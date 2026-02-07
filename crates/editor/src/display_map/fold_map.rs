@@ -1373,6 +1373,14 @@ impl Iterator for FoldRows<'_> {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+pub enum ChunkSpecial {
+    #[default]
+    None,
+    InlayHint,
+    EditPrediction,
+}
+
 /// A chunk of a buffer's text, along with its syntax highlight and
 /// diagnostic status.
 #[derive(Clone, Debug, Default)]
@@ -1392,8 +1400,8 @@ pub struct Chunk<'a> {
     pub underline: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text was originally a tab character.
-    pub is_inlay: bool,
+    /// Special property of chunk.
+    pub special: ChunkSpecial,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
     /// Bitmap of tab character locations in chunk
@@ -1586,7 +1594,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,
                 is_tab: chunk.is_tab,
-                is_inlay: chunk.is_inlay,
+                special: ChunkSpecial::InlayHint,
                 underline: chunk.underline,
                 renderer: inlay_chunk.renderer,
             });
