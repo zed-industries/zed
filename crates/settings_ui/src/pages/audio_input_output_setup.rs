@@ -2,27 +2,27 @@ use cpal::{
     Device, default_host,
     traits::{DeviceTrait, HostTrait},
 };
-use gpui::{AnyElement, App, ReadGlobal, SharedString, Window, prelude::*};
+use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
 use settings::{AudioDeviceName, SettingsStore};
-use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition};
+use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition, IntoElement};
 use util::ResultExt;
 
 use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
 
-const SYSTEM_DEFAULT: &str = "System Default";
+pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum AudioDeviceKind {
+pub(crate) enum AudioDeviceKind {
     Input,
     Output,
 }
 
-struct AudioDeviceInfo {
-    id: String,
-    label: String,
+pub(crate) struct AudioDeviceInfo {
+    pub id: String,
+    pub label: String,
 }
 
-fn should_show_device(device_id: &str) -> bool {
+pub(crate) fn should_show_device(device_id: &str) -> bool {
     // On non-Linux platforms, show all devices as they're typically already user-friendly
     #[cfg(not(target_os = "linux"))]
     {
@@ -53,7 +53,7 @@ fn should_show_device(device_id: &str) -> bool {
     }
 }
 
-fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
+pub(crate) fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
     let host = default_host();
 
     let devices: Vec<Device> = match kind {
@@ -90,7 +90,7 @@ fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
         .collect()
 }
 
-fn get_current_device_label(current_id: &str, devices: &[AudioDeviceInfo]) -> String {
+pub(crate) fn get_current_device_label(current_id: &str, devices: &[AudioDeviceInfo]) -> String {
     if current_id == SYSTEM_DEFAULT {
         return SYSTEM_DEFAULT.to_string();
     }
@@ -102,7 +102,67 @@ fn get_current_device_label(current_id: &str, devices: &[AudioDeviceInfo]) -> St
         .unwrap_or_else(|| SYSTEM_DEFAULT.to_string())
 }
 
-fn render_audio_device_dropdown(
+/// Renders an audio device dropdown with a callback for handling device selection.
+///
+/// The `on_select` callback receives the selected device ID (or None for the system default option).
+pub(crate) fn render_audio_device_dropdown<F>(
+    dropdown_id: impl Into<ElementId>,
+    kind: AudioDeviceKind,
+    current_device_id: String,
+    on_select: F,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement
+where
+    F: Fn(Option<String>, &mut Window, &mut App) + Clone + 'static,
+{
+    let devices = get_audio_devices(kind);
+    let current_label = get_current_device_label(&current_device_id, &devices);
+
+    let menu = ContextMenu::build(window, cx, {
+        let current_device_id = current_device_id.clone();
+        move |mut menu, _, _cx| {
+            let is_system_default = current_device_id == SYSTEM_DEFAULT;
+            menu = menu.toggleable_entry(
+                SYSTEM_DEFAULT,
+                is_system_default,
+                IconPosition::Start,
+                None,
+                {
+                    let on_select = on_select.clone();
+                    move |window, cx| {
+                        on_select(None, window, cx);
+                    }
+                },
+            );
+
+            for device in &devices {
+                let is_current = device.id == current_device_id;
+                let device_id = device.id.clone();
+
+                menu = menu.toggleable_entry(
+                    device.label.clone(),
+                    is_current,
+                    IconPosition::Start,
+                    None,
+                    {
+                        let on_select = on_select.clone();
+                        move |window, cx| {
+                            on_select(Some(device_id.clone()), window, cx);
+                        }
+                    },
+                );
+            }
+            menu
+        }
+    });
+
+    DropdownMenu::new(dropdown_id, current_label, menu)
+        .style(DropdownStyle::Outlined)
+        .into_any_element()
+}
+
+fn render_settings_audio_device_dropdown(
     field: SettingField<Option<AudioDeviceName>>,
     file: SettingsUiFile,
     kind: AudioDeviceKind,
@@ -115,79 +175,32 @@ fn render_audio_device_dropdown(
         .and_then(|opt| opt.as_ref().map(|x| x.0.clone()))
         .unwrap_or_else(|| SYSTEM_DEFAULT.into());
 
-    let devices = get_audio_devices(kind);
-    let current_label = get_current_device_label(&current_device_id, &devices);
-
     let dropdown_id: SharedString = match kind {
         AudioDeviceKind::Input => "input-audio-device-dropdown".into(),
         AudioDeviceKind::Output => "output-audio-device-dropdown".into(),
     };
 
-    let menu = ContextMenu::build(window, cx, {
-        let current_device_id = current_device_id.clone();
-        let file = file.clone();
-        move |mut menu, _, _cx| {
-            // Add "System Default" option first
-            let is_system_default = current_device_id == SYSTEM_DEFAULT;
-            menu = menu.toggleable_entry(
-                SYSTEM_DEFAULT,
-                is_system_default,
-                IconPosition::Start,
-                None,
-                {
-                    let file = file.clone();
-                    move |window, cx| {
-                        update_settings_file(
-                            file.clone(),
-                            field.json_path,
-                            window,
-                            cx,
-                            move |settings, _cx| {
-                                (field.write)(settings, Some(None));
-                            },
-                        )
-                        .log_err();
-                    }
+    render_audio_device_dropdown(
+        dropdown_id,
+        kind,
+        current_device_id,
+        move |device_id, window, cx| {
+            let value: Option<Option<AudioDeviceName>> =
+                device_id.map(|id| Some(AudioDeviceName(id)));
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, value.clone());
                 },
-            );
-
-            // Add all detected devices
-            for device in &devices {
-                let is_current = device.id == current_device_id;
-                let device_id = device.id.clone();
-                let file = file.clone();
-
-                menu = menu.toggleable_entry(
-                    device.label.clone(),
-                    is_current,
-                    IconPosition::Start,
-                    None,
-                    {
-                        move |window, cx| {
-                            let value: Option<Option<AudioDeviceName>> =
-                                Some(Some(AudioDeviceName(device_id.clone())));
-                            update_settings_file(
-                                file.clone(),
-                                field.json_path,
-                                window,
-                                cx,
-                                move |settings, _cx| {
-                                    (field.write)(settings, value.clone());
-                                },
-                            )
-                            .log_err();
-                        }
-                    },
-                );
-            }
-            menu
-        }
-    });
-
-    DropdownMenu::new(dropdown_id, current_label, menu)
-        .tab_index(0)
-        .style(DropdownStyle::Outlined)
-        .into_any_element()
+            )
+            .log_err();
+        },
+        window,
+        cx,
+    )
 }
 
 pub fn render_input_audio_device_dropdown(
@@ -197,7 +210,7 @@ pub fn render_input_audio_device_dropdown(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    render_audio_device_dropdown(field, file, AudioDeviceKind::Input, window, cx)
+    render_settings_audio_device_dropdown(field, file, AudioDeviceKind::Input, window, cx)
 }
 
 pub fn render_output_audio_device_dropdown(
@@ -207,5 +220,5 @@ pub fn render_output_audio_device_dropdown(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    render_audio_device_dropdown(field, file, AudioDeviceKind::Output, window, cx)
+    render_settings_audio_device_dropdown(field, file, AudioDeviceKind::Output, window, cx)
 }

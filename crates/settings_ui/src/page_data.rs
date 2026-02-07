@@ -7,7 +7,10 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::{render_edit_prediction_setup_page, render_tool_permissions_setup_page},
+    pages::{
+        open_audio_test_window, render_edit_prediction_setup_page,
+        render_tool_permissions_setup_page,
+    },
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -6769,7 +6772,7 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 8] {
+    fn experimental_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Experimental"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6863,6 +6866,14 @@ fn collaboration_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::ActionLink(ActionLink {
+                title: "Test Audio".into(),
+                description: Some("Test your microphone and speaker setup".into()),
+                button_text: "Test Audio".into(),
+                on_click: Arc::new(|_settings_window, window, cx| {
+                    open_audio_test_window(window, cx);
+                }),
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Output Audio Device".into(),
