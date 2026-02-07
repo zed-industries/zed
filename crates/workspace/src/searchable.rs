@@ -18,7 +18,7 @@ pub enum CollapseDirection {
     Expanded,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,

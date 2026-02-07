@@ -1047,7 +1047,7 @@ fn test_random_edits(
     log::info!("initial text:\n{}", buffer.text());
 
     for _ in 0..operations {
-        let prev_buffer = buffer.snapshot();
+        let prev_buffer = buffer.snapshot().clone();
         let prev_syntax_map = syntax_map.snapshot();
 
         buffer.randomly_edit(&mut rng, 3);

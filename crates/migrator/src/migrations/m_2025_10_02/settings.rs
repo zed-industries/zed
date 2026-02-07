@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::patterns::migrate_language_setting;
+use crate::migrations::migrate_language_setting;
 
 pub fn remove_formatters_on_save(value: &mut Value) -> Result<()> {
     migrate_language_setting(value, remove_formatters_on_save_inner)

@@ -25,6 +25,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+// Another comment
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;

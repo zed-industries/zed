@@ -2790,8 +2790,6 @@ impl Pane {
                 let item_handle = item.boxed_clone();
                 move |pane: &mut Self, event: &ClickEvent, window, cx| {
                     if event.click_count() > 1 {
-                        // On double-click, dispatch the Rename action (when available)
-                        // instead of just activating the item.
                         pane.unpreview_item_if_preview(item_id);
                         let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
                         if let Some((_, action)) = extra_actions
@@ -2809,10 +2807,12 @@ impl Pane {
                     pane.activate_item(ix, true, true, window, cx)
                 }
             }))
-            // TODO: This should be a click listener with the middle mouse button instead of a mouse down listener.
-            .on_mouse_down(
-                MouseButton::Middle,
-                cx.listener(move |pane, _event, window, cx| {
+            .on_aux_click(
+                cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
+                    if !event.is_middle_click() {
+                        return;
+                    }
+
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
                 }),

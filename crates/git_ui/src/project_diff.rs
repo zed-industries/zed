@@ -3,18 +3,18 @@ use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
+    resolve_active_repository,
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplitDiffFeatureFlag, SplittableEditor,
-    ToggleSplitDiff,
+    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use feature_flags::FeatureFlagAppExt as _;
+
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -155,6 +155,8 @@ impl ProjectDiff {
                 "Action"
             }
         );
+        let intended_repo = resolve_active_repository(workspace, cx);
+
         let existing = workspace
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
@@ -178,6 +180,23 @@ impl ProjectDiff {
             );
             project_diff
         };
+
+        if let Some(intended) = &intended_repo {
+            let needs_switch = project_diff
+                .read(cx)
+                .branch_diff
+                .read(cx)
+                .repo()
+                .map_or(true, |current| current.read(cx).id != intended.read(cx).id);
+            if needs_switch {
+                project_diff.update(cx, |project_diff, cx| {
+                    project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                        branch_diff.set_repo(Some(intended.clone()), cx);
+                    });
+                });
+            }
+        }
+
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
@@ -281,7 +300,8 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
-            let diff_display_editor = SplittableEditor::new_unsplit(
+            let diff_display_editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -480,7 +500,6 @@ impl ProjectDiff {
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
-        let is_split = self.editor.read(cx).is_split();
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let prev_next = snapshot.diff_hunks().nth(1).is_some();
@@ -541,7 +560,6 @@ impl ProjectDiff {
             selection,
             stage_all,
             unstage_all,
-            is_split,
         }
     }
 
@@ -877,9 +895,8 @@ impl Item for ProjectDiff {
         Some("Project Diff Opened")
     }
 
-    fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        // TODO(split-diff) SplitEditor should be searchable
-        Some(Box::new(self.editor.read(cx).rhs_editor().clone()))
+    fn as_searchable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
@@ -987,6 +1004,8 @@ impl Item for ProjectDiff {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
             Some(self.editor.read(cx).rhs_editor().clone().into())
+        } else if type_id == TypeId::of::<SplittableEditor>() {
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -1293,7 +1312,6 @@ struct ButtonStates {
     selection: bool,
     stage_all: bool,
     unstage_all: bool,
-    is_split: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -1433,31 +1451,6 @@ impl Render for ProjectDiffToolbar {
                             )
                         },
                     )
-                    .map(|this| {
-                        if !cx.has_flag::<SplitDiffFeatureFlag>() {
-                            return this;
-                        }
-                        this.child(
-                            Button::new(
-                                "toggle-split",
-                                if button_states.is_split {
-                                    "Stacked View"
-                                } else {
-                                    "Split View"
-                                },
-                            )
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Toggle Split View",
-                                &ToggleSplitDiff,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.dispatch_action(&ToggleSplitDiff, window, cx);
-                                },
-                            )),
-                        )
-                    })
                     .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(
@@ -2646,5 +2639,93 @@ mod tests {
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
         cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_respects_worktree_override(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project_a"),
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project_b"),
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_a/.git")),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_b/.git")),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/project_a")),
+                Path::new(path!("/project_b")),
+            ],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|w| w.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // Select project A via the dropdown override and open the diff.
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_a_id), cx);
+        });
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let paths_a = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert_eq!(paths_a.len(), 1);
+        assert_eq!(*paths_a[0], *"a.txt");
+
+        // Switch the override to project B and re-run the diff action.
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_b_id), cx);
+        });
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let same_diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        assert_eq!(diff_item.entity_id(), same_diff_item.entity_id());
+
+        let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert_eq!(paths_b.len(), 1);
+        assert_eq!(*paths_b[0], *"b.txt");
     }
 }

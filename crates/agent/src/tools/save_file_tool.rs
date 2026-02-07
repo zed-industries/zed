@@ -9,13 +9,32 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
 };
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+
+fn common_parent_for_paths(paths: &[String]) -> Option<PathBuf> {
+    let first = paths.first()?;
+    let mut common: Vec<Component<'_>> = Path::new(first).parent()?.components().collect();
+    for path in &paths[1..] {
+        let parent: Vec<Component<'_>> = Path::new(path).parent()?.components().collect();
+        let prefix_len = common
+            .iter()
+            .zip(parent.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        common.truncate(prefix_len);
+    }
+    if common.is_empty() {
+        return None;
+    }
+    Some(common.iter().collect())
+}
 
 /// Saves files that have unsaved changes.
 ///
@@ -41,9 +60,7 @@ impl AgentTool for SaveFileTool {
     type Input = SaveFileToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "save_file"
-    }
+    const NAME: &'static str = "save_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -68,53 +85,65 @@ impl AgentTool for SaveFileTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let mut needs_confirmation = false;
+        let mut confirmation_paths: Vec<String> = Vec::new();
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
-            let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+            let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
             match decision {
-                ToolPermissionDecision::Allow => {}
+                ToolPermissionDecision::Allow => {
+                    if !settings.always_allow_tool_actions
+                        && is_sensitive_settings_path(Path::new(&*path_str))
+                    {
+                        confirmation_paths.push(path_str.to_string());
+                    }
+                }
                 ToolPermissionDecision::Deny(reason) => {
                     return Task::ready(Err(anyhow::anyhow!("{}", reason)));
                 }
                 ToolPermissionDecision::Confirm => {
-                    needs_confirmation = true;
+                    confirmation_paths.push(path_str.to_string());
                 }
             }
         }
 
-        let authorize = if needs_confirmation {
-            let title = if input.paths.len() == 1 {
-                format!(
-                    "Save {}",
-                    MarkdownInlineCode(&input.paths[0].to_string_lossy())
-                )
+        let authorize = if !confirmation_paths.is_empty() {
+            let title = if confirmation_paths.len() == 1 {
+                format!("Save {}", MarkdownInlineCode(&confirmation_paths[0]))
             } else {
-                let paths: Vec<_> = input
-                    .paths
+                let paths: Vec<_> = confirmation_paths
                     .iter()
                     .take(3)
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| p.as_str())
                     .collect();
-                if input.paths.len() > 3 {
+                if confirmation_paths.len() > 3 {
                     format!(
                         "Save {}, and {} more",
                         paths.join(", "),
-                        input.paths.len() - 3
+                        confirmation_paths.len() - 3
                     )
                 } else {
                     format!("Save {}", paths.join(", "))
                 }
             };
-            let first_path = input
-                .paths
-                .first()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
+            let sensitive_kind = confirmation_paths
+                .iter()
+                .find_map(|p| sensitive_settings_kind(Path::new(p)));
+            let title = match sensitive_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
+            };
+            let input_value = if confirmation_paths.len() == 1 {
+                confirmation_paths[0].clone()
+            } else {
+                common_parent_for_paths(&confirmation_paths)
+                    .map(|parent| format!("{}/_", parent.display()))
+                    .unwrap_or_else(|| confirmation_paths[0].clone())
+            };
             let context = crate::ToolPermissionContext {
-                tool_name: "save_file".to_string(),
-                input_value: first_path,
+                tool_name: Self::NAME.to_string(),
+                input_value,
             };
             Some(event_stream.authorize(title, context, cx))
         } else {

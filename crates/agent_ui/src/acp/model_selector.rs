@@ -367,6 +367,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                                 })
                                 .is_selected(is_selected)
                                 .is_focused(selected)
+                                .is_latest(model_info.is_latest)
                                 .is_favorite(is_favorite)
                                 .on_toggle_favorite(handle_action_click),
                         )
@@ -552,6 +553,7 @@ mod tests {
                             name: model.to_string().into(),
                             description: None,
                             icon: None,
+                            is_latest: false,
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -774,12 +776,14 @@ mod tests {
                 name: "Claude".into(),
                 description: None,
                 icon: None,
+                is_latest: false,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("zed/gemini".to_string()),
                 name: "Gemini".into(),
                 description: None,
                 icon: None,
+                is_latest: false,
             },
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
@@ -820,12 +824,14 @@ mod tests {
                 name: "Favorite".into(),
                 description: None,
                 icon: None,
+                is_latest: false,
             },
             acp_thread::AgentModelInfo {
                 id: acp::ModelId::new("regular-model".to_string()),
                 name: "Regular".into(),
                 description: None,
                 icon: None,
+                is_latest: false,
             },
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);

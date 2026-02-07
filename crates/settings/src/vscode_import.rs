@@ -307,6 +307,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            diff_view_style: None,
         }
     }
 
@@ -561,6 +562,7 @@ impl VsCodeSettings {
                         SemanticTokens::Off
                     }
                 }),
+            document_folding_ranges: None,
             linked_edits: self.read_bool("editor.linkedEditing"),
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,
