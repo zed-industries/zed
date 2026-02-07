@@ -1,9 +1,26 @@
+use audio::{CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
+use cpal::{
+    DeviceId, default_host,
+    traits::{DeviceTrait, HostTrait},
+};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Render, Size, Window, WindowBounds, WindowKind,
     WindowOptions, prelude::*, px,
 };
+use log::info;
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
+use rodio::{DeviceSinkBuilder, Source};
+use std::{
+    any::Any,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
 use ui::{Button, ButtonStyle, Label, prelude::*};
 use util::ResultExt;
 use workspace::client_side_decorations;
@@ -14,10 +31,10 @@ use super::audio_input_output_setup::{
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    testing: bool,
     input_device_id: String,
     output_device_id: String,
     focus_handle: FocusHandle,
+    _stop_playback: Option<Box<dyn Any + Send>>,
 }
 
 impl AudioTestWindow {
@@ -30,20 +47,25 @@ impl AudioTestWindow {
 
         Self {
             title_bar,
-            testing: false,
             input_device_id: SYSTEM_DEFAULT.to_string(),
             output_device_id: SYSTEM_DEFAULT.to_string(),
             focus_handle: cx.focus_handle(),
+            _stop_playback: None,
         }
     }
 
     fn toggle_testing(&mut self, cx: &mut Context<Self>) {
-        self.testing = !self.testing;
-        if self.testing {
-            // TODO: Start audio routing (microphone → speaker)
-        } else {
-            // TODO: Stop audio routing
+        if let Some(_cb) = self._stop_playback.take() {
+            cx.notify();
+            return;
         }
+
+        if let Some(cb) =
+            start_test_playback(self.input_device_id.clone(), self.output_device_id.clone()).ok()
+        {
+            self._stop_playback = Some(cb);
+        }
+
         cx.notify();
     }
 
@@ -58,15 +80,112 @@ impl AudioTestWindow {
     }
 }
 
+fn start_test_playback(
+    input_device_id: String,
+    output_device_id: String,
+) -> anyhow::Result<Box<dyn Any + Send>> {
+    let stop_signal = Arc::new(AtomicBool::new(false));
+    let stop_signal_for_mic = stop_signal.clone();
+    let stop_signal_for_defer = stop_signal.clone();
+
+    thread::Builder::new()
+        .name("AudioTestPlayback".to_string())
+        .spawn(move || {
+            let output_device_id = DeviceId::from_str(&output_device_id).ok();
+            let output = if let Some(id) = output_device_id {
+                if let Some(device) = default_host().device_by_id(&id) {
+                    DeviceSinkBuilder::from_device(device).and_then(|device| device.open_stream())
+                } else {
+                    DeviceSinkBuilder::open_default_sink()
+                }
+            } else {
+                DeviceSinkBuilder::open_default_sink()
+            };
+            let Ok(output) = output else {
+                log::error!("Could not open output device for audio test");
+                return;
+            };
+
+            let input_device_id = DeviceId::from_str(&input_device_id).ok();
+            let microphone = match open_test_microphone(input_device_id, stop_signal_for_mic) {
+                Ok(mic) => mic,
+                Err(e) => {
+                    log::error!("Could not open microphone for audio test: {e}");
+                    return;
+                }
+            };
+
+            output.mixer().add(microphone);
+
+            // Keep thread (and output device) alive until stop signal
+            while !stop_signal.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(100));
+            }
+        })?;
+
+    Ok(Box::new(util::defer(move || {
+        stop_signal_for_defer.store(true, Ordering::Relaxed);
+    })))
+}
+
+fn open_test_microphone(
+    input_device_id: Option<DeviceId>,
+    stop_signal: Arc<AtomicBool>,
+) -> anyhow::Result<impl Source<Item = f32>> {
+    let builder = rodio::microphone::MicrophoneBuilder::new();
+    let builder = if let Some(id) = input_device_id {
+        let mut found = None;
+        for input in rodio::microphone::available_inputs()? {
+            if input.clone().into_inner().id()? == id {
+                found = Some(builder.device(input));
+                break;
+            }
+        }
+        found.unwrap_or_else(|| builder.default_device())?
+    } else {
+        builder.default_device()?
+    };
+
+    let stream = builder
+        .default_config()?
+        .prefer_sample_rates([
+            SAMPLE_RATE,
+            SAMPLE_RATE.saturating_mul(rodio::nz!(2)),
+            SAMPLE_RATE.saturating_mul(rodio::nz!(3)),
+            SAMPLE_RATE.saturating_mul(rodio::nz!(4)),
+        ])
+        .prefer_channel_counts([rodio::nz!(1), rodio::nz!(2), rodio::nz!(3), rodio::nz!(4)])
+        .prefer_buffer_sizes(512..)
+        .open_stream()?;
+    info!("Opened test microphone: {:?}", stream.config());
+
+    let stream = stream
+        .possibly_disconnected_channels_to_mono()
+        .constant_samplerate(SAMPLE_RATE)
+        .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
+        .stoppable()
+        .periodic_access(
+            Duration::from_millis(50),
+            move |stoppable: &mut rodio::source::Stoppable<_>| {
+                if stop_signal.load(Ordering::Relaxed) {
+                    stoppable.stop();
+                }
+            },
+        );
+
+    Ok(stream)
+}
+
 impl Render for AudioTestWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let button_text = if self.testing {
+        let is_testing = self._stop_playback.is_some();
+        let button_text = if is_testing {
             "Stop Testing"
         } else {
             "Start Testing"
         };
 
-        let button_style = if self.testing {
+        let button_style = if is_testing {
             ButtonStyle::Tinted(ui::TintColor::Error)
         } else {
             ButtonStyle::Filled
@@ -149,9 +268,7 @@ impl Focusable for AudioTestWindow {
 
 impl Drop for AudioTestWindow {
     fn drop(&mut self) {
-        if self.testing {
-            // TODO: Clean up audio streams
-        }
+        let _ = self._stop_playback.take();
     }
 }
 
