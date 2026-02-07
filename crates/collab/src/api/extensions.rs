@@ -9,8 +9,8 @@ use axum::{
     response::Redirect,
     routing::get,
 };
+use cloud_api_types::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeSet, HashMap};
-use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
 use std::str::FromStr;

@@ -21,6 +21,7 @@ async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 client.workspace = true
+cloud_api_types.workspace = true
 collections.workspace = true
 dap.workspace = true
 extension.workspace = true
