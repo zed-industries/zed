@@ -486,6 +486,11 @@ impl ExtensionsPage {
                         matches!(status, ExtensionStatus::NotInstalled)
                     }
                 })
+                .filter(|(_, extension)| {
+                    self.provides_filter.as_ref().map_or(true, |category| {
+                        extension.manifest.provides.contains(category)
+                    })
+                })
                 .map(|(ix, _)| ix),
         );
         cx.notify();
@@ -1863,3 +1868,6 @@ impl Item for ExtensionsPage {
         f(*event)
     }
 }
+
+#[cfg(test)]
+mod extensions_ui_test;

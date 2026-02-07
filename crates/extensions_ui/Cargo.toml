@@ -42,4 +42,5 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 editor = { workspace = true, features = ["test-support"] }
