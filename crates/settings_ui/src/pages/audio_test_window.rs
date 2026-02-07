@@ -7,11 +7,10 @@ use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Render, Size, Window, WindowBounds, WindowKind,
     WindowOptions, prelude::*, px,
 };
-use log::info;
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rodio::{DeviceSinkBuilder, Source};
-use settings::{AudioDeviceName, Settings};
+use settings::{AudioInputDeviceName, AudioOutputDeviceName, Settings};
 use std::{
     any::Any,
     str::FromStr,
@@ -82,6 +81,7 @@ impl AudioTestWindow {
     }
 
     fn set_input_device(&mut self, device_id: Option<String>, cx: &mut Context<Self>) {
+        dbg!(("Setting input device=", device_id.as_ref()));
         self.input_device_id = device_id.unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
         cx.notify();
     }
@@ -103,37 +103,14 @@ fn start_test_playback(
     thread::Builder::new()
         .name("AudioTestPlayback".to_string())
         .spawn(move || {
-            log::info!(
-                "Audio test: output_device_id string = {:?}",
-                output_device_id
-            );
             let output_device_id = DeviceId::from_str(&output_device_id).ok();
-            log::info!(
-                "Audio test: parsed output DeviceId = {:?}",
-                output_device_id
-            );
             let output = if let Some(ref id) = output_device_id {
-                log::info!("Audio test: looking for device by id: {id}");
                 if let Some(device) = default_host().device_by_id(id) {
-                    if let Ok(desc) = device.description() {
-                        log::info!(
-                            "Audio test: found device - name: {:?}, manufacturer: {:?}",
-                            desc.name(),
-                            desc.manufacturer()
-                        );
-                    } else {
-                        log::info!("Audio test: found device (no description available)");
-                    }
-                    DeviceSinkBuilder::from_device(device).and_then(|builder| {
-                        log::info!("Audio test: opening stream on specific device");
-                        builder.open_stream()
-                    })
+                    DeviceSinkBuilder::from_device(device).and_then(|builder| builder.open_stream())
                 } else {
-                    log::warn!("Audio test: device_by_id returned None, falling back to default");
                     DeviceSinkBuilder::open_default_sink()
                 }
             } else {
-                log::info!("Audio test: using default sink (no device id specified)");
                 DeviceSinkBuilder::open_default_sink()
             };
             let Ok(output) = output else {
@@ -193,7 +170,7 @@ fn open_test_microphone(
         .prefer_channel_counts([rodio::nz!(1), rodio::nz!(2), rodio::nz!(3), rodio::nz!(4)])
         .prefer_buffer_sizes(512..)
         .open_stream()?;
-    info!("Opened test microphone: {:?}", stream.config());
+    log::info!("Opened test microphone: {:?}", stream.config());
 
     let stream = stream
         .possibly_disconnected_channels_to_mono()
@@ -238,8 +215,8 @@ impl Render for AudioTestWindow {
                     weak_entity
                         .update(cx, |this, cx| this.set_input_device(device_id.clone(), cx))
                         .log_err();
-                    let value: Option<Option<AudioDeviceName>> =
-                        device_id.map(|id| Some(AudioDeviceName(id)));
+                    let value: Option<Option<AudioInputDeviceName>> =
+                        device_id.map(|id| Some(AudioInputDeviceName(id)));
                     update_settings_file(
                         SettingsUiFile::User,
                         Some("audio.experimental.input_audio_device"),
@@ -265,8 +242,8 @@ impl Render for AudioTestWindow {
                 weak_entity
                     .update(cx, |this, cx| this.set_output_device(device_id.clone(), cx))
                     .log_err();
-                let value: Option<Option<AudioDeviceName>> =
-                    device_id.map(|id| Some(AudioDeviceName(id)));
+                let value: Option<Option<AudioOutputDeviceName>> =
+                    device_id.map(|id| Some(AudioOutputDeviceName(id)));
                 update_settings_file(
                     SettingsUiFile::User,
                     Some("audio.experimental.output_audio_device"),

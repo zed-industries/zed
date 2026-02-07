@@ -1,17 +1,41 @@
 use cpal::{
-    Device, default_host,
+    DeviceDescription, default_host,
     traits::{DeviceTrait, HostTrait},
 };
 use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
-use settings::{AudioDeviceName, SettingsStore};
+use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition, IntoElement};
 use util::ResultExt;
 
 use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
 
+/// Trait for audio device name types to enable shared rendering logic
+pub(crate) trait AudioDeviceName: Clone + Send + 'static {
+    fn device_id(&self) -> &str;
+    fn from_device_id(id: String) -> Self;
+}
+
+impl AudioDeviceName for AudioInputDeviceName {
+    fn device_id(&self) -> &str {
+        &self.0
+    }
+    fn from_device_id(id: String) -> Self {
+        Self(id)
+    }
+}
+
+impl AudioDeviceName for AudioOutputDeviceName {
+    fn device_id(&self) -> &str {
+        &self.0
+    }
+    fn from_device_id(id: String) -> Self {
+        Self(id)
+    }
+}
+
 pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum AudioDeviceKind {
     Input,
     Output,
@@ -22,11 +46,25 @@ pub(crate) struct AudioDeviceInfo {
     pub label: String,
 }
 
-pub(crate) fn should_show_device(device_id: &str, kind: AudioDeviceKind) -> bool {
+pub(crate) fn should_show_device(
+    device_id: &str,
+    description: &DeviceDescription,
+    kind: AudioDeviceKind,
+) -> bool {
+    let is_valid_kind = match kind {
+        AudioDeviceKind::Input => description.supports_input(),
+        AudioDeviceKind::Output => description.supports_output(),
+    };
+
+    if !is_valid_kind {
+        return false;
+    }
+
     // On non-Linux platforms, show all devices as they're typically already user-friendly
     #[cfg(not(target_os = "linux"))]
     {
         let _ = device_id;
+        let _ = description;
         let _ = kind;
         return true;
     }
@@ -65,26 +103,17 @@ pub(crate) fn should_show_device(device_id: &str, kind: AudioDeviceKind) -> bool
 }
 
 pub(crate) fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
-    let host = default_host();
-
-    let devices: Vec<Device> = match kind {
-        AudioDeviceKind::Input => host
-            .input_devices()
-            .map(|d| d.collect())
-            .unwrap_or_default(),
-        AudioDeviceKind::Output => host
-            .output_devices()
-            .map(|d| d.collect())
-            .unwrap_or_default(),
+    let Some(devices) = default_host().devices().ok() else {
+        return Vec::new();
     };
 
     devices
-        .into_iter()
         .filter_map(|device| {
             let id = device.id().ok()?;
             let id_string = id.to_string();
+            let desc = device.description().ok()?;
 
-            if !should_show_device(&id_string, kind) {
+            if !should_show_device(&id_string, &desc, kind) {
                 return None;
             }
 
@@ -109,7 +138,8 @@ pub(crate) fn get_current_device_label(current_id: &str, devices: &[AudioDeviceI
     devices
         .iter()
         .find(|d| d.id == current_id)
-        .map(|d| d.label.clone())
+        .map(|d| format!("{} ({})", d.label, d.id))
+        // .map(|d| d.label.clone())
         .unwrap_or_else(|| SYSTEM_DEFAULT.to_string())
 }
 
@@ -152,7 +182,7 @@ where
                 let device_id = device.id.clone();
 
                 menu = menu.toggleable_entry(
-                    device.label.clone(),
+                    format!("{} ({})", device.label, device.id),
                     is_current,
                     IconPosition::Start,
                     None,
@@ -170,20 +200,21 @@ where
 
     DropdownMenu::new(dropdown_id, current_label, menu)
         .style(DropdownStyle::Outlined)
+        .full_width(true)
         .into_any_element()
 }
 
-fn render_settings_audio_device_dropdown(
-    field: SettingField<Option<AudioDeviceName>>,
+fn render_settings_audio_device_dropdown<T: AudioDeviceName>(
+    field: SettingField<Option<T>>,
     file: SettingsUiFile,
     kind: AudioDeviceKind,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, current_value): (_, Option<&Option<AudioDeviceName>>) =
+    let (_, current_value): (_, Option<&Option<T>>) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let current_device_id: String = current_value
-        .and_then(|opt| opt.as_ref().map(|x| x.0.clone()))
+        .and_then(|opt| opt.as_ref().map(|x| x.device_id().to_string()))
         .unwrap_or_else(|| SYSTEM_DEFAULT.into());
 
     let dropdown_id: SharedString = match kind {
@@ -196,8 +227,7 @@ fn render_settings_audio_device_dropdown(
         kind,
         current_device_id,
         move |device_id, window, cx| {
-            let value: Option<Option<AudioDeviceName>> =
-                device_id.map(|id| Some(AudioDeviceName(id)));
+            let value: Option<Option<T>> = device_id.map(|id| Some(T::from_device_id(id)));
             update_settings_file(
                 file.clone(),
                 field.json_path,
@@ -215,7 +245,7 @@ fn render_settings_audio_device_dropdown(
 }
 
 pub fn render_input_audio_device_dropdown(
-    field: SettingField<Option<AudioDeviceName>>,
+    field: SettingField<Option<AudioInputDeviceName>>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
@@ -225,7 +255,7 @@ pub fn render_input_audio_device_dropdown(
 }
 
 pub fn render_output_audio_device_dropdown(
-    field: SettingField<Option<AudioDeviceName>>,
+    field: SettingField<Option<AudioOutputDeviceName>>,
     file: SettingsUiFile,
     _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
