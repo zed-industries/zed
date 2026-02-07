@@ -5,7 +5,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
-use language::{Edit, HighlightId, Point};
+use language::{ChunkSpecial, Edit, HighlightId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -1373,14 +1373,6 @@ impl Iterator for FoldRows<'_> {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default)]
-pub enum ChunkSpecial {
-    #[default]
-    None,
-    InlayHint,
-    EditPrediction,
-}
-
 /// A chunk of a buffer's text, along with its syntax highlight and
 /// diagnostic status.
 #[derive(Clone, Debug, Default)]
@@ -1594,7 +1586,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,
                 is_tab: chunk.is_tab,
-                special: ChunkSpecial::InlayHint,
+                special: chunk.special,
                 underline: chunk.underline,
                 renderer: inlay_chunk.renderer,
             });

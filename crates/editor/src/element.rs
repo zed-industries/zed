@@ -13,8 +13,8 @@ use crate::{
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
-        Block, BlockContext, BlockStyle, ChunkRendererId, ChunkSpecial, DisplaySnapshot,
-        EditorMargins, HighlightKey, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
+        HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -51,7 +51,9 @@ use gpui::{
     pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
-use language::{HighlightedText, IndentGuideSettings, language_settings::ShowWhitespaceSetting};
+use language::{
+    ChunkSpecial, HighlightedText, IndentGuideSettings, language_settings::ShowWhitespaceSetting,
+};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,

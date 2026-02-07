@@ -135,6 +135,10 @@ pub struct ThemeSettings {
     pub ui_density: UiDensity,
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
+    /// The font used for inlay hints.
+    pub inlay_hint_font_family: Option<String>,
+    /// The font used for edit predictions.
+    pub edit_prediction_font_family: Option<String>,
 }
 
 /// Returns the name of the default theme for the given [`Appearance`].
@@ -736,6 +740,8 @@ impl settings::Settings for ThemeSettings {
             icon_theme: icon_theme_selection,
             ui_density: content.ui_density.unwrap_or_default().into(),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
+            inlay_hint_font_family: content.inlay_hints_font_family.clone(),
+            edit_prediction_font_family: content.edit_predictions_font_family.clone(),
         }
     }
 }
