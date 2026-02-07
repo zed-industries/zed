@@ -684,13 +684,17 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
  "http_client",
+ "reqwest_client",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]
