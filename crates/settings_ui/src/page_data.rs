@@ -1489,7 +1489,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 6] {
+    fn multibuffer_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1551,19 +1551,6 @@ fn editor_page() -> SettingsPage {
                             .outline_panel
                             .get_or_insert_default()
                             .expand_outlines_with_depth = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Diff View Style",
-                description: "How to display diffs in the editor.",
-                field: Box::new(SettingField {
-                    json_path: Some("diff_view_style"),
-                    pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.editor.diff_view_style = value;
                     },
                 }),
                 metadata: None,

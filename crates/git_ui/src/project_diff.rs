@@ -280,7 +280,8 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
-            let mut diff_display_editor = SplittableEditor::new_unsplit(
+            let diff_display_editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -312,9 +313,6 @@ impl ProjectDiff {
                     }
                 }
             });
-            if EditorSettings::get_global(cx).diff_view_style == DiffViewStyle::SideBySide {
-                diff_display_editor.split(&Default::default(), window, cx);
-            }
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
