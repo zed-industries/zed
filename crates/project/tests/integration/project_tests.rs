@@ -5642,6 +5642,75 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "version 1",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 1");
+        assert!(!buffer.is_dirty());
+    });
+
+    // User makes an edit, making the buffer dirty.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "user edit: ")], None, cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.is_dirty());
+        assert_eq!(buffer.text(), "user edit: version 1");
+    });
+
+    // External tool writes new content while buffer is dirty.
+    // file_updated() updates the File but suppresses ReloadNeeded.
+    fs.save(
+        path!("/dir/file.txt").as_ref(),
+        &"version 2 from external tool".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.has_conflict());
+        assert_eq!(buffer.text(), "user edit: version 1");
+    });
+
+    // User undoes their edit. Buffer becomes clean, but disk has different
+    // content. did_edit() detects the dirty->clean transition and checks if
+    // disk changed while dirty. Since mtime differs from saved_mtime, it
+    // emits ReloadNeeded.
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "version 2 from external tool",
+            "buffer should reload from disk after undo makes it clean"
+        );
+        assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
