@@ -675,3 +675,172 @@ impl Render for MarkdownPreviewView {
             .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use editor::MultiBuffer;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language::markdown_lang;
+    use project::Project;
+    use settings::SettingsStore;
+    use workspace::Workspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    async fn build_preview<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (
+        Entity<MarkdownPreviewView>,
+        Entity<Editor>,
+        Entity<MultiBuffer>,
+        &'a mut VisualTestContext,
+    ) {
+        init_test(cx);
+
+        let fs = Arc::new(FakeFs::new(cx.executor()));
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let markdown_language = markdown_lang();
+        project
+            .read(cx)
+            .languages()
+            .add(markdown_language.clone());
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        buffer.update(cx, |multi_buffer, cx| {
+            let Some(singleton) = multi_buffer.as_singleton() else {
+                panic!("expected singleton buffer");
+            };
+            singleton.update(cx, |buffer, cx| {
+                buffer.set_language(Some(markdown_language.clone()), cx);
+            });
+        });
+
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+
+        let language_registry = project.read(cx).languages().clone();
+        let view = workspace.update_in(cx, |workspace, window, cx| {
+            MarkdownPreviewView::new(
+                MarkdownPreviewMode::Default,
+                editor.clone(),
+                workspace.weak_handle(),
+                language_registry,
+                window,
+                cx,
+            )
+        });
+
+        (view, editor, buffer, cx)
+    }
+
+    async fn wait_for_block_count(
+        view: &Entity<MarkdownPreviewView>,
+        cx: &mut VisualTestContext,
+    ) -> usize {
+        for _ in 0..20 {
+            cx.run_until_parked();
+            if let Some(contents) = view.read(cx).contents.as_ref() {
+                return contents.children.len();
+            }
+            cx.background_executor().timer(Duration::from_millis(20)).await;
+        }
+        panic!("markdown preview did not parse");
+    }
+
+    async fn wait_for_block_count_change(
+        view: &Entity<MarkdownPreviewView>,
+        previous: usize,
+        cx: &mut VisualTestContext,
+    ) -> usize {
+        for _ in 0..20 {
+            cx.run_until_parked();
+            if let Some(contents) = view.read(cx).contents.as_ref() {
+                let count = contents.children.len();
+                if count != previous {
+                    return count;
+                }
+            }
+            cx.background_executor().timer(Duration::from_millis(20)).await;
+        }
+        panic!("markdown preview did not update");
+    }
+
+    #[gpui::test]
+    async fn test_markdown_preview_reparses_on_buffer_edit(cx: &mut TestAppContext) {
+        let (view, editor, _buffer, cx) =
+            build_preview(cx, "# Title\n\nFirst paragraph.").await;
+        let initial_blocks = wait_for_block_count(&view, cx).await;
+
+        editor.update(cx, |editor, cx| {
+            let buffer_len = editor.buffer().read(cx).snapshot(cx).len();
+            editor.edit(
+                [(
+                    buffer_len..buffer_len,
+                    "\n\n## New Section\n\nMore content.\n",
+                )],
+                cx,
+            );
+        });
+
+        cx.background_executor()
+            .timer(REPARSE_DEBOUNCE + Duration::from_millis(20))
+            .await;
+        cx.run_until_parked();
+
+        let updated_blocks = wait_for_block_count_change(&view, initial_blocks, cx).await;
+        assert!(
+            updated_blocks > initial_blocks,
+            "expected edit to introduce new markdown blocks"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_preview_reparses_on_buffer_reload(cx: &mut TestAppContext) {
+        let (view, _editor, buffer, cx) =
+            build_preview(cx, "# Title\n\nFirst paragraph.").await;
+        let initial_blocks = wait_for_block_count(&view, cx).await;
+
+        view.update(cx, |view, _cx| {
+            view.contents = None;
+        });
+
+        let singleton = buffer.read(cx).as_singleton();
+        let Some(singleton) = singleton else {
+            panic!("expected singleton buffer");
+        };
+        singleton.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot();
+            buffer.did_reload(
+                snapshot.text.version.clone(),
+                snapshot.text.line_ending(),
+                None,
+                cx,
+            );
+        });
+
+        let refreshed_blocks = wait_for_block_count(&view, cx).await;
+        assert_eq!(
+            refreshed_blocks, initial_blocks,
+            "expected reload to reparse the current contents"
+        );
+    }
+}

@@ -39,3 +39,4 @@ zed_actions.workspace = true
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
