@@ -467,9 +467,6 @@ impl SplittableEditor {
     }
 
     fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if !cx.has_flag::<SplitDiffFeatureFlag>() {
-            return;
-        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -483,6 +480,9 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<SplitDiffFeatureFlag>() {
+            return;
+        }
         if self.lhs.is_some() {
             return;
         }
