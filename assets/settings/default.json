@@ -291,6 +291,10 @@
   "completion_menu_scrollbar": "never",
   // Whether to align detail text in code completions context menus left or right.
   "completion_detail_alignment": "left",
+  // How to display diffs in the editor.
+  //
+  // Default: stacked
+  "diff_view_style": "stacked",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
