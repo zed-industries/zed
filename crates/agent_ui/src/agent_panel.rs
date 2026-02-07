@@ -428,6 +428,7 @@ pub struct AgentPanel {
     focus_handle: FocusHandle,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
+    _active_view_observation: Option<Subscription>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -646,6 +647,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             previous_view: None,
+            _active_view_observation: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -1473,6 +1475,16 @@ impl AgentPanel {
             }
             self.active_view = new_view;
         }
+
+        self._active_view_observation = match &self.active_view {
+            ActiveView::AgentThread { thread_view } => {
+                Some(cx.observe(thread_view, |_this, _, cx| {
+                    cx.emit(AgentPanelEvent::ActiveViewChanged);
+                    cx.notify();
+                }))
+            }
+            _ => None,
+        };
 
         if focus {
             self.focus_handle(cx).focus(window, cx);
