@@ -1170,16 +1170,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
-                let enable_thinking = settings
-                    .agent
-                    .as_ref()
-                    .and_then(|agent| {
-                        agent
-                            .default_model
-                            .as_ref()
-                            .map(|default_model| default_model.enable_thinking)
-                    })
-                    .unwrap_or_else(|| thread.read(cx).thinking_enabled());
+                let enable_thinking = thread.read(cx).thinking_enabled();
                 settings
                     .agent
                     .get_or_insert_default()
@@ -1854,6 +1845,42 @@ mod internal_tests {
         assert_eq!(
             settings_json["agent"]["default_model"]["provider"],
             json!("fake")
+        );
+
+        // Register a thinking model and select it.
+        cx.update(|cx| {
+            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "fake-corp",
+                "fake-thinking",
+                "Fake Thinking",
+                true,
+            ));
+            let thinking_provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    LanguageModelProviderName::from("Fake Corp".to_string()),
+                )
+                .with_models(vec![thinking_model]),
+            );
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify enable_thinking was written to settings as true.
+        let settings_content = fs.load(paths::settings_file()).await.unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_content).unwrap();
+        assert_eq!(
+            settings_json["agent"]["default_model"]["enable_thinking"],
+            json!(true),
+            "selecting a thinking model should persist enable_thinking: true to settings"
         );
     }
 
