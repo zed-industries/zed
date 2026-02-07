@@ -2754,11 +2754,11 @@ mod tests {
     }
 
     async fn assert_default_diff_view(
-        setting: Option<settings::DefaultDiffView>,
+        default_diff_view: Option<settings::DefaultDiffView>,
         expect_split: bool,
         cx: &mut TestAppContext,
     ) {
-        if let Some(default_diff_view) = setting {
+        if let Some(default_diff_view) = default_diff_view {
             cx.update(|cx| {
                 let mut settings = ProjectSettings::get_global(cx).clone();
                 settings.git.default_diff_view = default_diff_view;
