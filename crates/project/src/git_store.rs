@@ -1711,6 +1711,18 @@ impl GitStore {
         &self.repositories
     }
 
+    pub fn reload_repositories(&mut self, cx: &mut Context<Self>) {
+        let GitStoreState::Local { downstream, .. } = &self.state else {
+            return;
+        };
+        let updates_tx = downstream.as_ref().map(|d| d.updates_tx.clone());
+        for repo in self.repositories.values() {
+            repo.update(cx, |repo, cx| {
+                repo.schedule_scan(updates_tx.clone(), cx);
+            });
+        }
+    }
+
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         let (repo, path) = self.repository_and_path_for_buffer_id(buffer_id, cx)?;
         let status = repo.read(cx).snapshot.status_for_path(&path)?;
