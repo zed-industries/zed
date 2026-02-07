@@ -4,7 +4,7 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
@@ -27,7 +27,7 @@ use picker::{
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -48,9 +48,10 @@ pub struct RecentProjectEntry {
 pub async fn get_recent_projects(
     current_workspace_id: Option<WorkspaceId>,
     limit: Option<usize>,
+    fs: Arc<dyn fs::Fs>,
 ) -> Vec<RecentProjectEntry> {
     let workspaces = WORKSPACE_DB
-        .recent_workspaces_on_disk()
+        .recent_workspaces_on_disk(fs.as_ref())
         .await
         .unwrap_or_default();
 
@@ -331,6 +332,10 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let fs = delegate
+            .workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().fs.clone());
         let picker = cx.new(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
@@ -343,8 +348,9 @@ impl RecentProjects {
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         cx.spawn_in(window, async move |this, cx| {
+            let Some(fs) = fs else { return };
             let workspaces = WORKSPACE_DB
-                .recent_workspaces_on_disk()
+                .recent_workspaces_on_disk(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -354,7 +360,7 @@ impl RecentProjects {
                     picker.update_matches(picker.query(cx), window, cx)
                 })
             })
-            .ok()
+            .ok();
         })
         .detach();
         Self {
@@ -877,10 +883,18 @@ impl RecentProjectsDelegate {
     ) {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _, _) = self.workspaces[selected_match.candidate_id];
+            let fs = self
+                .workspace
+                .upgrade()
+                .map(|ws| ws.read(cx).app_state().fs.clone());
             cx.spawn_in(window, async move |this, cx| {
-                let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+                WORKSPACE_DB
+                    .delete_workspace_by_id(workspace_id)
+                    .await
+                    .log_err();
+                let Some(fs) = fs else { return };
                 let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
+                    .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
@@ -897,6 +911,7 @@ impl RecentProjectsDelegate {
                             .update(cx, |this, cx| this.delete_history(workspace_id, cx));
                     }
                 })
+                .ok();
             })
             .detach();
         }

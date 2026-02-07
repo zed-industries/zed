@@ -1,3 +1,4 @@
+use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render, SharedString,
@@ -586,8 +587,9 @@ impl Sidebar {
 
         let fetch_recent_projects = {
             let picker = picker.downgrade();
+            let fs = <dyn Fs>::global(cx);
             cx.spawn_in(window, async move |_this, cx| {
-                let projects = get_recent_projects(None, None).await;
+                let projects = get_recent_projects(None, None, fs).await;
 
                 cx.update(|window, cx| {
                     if let Some(picker) = picker.upgrade() {

@@ -2385,6 +2385,7 @@ mod tests {
     use settings::{SaturatingBool, SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
+        sync::Arc,
         time::Duration,
     };
     use theme::ThemeRegistry;
@@ -5842,5 +5843,228 @@ mod tests {
             2,
             "Case 3: Windows should still exist after cancelling quit"
         );
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
+        use collections::HashMap;
+        use session::Session;
+        use workspace::{Workspace, WorkspaceId};
+
+        let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            use feature_flags::FeatureFlagAppExt as _;
+            cx.update_flags(false, vec!["agent-v2".to_string()]);
+        });
+
+        let dir1 = path!("/dir1");
+        let dir2 = path!("/dir2");
+        let dir3 = path!("/dir3");
+
+        let fs = app_state.fs.clone();
+        let fake_fs = fs.as_fake();
+        fake_fs.insert_tree(dir1, json!({})).await;
+        fake_fs.insert_tree(dir2, json!({})).await;
+        fake_fs.insert_tree(dir3, json!({})).await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        // --- Create 3 workspaces in 2 windows ---
+        //
+        //   Window A: workspace for dir1, workspace for dir2
+        //   Window B: workspace for dir3
+        let (window_a, _) = cx
+            .update(|cx| {
+                Workspace::new_local(vec![dir1.into()], app_state.clone(), None, None, None, cx)
+            })
+            .await
+            .expect("failed to open first workspace");
+
+        cx.update(|cx| {
+            Workspace::new_local(
+                vec![dir2.into()],
+                app_state.clone(),
+                Some(window_a),
+                None,
+                None,
+                cx,
+            )
+        })
+        .await
+        .expect("failed to open second workspace into window A");
+
+        let (window_b, _) = cx
+            .update(|cx| {
+                Workspace::new_local(vec![dir3.into()], app_state.clone(), None, None, None, cx)
+            })
+            .await
+            .expect("failed to open third workspace");
+
+        // Currently dir2 is active because it was added last.
+        // So, switch window_a's active workspace to dir1 (index 0).
+        // This sets up a non-trivial assertion: after restore, dir1 should
+        // still be active rather than whichever workspace happened to restore last.
+        window_a
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate_index(0, window, cx);
+            })
+            .unwrap();
+
+        // --- Flush serialization ---
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+
+        // Close the original windows.
+        window_a
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        window_b
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate a new session launch: replace the session so that
+        // `last_session_id()` returns the ID used during workspace creation.
+        // `restore_on_startup` defaults to `LastSession`, which is what we need.
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        // --- Read back from DB and verify grouping ---
+        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("expected session workspace locations");
+
+        assert_eq!(locations.len(), 3, "expected 3 session workspaces");
+
+        let mut groups_by_window: HashMap<gpui::WindowId, Vec<WorkspaceId>> = HashMap::default();
+        for session_workspace in &locations {
+            if let Some(window_id) = session_workspace.window_id {
+                groups_by_window
+                    .entry(window_id)
+                    .or_default()
+                    .push(session_workspace.workspace_id);
+            }
+        }
+        assert_eq!(
+            groups_by_window.len(),
+            2,
+            "expected 2 window groups, got {groups_by_window:?}"
+        );
+        assert!(
+            groups_by_window.values().any(|g| g.len() == 2),
+            "expected one group with 2 workspaces"
+        );
+        assert!(
+            groups_by_window.values().any(|g| g.len() == 1),
+            "expected one group with 1 workspace"
+        );
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        // --- Verify the restored windows ---
+        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect()
+        });
+
+        assert_eq!(
+            restored_windows.len(),
+            2,
+            "expected 2 restored windows, got {}",
+            restored_windows.len()
+        );
+
+        let workspace_counts: Vec<usize> = restored_windows
+            .iter()
+            .map(|window| {
+                window
+                    .read_with(cx, |multi_workspace, _| multi_workspace.workspaces().len())
+                    .unwrap()
+            })
+            .collect();
+        let mut sorted_counts = workspace_counts.clone();
+        sorted_counts.sort();
+        assert_eq!(
+            sorted_counts,
+            vec![1, 2],
+            "expected one window with 1 workspace and one with 2, got {workspace_counts:?}"
+        );
+
+        let dir1_path: Arc<Path> = Path::new(dir1).into();
+        let dir2_path: Arc<Path> = Path::new(dir2).into();
+        let dir3_path: Arc<Path> = Path::new(dir3).into();
+
+        let all_restored_paths: Vec<Vec<Vec<Arc<Path>>>> = restored_windows
+            .iter()
+            .map(|window| {
+                window
+                    .read_with(cx, |multi_workspace, cx| {
+                        multi_workspace
+                            .workspaces()
+                            .iter()
+                            .map(|ws| ws.read(cx).root_paths(cx))
+                            .collect()
+                    })
+                    .unwrap()
+            })
+            .collect();
+
+        let two_ws_window = all_restored_paths
+            .iter()
+            .find(|paths| paths.len() == 2)
+            .expect("expected a window with 2 workspaces");
+        assert!(
+            two_ws_window.iter().any(|p| p.contains(&dir1_path)),
+            "2-workspace window should contain dir1, got {two_ws_window:?}"
+        );
+        assert!(
+            two_ws_window.iter().any(|p| p.contains(&dir2_path)),
+            "2-workspace window should contain dir2, got {two_ws_window:?}"
+        );
+
+        let one_ws_window = all_restored_paths
+            .iter()
+            .find(|paths| paths.len() == 1)
+            .expect("expected a window with 1 workspace");
+        assert!(
+            one_ws_window[0].contains(&dir3_path),
+            "1-workspace window should contain dir3, got {one_ws_window:?}"
+        );
+
+        // --- Verify the active workspace is preserved ---
+        for window in &restored_windows {
+            let (active_paths, workspace_count) = window
+                .read_with(cx, |multi_workspace, cx| {
+                    let active = multi_workspace.workspace();
+                    (
+                        active.read(cx).root_paths(cx),
+                        multi_workspace.workspaces().len(),
+                    )
+                })
+                .unwrap();
+
+            if workspace_count == 2 {
+                assert!(
+                    active_paths.contains(&dir1_path),
+                    "2-workspace window should have dir1 active, got {active_paths:?}"
+                );
+            } else {
+                assert!(
+                    active_paths.contains(&dir3_path),
+                    "1-workspace window should have dir3 active, got {active_paths:?}"
+                );
+            }
+        }
     }
 }

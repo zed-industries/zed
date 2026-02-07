@@ -227,9 +227,13 @@ impl WelcomePage {
             .detach();
 
         if fallback_to_recent_projects {
+            let fs = workspace
+                .upgrade()
+                .map(|ws| ws.read(cx).app_state().fs.clone());
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+                let Some(fs) = fs else { return };
                 let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
+                    .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();

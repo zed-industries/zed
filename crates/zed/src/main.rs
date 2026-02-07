@@ -1268,84 +1268,69 @@ async fn installation_id() -> Result<IdType> {
     Ok(IdType::New(installation_id))
 }
 
-async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
+pub(crate) async fn restore_or_create_workspace(
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        let use_system_window_tabs =
-            cx.update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs);
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, session_workspace) in locations.into_iter().enumerate() {
-            let SessionWorkspace {
-                workspace_id,
-                location,
-                paths,
-                window_id: _,
-            } = session_workspace;
-            match location {
-                SerializedWorkspaceLocation::Local if paths.is_empty() => {
-                    // Restore empty workspace by ID (has items like drafts but no folders)
-                    let app_state = app_state.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
-                            workspace::open_workspace_by_id(workspace_id, app_state, cx)
-                        });
-                        open_task.await.map(|_| ())
-                    });
+        let remote_workspaces: Vec<SessionWorkspace> = locations
+            .iter()
+            .filter(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)))
+            .cloned()
+            .collect();
 
-                    if use_system_window_tabs && index == 0 {
-                        results.push(task.await);
-                    } else {
-                        tasks.push(task);
-                    }
-                }
-                SerializedWorkspaceLocation::Local => {
-                    let app_state = app_state.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
-                            workspace::open_paths(
-                                &paths.paths(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                        });
-                        open_task.await.map(|_| ())
-                    });
-
-                    // If we're using system window tabs and this is the first workspace,
-                    // wait for it to finish so that the other windows can be added as tabs.
-                    if use_system_window_tabs && index == 0 {
-                        results.push(task.await);
-                    } else {
-                        tasks.push(task);
-                    }
-                }
-                SerializedWorkspaceLocation::Remote(mut connection_options) => {
-                    let app_state = app_state.clone();
-                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                        cx.update(|cx| {
-                            RemoteSettings::get_global(cx)
-                                .fill_connection_options_from_settings(options)
-                        });
-                    }
-                    let task = cx.spawn(async move |cx| {
-                        recent_projects::open_remote_project(
-                            connection_options,
-                            paths.paths().into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
+        let active_workspaces = cx.update(|cx| {
+            let session = app_state.session.read(cx);
+            session.last_session_active_workspaces().map(|raw| {
+                raw.iter()
+                    .map(|(&window_id, &workspace_id)| {
+                        (
+                            gpui::WindowId::from(window_id),
+                            workspace::WorkspaceId::from_i64(workspace_id),
                         )
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))
-                    });
-                    tasks.push(task);
-                }
-            }
+                    })
+                    .collect()
+            })
+        });
+
+        let local_results =
+            workspace::restore_session_windows(locations, active_workspaces, app_state.clone(), cx)
+                .await;
+        for result in local_results {
+            results.push(result.map(|_| ()));
         }
 
-        // Wait for all workspaces to open concurrently
+        for session_workspace in remote_workspaces {
+            let app_state = app_state.clone();
+            let SerializedWorkspaceLocation::Remote(mut connection_options) =
+                session_workspace.location
+            else {
+                continue;
+            };
+            let paths = session_workspace.paths;
+            if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                cx.update(|cx| {
+                    RemoteSettings::get_global(cx).fill_connection_options_from_settings(options)
+                });
+            }
+            let task = cx.spawn(async move |cx| {
+                recent_projects::open_remote_project(
+                    connection_options,
+                    paths.paths().iter().map(PathBuf::from).collect(),
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+            });
+            tasks.push(task);
+        }
+
+        // Wait for all window groups and remote workspaces to open concurrently
         results.extend(future::join_all(tasks).await);
 
         // Show notifications for any errors that occurred
@@ -1447,16 +1432,16 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location().await.map(
-                |(workspace_id, location, paths)| {
+            workspace::last_opened_workspace_location(app_state.fs.as_ref())
+                .await
+                .map(|(workspace_id, location, paths)| {
                     vec![SessionWorkspace {
                         workspace_id,
                         location,
                         paths,
                         window_id: None,
                     }]
-                },
-            )
+                })
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
@@ -1465,7 +1450,9 @@ pub(crate) async fn restorable_workspace_locations(
                 let mut locations = workspace::last_session_workspace_locations(
                     &last_session_id,
                     last_session_window_stack,
+                    app_state.fs.as_ref(),
                 )
+                .await
                 .filter(|locations| !locations.is_empty());
 
                 // Since last_session_window_order returns the windows ordered front-to-back

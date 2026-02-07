@@ -568,6 +568,12 @@ pub struct OpenTerminal {
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkspaceId(i64);
 
+impl WorkspaceId {
+    pub fn from_i64(value: i64) -> Self {
+        Self(value)
+    }
+}
+
 impl StaticColumnCount for WorkspaceId {}
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
@@ -624,7 +630,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
-    history_manager::init(cx);
+    history_manager::init(app_state.fs.clone(), cx);
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
@@ -7916,17 +7922,149 @@ impl WorkspaceHandle for Entity<Workspace> {
     }
 }
 
-pub async fn last_opened_workspace_location()
--> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
-    DB.last_workspace().await.log_err().flatten()
+pub async fn last_opened_workspace_location(
+    fs: &dyn fs::Fs,
+) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
+    DB.last_workspace(fs).await.log_err().flatten()
 }
 
-pub fn last_session_workspace_locations(
+pub async fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
+    fs: &dyn fs::Fs,
 ) -> Option<Vec<SessionWorkspace>> {
-    DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
+    DB.last_session_workspace_locations(last_session_id, last_session_window_stack, fs)
+        .await
         .log_err()
+}
+
+/// Restores local session workspaces, grouped by window_id, into MultiWorkspace windows.
+/// Returns one result per window group containing the window handle on success.
+/// Remote workspaces in the input are silently skipped.
+pub async fn restore_session_windows(
+    locations: Vec<SessionWorkspace>,
+    active_workspaces: Option<collections::HashMap<WindowId, WorkspaceId>>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Vec<anyhow::Result<WindowHandle<MultiWorkspace>>> {
+    let mut window_groups: Vec<Vec<SessionWorkspace>> = Vec::new();
+    let mut window_id_to_group: collections::HashMap<WindowId, usize> =
+        collections::HashMap::default();
+
+    for session_workspace in locations {
+        if matches!(
+            session_workspace.location,
+            SerializedWorkspaceLocation::Remote(_)
+        ) {
+            continue;
+        }
+
+        match session_workspace.window_id {
+            Some(window_id) => {
+                let group_index = *window_id_to_group.entry(window_id).or_insert_with(|| {
+                    window_groups.push(Vec::new());
+                    window_groups.len() - 1
+                });
+                window_groups[group_index].push(session_workspace);
+            }
+            None => {
+                window_groups.push(vec![session_workspace]);
+            }
+        }
+    }
+
+    let mut results = Vec::new();
+    for group in window_groups {
+        let active_workspace_id = active_workspaces.as_ref().and_then(|map| {
+            let window_id = group.first()?.window_id?;
+            map.get(&window_id).copied()
+        });
+        results.push(
+            restore_session_window_group(group, active_workspace_id, app_state.clone(), cx).await,
+        );
+    }
+    results
+}
+
+async fn restore_session_window_group(
+    group: Vec<SessionWorkspace>,
+    active_workspace_id: Option<WorkspaceId>,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
+    let mut group_iter = group.into_iter();
+    let first = group_iter
+        .next()
+        .context("window group must not be empty")?;
+
+    let window_handle = if first.paths.is_empty() {
+        cx.update(|cx| open_workspace_by_id(first.workspace_id, app_state.clone(), None, cx))
+            .await?
+    } else {
+        let (window, _items) = cx
+            .update(|cx| {
+                open_paths(
+                    first.paths.paths(),
+                    app_state.clone(),
+                    OpenOptions::default(),
+                    cx,
+                )
+            })
+            .await?;
+        window
+    };
+
+    for session_workspace in group_iter {
+        if session_workspace.paths.is_empty() {
+            cx.update(|cx| {
+                open_workspace_by_id(
+                    session_workspace.workspace_id,
+                    app_state.clone(),
+                    Some(window_handle),
+                    cx,
+                )
+            })
+            .await?;
+        } else {
+            cx.update(|cx| {
+                Workspace::new_local(
+                    session_workspace.paths.paths().to_vec(),
+                    app_state.clone(),
+                    Some(window_handle),
+                    None,
+                    None,
+                    cx,
+                )
+            })
+            .await?;
+        }
+    }
+
+    if let Some(target_id) = active_workspace_id {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let target_index = multi_workspace
+                    .workspaces()
+                    .iter()
+                    .position(|ws| ws.read(cx).database_id() == Some(target_id));
+                if let Some(index) = target_index {
+                    multi_workspace.activate_index(index, window, cx);
+                } else if !multi_workspace.workspaces().is_empty() {
+                    multi_workspace.activate_index(0, window, cx);
+                }
+            })
+            .log_err();
+    } else {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                if !multi_workspace.workspaces().is_empty() {
+                    multi_workspace.activate_index(0, window, cx);
+                }
+            })
+            .log_err();
+    }
+
+    Ok(window_handle)
 }
 
 actions!(
@@ -8272,6 +8410,7 @@ pub struct OpenOptions {
 pub fn open_workspace_by_id(
     workspace_id: WorkspaceId,
     app_state: Arc<AppState>,
+    requesting_window: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) -> Task<anyhow::Result<WindowHandle<MultiWorkspace>>> {
     let project_handle = Project::local(
@@ -8288,49 +8427,78 @@ pub fn open_workspace_by_id(
         cx,
     );
 
+    let is_new_window = requesting_window.is_none();
+
     cx.spawn(async move |cx| {
         let serialized_workspace = persistence::DB
             .workspace_for_id(workspace_id)
             .with_context(|| format!("Workspace {workspace_id:?} not found"))?;
 
-        let window_bounds_override = window_bounds_env_override();
-
-        let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
-            (Some(WindowBounds::Windowed(bounds)), None)
-        } else if let Some(display) = serialized_workspace.display
-            && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
-        {
-            (Some(bounds.0), Some(display))
-        } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
-            (Some(bounds), Some(display))
-        } else {
-            (None, None)
-        };
-
-        let options = cx.update(|cx| {
-            let mut options = (app_state.build_window_options)(display, cx);
-            options.window_bounds = window_bounds;
-            options
-        });
         let centered_layout = serialized_workspace.centered_layout;
 
-        let window = cx.open_window(options, {
-            let app_state = app_state.clone();
-            let project_handle = project_handle.clone();
-            move |window, cx| {
+        let (window, workspace) = if let Some(window) = requesting_window {
+            let workspace = window.update(cx, |multi_workspace, window, cx| {
                 let workspace = cx.new(|cx| {
-                    let mut workspace =
-                        Workspace::new(Some(workspace_id), project_handle, app_state, window, cx);
+                    let mut workspace = Workspace::new(
+                        Some(workspace_id),
+                        project_handle.clone(),
+                        app_state.clone(),
+                        window,
+                        cx,
+                    );
                     workspace.centered_layout = centered_layout;
                     workspace
                 });
-                cx.new(|cx| MultiWorkspace::new(workspace, cx))
-            }
-        })?;
+                multi_workspace.activate(workspace.clone(), cx);
+                workspace
+            })?;
+            (window, workspace)
+        } else {
+            let window_bounds_override = window_bounds_env_override();
 
-        let workspace = window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
-            multi_workspace.workspace().clone()
-        })?;
+            let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+                (Some(WindowBounds::Windowed(bounds)), None)
+            } else if let Some(display) = serialized_workspace.display
+                && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
+            {
+                (Some(bounds.0), Some(display))
+            } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+                (Some(bounds), Some(display))
+            } else {
+                (None, None)
+            };
+
+            let options = cx.update(|cx| {
+                let mut options = (app_state.build_window_options)(display, cx);
+                options.window_bounds = window_bounds;
+                options
+            });
+
+            let window = cx.open_window(options, {
+                let app_state = app_state.clone();
+                let project_handle = project_handle.clone();
+                move |window, cx| {
+                    let workspace = cx.new(|cx| {
+                        let mut workspace = Workspace::new(
+                            Some(workspace_id),
+                            project_handle,
+                            app_state,
+                            window,
+                            cx,
+                        );
+                        workspace.centered_layout = centered_layout;
+                        workspace
+                    });
+                    cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                }
+            })?;
+
+            let workspace = window.update(cx, |multi_workspace: &mut MultiWorkspace, _, _cx| {
+                multi_workspace.workspace().clone()
+            })?;
+
+            (window, workspace)
+        };
 
         notify_if_database_failed(window, cx);
 
@@ -8344,7 +8512,9 @@ pub fn open_workspace_by_id(
             .await?;
 
         window.update(cx, |_, window, cx| {
-            window.activate_window();
+            if is_new_window {
+                window.activate_window();
+            }
             workspace.update(cx, |workspace, cx| {
                 workspace.serialize_workspace(window, cx);
             });

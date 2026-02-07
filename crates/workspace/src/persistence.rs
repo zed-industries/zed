@@ -8,6 +8,8 @@ use std::{
     sync::Arc,
 };
 
+use fs::Fs;
+
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet, IndexSet};
 use db::{
@@ -278,6 +280,31 @@ impl From<WindowBoundsJson> for WindowBounds {
                 size: size(px(width as f32), px(height as f32)),
             }),
         }
+    }
+}
+
+pub const SESSION_ACTIVE_WORKSPACES_KEY: &str = "session_active_workspaces";
+
+fn read_active_workspaces_raw() -> Option<HashMap<u64, i64>> {
+    let json_str = KEY_VALUE_STORE
+        .read_kvp(SESSION_ACTIVE_WORKSPACES_KEY)
+        .log_err()
+        .flatten()?;
+
+    serde_json::from_str::<HashMap<u64, i64>>(&json_str).ok()
+}
+
+pub async fn write_active_workspace_for_window(
+    window_id: WindowId,
+    workspace_id: crate::WorkspaceId,
+) {
+    let mut map = read_active_workspaces_raw().unwrap_or_default();
+    map.insert(window_id.as_u64(), workspace_id.into());
+    if let Ok(json_str) = serde_json::to_string(&map) {
+        KEY_VALUE_STORE
+            .write_kvp(SESSION_ACTIVE_WORKSPACES_KEY.to_string(), json_str)
+            .await
+            .log_err();
     }
 }
 
@@ -1708,10 +1735,26 @@ impl WorkspaceDb {
         }
     }
 
+    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
+        let mut any_dir = false;
+        for path in paths {
+            match fs.metadata(path).await.ok().flatten() {
+                None => return false,
+                Some(meta) => {
+                    if meta.is_dir {
+                        any_dir = true;
+                    }
+                }
+            }
+        }
+        any_dir
+    }
+
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
+        fs: &dyn Fs,
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
@@ -1744,11 +1787,8 @@ impl WorkspaceDb {
             // If a local workspace points to WSL, this check will cause us to wait for the
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
-            if !has_wsl_path && paths.paths().iter().all(|path| path.exists()) {
-                // Only show directories in recent projects
-                if paths.paths().iter().any(|path| path.is_dir()) {
-                    result.push((id, SerializedWorkspaceLocation::Local, paths));
-                }
+            if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                result.push((id, SerializedWorkspaceLocation::Local, paths));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1760,18 +1800,20 @@ impl WorkspaceDb {
 
     pub async fn last_workspace(
         &self,
+        fs: &dyn Fs,
     ) -> Result<Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
-        Ok(self.recent_workspaces_on_disk().await?.into_iter().next())
+        Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last
     // session was closed (i.e. when Zed was quit).
     // If `last_session_window_order` is provided, the returned locations are ordered
     // according to that.
-    pub fn last_session_workspace_locations(
+    pub async fn last_session_workspace_locations(
         &self,
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
+        fs: &dyn Fs,
     ) -> Result<Vec<SessionWorkspace>> {
         let mut workspaces = Vec::new();
 
@@ -1797,15 +1839,15 @@ impl WorkspaceDb {
                     paths,
                     window_id,
                 });
-            } else if paths.paths().iter().all(|path| path.exists())
-                && paths.paths().iter().any(|path| path.is_dir())
-            {
-                workspaces.push(SessionWorkspace {
-                    workspace_id,
-                    location: SerializedWorkspaceLocation::Local,
-                    paths,
-                    window_id,
-                });
+            } else {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                    workspaces.push(SessionWorkspace {
+                        workspace_id,
+                        location: SerializedWorkspaceLocation::Local,
+                        paths,
+                        window_id,
+                    });
+                }
             }
         }
 
@@ -2277,6 +2319,7 @@ mod tests {
     use gpui;
     use pretty_assertions::assert_eq;
     use remote::SshConnectionOptions;
+    use serde_json::json;
     use std::{thread, time::Duration};
 
     #[gpui::test]
@@ -3040,11 +3083,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations() {
+    async fn test_last_session_workspace_locations(cx: &mut gpui::TestAppContext) {
         let dir1 = tempfile::TempDir::with_prefix("dir1").unwrap();
         let dir2 = tempfile::TempDir::with_prefix("dir2").unwrap();
         let dir3 = tempfile::TempDir::with_prefix("dir3").unwrap();
         let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir1.path(), json!({})).await;
+        fs.insert_tree(dir2.path(), json!({})).await;
+        fs.insert_tree(dir3.path(), json!({})).await;
+        fs.insert_tree(dir4.path(), json!({})).await;
 
         let db =
             WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces").await;
@@ -3088,7 +3137,8 @@ mod tests {
         ]));
 
         let locations = db
-            .last_session_workspace_locations("one-session", stack)
+            .last_session_workspace_locations("one-session", stack, fs.as_ref())
+            .await
             .unwrap();
         assert_eq!(
             locations,
@@ -3134,7 +3184,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations_remote() {
+    async fn test_last_session_workspace_locations_remote(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
         let db =
             WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces_remote")
                 .await;
@@ -3196,7 +3247,8 @@ mod tests {
         ]));
 
         let have = db
-            .last_session_workspace_locations("one-session", stack)
+            .last_session_workspace_locations("one-session", stack, fs.as_ref())
+            .await
             .unwrap();
         assert_eq!(have.len(), 4);
         assert_eq!(
@@ -3567,12 +3619,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations_groups_by_window_id() {
+    async fn test_last_session_workspace_locations_groups_by_window_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let dir1 = tempfile::TempDir::with_prefix("dir1").unwrap();
         let dir2 = tempfile::TempDir::with_prefix("dir2").unwrap();
         let dir3 = tempfile::TempDir::with_prefix("dir3").unwrap();
         let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
         let dir5 = tempfile::TempDir::with_prefix("dir5").unwrap();
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir1.path(), json!({})).await;
+        fs.insert_tree(dir2.path(), json!({})).await;
+        fs.insert_tree(dir3.path(), json!({})).await;
+        fs.insert_tree(dir4.path(), json!({})).await;
+        fs.insert_tree(dir5.path(), json!({})).await;
 
         let db =
             WorkspaceDb::open_test_db("test_last_session_workspace_locations_groups_by_window_id")
@@ -3613,7 +3674,8 @@ mod tests {
         }
 
         let locations = db
-            .last_session_workspace_locations("test-session", None)
+            .last_session_workspace_locations("test-session", None, fs.as_ref())
+            .await
             .unwrap();
 
         // All 5 workspaces should be returned with their window_ids.

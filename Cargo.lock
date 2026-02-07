@@ -15106,6 +15106,7 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "db",
  "gpui",
  "serde_json",
@@ -15340,6 +15341,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 name = "sidebar"
 version = "0.1.0"
 dependencies = [
+ "fs",
  "fuzzy",
  "gpui",
  "picker",
@@ -17233,6 +17235,7 @@ dependencies = [
  "collections",
  "db",
  "feature_flags",
+ "fs",
  "git_ui",
  "gpui",
  "http_client",

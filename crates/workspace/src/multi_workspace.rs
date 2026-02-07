@@ -193,6 +193,7 @@ impl MultiWorkspace {
             "workspace index out of bounds"
         );
         self.active_workspace_index = index;
+        self.serialize_active_workspace(window, cx);
         self.focus_active_workspace(window, cx);
         cx.notify();
     }
@@ -212,6 +213,17 @@ impl MultiWorkspace {
                 self.active_workspace_index - 1
             };
             self.activate_index(prev_index, window, cx);
+        }
+    }
+
+    fn serialize_active_workspace(&self, window: &mut Window, cx: &mut App) {
+        let workspace = self.workspace();
+        if let Some(database_id) = workspace.read(cx).database_id() {
+            let window_id = window.window_handle().window_id();
+            cx.background_spawn(async move {
+                crate::persistence::write_active_workspace_for_window(window_id, database_id).await;
+            })
+            .detach();
         }
     }
 

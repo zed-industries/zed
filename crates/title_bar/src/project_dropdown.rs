@@ -66,8 +66,12 @@ impl ProjectDropdown {
         let recent_projects_for_fetch = recent_projects.clone();
         let menu_shell_for_fetch = menu_shell.clone();
         let workspace_for_fetch = workspace.clone();
+        let fs = workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().fs.clone());
 
         cx.spawn_in(window, async move |_this, cx| {
+            let Some(fs) = fs else { return };
             let current_workspace_id = cx
                 .update(|_, cx| {
                     workspace_for_fetch
@@ -77,7 +81,7 @@ impl ProjectDropdown {
                 .ok()
                 .flatten();
 
-            let projects = get_recent_projects(current_workspace_id, None).await;
+            let projects = get_recent_projects(current_workspace_id, None, fs).await;
 
             cx.update(|window, cx| {
                 *recent_projects_for_fetch.borrow_mut() = projects;
@@ -88,7 +92,7 @@ impl ProjectDropdown {
                     });
                 }
             })
-            .ok()
+            .ok();
         })
         .detach();
 
