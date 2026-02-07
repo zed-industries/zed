@@ -12151,18 +12151,9 @@ mod disable_ai_settings_tests {
 
 #[gpui::test]
 async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppContext) {
-    // Reproduces the truncate-then-write race condition from #38109.
-    //
-    // When an AI agent (Claude Code, Cursor, etc.) writes a file, the typical
-    // pattern is File::create() (which truncates to 0 bytes) followed by write_all().
-    // If Zed's scanner processes the truncation event before the write completes,
-    // the buffer reloads to empty and may become permanently stuck.
-    //
-    // We reproduce this deterministically on a real filesystem by:
-    // 1. Truncating the file to empty
-    // 2. Forcing scanner to process (flush_fs_events) → buffer reloads to empty
-    // 3. Writing new content but resetting mtime to match the truncated file's mtime
-    // 4. Flushing again → scanner sees same mtime but different size → buffer recovers
+    // Reproduces #38109: scanner catches a truncated file mid-write,
+    // buffer reloads to empty, and the final write has the same mtime.
+    // Without size in DiskState, the buffer stays stuck empty.
     use worktree::WorktreeModelHandle as _;
 
     init_test(cx);
@@ -12189,18 +12180,13 @@ async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppCon
 
     let file_path = dir.path().join("file.txt");
 
-    // Step 1: Truncate the file to empty (simulating the first half of an agent write).
-    // An AI agent's File::create() does exactly this — opens with O_TRUNC.
+    // Truncate the file (first half of std::fs::write).
     std::fs::write(&file_path, "").unwrap();
-
-    // Capture the mtime of the truncated (empty) file.
     let truncated_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
 
-    // Step 2: Force the scanner to process this truncation event.
-    // This simulates the race where FSEvents delivers the truncation before the write.
+    // Scanner picks up the truncation.
     tree.flush_fs_events(cx).await;
 
-    // The buffer should now be empty — it reloaded the 0-byte file.
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
@@ -12209,14 +12195,11 @@ async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppCon
         );
     });
 
-    // Step 3: Write the actual content (the second half of the agent write).
+    // Write actual content (second half of std::fs::write).
     std::fs::write(&file_path, "new content from AI agent").unwrap();
 
-    // Step 4: Reset the file's mtime to match the truncated file's mtime.
-    // This simulates the scenario where both the truncation and write happen
-    // within the same mtime granularity (same timestamp). On a busy system with
-    // coarse-grained timestamps, or when the OS doesn't update mtime for rapid
-    // writes, this is how the race manifests.
+    // Force mtime to match the truncated file's mtime, simulating
+    // coarse-grained timestamps or rapid sequential writes.
     let times = std::fs::FileTimes::new().set_modified(truncated_mtime);
     let file_handle = std::fs::File::options()
         .write(true)
@@ -12225,12 +12208,9 @@ async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppCon
     file_handle.set_times(times).unwrap();
     drop(file_handle);
 
-    // Step 5: Force scanner to process the write event.
     tree.flush_fs_events(cx).await;
 
-    // With the fix (size in DiskState::Present), the scanner sees the file size
-    // changed from 0 to 25 bytes even though mtime is the same. This triggers
-    // ReloadNeeded and the buffer recovers.
+    // Size changed (0 -> 25 bytes) even though mtime is the same.
     buffer.read_with(cx, |buffer, _| {
         let file = buffer.file().expect("buffer should have a file");
         assert!(
@@ -12242,18 +12222,16 @@ async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppCon
         assert_eq!(
             buffer.text(),
             "new content from AI agent",
-            "buffer should recover after truncate-then-write even with same mtime, \
-             because DiskState::Present now includes file size"
+            "buffer should recover when size changes even if mtime matches"
         );
     });
 }
 
 #[gpui::test]
 async fn test_buffer_recovers_from_truncate_when_mtime_differs(cx: &mut gpui::TestAppContext) {
-    // Control test for test_buffer_reload_during_truncate_then_write.
-    // Same truncate-then-write sequence, but WITHOUT resetting the mtime.
-    // With distinct mtimes (which APFS nanosecond precision provides), the
-    // scanner detects the change and the buffer recovers.
+    // Control: same sequence without forcing mtime to match.
+    // APFS nanosecond precision means the mtime naturally differs,
+    // so the buffer recovers without the size fix.
     use worktree::WorktreeModelHandle as _;
 
     init_test(cx);
@@ -12291,7 +12269,7 @@ async fn test_buffer_recovers_from_truncate_when_mtime_differs(cx: &mut gpui::Te
     std::fs::write(&file_path, "recovered content").unwrap();
     tree.flush_fs_events(cx).await;
 
-    // With a different mtime, the scanner detects the change and triggers reload.
+    // Different mtime triggers reload via the existing path.
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer.text(),
