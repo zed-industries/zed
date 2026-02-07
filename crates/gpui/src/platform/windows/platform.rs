@@ -444,20 +444,29 @@ impl Platform for WindowsPlatform {
             app_path.display(),
         );
 
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "We are restarting ourselves, using std command thus is fine"
-        )] // todo(shell): There might be no powershell on the system
-        let restart_process =
-            util::command::new_std_command(util::shell::get_windows_system_shell())
-                .arg("-command")
-                .arg(script)
-                .spawn();
+        // Defer spawning to the foreground executor so it runs after the
+        // current `AppCell` borrow is released. On Windows, `Command::spawn()`
+        // can pump the Win32 message loop (via `CreateProcessW`), which
+        // re-enters message handling possibly resulting in another mutable
+        // borrow of the `AppCell` ending up with a double borrow panic
+        self.foreground_executor
+            .spawn(async move {
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "We are restarting ourselves, using std command thus is fine"
+                )]
+                let restart_process =
+                    util::command::new_std_command(util::shell::get_windows_system_shell())
+                        .arg("-command")
+                        .arg(script)
+                        .spawn();
 
-        match restart_process {
-            Ok(_) => self.quit(),
-            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
-        }
+                match restart_process {
+                    Ok(_) => unsafe { PostQuitMessage(0) },
+                    Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+                }
+            })
+            .detach();
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {}
