@@ -90,6 +90,12 @@ async fn get_extensions(
                 .cloned();
         }
 
+        let exact_match = exact_match.filter(|ext| {
+            provides_filter
+                .as_ref()
+                .map_or(true, |filter| !ext.manifest.provides.is_disjoint(filter))
+        });
+
         if let Some(exact_match) = exact_match {
             extensions.insert(0, exact_match);
         }
@@ -102,6 +108,10 @@ async fn get_extensions(
 
     Ok(Json(GetExtensionsResponse { data: extensions }))
 }
+
+#[cfg(test)]
+#[path = "extensions_test.rs"]
+mod extensions_test;
 
 #[derive(Debug, Deserialize)]
 struct GetExtensionUpdatesParams {
