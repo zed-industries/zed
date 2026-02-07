@@ -44,7 +44,6 @@ reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-shell_command_parser.workspace = true
 smol.workspace = true
 task.workspace = true
 tempfile.workspace = true
