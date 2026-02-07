@@ -9,13 +9,15 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task};
 use language::Buffer;
-use lsp::{LSP_REQUEST_TIMEOUT, LanguageServerId};
+use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
+use settings::Settings as _;
 use std::time::Duration;
 
 use crate::{
     CodeAction, LspStore, LspStoreEvent,
     lsp_command::{GetCodeLens, LspCommand as _},
+    project_settings::ProjectSettings,
 };
 
 pub(super) type CodeLensTask =
@@ -139,10 +141,13 @@ impl LspStore {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );

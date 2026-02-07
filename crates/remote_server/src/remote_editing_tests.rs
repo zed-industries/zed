@@ -17,7 +17,10 @@ use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
     language_settings::{AllLanguageSettings, language_settings},
 };
-use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
+use lsp::{
+    CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
+    LanguageServerName,
+};
 use node_runtime::NodeRuntime;
 use project::{
     ProgressToken, Project,
@@ -816,6 +819,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(false),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 
@@ -827,6 +831,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(true),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 
@@ -860,6 +865,7 @@ async fn test_remote_cancel_language_server_work(
                     cancellable: Some(true),
                     ..Default::default()
                 },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
             .await;
 

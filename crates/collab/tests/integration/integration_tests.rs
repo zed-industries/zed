@@ -26,7 +26,7 @@ use language::{
     language_settings::{Formatter, FormatterList},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
-use lsp::{LanguageServerId, OneOf};
+use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
@@ -4358,9 +4358,12 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
     fake_language_server
-        .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-            token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
-        })
+        .request::<lsp::request::WorkDoneProgressCreate>(
+            lsp::WorkDoneProgressCreateParams {
+                token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
         .await
         .into_response()
         .unwrap();

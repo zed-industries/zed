@@ -566,6 +566,10 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
+    fn is_latest(&self) -> bool {
+        self.model.is_latest
+    }
+
     fn supports_tools(&self) -> bool {
         self.model.supports_tools
     }
