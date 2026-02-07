@@ -283,6 +283,16 @@ pub fn into_anthropic_count_tokens_request(
                             },
                             cache_control: None,
                         }),
+                        MessageContent::Document { data, media_type } => {
+                            Some(anthropic::RequestContent::Document {
+                                source: anthropic::DocumentSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: media_type.to_string(),
+                                    data: data.to_string(),
+                                },
+                                cache_control: None,
+                            })
+                        }
                         MessageContent::ToolUse(tool_use) => {
                             Some(anthropic::RequestContent::ToolUse {
                                 id: tool_use.id.to_string(),
@@ -308,6 +318,18 @@ pub fn into_anthropic_count_tokens_request(
                                             },
                                         }])
                                     }
+                                    LanguageModelToolResultContent::Document {
+                                        data,
+                                        media_type,
+                                    } => ToolResultContent::Multipart(vec![
+                                        ToolResultPart::Document {
+                                            source: anthropic::DocumentSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: media_type.to_string(),
+                                                data: data.to_string(),
+                                            },
+                                        },
+                                    ]),
                                 },
                                 cache_control: None,
                             })
@@ -396,6 +418,9 @@ pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Re
                 MessageContent::Image(image) => {
                     tokens_from_images += image.estimate_tokens();
                 }
+                MessageContent::Document { .. } => {
+                    // TODO: Estimate token usage from documents (PDFs use ~7000 tokens per 3 pages)
+                }
                 MessageContent::ToolUse(_tool_use) => {
                     // TODO: Estimate token usage from tool uses.
                 }
@@ -405,6 +430,9 @@ pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Re
                     }
                     LanguageModelToolResultContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
+                    }
+                    LanguageModelToolResultContent::Document { .. } => {
+                        // TODO: Estimate token usage from documents
                     }
                 },
             }
@@ -669,6 +697,16 @@ pub fn into_anthropic(
                             },
                             cache_control: None,
                         }),
+                        MessageContent::Document { data, media_type } => {
+                            Some(anthropic::RequestContent::Document {
+                                source: anthropic::DocumentSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: media_type.to_string(),
+                                    data: data.to_string(),
+                                },
+                                cache_control: None,
+                            })
+                        }
                         MessageContent::ToolUse(tool_use) => {
                             Some(anthropic::RequestContent::ToolUse {
                                 id: tool_use.id.to_string(),
@@ -694,6 +732,18 @@ pub fn into_anthropic(
                                             },
                                         }])
                                     }
+                                    LanguageModelToolResultContent::Document {
+                                        data,
+                                        media_type,
+                                    } => ToolResultContent::Multipart(vec![
+                                        ToolResultPart::Document {
+                                            source: anthropic::DocumentSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: media_type.to_string(),
+                                                data: data.to_string(),
+                                            },
+                                        },
+                                    ]),
                                 },
                                 cache_control: None,
                             })
@@ -725,6 +775,7 @@ pub fn into_anthropic(
                             anthropic::RequestContent::Text { cache_control, .. }
                             | anthropic::RequestContent::Thinking { cache_control, .. }
                             | anthropic::RequestContent::Image { cache_control, .. }
+                            | anthropic::RequestContent::Document { cache_control, .. }
                             | anthropic::RequestContent::ToolUse { cache_control, .. }
                             | anthropic::RequestContent::ToolResult { cache_control, .. } => {
                                 *cache_control = cache_control_value;

@@ -25,6 +25,7 @@ agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true

@@ -1,5 +1,5 @@
 use acp_thread::{MentionUri, selection_name};
-use agent::{ThreadStore, outline};
+use agent::{ThreadStore, outline, pdf::Pdf};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
@@ -49,6 +49,7 @@ pub enum Mention {
         tracked_buffers: Vec<Entity<Buffer>>,
     },
     Image(MentionImage),
+    Pdf(Pdf),
     Link,
 }
 
@@ -329,6 +330,27 @@ impl MentionSet {
         else {
             return Task::ready(Err(anyhow!("project path not found")));
         };
+        // Handle PDF files specially - load as binary and send to LLM as document
+        if Pdf::is_pdf_path(&abs_path) {
+            let worktree_id = project_path.worktree_id;
+            let path = project_path.path.clone();
+
+            return cx.spawn(async move |_, cx| {
+                let binary_file = project
+                    .update(cx, |project, cx| {
+                        let worktree = project
+                            .worktree_for_id(worktree_id, cx)
+                            .ok_or_else(|| anyhow!("worktree not found"))?;
+                        anyhow::Ok(worktree.update(cx, |wt, cx| wt.load_binary_file(&path, cx)))
+                    })?
+                    .await?;
+
+                let pdf = Pdf::load(abs_path, binary_file.content)?;
+
+                Ok(Mention::Pdf(pdf))
+            });
+        }
+
         let extension = abs_path
             .extension()
             .and_then(OsStr::to_str)

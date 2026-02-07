@@ -821,6 +821,11 @@ pub fn into_bedrock(
                                             "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
                                         )
                                     }
+                                    LanguageModelToolResultContent::Document { .. } => {
+                                        BedrockToolResultContentBlock::Text(
+                                            "[Tool responded with a document, but Zed doesn't support these in Bedrock models yet]".to_string()
+                                        )
+                                    }
                                 })
                                 .status({
                                     if tool_result.is_error {
@@ -963,6 +968,9 @@ pub fn get_bedrock_tokens(
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
                         }
+                        MessageContent::Document { .. } => {
+                            // TODO: Estimate token usage from documents
+                        }
                         MessageContent::ToolUse(_tool_use) => {
                             // TODO: Estimate token usage from tool uses.
                         }
@@ -972,6 +980,9 @@ pub fn get_bedrock_tokens(
                             }
                             LanguageModelToolResultContent::Image(image) => {
                                 tokens_from_images += image.estimate_tokens();
+                            }
+                            LanguageModelToolResultContent::Document { .. } => {
+                                // TODO: Estimate token usage from documents
                             }
                         },
                     }

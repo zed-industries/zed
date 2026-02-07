@@ -474,6 +474,19 @@ impl MessageEditor {
                                     }
                                 }),
                             ),
+                            Mention::Pdf(pdf) => {
+                                // PDFs are handled as embedded resources with base64 data
+                                // The actual Document content is built at the language model layer
+                                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                                    acp::EmbeddedResourceResource::BlobResourceContents(
+                                        acp::BlobResourceContents::new(
+                                            pdf.to_base64(),
+                                            uri.to_uri().to_string(),
+                                        )
+                                        .mime_type("application/pdf"),
+                                    ),
+                                ))
+                            }
                             Mention::Link => acp::ContentBlock::ResourceLink(
                                 acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
                             ),

@@ -55,6 +55,9 @@ pub fn load_context(mention_set: &Entity<MentionSet>, cx: &mut App) -> Task<Opti
                     source: mention_image.data,
                     ..LanguageModelImage::empty()
                 }),
+                Mention::Pdf(_) => {
+                    // PDFs are handled as documents at the language model layer, not as loaded context
+                }
                 Mention::Link => {}
             }
         }

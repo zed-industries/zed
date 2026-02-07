@@ -277,6 +277,9 @@ impl LmStudioLanguageModel {
                     ),
                     MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Document { .. } => {
+                        // LM Studio doesn't support document content; skip silently
+                    }
                     MessageContent::Image(image) => {
                         add_message_content_part(
                             lmstudio::MessagePart::Image {
@@ -325,6 +328,12 @@ impl LmStudioLanguageModel {
                                         url: image.to_base64_url(),
                                         detail: None,
                                     },
+                                }]
+                            }
+                            LanguageModelToolResultContent::Document { .. } => {
+                                vec![lmstudio::MessagePart::Text {
+                                    text: "[Document content not supported by this model]"
+                                        .to_string(),
                                 }]
                             }
                         };

@@ -173,8 +173,16 @@ pub struct UserMessage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserMessageContent {
     Text(String),
-    Mention { uri: MentionUri, content: String },
+    Mention {
+        uri: MentionUri,
+        content: String,
+    },
     Image(LanguageModelImage),
+    Document {
+        data: Arc<str>,
+        media_type: Arc<str>,
+        uri: MentionUri,
+    },
 }
 
 impl UserMessage {
@@ -189,6 +197,9 @@ impl UserMessage {
                 }
                 UserMessageContent::Image(_) => {
                     markdown.push_str("<image />\n");
+                }
+                UserMessageContent::Document { uri, .. } => {
+                    let _ = writeln!(&mut markdown, "<document uri=\"{}\" />", uri.as_link());
                 }
                 UserMessageContent::Mention { uri, content } => {
                     if !content.is_empty() {
@@ -242,6 +253,12 @@ impl UserMessage {
                 UserMessageContent::Image(value) => {
                     language_model::MessageContent::Image(value.clone())
                 }
+                UserMessageContent::Document {
+                    data, media_type, ..
+                } => language_model::MessageContent::Document {
+                    data: data.clone(),
+                    media_type: media_type.clone(),
+                },
                 UserMessageContent::Mention { uri, content } => {
                     match uri {
                         MentionUri::File { abs_path } => {
@@ -478,6 +495,9 @@ impl AgentMessage {
                 }
                 LanguageModelToolResultContent::Image(_) => {
                     writeln!(markdown, "<image />\n").ok();
+                }
+                LanguageModelToolResultContent::Document { media_type, .. } => {
+                    writeln!(markdown, "<document type=\"{media_type}\" />\n").ok();
                 }
             }
 
@@ -3460,9 +3480,26 @@ impl UserMessageContent {
                         }
                     }
                 }
-                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
-                    // TODO
-                    Self::Text("[blob]".to_string())
+                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    let mime_type = blob
+                        .mime_type
+                        .as_deref()
+                        .unwrap_or("application/octet-stream");
+                    if mime_type == "application/pdf" {
+                        match MentionUri::parse(&blob.uri, path_style) {
+                            Ok(uri) => Self::Document {
+                                data: blob.blob.into(),
+                                media_type: mime_type.into(),
+                                uri,
+                            },
+                            Err(err) => {
+                                log::error!("Failed to parse PDF mention link: {}", err);
+                                Self::Text("[PDF document]".to_string())
+                            }
+                        }
+                    } else {
+                        Self::Text(format!("[blob: {}]", mime_type))
+                    }
                 }
                 other => {
                     log::warn!("Unexpected content type: {:?}", other);
@@ -3489,6 +3526,16 @@ impl From<UserMessageContent> for acp::ContentBlock {
                     acp::TextResourceContents::new(content, uri.to_uri().to_string()),
                 )),
             ),
+            UserMessageContent::Document {
+                data,
+                media_type,
+                uri,
+            } => acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new(data.to_string(), uri.to_uri().to_string())
+                        .mime_type(media_type.to_string()),
+                ),
+            )),
         }
     }
 }

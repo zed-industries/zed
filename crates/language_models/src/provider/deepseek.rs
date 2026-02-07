@@ -341,6 +341,7 @@ pub fn into_deepseek(
                 }
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
+                MessageContent::Document { .. } => {}
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),
@@ -374,6 +375,7 @@ pub fn into_deepseek(
                             });
                         }
                         LanguageModelToolResultContent::Image(_) => {}
+                        LanguageModelToolResultContent::Document { .. } => {}
                     };
                 }
             }
