@@ -22,11 +22,12 @@ pub(crate) struct AudioDeviceInfo {
     pub label: String,
 }
 
-pub(crate) fn should_show_device(device_id: &str) -> bool {
+pub(crate) fn should_show_device(device_id: &str, kind: AudioDeviceKind) -> bool {
     // On non-Linux platforms, show all devices as they're typically already user-friendly
     #[cfg(not(target_os = "linux"))]
     {
         let _ = device_id;
+        let _ = kind;
         return true;
     }
 
@@ -38,16 +39,26 @@ pub(crate) fn should_show_device(device_id: &str) -> bool {
             return true;
         }
 
-        // Show sysdefault entries (one per card) - these are the main user-facing devices
-        if device_id.starts_with("alsa:sysdefault:") {
-            return true;
+        match kind {
+            // For input devices, sysdefault works well
+            AudioDeviceKind::Input => {
+                if device_id.starts_with("alsa:sysdefault:") {
+                    return true;
+                }
+            }
+            // For output devices, plughw handles format conversion reliably
+            AudioDeviceKind::Output => {
+                if device_id.starts_with("alsa:plughw:") {
+                    return true;
+                }
+            }
         }
 
         // Filter out everything else:
         // - null (discard samples)
-        // - hw:, plughw: (raw hardware access)
+        // - hw: (raw hardware access without format conversion)
         // - front:, surround*: (speaker configuration variants)
-        // - hdmi: (usually duplicated by sysdefault)
+        // - hdmi: (usually duplicated)
         // - iec958: (S/PDIF digital)
         false
     }
@@ -73,7 +84,7 @@ pub(crate) fn get_audio_devices(kind: AudioDeviceKind) -> Vec<AudioDeviceInfo> {
             let id = device.id().ok()?;
             let id_string = id.to_string();
 
-            if !should_show_device(&id_string) {
+            if !should_show_device(&id_string, kind) {
                 return None;
             }
 
