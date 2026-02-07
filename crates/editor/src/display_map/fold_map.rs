@@ -56,9 +56,13 @@ impl FoldPlaceholder {
     /// Callers add children and event handlers on top.
     pub fn fold_element(fold_id: FoldId, cx: &App) -> Stateful<gpui::Div> {
         use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, Styled as _};
-        use theme::ActiveTheme as _;
+        use settings::Settings as _;
+        use theme::{ActiveTheme as _, ThemeSettings};
+        let settings = ThemeSettings::get_global(cx);
         gpui::div()
             .id(fold_id)
+            .font(settings.buffer_font.clone())
+            .text_color(cx.theme().colors().text_placeholder)
             .bg(cx.theme().colors().ghost_element_background)
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
