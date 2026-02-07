@@ -103,20 +103,44 @@ fn start_test_playback(
     thread::Builder::new()
         .name("AudioTestPlayback".to_string())
         .spawn(move || {
+            log::info!(
+                "Audio test: output_device_id string = {:?}",
+                output_device_id
+            );
             let output_device_id = DeviceId::from_str(&output_device_id).ok();
-            let output = if let Some(id) = output_device_id {
-                if let Some(device) = default_host().device_by_id(&id) {
-                    DeviceSinkBuilder::from_device(device).and_then(|device| device.open_stream())
+            log::info!(
+                "Audio test: parsed output DeviceId = {:?}",
+                output_device_id
+            );
+            let output = if let Some(ref id) = output_device_id {
+                log::info!("Audio test: looking for device by id: {id}");
+                if let Some(device) = default_host().device_by_id(id) {
+                    if let Ok(desc) = device.description() {
+                        log::info!(
+                            "Audio test: found device - name: {:?}, manufacturer: {:?}",
+                            desc.name(),
+                            desc.manufacturer()
+                        );
+                    } else {
+                        log::info!("Audio test: found device (no description available)");
+                    }
+                    DeviceSinkBuilder::from_device(device).and_then(|builder| {
+                        log::info!("Audio test: opening stream on specific device");
+                        builder.open_stream()
+                    })
                 } else {
+                    log::warn!("Audio test: device_by_id returned None, falling back to default");
                     DeviceSinkBuilder::open_default_sink()
                 }
             } else {
+                log::info!("Audio test: using default sink (no device id specified)");
                 DeviceSinkBuilder::open_default_sink()
             };
             let Ok(output) = output else {
                 log::error!("Could not open output device for audio test");
                 return;
             };
+            log::info!("Audio test: output device opened successfully");
 
             let input_device_id = DeviceId::from_str(&input_device_id).ok();
             let microphone = match open_test_microphone(input_device_id, stop_signal_for_mic) {
