@@ -97,6 +97,10 @@ pub enum BufferStoreEvent {
         buffer: Entity<Buffer>,
         old_file: Option<Arc<dyn language::File>>,
     },
+    BufferFileDeleted {
+        buffer: Entity<Buffer>,
+        old_file: Arc<dyn language::File>,
+    },
 }
 
 #[derive(Default, Debug, Clone)]
@@ -573,6 +577,15 @@ impl LocalBufferStore {
                     buffer: cx.entity(),
                     old_file: buffer.file().cloned(),
                 });
+            }
+            // Emit BufferFileDeleted when file is deleted externally (e.g., git branch switch)
+            if new_file.disk_state.is_deleted() && !old_file.disk_state.is_deleted() {
+                if let Some(old_file) = buffer.file().cloned() {
+                    events.push(BufferStoreEvent::BufferFileDeleted {
+                        buffer: cx.entity(),
+                        old_file,
+                    });
+                }
             }
             let local = this.as_local_mut()?;
             if new_file.entry_id != old_file.entry_id {

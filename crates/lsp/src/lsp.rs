@@ -1878,6 +1878,15 @@ impl FakeLanguageServer {
         }
     }
 
+    /// Collects all currently pending notifications without blocking.
+    pub fn collect_pending_notifications(&mut self) -> Vec<(String, String)> {
+        let mut notifications = Vec::new();
+        while let Ok((method, params)) = self.notifications_rx.try_recv() {
+            notifications.push((method, params));
+        }
+        notifications
+    }
+
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
     pub fn set_request_handler<T, F, Fut>(
         &self,

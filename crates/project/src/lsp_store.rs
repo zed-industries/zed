@@ -69,6 +69,11 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, DiskState, File as _,
+    Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
+    LspInstaller, ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Toolchain, Transaction, Unclipped,
+    language_settings::{FormatOnSave, Formatter, LanguageSettings, language_settings},
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
     LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
     ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
@@ -2656,6 +2661,19 @@ impl LocalLspStore {
         if !file.is_local() {
             return;
         }
+        // Don't register if the buffer is out of sync with disk
+        // (file was deleted or modified externally, e.g., during git branch switch)
+        match file.disk_state() {
+            DiskState::Deleted => return,
+            DiskState::Present { mtime } => {
+                if let Some(saved_mtime) = buffer.saved_mtime() {
+                    if mtime != saved_mtime {
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
 
         let abs_path = file.abs_path(cx);
         let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
@@ -4270,6 +4288,15 @@ impl LspStore {
                     if local.registered_buffers.contains_key(&buffer_id) {
                         local.register_buffer_with_language_servers(buffer, HashSet::default(), cx);
                     }
+                }
+            }
+            BufferStoreEvent::BufferFileDeleted { buffer, old_file } => {
+                let buffer_id = buffer.read(cx).remote_id();
+                if let Some(local) = self.as_local_mut()
+                    && let Some(file) = File::from_dyn(Some(old_file))
+                    && local.registered_buffers.contains_key(&buffer_id)
+                {
+                    local.unregister_old_buffer_from_language_servers(buffer, file, cx);
                 }
             }
             _ => {}
