@@ -12,7 +12,7 @@ use extension::{
     WorktreeDelegate,
 };
 use fs::Fs;
-use futures::future::{LocalBoxFuture, Shared};
+use futures::future::LocalBoxFuture;
 use futures::{
     Future, FutureExt, StreamExt as _,
     channel::{
@@ -56,7 +56,6 @@ pub struct WasmHost {
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
-    canonical_work_dir: Shared<Task<Result<PathBuf, Arc<anyhow::Error>>>>,
     /// The capabilities granted to extensions running on the host.
     pub(crate) granted_capabilities: Vec<ExtensionCapability>,
     _main_thread_message_task: Task<()>,
@@ -583,26 +582,10 @@ impl WasmHost {
 
         let extension_settings = ExtensionSettings::get_global(cx);
 
-        let canonical_work_dir = cx
-            .background_executor()
-            .spawn({
-                let fs = fs.clone();
-                let work_dir = work_dir.clone();
-                async move {
-                    // Ensure the directory exists before canonicalizing. This
-                    // may race with `rebuild_extension_index` which also creates
-                    // it, but `create_dir` is idempotent.
-                    fs.create_dir(&work_dir).await.map_err(Arc::new)?;
-                    fs.canonicalize(&work_dir).await.map_err(Arc::new)
-                }
-            })
-            .shared();
-
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
             work_dir,
-            canonical_work_dir,
             http_client,
             node_runtime,
             proxy,
@@ -745,10 +728,10 @@ impl WasmHost {
         path: &Path,
     ) -> Result<PathBuf> {
         let canonical_work_dir = self
-            .canonical_work_dir
-            .clone()
+            .fs
+            .canonicalize(&self.work_dir)
             .await
-            .map_err(|error| anyhow!("{error}"))?;
+            .with_context(|| format!("canonicalizing work dir {:?}", self.work_dir))?;
         let extension_work_dir = canonical_work_dir.join(id.as_ref());
 
         let absolute = if path.is_relative() {
