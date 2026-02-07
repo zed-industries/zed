@@ -91,12 +91,7 @@ impl Watcher for FsWatcher {
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
+                    let kind = path_event_kind(&event.kind);
                     let mut path_events = event
                         .paths
                         .iter()
@@ -238,6 +233,15 @@ impl GlobalWatcher {
 static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
     OnceLock::new();
 
+fn path_event_kind(event_kind: &EventKind) -> Option<PathEventKind> {
+    match event_kind {
+        EventKind::Create(_) => Some(PathEventKind::Created),
+        EventKind::Modify(_) => Some(PathEventKind::Changed),
+        EventKind::Remove(_) => Some(PathEventKind::Removed),
+        _ => Some(PathEventKind::Changed),
+    }
+}
+
 fn handle_event(event: Result<notify::Event, notify::Error>) {
     log::trace!("global handle event: {event:?}");
     // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
@@ -278,5 +282,35 @@ pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     match result {
         Ok(g) => Ok(f(g)),
         Err(e) => Err(anyhow::anyhow!("{e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify::event::*;
+
+    #[test]
+    fn test_path_event_kind_mapping() {
+        assert_eq!(
+            path_event_kind(&EventKind::Create(CreateKind::Any)),
+            Some(PathEventKind::Created),
+        );
+        assert_eq!(
+            path_event_kind(&EventKind::Modify(ModifyKind::Any)),
+            Some(PathEventKind::Changed),
+        );
+        assert_eq!(
+            path_event_kind(&EventKind::Remove(RemoveKind::Any)),
+            Some(PathEventKind::Removed),
+        );
+        assert_eq!(
+            path_event_kind(&EventKind::Other),
+            Some(PathEventKind::Changed),
+        );
+        assert_eq!(
+            path_event_kind(&EventKind::Any),
+            Some(PathEventKind::Changed),
+        );
     }
 }
