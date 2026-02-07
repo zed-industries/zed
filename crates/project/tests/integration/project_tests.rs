@@ -12148,3 +12148,155 @@ mod disable_ai_settings_tests {
         });
     }
 }
+
+#[gpui::test]
+async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppContext) {
+    // Reproduces the truncate-then-write race condition from #38109.
+    //
+    // When an AI agent (Claude Code, Cursor, etc.) writes a file, the typical
+    // pattern is File::create() (which truncates to 0 bytes) followed by write_all().
+    // If Zed's scanner processes the truncation event before the write completes,
+    // the buffer reloads to empty and may become permanently stuck.
+    //
+    // We reproduce this deterministically on a real filesystem by:
+    // 1. Truncating the file to empty
+    // 2. Forcing scanner to process (flush_fs_events) → buffer reloads to empty
+    // 3. Writing new content but resetting mtime to match the truncated file's mtime
+    // 4. Flushing again → scanner sees same mtime but different size → buffer recovers
+    use worktree::WorktreeModelHandle as _;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "original content that should not be lost",
+    }));
+
+    let project =
+        Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(dir.path().join("file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "original content that should not be lost");
+        assert!(!buffer.is_dirty());
+    });
+
+    let file_path = dir.path().join("file.txt");
+
+    // Step 1: Truncate the file to empty (simulating the first half of an agent write).
+    // An AI agent's File::create() does exactly this — opens with O_TRUNC.
+    std::fs::write(&file_path, "").unwrap();
+
+    // Capture the mtime of the truncated (empty) file.
+    let truncated_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+
+    // Step 2: Force the scanner to process this truncation event.
+    // This simulates the race where FSEvents delivers the truncation before the write.
+    tree.flush_fs_events(cx).await;
+
+    // The buffer should now be empty — it reloaded the 0-byte file.
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "",
+            "buffer should be empty after reloading truncated file"
+        );
+    });
+
+    // Step 3: Write the actual content (the second half of the agent write).
+    std::fs::write(&file_path, "new content from AI agent").unwrap();
+
+    // Step 4: Reset the file's mtime to match the truncated file's mtime.
+    // This simulates the scenario where both the truncation and write happen
+    // within the same mtime granularity (same timestamp). On a busy system with
+    // coarse-grained timestamps, or when the OS doesn't update mtime for rapid
+    // writes, this is how the race manifests.
+    let times = std::fs::FileTimes::new().set_modified(truncated_mtime);
+    let file_handle = std::fs::File::options()
+        .write(true)
+        .open(&file_path)
+        .unwrap();
+    file_handle.set_times(times).unwrap();
+    drop(file_handle);
+
+    // Step 5: Force scanner to process the write event.
+    tree.flush_fs_events(cx).await;
+
+    // With the fix (size in DiskState::Present), the scanner sees the file size
+    // changed from 0 to 25 bytes even though mtime is the same. This triggers
+    // ReloadNeeded and the buffer recovers.
+    buffer.read_with(cx, |buffer, _| {
+        let file = buffer.file().expect("buffer should have a file");
+        assert!(
+            matches!(file.disk_state(), DiskState::Present { .. }),
+            "disk state should be Present, got {:?}",
+            file.disk_state()
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "new content from AI agent",
+            "buffer should recover after truncate-then-write even with same mtime, \
+             because DiskState::Present now includes file size"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_recovers_from_truncate_when_mtime_differs(cx: &mut gpui::TestAppContext) {
+    // Control test for test_buffer_reload_during_truncate_then_write.
+    // Same truncate-then-write sequence, but WITHOUT resetting the mtime.
+    // With distinct mtimes (which APFS nanosecond precision provides), the
+    // scanner detects the change and the buffer recovers.
+    use worktree::WorktreeModelHandle as _;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "original content",
+    }));
+
+    let project =
+        Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(dir.path().join("file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "original content");
+    });
+
+    let file_path = dir.path().join("file.txt");
+
+    // Truncate
+    std::fs::write(&file_path, "").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "", "buffer should be empty after truncation");
+    });
+
+    // Write new content (mtime will naturally differ on APFS)
+    std::fs::write(&file_path, "recovered content").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    // With a different mtime, the scanner detects the change and triggers reload.
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "recovered content",
+            "buffer should recover when mtime differs after truncate-then-write"
+        );
+    });
+}
