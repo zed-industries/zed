@@ -46,13 +46,20 @@ impl LspStdoutHandler {
         stdout: Input,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        io_history_buffer: Arc<Mutex<Vec<(String, IoKind)>>>,
         cx: BackgroundExecutor,
     ) -> Self
     where
         Input: AsyncRead + Unpin + Send + 'static,
     {
         let (tx, notifications_channel) = unbounded();
-        let loop_handle = cx.spawn(Self::handler(stdout, tx, response_handlers, io_handlers));
+        let loop_handle = cx.spawn(Self::handler(
+            stdout,
+            tx,
+            response_handlers,
+            io_handlers,
+            io_history_buffer,
+        ));
         Self {
             loop_handle,
             incoming_messages: notifications_channel,
@@ -64,6 +71,7 @@ impl LspStdoutHandler {
         notifications_sender: UnboundedSender<NotificationOrRequest>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        io_history_buffer: Arc<Mutex<Vec<(String, IoKind)>>>,
     ) -> anyhow::Result<()>
     where
         Input: AsyncRead + Unpin + Send + 'static,
@@ -91,6 +99,11 @@ impl LspStdoutHandler {
             stdout.read_exact(&mut buffer).await?;
 
             if let Ok(message) = str::from_utf8(&buffer) {
+                // Store in history buffer
+                io_history_buffer
+                    .lock()
+                    .push((message.to_string(), IoKind::StdOut));
+
                 log::trace!("incoming message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
