@@ -1450,6 +1450,11 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Whether the project diff view opens in stacked or side-by-side mode.
+    //
+    // Choices: stacked, side_by_side
+    // Default: stacked
+    "default_diff_view": "stacked",
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

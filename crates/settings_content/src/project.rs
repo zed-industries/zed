@@ -9,8 +9,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SlashCommandSettings, fallible_options,
+    AllLanguageSettingsContent, DefaultDiffView, DelayMs, ExtendingVec, ParseStatus,
+    ProjectTerminalSettingsContent, RootUserSettings, SlashCommandSettings, fallible_options,
 };
 
 #[with_fallible_options]
@@ -468,6 +468,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether the project diff view opens in stacked or side-by-side mode.
+    ///
+    /// Default: stacked
+    pub default_diff_view: Option<DefaultDiffView>,
 }
 
 #[with_fallible_options]

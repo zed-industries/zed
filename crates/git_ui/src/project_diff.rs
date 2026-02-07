@@ -26,6 +26,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
+use project::project_settings::ProjectSettings;
 use project::{
     Project, ProjectPath,
     git_store::{
@@ -33,7 +34,7 @@ use project::{
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
-use settings::{Settings, SettingsStore};
+use settings::{DefaultDiffView, Settings, SettingsStore};
 use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
@@ -300,7 +301,7 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
-            let diff_display_editor = SplittableEditor::new_unsplit(
+            let mut diff_display_editor = SplittableEditor::new_unsplit(
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -332,6 +333,12 @@ impl ProjectDiff {
                     }
                 }
             });
+
+            if ProjectSettings::get_global(cx).git.default_diff_view == DefaultDiffView::SideBySide
+            {
+                diff_display_editor.do_split(project.clone(), window, cx);
+            }
+
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
@@ -2726,5 +2733,93 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+    }
+
+    #[gpui::test]
+    async fn test_default_diff_view_stacked(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "dominate\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("foo.txt", "intimidate\n".to_string())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        diff_item.read_with(cx, |diff, cx| {
+            assert!(
+                !diff.editor.read(cx).is_split(),
+                "Expected stacked (unsplit) mode by default"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_default_diff_view_side_by_side(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let mut settings = ProjectSettings::get_global(cx).clone();
+            settings.git.default_diff_view = settings::DefaultDiffView::SideBySide;
+            ProjectSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "dominate\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("foo.txt", "intimidate\n".to_string())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        diff_item.read_with(cx, |diff, cx| {
+            assert!(
+                diff.editor.read(cx).is_split(),
+                "Expected side-by-side (split) mode from setting"
+            );
+        });
     }
 }

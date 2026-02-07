@@ -454,6 +454,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// Whether the project diff view opens in stacked or side-by-side mode.
+    ///
+    /// Default: stacked
+    pub default_diff_view: settings::DefaultDiffView,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -643,6 +647,7 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            default_diff_view: git.default_diff_view.unwrap(),
         };
         Self {
             context_servers: project

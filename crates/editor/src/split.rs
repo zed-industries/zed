@@ -470,13 +470,22 @@ impl SplittableEditor {
         if !cx.has_flag::<SplitDiffFeatureFlag>() {
             return;
         }
-        if self.lhs.is_some() {
-            return;
-        }
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
         let project = workspace.read(cx).project().clone();
+        self.do_split(project, window, cx);
+    }
+
+    pub fn do_split(
+        &mut self,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.lhs.is_some() {
+            return;
+        }
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);

@@ -599,6 +599,29 @@ pub struct GitPanelSettingsContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum DefaultDiffView {
+    /// Show the old and new content in a single editor, interleaved.
+    #[default]
+    Stacked,
+    /// Show the old and new content in side-by-side editors.
+    SideBySide,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
     #[default]
     Icon,
