@@ -2738,32 +2738,34 @@ mod tests {
     #[gpui::test]
     async fn test_default_diff_view_is_stacked_when_no_setting_specified(cx: &mut TestAppContext) {
         init_test(cx);
-        assert_default_diff_view(false, cx).await;
+        assert_default_diff_view(None, false, cx).await;
     }
 
     #[gpui::test]
     async fn test_default_diff_view_is_stacked_when_set_to_stacked(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            let mut settings = ProjectSettings::get_global(cx).clone();
-            settings.git.default_diff_view = settings::DefaultDiffView::Stacked;
-            ProjectSettings::override_global(settings, cx);
-        });
-        assert_default_diff_view(false, cx).await;
+        assert_default_diff_view(Some(settings::DefaultDiffView::Stacked), false, cx).await;
     }
 
     #[gpui::test]
     async fn test_default_diff_view_is_split_when_set_to_side_by_side(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            let mut settings = ProjectSettings::get_global(cx).clone();
-            settings.git.default_diff_view = settings::DefaultDiffView::SideBySide;
-            ProjectSettings::override_global(settings, cx);
-        });
-        assert_default_diff_view(true, cx).await;
+        assert_default_diff_view(Some(settings::DefaultDiffView::SideBySide), true, cx).await;
     }
 
-    async fn assert_default_diff_view(expect_split: bool, cx: &mut TestAppContext) {
+    async fn assert_default_diff_view(
+        setting: Option<settings::DefaultDiffView>,
+        expect_split: bool,
+        cx: &mut TestAppContext,
+    ) {
+        if let Some(default_diff_view) = setting {
+            cx.update(|cx| {
+                let mut settings = ProjectSettings::get_global(cx).clone();
+                settings.git.default_diff_view = default_diff_view;
+                ProjectSettings::override_global(settings, cx);
+            });
+        }
+
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/project"),
