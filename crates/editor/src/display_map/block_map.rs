@@ -1337,14 +1337,22 @@ impl BlockMap {
                     break;
                 }
 
-                let (delta_at_end, spacer_at_end) = determine_spacer(
-                    &mut our_wrapper,
-                    &mut companion_wrapper,
-                    current_boundary,
-                    current_range.end,
-                    delta,
-                );
-                delta = delta_at_end;
+                let edit_for_current_boundary =
+                    excerpt.patch.edit_for_old_position(current_boundary);
+
+                let spacer_at_end = if current_boundary == edit_for_current_boundary.old.end {
+                    let (delta_at_end, spacer_at_end) = determine_spacer(
+                        &mut our_wrapper,
+                        &mut companion_wrapper,
+                        current_boundary,
+                        current_range.end,
+                        delta,
+                    );
+                    delta = delta_at_end;
+                    spacer_at_end
+                } else {
+                    None
+                };
 
                 if let Some((wrap_row, mut height)) = spacer_at_start {
                     if let Some((_, additional_height)) = spacer_at_end {
