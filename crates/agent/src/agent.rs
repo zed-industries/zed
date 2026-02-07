@@ -1161,6 +1161,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_thinking_effort(effort.clone(), cx);
+            thread.set_thinking_enabled(model.supports_thinking(), cx);
         });
 
         update_settings_file(
@@ -1644,7 +1645,8 @@ mod internal_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::{LanguageModelProviderId, LanguageModelProviderName};
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
@@ -1853,6 +1855,102 @@ mod internal_tests {
             settings_json["agent"]["default_model"]["provider"],
             json!("fake")
         );
+    }
+
+    #[gpui::test]
+    async fn test_select_model_updates_thinking_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = NativeAgentConnection(agent.clone());
+
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        // Register a second provider with a thinking model.
+        cx.update(|cx| {
+            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "fake-corp",
+                "fake-thinking",
+                "Fake Thinking",
+                true,
+            ));
+            let thinking_provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    LanguageModelProviderName::from("Fake Corp".to_string()),
+                )
+                .with_models(vec![thinking_model]),
+            );
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        // Refresh the agent's model list so it picks up the new provider.
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // Thread starts with thinking_enabled = false (the default).
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(!thread.thinking_enabled(), "thinking defaults to false");
+            });
+        });
+
+        // Select the thinking model via select_model.
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
+
+        // select_model should have enabled thinking based on the model's supports_thinking().
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.thinking_enabled(),
+                    "select_model should enable thinking when model supports it"
+                );
+            });
+        });
+
+        // Switch back to the non-thinking model.
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake/fake"), cx))
+            .await
+            .unwrap();
+
+        // select_model should have disabled thinking.
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(
+                    !thread.thinking_enabled(),
+                    "select_model should disable thinking when model does not support it"
+                );
+            });
+        });
     }
 
     #[gpui::test]
