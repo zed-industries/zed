@@ -32,6 +32,7 @@ env_logger = { workspace = true, optional = true }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+shell_command_parser.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 credentials_provider.workspace = true
 google_ai.workspace = true
@@ -46,7 +47,6 @@ reqwest_client = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-shell_command_parser.workspace = true
 smol.workspace = true
 task.workspace = true
 tempfile.workspace = true
@@ -71,3 +71,4 @@ acp_thread = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

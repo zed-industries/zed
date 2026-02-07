@@ -158,18 +158,125 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 
 > Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
-### Auto-run Commands
+### Default Tool Permissions
 
-Control whether to allow the agent to run commands without asking you for permission.
-The default value is `false`.
+Control the default behavior for tool actions. The default value is `"confirm"`.
+
+- `"confirm"` - Prompts for approval before running any tool action (default)
+- `"allow"` - Auto-approves tool actions without prompting
+- `"deny"` - Blocks all tool actions
 
 ```json [settings]
 {
   "agent": {
-    "always_allow_tool_actions": true
+    "tool_permissions": {
+      "default": "allow"
+    }
   }
 }
 ```
+
+Even with `default: "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, allowing you to maintain safety guardrails for specific commands.
+
+### Per-tool Permission Rules {#per-tool-permission-rules}
+
+You can configure fine-grained permission rules for individual tools using the `tools` key inside `tool_permissions`. Each tool entry supports a `default` and three pattern lists: `always_allow`, `always_deny`, and `always_confirm`. Patterns are regular expressions matched against the tool's input (e.g., the command string for `terminal`, the file path for `edit_file`, etc.).
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "default": "allow",
+      "tools": {
+        "terminal": {
+          "default": "allow",
+          "always_deny": [{ "pattern": "rm\\s+-rf" }],
+          "always_allow": [{ "pattern": "^git\\s" }],
+          "always_confirm": [{ "pattern": "sudo" }]
+        },
+        "edit_file": {
+          "always_deny": [{ "pattern": "\\.env$" }]
+        }
+      }
+    }
+  }
+}
+```
+
+#### Pattern Precedence
+
+Rules are evaluated in the following order (highest priority first):
+
+1. **Hardcoded security rules** — Built-in rules (e.g., blocking `rm -rf /`) that cannot be overridden.
+2. **`always_deny`** — If any deny pattern matches, the tool call is blocked immediately.
+3. **`always_confirm`** — If any confirm pattern matches (and no deny matched), the user is prompted.
+4. **`always_allow`** — If any allow pattern matches (and no deny/confirm matched), the tool call proceeds without prompting. For `terminal` commands with chaining (`&&`, `||`, `;`), **all** sub-commands must match an allow pattern.
+5. **Tool-specific `default`** — Used when no patterns match.
+6. **Global `default`** — Falls back to `tool_permissions.default` when there is no tool-specific default.
+
+Patterns are case-insensitive by default. Set `"case_sensitive": true` on an individual pattern for exact matching:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "always_deny": [{ "pattern": "PRODUCTION", "case_sensitive": true }]
+        }
+      }
+    }
+  }
+}
+```
+
+#### `copy_path` and `move_path` Patterns
+
+For `copy_path` and `move_path` tools, permission patterns are matched independently against both the source path and the destination path. A deny match on **either** path blocks the entire operation. If either path triggers an `always_confirm` match (and neither is denied), the user is prompted for confirmation.
+
+For example, the following rule prevents copying or moving anything into a `secrets/` directory _or_ out of one:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "copy_path": {
+          "always_deny": [{ "pattern": "^secrets/" }]
+        },
+        "move_path": {
+          "always_deny": [{ "pattern": "^secrets/" }]
+        }
+      }
+    }
+  }
+}
+```
+
+#### MCP and External Tool Permissions
+
+MCP tools can also have per-tool defaults using the key format `mcp:server_name:tool_name`:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "mcp:github:create_issue": {
+          "default": "allow"
+        },
+        "mcp:filesystem:write_file": {
+          "default": "deny"
+        }
+      }
+    }
+  }
+}
+```
+
+For MCP tools running inside the native Zed agent, the `default` key is the primary mechanism for controlling permissions. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) are evaluated against an empty string, so most patterns won't match. However, patterns that can match an empty string (such as `.*` or `^$`) will still take effect — keep this in mind if you use broad catch-all patterns.
+
+For external ACP tools (including MCP servers running through an ACP bridge), patterns are matched against the tool call's **title** as provided by the server. This means pattern matching for ACP tools is best-effort and depends on the server providing descriptive titles.
 
 ### Single-file Review
 

@@ -39,7 +39,7 @@ pub struct AgentSettings {
     pub default_profile: AgentProfileId,
     pub default_view: DefaultAgentView,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
-    pub always_allow_tool_actions: bool,
+
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: bool,
     pub single_file_review: bool,
@@ -112,6 +112,7 @@ impl Default for AgentProfileId {
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolPermissions {
+    pub default: ToolPermissionMode,
     pub tools: collections::HashMap<Arc<str>, ToolRules>,
 }
 
@@ -143,26 +144,14 @@ pub struct InvalidRegexPattern {
     pub error: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ToolRules {
-    pub default_mode: ToolPermissionMode,
+    pub default: Option<ToolPermissionMode>,
     pub always_allow: Vec<CompiledRegex>,
     pub always_deny: Vec<CompiledRegex>,
     pub always_confirm: Vec<CompiledRegex>,
     /// Patterns that failed to compile. If non-empty, tool calls should be blocked.
     pub invalid_patterns: Vec<InvalidRegexPattern>,
-}
-
-impl Default for ToolRules {
-    fn default() -> Self {
-        Self {
-            default_mode: ToolPermissionMode::Confirm,
-            always_allow: Vec::new(),
-            always_deny: Vec::new(),
-            always_confirm: Vec::new(),
-            invalid_patterns: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -430,7 +419,7 @@ impl Settings for AgentSettings {
                 .into_iter()
                 .map(|(key, val)| (AgentProfileId(key), val.into()))
                 .collect(),
-            always_allow_tool_actions: agent.always_allow_tool_actions.unwrap(),
+
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
@@ -492,7 +481,7 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
             }
 
             let rules = ToolRules {
-                default_mode: rules_content.default_mode.unwrap_or_default(),
+                default: rules_content.default,
                 always_allow,
                 always_deny,
                 always_confirm,
@@ -502,7 +491,10 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
         })
         .collect();
 
-    ToolPermissions { tools }
+    ToolPermissions {
+        default: content.default.unwrap_or_default(),
+        tools,
+    }
 }
 
 fn compile_regex_rules(
@@ -561,7 +553,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [
                         { "pattern": "rm\\s+-rf" }
                     ],
@@ -576,7 +568,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal_rules = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal_rules.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal_rules.always_deny.len(), 1);
         assert_eq!(terminal_rules.always_allow.len(), 1);
         assert!(terminal_rules.always_deny[0].is_match("rm -rf /"));
@@ -584,11 +576,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_rules_default_mode() {
+    fn test_tool_rules_default() {
         let json = json!({
             "tools": {
                 "edit_file": {
-                    "default_mode": "deny"
+                    "default": "deny"
                 }
             }
         });
@@ -597,7 +589,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let rules = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(rules.default_mode, ToolPermissionMode::Deny);
+        assert_eq!(rules.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
@@ -609,7 +601,7 @@ mod tests {
     #[test]
     fn test_tool_rules_default_returns_confirm() {
         let default_rules = ToolRules::default();
-        assert_eq!(default_rules.default_mode, ToolPermissionMode::Confirm);
+        assert_eq!(default_rules.default, None);
         assert!(default_rules.always_allow.is_empty());
         assert!(default_rules.always_deny.is_empty());
         assert!(default_rules.always_confirm.is_empty());
@@ -620,15 +612,15 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [{ "pattern": "rm\\s+-rf" }]
                 },
                 "edit_file": {
-                    "default_mode": "confirm",
+                    "default": "confirm",
                     "always_deny": [{ "pattern": "\\.env$" }]
                 },
                 "delete_path": {
-                    "default_mode": "deny"
+                    "default": "deny"
                 }
             }
         });
@@ -639,15 +631,15 @@ mod tests {
         assert_eq!(permissions.tools.len(), 3);
 
         let terminal = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal.always_deny.len(), 1);
 
         let edit_file = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(edit_file.default_mode, ToolPermissionMode::Confirm);
+        assert_eq!(edit_file.default, Some(ToolPermissionMode::Confirm));
         assert!(edit_file.always_deny[0].is_match("secrets.env"));
 
         let delete_path = permissions.tools.get("delete_path").unwrap();
-        assert_eq!(delete_path.default_mode, ToolPermissionMode::Deny);
+        assert_eq!(delete_path.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
@@ -728,7 +720,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [{ "pattern": "dangerous" }],
                     "always_confirm": [{ "pattern": "dangerous" }],
                     "always_allow": [{ "pattern": "dangerous" }]
@@ -759,7 +751,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_confirm": [{ "pattern": "risky" }],
                     "always_allow": [{ "pattern": "risky" }]
                 }
@@ -863,7 +855,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow"
+                    "default": "allow"
                 }
             }
         });
@@ -924,11 +916,9 @@ mod tests {
             "Pattern ^echo\\s should NOT match 'echoHello' (requires whitespace)"
         );
 
-        // Verify default_mode is Confirm (the default)
         assert_eq!(
-            terminal.default_mode,
-            settings::ToolPermissionMode::Confirm,
-            "default_mode should be Confirm when not specified"
+            terminal.default, None,
+            "default should be None when not specified"
         );
     }
 }

@@ -38,6 +38,7 @@ log.workspace = true
 menu.workspace = true
 paths.workspace = true
 picker.workspace = true
+regex.workspace = true
 platform_title_bar.workspace = true
 project.workspace = true
 release_channel.workspace = true

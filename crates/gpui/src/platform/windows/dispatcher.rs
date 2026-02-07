@@ -12,7 +12,6 @@ use windows::{
     },
     Win32::{
         Foundation::{LPARAM, WPARAM},
-        Media::{timeBeginPeriod, timeEndPeriod},
         System::Threading::{
             GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
             THREAD_PRIORITY_TIME_CRITICAL,
@@ -23,7 +22,7 @@ use windows::{
 
 use crate::{
     GLOBAL_THREAD_TIMINGS, HWND, PlatformDispatcher, Priority, PriorityQueueSender,
-    RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
+    RunnableVariant, SafeHwnd, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
     WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD, profiler,
 };
 
@@ -193,16 +192,5 @@ impl PlatformDispatcher for WindowsDispatcher {
 
             f();
         });
-    }
-
-    fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        unsafe {
-            timeBeginPeriod(1);
-        }
-        TimerResolutionGuard {
-            cleanup: Some(Box::new(|| unsafe {
-                timeEndPeriod(1);
-            })),
-        }
     }
 }

@@ -1228,11 +1228,9 @@ fn check_acp_tool_permission(
         return AcpPermissionDecision::Allow;
     }
 
-    match rules.default_mode {
+    match rules.default.unwrap_or(settings.tool_permissions.default) {
         ToolPermissionMode::Allow => AcpPermissionDecision::Allow,
-        ToolPermissionMode::Deny => {
-            AcpPermissionDecision::Deny("Blocked by default_mode: deny".into())
-        }
+        ToolPermissionMode::Deny => AcpPermissionDecision::Deny("Blocked by default: deny".into()),
         ToolPermissionMode::Confirm => AcpPermissionDecision::Confirm,
     }
 }
@@ -1307,12 +1305,7 @@ impl acp::Client for ClientDelegate {
                 }
             }
 
-            thread.request_tool_call_authorization(
-                arguments.tool_call,
-                options,
-                !has_own_permission_modes,
-                cx,
-            )
+            thread.request_tool_call_authorization(arguments.tool_call, options, cx)
         })??;
 
         let outcome = task.await;

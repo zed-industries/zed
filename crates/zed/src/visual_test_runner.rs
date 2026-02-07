@@ -2574,16 +2574,38 @@ fn run_agent_thread_view_test(
 
 /// Visual test for the Tool Permissions Settings UI page
 ///
-/// Takes two screenshots:
-/// 1. The settings page showing the "Configure Tool Rules" item
-/// 2. The tool permissions sub-page after clicking Configure
+/// Takes a screenshot showing the tool config page with matched patterns and verdict.
 #[cfg(target_os = "macos")]
 fn run_tool_permissions_visual_tests(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
     _update_baseline: bool,
 ) -> Result<TestResult> {
+    use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
+    use collections::HashMap;
+    use settings::ToolPermissionMode;
     use zed_actions::OpenSettingsAt;
+
+    // Set up tool permissions with "hi" as both always_deny and always_allow for terminal
+    cx.update(|cx| {
+        let mut tools = HashMap::default();
+        tools.insert(
+            Arc::from("terminal"),
+            ToolRules {
+                default: None,
+                always_allow: vec![CompiledRegex::new("hi", false).unwrap()],
+                always_deny: vec![CompiledRegex::new("hi", false).unwrap()],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.tool_permissions = ToolPermissions {
+            default: ToolPermissionMode::Confirm,
+            tools,
+        };
+        AgentSettings::override_global(settings, cx);
+    });
 
     // Create a minimal workspace to dispatch the settings action from
     let window_size = size(px(900.0), px(700.0));
@@ -2652,22 +2674,9 @@ fn run_tool_permissions_visual_tests(
     let all_windows = cx.update(|cx| cx.windows());
     let settings_window = all_windows.last().copied().context("No windows found")?;
 
-    // Save screenshot 1: Settings page showing "Configure Tool Rules" item
     let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
         .unwrap_or_else(|_| "target/visual_tests".to_string());
-    std::fs::create_dir_all(&output_dir).ok();
-
-    cx.update_window(settings_window, |_, window, _cx| {
-        window.refresh();
-    })
-    .ok();
-    cx.run_until_parked();
-
-    let output_path = PathBuf::from(&output_dir).join("tool_permissions_settings.png");
-    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
-        let _: Result<(), _> = screenshot.save(&output_path);
-        println!("Screenshot 1 saved to: {}", output_path.display());
-    }
+    std::fs::create_dir_all(&output_dir).log_err();
 
     // Navigate to the tool permissions sub-page using the public API
     let settings_window_handle = settings_window
@@ -2688,32 +2697,7 @@ fn run_tool_permissions_visual_tests(
         cx.run_until_parked();
     }
 
-    // Refresh and redraw
-    cx.update_window(settings_window, |_, window, cx| {
-        window.draw(cx).clear();
-    })
-    .ok();
-    cx.run_until_parked();
-
-    cx.update_window(settings_window, |_, window, _cx| {
-        window.refresh();
-    })
-    .ok();
-    cx.run_until_parked();
-
-    // Save screenshot 2: The tool permissions sub-page (list of tools)
-    let subpage_output_path = PathBuf::from(&output_dir).join("tool_permissions_subpage.png");
-
-    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
-        let _: Result<(), _> = screenshot.save(&subpage_output_path);
-        println!(
-            "Screenshot 2 (tool list) saved to: {}",
-            subpage_output_path.display()
-        );
-    }
-
     // Now navigate into a specific tool (Terminal) to show the tool config page
-    // We need to use push_dynamic_sub_page since the tool pages are nested
     settings_window_handle
         .update(cx, |settings_window, window, cx| {
             settings_window.push_dynamic_sub_page(
@@ -2735,40 +2719,71 @@ fn run_tool_permissions_visual_tests(
         cx.run_until_parked();
     }
 
-    // Refresh and redraw
+    // Refresh and redraw so the "Test Your Rules" input is present
     cx.update_window(settings_window, |_, window, cx| {
         window.draw(cx).clear();
     })
-    .ok();
+    .log_err();
     cx.run_until_parked();
 
     cx.update_window(settings_window, |_, window, _cx| {
         window.refresh();
     })
-    .ok();
+    .log_err();
     cx.run_until_parked();
 
-    // Save screenshot 3: Individual tool config page
+    // Focus the first tab stop in the window (the "Test Your Rules" editor
+    // has tab_index(0) and tab_stop(true)) and type "hi" into it.
+    cx.update_window(settings_window, |_, window, cx| {
+        window.focus_next(cx);
+    })
+    .log_err();
+    cx.run_until_parked();
+
+    cx.simulate_input(settings_window, "hi");
+
+    // Let the UI update with the matched patterns
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .log_err();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .log_err();
+    cx.run_until_parked();
+
+    // Save screenshot: Tool config page with "hi" typed and matched patterns visible
     let tool_config_output_path =
-        PathBuf::from(&output_dir).join("tool_permissions_tool_config.png");
+        PathBuf::from(&output_dir).join("tool_permissions_test_rules.png");
 
     if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
-        let _: Result<(), _> = screenshot.save(&tool_config_output_path);
+        screenshot.save(&tool_config_output_path).log_err();
         println!(
-            "Screenshot 3 (tool config) saved to: {}",
+            "Screenshot (test rules) saved to: {}",
             tool_config_output_path.display()
         );
     }
 
     // Clean up - close the settings window
-    let _ = cx.update_window(settings_window, |_, window, _cx| {
+    cx.update_window(settings_window, |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     // Close the workspace window
-    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
         window.remove_window();
-    });
+    })
+    .log_err();
 
     cx.run_until_parked();
 

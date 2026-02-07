@@ -954,20 +954,29 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run tool actions without asking for your confirmation.
-    // This setting takes precedence over `always_confirm` patterns and `default_mode` settings,
-    // but `always_deny` patterns still block actions for security.
+    // Permission rules for tool actions.
     //
-    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
-    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
-    "always_allow_tool_actions": false,
-    // Per-tool permission rules for granular control over tool actions.
-    // This setting only applies to the native Zed agent.
+    // The "default" setting applies to both the native Zed agent and external
+    // agent servers (e.g. Claude Code) that don't define their own permission
+    // modes. For external agents that do define their own permission modes,
+    // "deny" and "confirm" still take precedence — the external agent's
+    // permission system is only used when Zed would allow the action.
+    //
+    // Per-tool regex patterns ("tools" below) apply to both the native Zed
+    // agent and external agents. For external agents, patterns are matched
+    // against the tool call's title rather than raw tool input.
     "tool_permissions": {
-      // Here are some examples of tool-specific permissions.
+      // Global default permission when no tool-specific rules match.
+      // "allow" - Auto-approve without prompting
+      // "deny" - Auto-reject
+      // "confirm" - Always prompt (default)
+      "default": "confirm",
+      // Per-tool permission rules. Regex patterns apply to both the native Zed
+      // agent and external agents. The per-tool "default" also applies to MCP tools.
+      // Each tool can have its own default and regex patterns.
       "tools": {
         // "terminal": {
-        //   "default_mode": "confirm",
+        //   "default": "confirm",
         //   "always_confirm": [
         //     // Destructive git operations
         //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
@@ -975,7 +984,7 @@
         //   ],
         // },
         // "edit_file": {
-        //   "default_mode": "confirm",
+        //   "default": "confirm",
         //   "always_deny": [
         //     // Secrets and credentials
         //     { "pattern": "\\.env($|\\.)" },
@@ -2230,11 +2239,6 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
-    // The maximum amount of time to wait for responses from language servers, in seconds.
-    //
-    // A value of `0` will result in no timeout being applied (causing all LSP responses to wait
-    // indefinitely until completed).
-    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.

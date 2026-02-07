@@ -959,7 +959,7 @@ pub mod tests {
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
-    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
+    use lsp::FakeLanguageServer;
     use multi_buffer::{MultiBuffer, MultiBufferOffset};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
@@ -1065,7 +1065,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1231,12 +1231,9 @@ pub mod tests {
 
         let progress_token = 42;
         fake_server
-            .request::<lsp::request::WorkDoneProgressCreate>(
-                lsp::WorkDoneProgressCreateParams {
-                    token: lsp::ProgressToken::Number(progress_token),
-                },
-                DEFAULT_LSP_REQUEST_TIMEOUT,
-            )
+            .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
+                token: lsp::ProgressToken::Number(progress_token),
+            })
             .await
             .into_response()
             .expect("work done progress create request failed");
@@ -1631,7 +1628,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1789,7 +1786,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1862,7 +1859,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
             .into_response()
             .expect("inlay refresh request failed");

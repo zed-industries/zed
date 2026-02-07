@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/shell_command_parser.rs"
+doctest = false
 
 [dependencies]
 brush-parser.workspace = true
