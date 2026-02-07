@@ -22,7 +22,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 collections.workspace = true
 dirs.workspace = true
 fs.workspace = true
@@ -37,4 +36,6 @@ settings.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+reqwest_client.workspace = true
 serde_json.workspace = true
+smol.workspace = true

@@ -3756,7 +3756,6 @@ name = "copilot_chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "collections",
  "dirs 4.0.0",
  "fs",
@@ -3765,9 +3764,11 @@ dependencies = [
  "http_client",
  "log",
  "paths",
+ "reqwest_client",
  "serde",
  "serde_json",
  "settings",
+ "smol",
 ]
 
 [[package]]

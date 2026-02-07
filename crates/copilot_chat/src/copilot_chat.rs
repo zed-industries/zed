@@ -6,7 +6,6 @@ use std::sync::OnceLock;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
-use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
@@ -27,15 +26,6 @@ pub struct CopilotChatConfiguration {
 }
 
 impl CopilotChatConfiguration {
-    pub fn token_url(&self) -> String {
-        if let Some(enterprise_uri) = &self.enterprise_uri {
-            let domain = Self::parse_domain(enterprise_uri);
-            format!("https://api.{}/copilot_internal/v2/token", domain)
-        } else {
-            "https://api.github.com/copilot_internal/v2/token".to_string()
-        }
-    }
-
     pub fn oauth_domain(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             Self::parse_domain(enterprise_uri)
@@ -44,16 +34,20 @@ impl CopilotChatConfiguration {
         }
     }
 
-    pub fn chat_completions_url_from_endpoint(&self, endpoint: &str) -> String {
-        format!("{}/chat/completions", endpoint)
+    pub fn api_endpoint(&self) -> String {
+        "https://api.githubcopilot.com".to_string()
     }
 
-    pub fn responses_url_from_endpoint(&self, endpoint: &str) -> String {
-        format!("{}/responses", endpoint)
+    pub fn chat_completions_url(&self) -> String {
+        format!("{}/chat/completions", self.api_endpoint())
     }
 
-    pub fn models_url_from_endpoint(&self, endpoint: &str) -> String {
-        format!("{}/models", endpoint)
+    pub fn responses_url(&self) -> String {
+        format!("{}/responses", self.api_endpoint())
+    }
+
+    pub fn models_url(&self) -> String {
+        format!("{}/models", self.api_endpoint())
     }
 
     fn parse_domain(enterprise_uri: &str) -> String {
@@ -412,55 +406,12 @@ pub struct FunctionChunk {
     pub thought_signature: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct ApiTokenResponse {
-    token: String,
-    expires_at: i64,
-    endpoints: ApiTokenResponseEndpoints,
-}
-
-#[derive(Deserialize)]
-struct ApiTokenResponseEndpoints {
-    api: String,
-}
-
-#[derive(Clone)]
-struct ApiToken {
-    api_key: String,
-    expires_at: DateTime<chrono::Utc>,
-    api_endpoint: String,
-}
-
-impl ApiToken {
-    pub fn remaining_seconds(&self) -> i64 {
-        self.expires_at
-            .timestamp()
-            .saturating_sub(chrono::Utc::now().timestamp())
-    }
-}
-
-impl TryFrom<ApiTokenResponse> for ApiToken {
-    type Error = anyhow::Error;
-
-    fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
-        let expires_at =
-            DateTime::from_timestamp(response.expires_at, 0).context("invalid expires_at")?;
-
-        Ok(Self {
-            api_key: response.token,
-            expires_at,
-            api_endpoint: response.endpoints.api,
-        })
-    }
-}
-
 struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
 pub struct CopilotChat {
     oauth_token: Option<String>,
-    api_token: Option<ApiToken>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
@@ -539,7 +490,6 @@ impl CopilotChat {
 
         let this = Self {
             oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
-            api_token: None,
             models: None,
             configuration,
             client,
@@ -565,15 +515,10 @@ impl CopilotChat {
         let oauth_token = oauth_token
             .ok_or_else(|| anyhow!("OAuth token is missing while updating Copilot Chat models"))?;
 
-        let token_url = configuration.token_url();
-        let api_token = request_api_token(&oauth_token, token_url.into(), client.clone()).await?;
-
-        let models_url = configuration.models_url_from_endpoint(&api_token.api_endpoint);
-        let models =
-            get_models(models_url.into(), api_token.api_key.clone(), client.clone()).await?;
+        let models_url = configuration.models_url();
+        let models = get_models(models_url.into(), oauth_token, client.clone()).await?;
 
         this.update(cx, |this, cx| {
-            this.api_token = Some(api_token);
             this.models = Some(models);
             cx.notify();
         })?;
@@ -593,12 +538,12 @@ impl CopilotChat {
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+        let (client, oauth_token, configuration) = Self::get_auth_details(&mut cx)?;
 
-        let api_url = configuration.chat_completions_url_from_endpoint(&token.api_endpoint);
+        let api_url = configuration.chat_completions_url();
         stream_completion(
             client.clone(),
-            token.api_key,
+            oauth_token,
             api_url.into(),
             request,
             is_user_initiated,
@@ -611,12 +556,12 @@ impl CopilotChat {
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
-        let (client, token, configuration) = Self::get_auth_details(&mut cx).await?;
+        let (client, oauth_token, configuration) = Self::get_auth_details(&mut cx)?;
 
-        let api_url = configuration.responses_url_from_endpoint(&token.api_endpoint);
+        let api_url = configuration.responses_url();
         responses::stream_response(
             client.clone(),
-            token.api_key,
+            oauth_token,
             api_url,
             request,
             is_user_initiated,
@@ -624,17 +569,16 @@ impl CopilotChat {
         .await
     }
 
-    async fn get_auth_details(
+    fn get_auth_details(
         cx: &mut AsyncApp,
-    ) -> Result<(Arc<dyn HttpClient>, ApiToken, CopilotChatConfiguration)> {
+    ) -> Result<(Arc<dyn HttpClient>, String, CopilotChatConfiguration)> {
         let this = cx
             .update(|cx| Self::global(cx))
             .context("Copilot chat is not enabled")?;
 
-        let (oauth_token, api_token, client, configuration) = this.read_with(cx, |this, _| {
+        let (oauth_token, client, configuration) = this.read_with(cx, |this, _| {
             (
                 this.oauth_token.clone(),
-                this.api_token.clone(),
                 this.client.clone(),
                 this.configuration.clone(),
             )
@@ -642,21 +586,7 @@ impl CopilotChat {
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
-        let token = match api_token {
-            Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token,
-            _ => {
-                let token_url = configuration.token_url();
-                let token =
-                    request_api_token(&oauth_token, token_url.into(), client.clone()).await?;
-                this.update(cx, |this, cx| {
-                    this.api_token = Some(token.clone());
-                    cx.notify();
-                });
-                token
-            }
-        };
-
-        Ok((client, token, configuration))
+        Ok((client, oauth_token, configuration))
     }
 
     pub fn set_configuration(
@@ -667,7 +597,6 @@ impl CopilotChat {
         let same_configuration = self.configuration == configuration;
         self.configuration = configuration;
         if !same_configuration {
-            self.api_token = None;
             cx.spawn(async move |this, cx| {
                 Self::update_models(&this, cx).await?;
                 Ok::<_, anyhow::Error>(())
@@ -679,10 +608,10 @@ impl CopilotChat {
 
 async fn get_models(
     models_url: Arc<str>,
-    api_token: String,
+    oauth_token: String,
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
-    let all_models = request_models(models_url, api_token, client).await?;
+    let all_models = request_models(models_url, oauth_token, client).await?;
 
     let mut models: Vec<Model> = all_models
         .into_iter()
@@ -714,11 +643,11 @@ async fn get_models(
 /// endpoints like model listing that don't involve completions.
 pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
-    api_token: &str,
+    oauth_token: &str,
     is_user_initiated: Option<bool>,
 ) -> http_client::Builder {
     builder
-        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Authorization", format!("Bearer {}", oauth_token))
         .header("Content-Type", "application/json")
         .header(
             "Editor-Version",
@@ -737,14 +666,14 @@ pub(crate) fn copilot_request_headers(
 
 async fn request_models(
     models_url: Arc<str>,
-    api_token: String,
+    oauth_token: String,
     client: Arc<dyn HttpClient>,
 ) -> Result<Vec<Model>> {
     let request_builder = copilot_request_headers(
         HttpRequest::builder()
             .method(Method::GET)
             .uri(models_url.as_ref()),
-        &api_token,
+        &oauth_token,
         None,
     )
     .header("x-github-api-version", "2025-05-01");
@@ -768,38 +697,6 @@ async fn request_models(
     Ok(models)
 }
 
-async fn request_api_token(
-    oauth_token: &str,
-    auth_url: Arc<str>,
-    client: Arc<dyn HttpClient>,
-) -> Result<ApiToken> {
-    let request_builder = HttpRequest::builder()
-        .method(Method::GET)
-        .uri(auth_url.as_ref())
-        .header("Authorization", format!("token {}", oauth_token))
-        .header("Accept", "application/json");
-
-    let request = request_builder.body(AsyncBody::empty())?;
-
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        let body_str = std::str::from_utf8(&body)?;
-
-        let parsed: ApiTokenResponse = serde_json::from_str(body_str)?;
-        ApiToken::try_from(parsed)
-    } else {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-
-        let body_str = std::str::from_utf8(&body)?;
-        anyhow::bail!("Failed to request API token: {body_str}");
-    }
-}
-
 fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
@@ -819,7 +716,7 @@ fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
 
 async fn stream_completion(
     client: Arc<dyn HttpClient>,
-    api_key: String,
+    oauth_token: String,
     completion_url: Arc<str>,
     request: Request,
     is_user_initiated: bool,
@@ -837,7 +734,7 @@ async fn stream_completion(
         HttpRequest::builder()
             .method(Method::POST)
             .uri(completion_url.as_ref()),
-        &api_key,
+        &oauth_token,
         Some(is_user_initiated),
     )
     .when(is_vision_request, |builder| {

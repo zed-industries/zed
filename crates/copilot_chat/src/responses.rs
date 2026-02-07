@@ -276,7 +276,7 @@ pub enum ResponseOutputContent {
 
 pub async fn stream_response(
     client: Arc<dyn HttpClient>,
-    api_key: String,
+    oauth_token: String,
     api_url: String,
     request: Request,
     is_user_initiated: bool,
@@ -293,7 +293,7 @@ pub async fn stream_response(
 
     let request_builder = copilot_request_headers(
         HttpRequest::builder().method(Method::POST).uri(&api_url),
-        &api_key,
+        &oauth_token,
         Some(is_user_initiated),
     );
 
