@@ -455,7 +455,7 @@ fn metadata_from_extension_and_version(
 
     ExtensionMetadata {
         id: extension.external_id.into(),
-        manifest: rpc::ExtensionApiManifest {
+        manifest: cloud_api_types::ExtensionApiManifest {
             name: extension.name,
             version: version.version.into(),
             authors: version

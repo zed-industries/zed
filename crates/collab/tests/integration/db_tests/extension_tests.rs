@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rpc::ExtensionProvides;
-
-use crate::test_both_dbs;
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collab::db::Database;
 use collab::db::ExtensionVersionConstraints;
 use collab::db::{NewExtensionVersion, queries::extensions::convert_time_to_chrono};
-use rpc::ExtensionMetadata;
+
+use crate::test_both_dbs;
+
 test_both_dbs!(
     test_extensions,
     test_extensions_postgres,
@@ -160,7 +160,7 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext1".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension One".into(),
                     version: "0.0.2".into(),
                     authors: vec!["max".into(), "marshall".into()],
@@ -175,7 +175,7 @@ async fn test_extensions(db: &Arc<Database>) {
             },
             ExtensionMetadata {
                 id: "ext2".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension Two".into(),
                     version: "0.2.0".into(),
                     authors: vec!["marshall".into()],
@@ -197,7 +197,7 @@ async fn test_extensions(db: &Arc<Database>) {
         extensions,
         &[ExtensionMetadata {
             id: "ext2".into(),
-            manifest: rpc::ExtensionApiManifest {
+            manifest: cloud_api_types::ExtensionApiManifest {
                 name: "Extension Two".into(),
                 version: "0.2.0".into(),
                 authors: vec!["marshall".into()],
@@ -239,7 +239,7 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext2".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension Two".into(),
                     version: "0.2.0".into(),
                     authors: vec!["marshall".into()],
@@ -254,7 +254,7 @@ async fn test_extensions(db: &Arc<Database>) {
             },
             ExtensionMetadata {
                 id: "ext1".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension One".into(),
                     version: "0.0.2".into(),
                     authors: vec!["max".into(), "marshall".into()],
@@ -329,7 +329,7 @@ async fn test_extensions(db: &Arc<Database>) {
         &[
             ExtensionMetadata {
                 id: "ext2".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension Two".into(),
                     version: "0.2.0".into(),
                     authors: vec!["marshall".into()],
@@ -344,7 +344,7 @@ async fn test_extensions(db: &Arc<Database>) {
             },
             ExtensionMetadata {
                 id: "ext1".into(),
-                manifest: rpc::ExtensionApiManifest {
+                manifest: cloud_api_types::ExtensionApiManifest {
                     name: "Extension One".into(),
                     version: "0.0.3".into(),
                     authors: vec!["max".into(), "marshall".into()],
@@ -466,7 +466,7 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
         extensions,
         &[ExtensionMetadata {
             id: "ext1".into(),
-            manifest: rpc::ExtensionApiManifest {
+            manifest: cloud_api_types::ExtensionApiManifest {
                 name: "Extension 1".into(),
                 version: "0.0.2".into(),
                 authors: vec!["max".into()],
