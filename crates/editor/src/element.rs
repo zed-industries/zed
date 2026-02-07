@@ -13,8 +13,8 @@ use crate::{
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
-        Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
-        HighlightKey, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, ChunkRendererId, ChunkSpecial, DisplaySnapshot,
+        EditorMargins, HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -8642,6 +8642,57 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    /// Helper function to get the appropriate font for a chunk, using inlay font if available
+    fn font_for_chunk(
+        special: ChunkSpecial,
+        base_font: gpui::Font,
+        editor_style: &EditorStyle,
+        highlight_style: Option<gpui::HighlightStyle>,
+    ) -> gpui::Font {
+        let mut font = match special {
+            ChunkSpecial::InlayHint => {
+                // Use inlay-specific font if configured
+                if let Some(inlay_font) = &editor_style.inlay_hints_font {
+                    let mut font = base_font.clone();
+                    font.family = inlay_font.clone();
+                    font
+                } else {
+                    base_font.clone()
+                }
+            }
+            ChunkSpecial::EditPrediction => {
+                // Use inlay-specific font if configured
+                if let Some(edit_prediction_font) = &editor_style.edit_prediction_font {
+                    let mut font = base_font.clone();
+                    font.family = edit_prediction_font.clone();
+                    font
+                } else {
+                    base_font.clone()
+                }
+            }
+            _ => base_font.clone(),
+        };
+
+        // Apply weight and style from highlight style or inlay_hints_style
+        if let Some(style) = highlight_style {
+            if let Some(weight) = style.font_weight {
+                font.weight = weight;
+            }
+            if let Some(font_style) = style.font_style {
+                font.style = font_style;
+            }
+        } else {
+            if let Some(weight) = editor_style.inlay_hints_style.font_weight {
+                font.weight = weight;
+            }
+            if let Some(font_style) = editor_style.inlay_hints_style.font_style {
+                font.style = font_style;
+            }
+        }
+
+        font
+    }
+
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
@@ -8674,7 +8725,7 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
-            is_inlay: false,
+            special: ChunkSpecial::None,
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
@@ -8747,7 +8798,12 @@ impl LineWithInvisibles {
 
                         let run = TextRun {
                             len: x.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.special,
+                                text_style.font(),
+                                editor_style,
+                                highlighted_chunk.style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
@@ -8817,40 +8873,50 @@ impl LineWithInvisibles {
 
                         styles.push(TextRun {
                             len: line_chunk.len(),
-                            font: text_style.font(),
+                            font: Self::font_for_chunk(
+                                highlighted_chunk.special,
+                                text_style.font(),
+                                editor_style,
+                                highlighted_chunk.style,
+                            ),
                             color: text_style.color,
                             background_color: text_style.background_color,
                             underline: text_style.underline,
                             strikethrough: text_style.strikethrough,
                         });
 
-                        if editor_mode.is_full() && !highlighted_chunk.is_inlay {
-                            // Line wrap pads its contents with fake whitespaces,
-                            // avoid printing them
-                            let is_soft_wrapped = is_row_soft_wrapped(row);
-                            if highlighted_chunk.is_tab {
-                                if non_whitespace_added || !is_soft_wrapped {
-                                    invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
-                                    });
-                                }
-                            } else {
-                                invisibles.extend(line_chunk.char_indices().filter_map(
-                                    |(index, c)| {
-                                        let is_whitespace = c.is_whitespace();
-                                        non_whitespace_added |= !is_whitespace;
-                                        if is_whitespace
-                                            && (non_whitespace_added || !is_soft_wrapped)
-                                        {
-                                            Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
-                                            })
-                                        } else {
-                                            None
+                        if editor_mode.is_full() {
+                            match highlighted_chunk.special {
+                                ChunkSpecial::InlayHint => {}
+                                _ => {
+                                    // Line wrap pads its contents with fake whitespaces,
+                                    // avoid printing them
+                                    let is_soft_wrapped = is_row_soft_wrapped(row);
+                                    if highlighted_chunk.is_tab {
+                                        if non_whitespace_added || !is_soft_wrapped {
+                                            invisibles.push(Invisible::Tab {
+                                                line_start_offset: line.len(),
+                                                line_end_offset: line.len() + line_chunk.len(),
+                                            });
                                         }
-                                    },
-                                ))
+                                    } else {
+                                        invisibles.extend(line_chunk.char_indices().filter_map(
+                                            |(index, c)| {
+                                                let is_whitespace = c.is_whitespace();
+                                                non_whitespace_added |= !is_whitespace;
+                                                if is_whitespace
+                                                    && (non_whitespace_added || !is_soft_wrapped)
+                                                {
+                                                    Some(Invisible::Whitespace {
+                                                        line_offset: line.len() + index,
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                        ))
+                                    }
+                                }
                             }
                         }
 

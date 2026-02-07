@@ -1465,11 +1465,39 @@ pub enum ChunkReplacement {
     Str(SharedString),
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+pub enum ChunkSpecial {
+    #[default]
+    None,
+    InlayHint,
+    EditPrediction,
+}
+
+impl From<fold_map::ChunkSpecial> for ChunkSpecial {
+    fn from(chunk_special: fold_map::ChunkSpecial) -> Self {
+        match chunk_special {
+            fold_map::ChunkSpecial::InlayHint => ChunkSpecial::InlayHint,
+            fold_map::ChunkSpecial::EditPrediction => ChunkSpecial::EditPrediction,
+            fold_map::ChunkSpecial::None => ChunkSpecial::None,
+        }
+    }
+}
+
+impl From<ChunkSpecial> for fold_map::ChunkSpecial {
+    fn from(chunk_special: ChunkSpecial) -> Self {
+        match chunk_special {
+            ChunkSpecial::None => fold_map::ChunkSpecial::None,
+            ChunkSpecial::InlayHint => fold_map::ChunkSpecial::InlayHint,
+            ChunkSpecial::EditPrediction => fold_map::ChunkSpecial::EditPrediction,
+        }
+    }
+}
+
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
-    pub is_inlay: bool,
+    pub special: ChunkSpecial,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -1484,7 +1512,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
-        let is_inlay = self.is_inlay;
+        let special = self.special;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -1500,7 +1528,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
-                        is_inlay,
+                        special,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1526,7 +1554,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        is_inlay,
+                        special,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -1549,7 +1577,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        is_inlay,
+                        special,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1562,7 +1590,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
-                    is_inlay,
+                    special,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -1888,12 +1916,16 @@ impl DisplaySnapshot {
                 HighlightStyle {
                     // For color inlays, blend the color with the editor background
                     // if the color has transparency (alpha < 1.0)
-                    color: chunk_highlight.color.map(|color| {
-                        if chunk.is_inlay && !color.is_opaque() {
-                            editor_style.background.blend(color)
-                        } else {
-                            color
+                    color: chunk_highlight.color.map(|color| match chunk.special {
+                        fold_map::ChunkSpecial::InlayHint => {
+                            if !color.is_opaque() {
+                                editor_style.background.blend(color)
+                            } else {
+                                color
+                            }
                         }
+                        fold_map::ChunkSpecial::EditPrediction => color,
+                        fold_map::ChunkSpecial::None => color,
                     }),
                     ..chunk_highlight
                 }
@@ -1938,7 +1970,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style,
                 is_tab: chunk.is_tab,
-                is_inlay: chunk.is_inlay,
+                special: chunk.special.into(),
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
