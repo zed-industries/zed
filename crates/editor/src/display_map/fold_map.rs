@@ -5,7 +5,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
-use language::{ChunkSpecial, Edit, HighlightId, Point};
+use language::{ChunkKind, Edit, HighlightId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -1392,8 +1392,8 @@ pub struct Chunk<'a> {
     pub underline: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Special property of chunk.
-    pub special: ChunkSpecial,
+    /// What kind of chunk this is.
+    pub kind: ChunkKind,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
     /// Bitmap of tab character locations in chunk
@@ -1586,7 +1586,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,
                 is_tab: chunk.is_tab,
-                special: chunk.special,
+                kind: chunk.kind,
                 underline: chunk.underline,
                 renderer: inlay_chunk.renderer,
             });

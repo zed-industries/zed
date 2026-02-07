@@ -98,7 +98,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    ChunkSpecial, Point, Subscription as BufferSubscription, language_settings::language_settings,
+    ChunkKind, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
@@ -1493,7 +1493,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
-    pub special: ChunkSpecial,
+    pub kind: ChunkKind,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -1508,7 +1508,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
-        let special = self.special;
+        let kind = self.kind;
 
         iter::from_fn(move || {
             let mut prefix_len = 0;
@@ -1527,7 +1527,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
-                        special,
+                        kind,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1553,7 +1553,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        special,
+                        kind,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -1576,7 +1576,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
-                        special,
+                        kind,
                         replacement: renderer.clone(),
                     });
                 }
@@ -1589,7 +1589,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
-                    special,
+                    kind,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -1915,8 +1915,8 @@ impl DisplaySnapshot {
                 HighlightStyle {
                     // For color inlays, blend the color with the editor background
                     // if the color has transparency (alpha < 1.0)
-                    color: chunk_highlight.color.map(|color| match chunk.special {
-                        ChunkSpecial::InlayHint => {
+                    color: chunk_highlight.color.map(|color| match chunk.kind {
+                        ChunkKind::InlayHint => {
                             if !color.is_opaque() {
                                 editor_style.background.blend(color)
                             } else {
@@ -1971,7 +1971,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style,
                 is_tab: chunk.is_tab,
-                special: chunk.special.into(),
+                kind: chunk.kind.into(),
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
