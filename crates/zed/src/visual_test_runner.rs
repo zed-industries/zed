@@ -71,9 +71,7 @@ use {
     },
     util::ResultExt as _,
     watch,
-    workspace::{
-        AgentThreadInfo, AgentThreadStatus, AppState, MultiWorkspace, Workspace, WorkspaceId,
-    },
+    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
     zed_actions::OpenSettingsAt,
 };
 
@@ -2994,27 +2992,21 @@ fn run_multi_workspace_sidebar_visual_tests(
         });
     });
 
-    // Set thread info on MultiWorkspace (the sidebar reads it from there during refresh)
-    multi_workspace_window
-        .update(cx, |multi_workspace, _window, cx| {
-            multi_workspace.set_workspace_thread_info(
+    // Set thread info directly on the sidebar for visual testing
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, _cx| {
+            sidebar.set_test_thread_info(
                 0,
-                Some(AgentThreadInfo {
-                    title: "Refine thread view scrolling behavior".into(),
-                    status: AgentThreadStatus::Completed,
-                }),
-                cx,
+                "Refine thread view scrolling behavior".into(),
+                "completed",
             );
-            multi_workspace.set_workspace_thread_info(
+            sidebar.set_test_thread_info(
                 1,
-                Some(AgentThreadInfo {
-                    title: "Add line numbers option to FileEditBlock".into(),
-                    status: AgentThreadStatus::Running,
-                }),
-                cx,
+                "Add line numbers option to FileEditBlock".into(),
+                "running",
             );
-        })
-        .context("Failed to set thread info")?;
+        });
+    });
 
     cx.run_until_parked();
 

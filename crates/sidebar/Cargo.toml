@@ -16,6 +16,8 @@ default = []
 test-support = []
 
 [dependencies]
+acp_thread.workspace = true
+agent_ui.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true

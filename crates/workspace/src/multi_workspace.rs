@@ -1,26 +1,12 @@
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, Focusable, ManagedView,
-    MouseButton, Pixels, Render, SharedString, Subscription, Window, actions, deferred, px,
+    MouseButton, Pixels, Render, Subscription, Window, actions, deferred, px,
 };
 use project::Project;
-use std::collections::HashMap;
 use ui::prelude::*;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AgentThreadStatus {
-    Running,
-    Completed,
-    Errored,
-}
-
-#[derive(Clone, Debug)]
-pub struct AgentThreadInfo {
-    pub title: SharedString,
-    pub status: AgentThreadStatus,
-}
 
 use crate::{
     DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -96,7 +82,6 @@ pub struct MultiWorkspace {
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     _sidebar_subscription: Option<Subscription>,
-    workspace_thread_infos: HashMap<usize, AgentThreadInfo>,
 }
 
 impl MultiWorkspace {
@@ -107,7 +92,6 @@ impl MultiWorkspace {
             sidebar: None,
             sidebar_open: false,
             _sidebar_subscription: None,
-            workspace_thread_infos: HashMap::new(),
         }
     }
 
@@ -349,51 +333,12 @@ impl MultiWorkspace {
         self.focus_active_workspace(window, cx);
     }
 
-    pub fn workspace_index_by_entity_id(&self, entity_id: EntityId) -> Option<usize> {
-        self.workspaces
-            .iter()
-            .position(|w| w.entity_id() == entity_id)
-    }
-
-    pub fn set_workspace_thread_info(
-        &mut self,
-        index: usize,
-        info: Option<AgentThreadInfo>,
-        cx: &mut Context<Self>,
-    ) {
-        match info {
-            Some(info) => {
-                self.workspace_thread_infos.insert(index, info);
-            }
-            None => {
-                self.workspace_thread_infos.remove(&index);
-            }
-        }
-        cx.notify();
-    }
-
-    pub fn workspace_thread_info(&self, index: usize) -> Option<&AgentThreadInfo> {
-        self.workspace_thread_infos.get(&index)
-    }
-
     pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
             return;
         }
 
         self.workspaces.remove(index);
-
-        self.workspace_thread_infos.remove(&index);
-        let old_infos: HashMap<usize, AgentThreadInfo> =
-            self.workspace_thread_infos.drain().collect();
-        for (old_index, info) in old_infos {
-            let new_index = if old_index > index {
-                old_index - 1
-            } else {
-                old_index
-            };
-            self.workspace_thread_infos.insert(new_index, info);
-        }
 
         if self.active_workspace_index >= self.workspaces.len() {
             self.active_workspace_index = self.workspaces.len() - 1;

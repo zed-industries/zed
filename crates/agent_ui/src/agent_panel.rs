@@ -1021,6 +1021,7 @@ impl AgentPanel {
             ActiveView::Configuration | ActiveView::History { .. } => {
                 if let Some(previous_view) = self.previous_view.take() {
                     self.active_view = previous_view;
+                    cx.emit(AgentPanelEvent::ActiveViewChanged);
 
                     match &self.active_view {
                         ActiveView::AgentThread { thread_view } => {
@@ -1417,7 +1418,7 @@ impl AgentPanel {
         }
     }
 
-    pub(crate) fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
+    pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
             ActiveView::AgentThread { thread_view, .. } => thread_view
                 .read(cx)
@@ -1476,6 +1477,7 @@ impl AgentPanel {
         if focus {
             self.focus_handle(cx).focus(window, cx);
         }
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
     }
 
     fn populate_recently_updated_menu_section(
@@ -1748,7 +1750,12 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
     AgentSettings::get_global(cx).dock.into()
 }
 
+pub enum AgentPanelEvent {
+    ActiveViewChanged,
+}
+
 impl EventEmitter<PanelEvent> for AgentPanel {}
+impl EventEmitter<AgentPanelEvent> for AgentPanel {}
 
 impl Panel for AgentPanel {
     fn persistent_name() -> &'static str {

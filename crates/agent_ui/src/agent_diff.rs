@@ -1,5 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use acp_thread::{AcpThread, AcpThreadEvent, ThreadStatus};
+use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::ActionLogTelemetry;
 use agent_settings::AgentSettings;
 use anyhow::Result;
@@ -31,8 +31,8 @@ use std::{
 use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
-    AgentThreadInfo, AgentThreadStatus, Item, ItemHandle, ItemNavHistory, MultiWorkspace,
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -1206,60 +1206,6 @@ impl AgentDiff {
         });
     }
 
-    fn push_thread_info_to_multi_workspace(
-        workspace: &WeakEntity<Workspace>,
-        thread: &Entity<AcpThread>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(Some(multi_workspace)) = window.root::<MultiWorkspace>() else {
-            return;
-        };
-        let Some(workspace_entity) = workspace.upgrade() else {
-            return;
-        };
-        let thread_ref = thread.read(cx);
-        let title = thread_ref.title();
-        let status = match thread_ref.status() {
-            ThreadStatus::Generating => AgentThreadStatus::Running,
-            ThreadStatus::Idle => AgentThreadStatus::Completed,
-        };
-        let entity_id = workspace_entity.entity_id();
-        multi_workspace.update(cx, |mw, cx| {
-            if let Some(index) = mw.workspace_index_by_entity_id(entity_id) {
-                mw.set_workspace_thread_info(index, Some(AgentThreadInfo { title, status }), cx);
-            }
-        });
-    }
-
-    fn push_thread_error_to_multi_workspace(
-        workspace: &WeakEntity<Workspace>,
-        thread: &Entity<AcpThread>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(Some(multi_workspace)) = window.root::<MultiWorkspace>() else {
-            return;
-        };
-        let Some(workspace_entity) = workspace.upgrade() else {
-            return;
-        };
-        let title = thread.read(cx).title();
-        let entity_id = workspace_entity.entity_id();
-        multi_workspace.update(cx, |mw, cx| {
-            if let Some(index) = mw.workspace_index_by_entity_id(entity_id) {
-                mw.set_workspace_thread_info(
-                    index,
-                    Some(AgentThreadInfo {
-                        title,
-                        status: AgentThreadStatus::Errored,
-                    }),
-                    cx,
-                );
-            }
-        });
-    }
-
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
@@ -1267,8 +1213,6 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::push_thread_info_to_multi_workspace(workspace, &thread, window, cx);
-
         let action_log = thread.read(cx).action_log().clone();
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
@@ -1389,7 +1333,6 @@ impl AgentDiff {
     ) {
         match event {
             AcpThreadEvent::NewEntry => {
-                Self::push_thread_info_to_multi_workspace(workspace, thread, window, cx);
                 if thread
                     .read(cx)
                     .entries()
@@ -1410,17 +1353,13 @@ impl AgentDiff {
                 }
             }
             AcpThreadEvent::Stopped => {
-                Self::push_thread_info_to_multi_workspace(workspace, thread, window, cx);
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
-                Self::push_thread_error_to_multi_workspace(workspace, thread, window, cx);
                 self.update_reviewing_editors(workspace, window, cx);
             }
-            AcpThreadEvent::TitleUpdated => {
-                Self::push_thread_info_to_multi_workspace(workspace, thread, window, cx);
-            }
-            AcpThreadEvent::TokenUsageUpdated
+            AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::PromptCapabilitiesUpdated

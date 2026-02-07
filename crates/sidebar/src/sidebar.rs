@@ -1,3 +1,5 @@
+use acp_thread::ThreadStatus;
+use agent_ui::{AgentPanel, AgentPanelEvent};
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -7,6 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashMap;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -15,10 +20,21 @@ use ui::{CommonAnimationExt, Divider, HighlightedLabel, ListItem, Tab, Tooltip, 
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    AgentThreadInfo, AgentThreadStatus, CloseIntent, MultiWorkspace, NewWorkspaceInWindow,
-    OpenOptions, OpenVisible, Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar,
-    Workspace,
+    CloseIntent, MultiWorkspace, NewWorkspaceInWindow, OpenOptions, OpenVisible,
+    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AgentThreadStatus {
+    Running,
+    Completed,
+}
+
+#[derive(Clone, Debug)]
+struct AgentThreadInfo {
+    title: SharedString,
+    status: AgentThreadStatus,
+}
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
 const MIN_WIDTH: Pixels = px(200.0);
@@ -34,12 +50,8 @@ struct WorkspaceThreadEntry {
 }
 
 impl WorkspaceThreadEntry {
-    fn new(
-        index: usize,
-        workspace: &Entity<Workspace>,
-        thread_info: Option<AgentThreadInfo>,
-        cx: &App,
-    ) -> Self {
+    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
+        let thread_info = Self::thread_info(workspace, cx);
         let workspace_ref = workspace.read(cx);
 
         let worktrees: Vec<_> = workspace_ref
@@ -74,6 +86,18 @@ impl WorkspaceThreadEntry {
             full_path,
             thread_info,
         }
+    }
+
+    fn thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
+        let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let thread = agent_panel.read(cx).active_agent_thread(cx)?;
+        let thread_ref = thread.read(cx);
+        let title = thread_ref.title();
+        let status = match thread_ref.status() {
+            ThreadStatus::Generating => AgentThreadStatus::Running,
+            ThreadStatus::Idle => AgentThreadStatus::Completed,
+        };
+        Some(AgentThreadInfo { title, status })
     }
 }
 
@@ -490,10 +514,6 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     .size(IconSize::XSmall)
                     .color(Color::Accent)
                     .into_any_element(),
-                AgentThreadStatus::Errored => Icon::new(IconName::XCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Error)
-                    .into_any_element(),
             }
         }
 
@@ -648,6 +668,10 @@ pub struct Sidebar {
     picker: Entity<Picker<WorkspacePickerDelegate>>,
     _subscription: Subscription,
     _project_subscriptions: Vec<Subscription>,
+    _agent_panel_subscriptions: Vec<Subscription>,
+    _thread_subscriptions: Vec<Subscription>,
+    #[cfg(any(test, feature = "test-support"))]
+    test_thread_infos: HashMap<usize, AgentThreadInfo>,
     _fetch_recent_projects: Task<()>,
 }
 
@@ -700,6 +724,10 @@ impl Sidebar {
             picker,
             _subscription: subscription,
             _project_subscriptions: Vec::new(),
+            _agent_panel_subscriptions: Vec::new(),
+            _thread_subscriptions: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            test_thread_infos: HashMap::new(),
             _fetch_recent_projects: fetch_recent_projects,
         };
         this.queue_refresh(this.multi_workspace.clone(), window, cx);
@@ -739,18 +767,25 @@ impl Sidebar {
     }
 
     fn build_workspace_thread_entries(
+        &self,
         multi_workspace: &MultiWorkspace,
         cx: &App,
     ) -> (Vec<WorkspaceThreadEntry>, usize) {
-        let entries = multi_workspace
+        #[allow(unused_mut)]
+        let mut entries: Vec<WorkspaceThreadEntry> = multi_workspace
             .workspaces()
             .iter()
             .enumerate()
-            .map(|(index, workspace)| {
-                let thread_info = multi_workspace.workspace_thread_info(index).cloned();
-                WorkspaceThreadEntry::new(index, workspace, thread_info, cx)
-            })
+            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
             .collect();
+
+        #[cfg(any(test, feature = "test-support"))]
+        for (index, info) in &self.test_thread_infos {
+            if let Some(entry) = entries.get_mut(*index) {
+                entry.thread_info = Some(info.clone());
+            }
+        }
+
         (entries, multi_workspace.active_workspace_index())
     }
 
@@ -765,6 +800,57 @@ impl Sidebar {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_thread_info(&mut self, index: usize, title: SharedString, status: &str) {
+        let status = match status {
+            "running" => AgentThreadStatus::Running,
+            _ => AgentThreadStatus::Completed,
+        };
+        self.test_thread_infos
+            .insert(index, AgentThreadInfo { title, status });
+    }
+
+    fn subscribe_to_agent_panels(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
+
+        workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+                Some(cx.subscribe_in(
+                    &agent_panel,
+                    window,
+                    |this, _, _event: &AgentPanelEvent, window, cx| {
+                        this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn subscribe_to_threads(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let workspaces: Vec<_> = self.multi_workspace.read(cx).workspaces().to_vec();
+
+        workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
+                let thread = agent_panel.read(cx).active_agent_thread(cx)?;
+                Some(cx.observe_in(&thread, window, |this, _, window, cx| {
+                    this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                }))
+            })
+            .collect()
+    }
+
     fn queue_refresh(
         &mut self,
         multi_workspace: Entity<MultiWorkspace>,
@@ -773,8 +859,10 @@ impl Sidebar {
     ) {
         cx.defer_in(window, move |this, window, cx| {
             this._project_subscriptions = this.subscribe_to_projects(window, cx);
+            this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
+            this._thread_subscriptions = this.subscribe_to_threads(window, cx);
             let (entries, active_index) = multi_workspace.read_with(cx, |multi_workspace, cx| {
-                Self::build_workspace_thread_entries(multi_workspace, cx)
+                this.build_workspace_thread_entries(multi_workspace, cx)
             });
             this.picker.update(cx, |picker, cx| {
                 picker.delegate.set_entries(entries, active_index, cx);
