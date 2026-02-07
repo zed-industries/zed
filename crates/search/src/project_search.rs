@@ -39,6 +39,7 @@ use std::{
     ops::{Not, Range},
     pin::pin,
     sync::Arc,
+    time::{Duration, Instant},
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
@@ -309,6 +310,8 @@ impl ProjectSearch {
     }
 
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        const SEARCH_RESULTS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
@@ -347,6 +350,8 @@ impl ProjectSearch {
                 .ok()?;
 
             let mut limit_reached = false;
+            let mut pending_match_ranges = Vec::new();
+            let mut last_refresh_at = Instant::now();
             while let Some(results) = matches.next().await {
                 let (buffers_with_ranges, has_reached_limit) = cx
                     .background_executor()
@@ -389,13 +394,30 @@ impl ProjectSearch {
                     // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
                     // will not reschedule, starving other front end tasks, insert a yield point for that here
                     smol::future::yield_now().await;
-                    project_search
-                        .update(cx, |project_search, cx| {
-                            project_search.match_ranges.extend(new_ranges);
-                            cx.notify();
-                        })
-                        .ok()?;
+                    pending_match_ranges.extend(new_ranges);
+
+                    if !pending_match_ranges.is_empty()
+                        && last_refresh_at.elapsed() >= SEARCH_RESULTS_REFRESH_INTERVAL
+                    {
+                        let ranges_to_apply = mem::take(&mut pending_match_ranges);
+                        project_search
+                            .update(cx, |project_search, cx| {
+                                project_search.match_ranges.extend(ranges_to_apply);
+                                cx.notify();
+                            })
+                            .ok()?;
+                        last_refresh_at = Instant::now();
+                    }
                 }
+            }
+
+            if !pending_match_ranges.is_empty() {
+                project_search
+                    .update(cx, |project_search, cx| {
+                        project_search.match_ranges.extend(pending_match_ranges);
+                        cx.notify();
+                    })
+                    .ok()?;
             }
 
             project_search
