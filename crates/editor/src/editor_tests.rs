@@ -7896,6 +7896,38 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_paste_multiline_from_other_app_into_matching_cursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Paste into 3 cursors: each cursor should receive one line.
+    cx.set_state("ˇ one ˇ two ˇ three");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alphaˇ one betaˇ two gammaˇ three");
+
+    // Paste into 2 cursors: line count doesn't match, so paste entire text at each cursor.
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+    cx.set_state("ˇ one ˇ two");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alpha\nbeta\ngammaˇ one alpha\nbeta\ngammaˇ two");
+
+    // Paste into a single cursor: should paste everything as-is.
+    cx.write_to_clipboard(ClipboardItem::new_string("alpha\nbeta\ngamma".into()));
+    cx.set_state("ˇ one");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("alpha\nbeta\ngammaˇ one");
+
+    // Paste with selections: each selection is replaced with its corresponding line.
+    cx.write_to_clipboard(ClipboardItem::new_string("xx\nyy\nzz".into()));
+    cx.set_state("«aˇ» one «bˇ» two «cˇ» three");
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("xxˇ one yyˇ two zzˇ three");
+}
+
+#[gpui::test]
 fn test_select_all(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
