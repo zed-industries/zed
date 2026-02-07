@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
@@ -308,6 +307,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace",
 ]
 
 [[package]]
@@ -3739,7 +3739,6 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
- "pretty_assertions",
  "project",
  "rpc",
  "semver",
@@ -15240,6 +15239,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "regex",
  "release_channel",
  "schemars",
  "search",

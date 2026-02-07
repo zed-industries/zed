@@ -676,12 +676,13 @@ impl ToolPermissionContext {
                 extract_terminal_pattern_display(input_value),
             )
         } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
-            // input_value is "source\ndestination"; extract a pattern from the
-            // common parent directory of both paths so that "always allow" covers
-            // future checks against both the source and the destination.
+            let dest = input_value
+                .split_once(" -> ")
+                .map(|(_, d)| d)
+                .unwrap_or(input_value);
             (
-                extract_copy_move_pattern(input_value),
-                extract_copy_move_pattern_display(input_value),
+                extract_path_pattern(dest),
+                extract_path_pattern_display(dest),
             )
         } else if tool_name == EditFileTool::NAME
             || tool_name == DeletePathTool::NAME
@@ -3112,10 +3113,10 @@ impl ToolCallEventStream {
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// They only support `default` (allow/deny/confirm) per tool.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
@@ -3198,7 +3199,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3211,7 +3212,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3271,7 +3272,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3287,7 +3288,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
                 }

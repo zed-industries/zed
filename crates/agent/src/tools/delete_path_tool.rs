@@ -81,7 +81,6 @@ impl AgentTool for DeletePathTool {
         let mut decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         if matches!(decision, ToolPermissionDecision::Allow)
-            && !settings.always_allow_tool_actions
             && is_sensitive_settings_path(Path::new(&path))
         {
             decision = ToolPermissionDecision::Confirm;

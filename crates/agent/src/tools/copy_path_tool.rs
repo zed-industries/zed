@@ -98,11 +98,9 @@ impl AgentTool for CopyPathTool {
 
         let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
             || matches!(dest_decision, ToolPermissionDecision::Confirm)
-            || (!settings.always_allow_tool_actions
-                && matches!(source_decision, ToolPermissionDecision::Allow)
+            || (matches!(source_decision, ToolPermissionDecision::Allow)
                 && is_sensitive_settings_path(Path::new(&input.source_path)))
-            || (!settings.always_allow_tool_actions
-                && matches!(dest_decision, ToolPermissionDecision::Allow)
+            || (matches!(dest_decision, ToolPermissionDecision::Allow)
                 && is_sensitive_settings_path(Path::new(&input.destination_path)));
 
         let authorize = if needs_confirmation {
@@ -110,7 +108,7 @@ impl AgentTool for CopyPathTool {
             let dest = MarkdownInlineCode(&input.destination_path);
             let context = crate::ToolPermissionContext {
                 tool_name: Self::NAME.to_string(),
-                input_value: format!("{}\n{}", input.source_path, input.destination_path),
+                input_value: format!("{} -> {}", input.source_path, input.destination_path),
             };
             let title = format!("Copy {src} to {dest}");
             let sensitive_kind = sensitive_settings_kind(Path::new(&input.source_path))
@@ -156,7 +154,7 @@ impl AgentTool for CopyPathTool {
                     anyhow::bail!("Copy cancelled by user");
                 }
             };
-            let _ = result.with_context(|| {
+            result.with_context(|| {
                 format!(
                     "Copying {} to {}",
                     input.source_path, input.destination_path
