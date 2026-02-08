@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "start"
+    },
+    {
+      "label": "Explicit Label",
+      "type": "npm",
+      "script": "test"
+    }
+  ]
+}

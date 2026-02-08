@@ -13,15 +13,57 @@ struct TaskOptions {
     env: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 struct VsCodeTaskDefinition {
     label: String,
-    #[serde(flatten)]
     command: Option<Command>,
-    #[serde(flatten)]
     other_attributes: HashMap<String, serde_json_lenient::Value>,
     options: Option<TaskOptions>,
+}
+
+impl<'de> serde::Deserialize<'de> for VsCodeTaskDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TaskHelper {
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(flatten)]
+            command: Option<Command>,
+            #[serde(flatten)]
+            other_attributes: HashMap<String, serde_json_lenient::Value>,
+            options: Option<TaskOptions>,
+        }
+
+        let helper = TaskHelper::deserialize(deserializer)?;
+
+        // Generate label if not provided, matching VSCode's behavior
+        let label = helper.label.unwrap_or_else(|| {
+            match &helper.command {
+                Some(Command::Npm { script }) => format!("npm: {}", script),
+                Some(Command::Shell { command, .. }) => {
+                    // Use first word of command as label
+                    command
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("shell")
+                        .to_string()
+                }
+                Some(Command::Gulp { task }) => format!("gulp: {}", task),
+                None => "Untitled Task".to_string(),
+            }
+        });
+
+        Ok(VsCodeTaskDefinition {
+            label,
+            command: helper.command,
+            other_attributes: helper.other_attributes,
+            options: helper.options,
+        })
+    }
 }
 
 #[derive(Clone, Deserialize, PartialEq, Debug)]
@@ -357,5 +399,16 @@ mod tests {
         ];
         let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
+    }
+
+    #[test]
+    fn can_deserialize_tasks_without_labels() {
+        const TASKS_WITHOUT_LABELS: &str = include_str!("../test_data/tasks-without-labels.json");
+        let vscode_definitions: VsCodeTaskFile =
+            serde_json_lenient::from_str(TASKS_WITHOUT_LABELS).unwrap();
+
+        assert_eq!(vscode_definitions.tasks.len(), 2);
+        assert_eq!(vscode_definitions.tasks[0].label, "npm: start");
+        assert_eq!(vscode_definitions.tasks[1].label, "Explicit Label");
     }
 }
