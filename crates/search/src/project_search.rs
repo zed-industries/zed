@@ -1383,23 +1383,24 @@ impl ProjectSearchView {
 
     fn select_match(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.active_match_index {
-            let match_ranges = self.entity.read(cx).match_ranges.clone();
+            let match_count = self.entity.read(cx).match_ranges.len();
+            if match_count == 0 || index >= match_count {
+                return;
+            }
 
             if !EditorSettings::get_global(cx).search_wrap
-                && ((direction == Direction::Next && index + 1 >= match_ranges.len())
+                && ((direction == Direction::Next && index + 1 >= match_count)
                     || (direction == Direction::Prev && index == 0))
             {
                 crate::show_no_more_matches(window, cx);
                 return;
             }
 
-            let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, 1, window, cx)
-            });
-
-            let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                let range_to_select = editor.range_for_match(&range_to_select);
+                let match_ranges = &self.entity.read(cx).match_ranges;
+                let new_index =
+                    editor.match_index_for_direction(match_ranges, index, direction, 1, window, cx);
+                let range_to_select = editor.range_for_match(&match_ranges[new_index]);
                 let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
                     Autoscroll::center()
                 } else {
