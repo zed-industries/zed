@@ -567,6 +567,7 @@ impl VsCodeSettings {
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,
             remove_trailing_whitespace_on_save: self.read_bool("editor.trimAutoWhitespace"),
+            remove_whitespace_on_empty_lines: self.read_bool("editor.trimAutoWhitespace"),
             show_completion_documentation: None,
             colorize_brackets: self.read_bool("editor.bracketPairColorization.enabled"),
             show_completions_on_input: self.read_bool("editor.suggestOnTriggerCharacters"),
