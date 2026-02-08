@@ -1009,9 +1009,9 @@ impl LanguageServer {
                         }),
                         folding_range_kind: Some(FoldingRangeKindCapability {
                             value_set: Some(vec![
-                                FoldingRangeKind::Comment,
-                                FoldingRangeKind::Region,
-                                FoldingRangeKind::Imports,
+                                FoldingRangeKind::COMMENT,
+                                FoldingRangeKind::REGION,
+                                FoldingRangeKind::IMPORTS,
                             ]),
                         }),
                     }),
