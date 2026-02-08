@@ -799,7 +799,11 @@ pub async fn stream_completion_with_rate_limit_info(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
+                        let line = match line.strip_prefix("data:") {
+                            Some(rest) => rest.trim_start(),
+                            None => return None,
+                        };
+
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
                             Err(error) => Some(Err(AnthropicError::DeserializeResponse(error))),
