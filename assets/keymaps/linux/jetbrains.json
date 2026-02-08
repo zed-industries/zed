@@ -29,7 +29,6 @@
       "ctrl-pageup": "editor::MovePageUp",
       // "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
       "ctrl-alt-enter": "editor::NewlineAbove",
-      "shift-enter": "editor::NewlineBelow",
       // "ctrl--": "editor::Fold", // TODO: `ctrl-numpad--` (numpad not implemented)
       // "ctrl-+": "editor::UnfoldLines", // TODO: `ctrl-numpad+` (numpad not implemented)
       "alt-shift-g": "editor::SplitSelectionIntoLines",
@@ -68,6 +67,7 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
+      "shift-enter": "editor::NewlineBelow",
       "ctrl-f12": "outline::Toggle",
       "ctrl-r": ["buffer_search::Deploy", { "replace_enabled": true }],
       "ctrl-e": "file_finder::Toggle",
