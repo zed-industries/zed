@@ -143,19 +143,25 @@ impl MultiWorkspace {
 
         if self.sidebar_open {
             self.close_sidebar(window, cx);
+            let pane = self.workspace().read(cx).active_pane().clone();
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
         } else {
-            self.sidebar_open = true;
+            self.open_sidebar(window, cx);
             if let Some(sidebar) = &self.sidebar {
                 sidebar.focus(window, cx);
             }
-            cx.notify();
         }
+    }
+
+    pub fn open_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_open = true;
+        self.serialize(window, cx);
+        cx.notify();
     }
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
-        let pane = self.workspace().read(cx).active_pane().clone();
-        window.focus(&pane.read(cx).focus_handle(cx), cx);
+        self.serialize(window, cx);
         cx.notify();
     }
 
@@ -184,18 +190,22 @@ impl MultiWorkspace {
             return;
         }
 
-        // Multi-workspace mode: insert if not present, then activate
-        let index = self
-            .workspaces
-            .iter()
-            .position(|w| *w == workspace)
-            .unwrap_or_else(|| {
-                self.workspaces.push(workspace);
-                self.workspaces.len() - 1
-            });
+        let index = self.add_workspace(workspace.clone(), cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
             cx.notify();
+        }
+    }
+
+    /// Adds a workspace to this window without changing which workspace is active.
+    /// Returns the index of the workspace (existing or newly inserted).
+    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
+        if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
+            index
+        } else {
+            self.workspaces.push(workspace);
+            cx.notify();
+            self.workspaces.len() - 1
         }
     }
 
@@ -205,7 +215,7 @@ impl MultiWorkspace {
             "workspace index out of bounds"
         );
         self.active_workspace_index = index;
-        self.serialize_active_workspace(window, cx);
+        self.serialize(window, cx);
         self.focus_active_workspace(window, cx);
         cx.notify();
     }
@@ -228,15 +238,16 @@ impl MultiWorkspace {
         }
     }
 
-    fn serialize_active_workspace(&self, window: &mut Window, cx: &mut App) {
-        let workspace = self.workspace();
-        if let Some(database_id) = workspace.read(cx).database_id() {
-            let window_id = window.window_handle().window_id();
-            cx.background_spawn(async move {
-                crate::persistence::write_active_workspace_for_window(window_id, database_id).await;
-            })
-            .detach();
-        }
+    fn serialize(&self, window: &mut Window, cx: &mut App) {
+        let window_id = window.window_handle().window_id();
+        let state = crate::persistence::model::MultiWorkspaceState {
+            active_workspace_id: self.workspace().read(cx).database_id(),
+            sidebar_open: self.sidebar_open,
+        };
+        cx.background_spawn(async move {
+            crate::persistence::write_multi_workspace_state(window_id, state).await;
+        })
+        .detach();
     }
 
     fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {

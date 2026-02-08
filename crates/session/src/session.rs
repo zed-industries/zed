@@ -1,4 +1,3 @@
-use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
@@ -7,12 +6,10 @@ pub struct Session {
     session_id: String,
     old_session_id: Option<String>,
     old_window_ids: Option<Vec<WindowId>>,
-    old_active_workspaces: Option<HashMap<u64, i64>>,
 }
 
 const SESSION_ID_KEY: &str = "session_id";
 const SESSION_WINDOW_STACK_KEY: &str = "session_window_stack";
-const SESSION_ACTIVE_WORKSPACES_KEY: &str = "session_active_workspaces";
 
 impl Session {
     pub async fn new(session_id: String) -> Self {
@@ -34,17 +31,10 @@ impl Session {
                     .collect::<Vec<WindowId>>()
             });
 
-        let old_active_workspaces = KEY_VALUE_STORE
-            .read_kvp(SESSION_ACTIVE_WORKSPACES_KEY)
-            .ok()
-            .flatten()
-            .and_then(|json| serde_json::from_str::<HashMap<u64, i64>>(&json).ok());
-
         Self {
             session_id,
             old_session_id,
             old_window_ids,
-            old_active_workspaces,
         }
     }
 
@@ -54,7 +44,6 @@ impl Session {
             session_id: uuid::Uuid::new_v4().to_string(),
             old_session_id: None,
             old_window_ids: None,
-            old_active_workspaces: None,
         }
     }
 
@@ -64,7 +53,6 @@ impl Session {
             session_id: uuid::Uuid::new_v4().to_string(),
             old_session_id: Some(old_session_id),
             old_window_ids: None,
-            old_active_workspaces: None,
         }
     }
 
@@ -137,10 +125,6 @@ impl AppSession {
 
     pub fn last_session_window_stack(&self) -> Option<Vec<WindowId>> {
         self.session.old_window_ids.clone()
-    }
-
-    pub fn last_session_active_workspaces(&self) -> Option<&HashMap<u64, i64>> {
-        self.session.old_active_workspaces.as_ref()
     }
 }
 

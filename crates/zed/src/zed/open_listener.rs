@@ -498,8 +498,10 @@ async fn open_workspaces(
             if open_new_workspace == Some(true) {
                 Vec::new()
             } else {
-                // The workspace_id from the database is not used;
-                // open_paths will assign a new WorkspaceId when opening the workspace.
+                // TODO!(): This discards workspace_id, window_id, active workspace, and
+                // sidebar state — so multi-workspace grouping is lost and each workspace
+                // opens in its own window. Should use `restorable_workspaces` +
+                // `restore_session_windows` like `restore_or_create_workspace` does.
                 restorable_workspace_locations(cx, &app_state)
                     .await
                     .unwrap_or_default()

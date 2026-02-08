@@ -76,7 +76,8 @@ pub use pane_group::{
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, SerializedWorkspaceLocation, SessionWorkspace},
+    model::{ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace},
+    read_serialized_multi_workspaces,
 };
 use postage::stream::Stream;
 use project::{
@@ -565,7 +566,19 @@ pub struct OpenTerminal {
     pub local: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct WorkspaceId(i64);
 
 impl WorkspaceId {
@@ -1806,7 +1819,7 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.activate(workspace.clone(), cx);
+                        multi_workspace.add_workspace(workspace.clone(), cx);
                         workspace
                     })?;
                     (window, workspace)
@@ -7938,61 +7951,13 @@ pub async fn last_session_workspace_locations(
         .log_err()
 }
 
-/// Restores local session workspaces, grouped by window_id, into MultiWorkspace windows.
-/// Returns one result per window group containing the window handle on success.
-/// Remote workspaces in the input are silently skipped.
-pub async fn restore_session_windows(
-    locations: Vec<SessionWorkspace>,
-    active_workspaces: Option<collections::HashMap<WindowId, WorkspaceId>>,
-    app_state: Arc<AppState>,
-    cx: &mut AsyncApp,
-) -> Vec<anyhow::Result<WindowHandle<MultiWorkspace>>> {
-    let mut window_groups: Vec<Vec<SessionWorkspace>> = Vec::new();
-    let mut window_id_to_group: collections::HashMap<WindowId, usize> =
-        collections::HashMap::default();
-
-    for session_workspace in locations {
-        if matches!(
-            session_workspace.location,
-            SerializedWorkspaceLocation::Remote(_)
-        ) {
-            continue;
-        }
-
-        match session_workspace.window_id {
-            Some(window_id) => {
-                let group_index = *window_id_to_group.entry(window_id).or_insert_with(|| {
-                    window_groups.push(Vec::new());
-                    window_groups.len() - 1
-                });
-                window_groups[group_index].push(session_workspace);
-            }
-            None => {
-                window_groups.push(vec![session_workspace]);
-            }
-        }
-    }
-
-    let mut results = Vec::new();
-    for group in window_groups {
-        let active_workspace_id = active_workspaces.as_ref().and_then(|map| {
-            let window_id = group.first()?.window_id?;
-            map.get(&window_id).copied()
-        });
-        results.push(
-            restore_session_window_group(group, active_workspace_id, app_state.clone(), cx).await,
-        );
-    }
-    results
-}
-
-async fn restore_session_window_group(
-    group: Vec<SessionWorkspace>,
-    active_workspace_id: Option<WorkspaceId>,
+pub async fn restore_multiworkspace(
+    multi_workspace: SerializedMultiWorkspace,
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
-    let mut group_iter = group.into_iter();
+    let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
+    let mut group_iter = workspaces.into_iter();
     let first = group_iter
         .next()
         .context("window group must not be empty")?;
@@ -8040,7 +8005,7 @@ async fn restore_session_window_group(
         }
     }
 
-    if let Some(target_id) = active_workspace_id {
+    if let Some(target_id) = state.active_workspace_id {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 let target_index = multi_workspace
@@ -8060,6 +8025,14 @@ async fn restore_session_window_group(
                 if !multi_workspace.workspaces().is_empty() {
                     multi_workspace.activate_index(0, window, cx);
                 }
+            })
+            .log_err();
+    }
+
+    if state.sidebar_open {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_sidebar(window, cx);
             })
             .log_err();
     }
@@ -8449,7 +8422,7 @@ pub fn open_workspace_by_id(
                     workspace.centered_layout = centered_layout;
                     workspace
                 });
-                multi_workspace.activate(workspace.clone(), cx);
+                multi_workspace.add_workspace(workspace.clone(), cx);
                 workspace
             })?;
             (window, workspace)

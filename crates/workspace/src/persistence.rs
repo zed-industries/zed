@@ -283,29 +283,62 @@ impl From<WindowBoundsJson> for WindowBounds {
     }
 }
 
-pub const SESSION_ACTIVE_WORKSPACES_KEY: &str = "session_active_workspaces";
-
-fn read_active_workspaces_raw() -> Option<HashMap<u64, i64>> {
-    let json_str = KEY_VALUE_STORE
-        .read_kvp(SESSION_ACTIVE_WORKSPACES_KEY)
-        .log_err()
-        .flatten()?;
-
-    serde_json::from_str::<HashMap<u64, i64>>(&json_str).ok()
+fn multi_workspace_states() -> db::kvp::ScopedKeyValueStore<'static> {
+    KEY_VALUE_STORE.scoped("multi_workspace_state")
 }
 
-pub async fn write_active_workspace_for_window(
-    window_id: WindowId,
-    workspace_id: crate::WorkspaceId,
-) {
-    let mut map = read_active_workspaces_raw().unwrap_or_default();
-    map.insert(window_id.as_u64(), workspace_id.into());
-    if let Ok(json_str) = serde_json::to_string(&map) {
-        KEY_VALUE_STORE
-            .write_kvp(SESSION_ACTIVE_WORKSPACES_KEY.to_string(), json_str)
+fn read_multi_workspace_state(window_id: WindowId) -> model::MultiWorkspaceState {
+    multi_workspace_states()
+        .read(&window_id.as_u64().to_string())
+        .log_err()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+pub async fn write_multi_workspace_state(window_id: WindowId, state: model::MultiWorkspaceState) {
+    if let Ok(json_str) = serde_json::to_string(&state) {
+        multi_workspace_states()
+            .write(window_id.as_u64().to_string(), json_str)
             .await
             .log_err();
     }
+}
+
+pub fn read_serialized_multi_workspaces(
+    session_workspaces: Vec<model::SessionWorkspace>,
+) -> Vec<model::SerializedMultiWorkspace> {
+    let mut window_groups: Vec<Vec<model::SessionWorkspace>> = Vec::new();
+    let mut window_id_to_group: HashMap<WindowId, usize> = HashMap::default();
+
+    for session_workspace in session_workspaces {
+        match session_workspace.window_id {
+            Some(window_id) => {
+                let group_index = *window_id_to_group.entry(window_id).or_insert_with(|| {
+                    window_groups.push(Vec::new());
+                    window_groups.len() - 1
+                });
+                window_groups[group_index].push(session_workspace);
+            }
+            None => {
+                window_groups.push(vec![session_workspace]);
+            }
+        }
+    }
+
+    window_groups
+        .into_iter()
+        .map(|group| {
+            let window_id = group.first().and_then(|sw| sw.window_id);
+            let state = window_id
+                .map(read_multi_workspace_state)
+                .unwrap_or_default();
+            model::SerializedMultiWorkspace {
+                workspaces: group,
+                state,
+            }
+        })
+        .collect()
 }
 
 const DEFAULT_DOCK_STATE_KEY: &str = "default_dock_state";
@@ -3726,5 +3759,83 @@ mod tests {
         let window_30 = by_window.get(&WindowId::from(30u64)).unwrap();
         assert_eq!(window_30.len(), 1);
         assert!(window_30.contains(&WorkspaceId(5)));
+    }
+
+    #[gpui::test]
+    async fn test_read_serialized_multi_workspaces_with_state() {
+        use crate::persistence::model::MultiWorkspaceState;
+
+        // Write multi-workspace state for two windows via the scoped KVP.
+        let window_10 = WindowId::from(10u64);
+        let window_20 = WindowId::from(20u64);
+
+        write_multi_workspace_state(
+            window_10,
+            MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(2)),
+                sidebar_open: true,
+            },
+        )
+        .await;
+
+        write_multi_workspace_state(
+            window_20,
+            MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(3)),
+                sidebar_open: false,
+            },
+        )
+        .await;
+
+        // Build session workspaces: two in window 10, one in window 20, one with no window.
+        let session_workspaces = vec![
+            SessionWorkspace {
+                workspace_id: WorkspaceId(1),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/a"]),
+                window_id: Some(window_10),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(2),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/b"]),
+                window_id: Some(window_10),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(3),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/c"]),
+                window_id: Some(window_20),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(4),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/d"]),
+                window_id: None,
+            },
+        ];
+
+        let results = read_serialized_multi_workspaces(session_workspaces);
+
+        // Should produce 3 groups: window 10, window 20, and the orphan.
+        assert_eq!(results.len(), 3);
+
+        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        let group_10 = &results[0];
+        assert_eq!(group_10.workspaces.len(), 2);
+        assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
+        assert_eq!(group_10.state.sidebar_open, true);
+
+        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        let group_20 = &results[1];
+        assert_eq!(group_20.workspaces.len(), 1);
+        assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
+        assert_eq!(group_20.state.sidebar_open, false);
+
+        // Orphan group: no window_id, so state is default.
+        let group_none = &results[2];
+        assert_eq!(group_none.workspaces.len(), 1);
+        assert_eq!(group_none.state.active_workspace_id, None);
+        assert_eq!(group_none.state.sidebar_open, false);
     }
 }

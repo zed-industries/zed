@@ -55,7 +55,7 @@ use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -1272,33 +1272,17 @@ pub(crate) async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+    if let Some((multi_workspaces, remote_workspaces)) = restorable_workspaces(cx, &app_state).await
+    {
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        let remote_workspaces: Vec<SessionWorkspace> = locations
-            .iter()
-            .filter(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)))
-            .cloned()
-            .collect();
+        let mut local_results = Vec::new();
+        for multi_workspace in multi_workspaces {
+            local_results
+                .push(restore_multiworkspace(multi_workspace, app_state.clone(), cx).await);
+        }
 
-        let active_workspaces = cx.update(|cx| {
-            let session = app_state.session.read(cx);
-            session.last_session_active_workspaces().map(|raw| {
-                raw.iter()
-                    .map(|(&window_id, &workspace_id)| {
-                        (
-                            gpui::WindowId::from(window_id),
-                            workspace::WorkspaceId::from_i64(workspace_id),
-                        )
-                    })
-                    .collect()
-            })
-        });
-
-        let local_results =
-            workspace::restore_session_windows(locations, active_workspaces, app_state.clone(), cx)
-                .await;
         for result in local_results {
             results.push(result.map(|_| ()));
         }
@@ -1403,6 +1387,21 @@ pub(crate) async fn restore_or_create_workspace(
     }
 
     Ok(())
+}
+
+async fn restorable_workspaces(
+    cx: &mut AsyncApp,
+    app_state: &Arc<AppState>,
+) -> Option<(
+    Vec<workspace::SerializedMultiWorkspace>,
+    Vec<SessionWorkspace>,
+)> {
+    let locations = restorable_workspace_locations(cx, app_state).await?;
+    let (remote_workspaces, local_workspaces) = locations
+        .into_iter()
+        .partition(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)));
+    let multi_workspaces = workspace::read_serialized_multi_workspaces(local_workspaces);
+    Some((multi_workspaces, remote_workspaces))
 }
 
 pub(crate) async fn restorable_workspace_locations(
