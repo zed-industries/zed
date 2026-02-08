@@ -184,6 +184,27 @@ When using `vtsls`:
 }
 ```
 
+## Workspace TypeScript version
+
+This is enabled by default.
+
+Some projects require using the TypeScript version in `node_modules` to ensure compiler behavior, diagnostics, and editor tooling exactly match the build and CI environment, including framework and plugin compatibility. This avoids version-related inconsistencies and false errors across contributors and tooling.
+If you wish to disable this feature, it can be done as follows:
+
+```json [settings]
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "vtsls": {
+          "autoUseWorkspaceTsdk": false
+        }
+      }
+    }
+  }
+}
+```
+
 ## Debugging
 
 Zed supports debugging TypeScript code out of the box with `vscode-js-debug`.
