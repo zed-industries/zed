@@ -4038,11 +4038,27 @@ impl EditorElement {
                 && let Some((x_target, line_width)) = x_position
             {
                 let margin = em_width * 2;
-                if line_width + final_size.width + margin
+                if block.height() == 0 && block.style() == BlockStyle::Fixed {
+                    // Render inline at cursor position (for helix jump labels)
+                    // Check this FIRST before the diagnostic block check, because
+                    // helix jump labels also have element_height_in_lines == 1.
+                    if row.0 > 0 {
+                        row = DisplayRow(row.0 - 1);
+                    }
+                    is_block = false;
+                    element_height_in_lines = 0;
+                    let max_offset =
+                        editor_width + editor_margins.gutter.full_width() - final_size.width;
+                    let min_offset = (x_target + em_width - final_size.width)
+                        .max(editor_margins.gutter.full_width());
+                    x_offset = x_target.min(max_offset).max(min_offset);
+                    row_block_types.insert(row, is_block);
+                } else if line_width + final_size.width + margin
                     < editor_width + editor_margins.gutter.full_width()
                     && !row_block_types.contains_key(&(row - 1))
                     && element_height_in_lines == 1
                 {
+                    // Render inline at end of line (for diagnostic blocks that fit)
                     x_offset = line_width + margin;
                     row = row - 1;
                     is_block = false;

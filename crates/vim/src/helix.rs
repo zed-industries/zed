@@ -5,26 +5,36 @@ mod paste;
 mod select;
 mod surround;
 
-use editor::display_map::DisplaySnapshot;
+use editor::display_map::{
+    BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, DisplaySnapshot,
+};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    Anchor, DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
     SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{Context, Window};
-use language::{CharClassifier, CharKind, Point};
+use gpui::{Context, Font, Hsla, Pixels, Window, WindowTextSystem};
+use language::{CharClassifier, CharKind, Point, Selection};
+use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
-use settings::Settings;
+use settings::{RegisterSetting, Settings};
 use text::{Bias, SelectionGoal};
-use workspace::searchable::FilteredSearchRange;
-use workspace::searchable::{self, Direction};
+use ui::prelude::*;
+use workspace::searchable::{self, Direction, FilteredSearchRange};
 
 use crate::motion::{self, MotionKind};
-use crate::state::{Operator, SearchState};
+use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
     PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
-    state::Mode,
+};
+use std::{ops::Range, sync::Arc};
+
+pub(crate) const HELIX_JUMP_ACCENT: Hsla = Hsla {
+    h: 0.0,
+    s: 0.78,
+    l: 0.55,
+    a: 1.0,
 };
 
 actions!(
@@ -53,6 +63,8 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
+        /// Activate Helix-style word jump labels.
+        HelixJumpToWord,
         /// Select the next match for the current search query.
         HelixSelectNext,
         /// Select the previous match for the current search query.
@@ -79,6 +91,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, Vim::helix_substitute);
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
+    Vim::action(editor, cx, Vim::helix_jump_to_word);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
     Vim::action(editor, cx, |vim, _: &PushHelixSurroundAdd, window, cx| {
@@ -863,6 +876,704 @@ impl Vim {
             });
         }
     }
+
+    pub fn helix_jump_to_word(
+        &mut self,
+        _: &HelixJumpToWord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let behaviour = if self.mode.is_visual() {
+            HelixJumpBehaviour::Extend
+        } else {
+            HelixJumpBehaviour::Move
+        };
+        self.start_helix_jump(behaviour, window, cx);
+    }
+
+    fn start_helix_jump(
+        &mut self,
+        behaviour: HelixJumpBehaviour,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_visual = self.mode.is_visual();
+        let Some(data) = self.collect_helix_jump_data(is_visual, window, cx) else {
+            return;
+        };
+
+        if data.labels.is_empty() {
+            self.clear_helix_jump_ui(window, cx);
+            return;
+        }
+
+        if !self.apply_helix_jump_ui(data.highlights, data.blocks, window, cx) {
+            return;
+        }
+
+        self.push_operator(
+            Operator::HelixJump {
+                behaviour,
+                first_char: None,
+                labels: data.labels,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn collect_helix_jump_data(
+        &mut self,
+        is_visual: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<HelixJumpUiData> {
+        self.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let display_snapshot = &snapshot.display_snapshot;
+            let buffer_snapshot = display_snapshot.buffer_snapshot();
+
+            let scroll_position = snapshot.scroll_position();
+            let top_row = scroll_position.y.floor().max(0.0) as u32;
+
+            let visible_rows = editor
+                .visible_line_count()
+                .map(|count| count.ceil() as u32 + 1)
+                .filter(|count| *count > 0)
+                .unwrap_or_else(|| {
+                    display_snapshot
+                        .max_point()
+                        .row()
+                        .0
+                        .saturating_sub(top_row)
+                        .saturating_add(1)
+                });
+
+            let start_display_point = DisplayPoint::new(DisplayRow(top_row), 0);
+            let end_display_point =
+                DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
+
+            let start_point =
+                display_snapshot.display_point_to_point(start_display_point, Bias::Left);
+            let end_point = display_snapshot.display_point_to_point(end_display_point, Bias::Right);
+
+            let start_offset = buffer_snapshot.point_to_offset(start_point);
+            let end_offset = buffer_snapshot.point_to_offset(end_point);
+
+            let selections = editor.selections.all::<Point>(&display_snapshot);
+            let (skip_points, skip_ranges) =
+                Self::selection_skip_offsets(buffer_snapshot, &selections, is_visual);
+
+            // Get the primary cursor position for alternating forward/backward labeling
+            let cursor_offset = selections
+                .first()
+                .map(|s| buffer_snapshot.point_to_offset(s.head()))
+                .unwrap_or(start_offset);
+
+            let style = editor.style(cx);
+            let font = style.text.font();
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+
+            let accent = HelixSettings::get_global(cx).jump_label_accent;
+            Self::build_helix_jump_ui_data(
+                buffer_snapshot,
+                start_offset,
+                end_offset,
+                cursor_offset,
+                accent,
+                &skip_points,
+                &skip_ranges,
+                window.text_system(),
+                font,
+                font_size,
+            )
+        })
+    }
+
+    fn build_helix_jump_ui_data(
+        buffer: &MultiBufferSnapshot,
+        start_offset: MultiBufferOffset,
+        end_offset: MultiBufferOffset,
+        cursor_offset: MultiBufferOffset,
+        accent: Hsla,
+        skip_points: &[MultiBufferOffset],
+        skip_ranges: &[Range<MultiBufferOffset>],
+        text_system: &WindowTextSystem,
+        font: Font,
+        font_size: Pixels,
+    ) -> HelixJumpUiData {
+        if start_offset >= end_offset {
+            return HelixJumpUiData::default();
+        }
+
+        // First pass: collect all word candidates without assigning labels
+        let candidates = Self::collect_jump_candidates(
+            buffer,
+            start_offset,
+            end_offset,
+            skip_points,
+            skip_ranges,
+        );
+
+        if candidates.is_empty() {
+            return HelixJumpUiData::default();
+        }
+
+        // Partition candidates into forward (>= cursor) and backward (< cursor)
+        let mut forward: Vec<_> = candidates
+            .iter()
+            .filter(|c| c.word_start >= cursor_offset)
+            .cloned()
+            .collect();
+        let mut backward: Vec<_> = candidates
+            .iter()
+            .filter(|c| c.word_start < cursor_offset)
+            .cloned()
+            .collect();
+
+        // Sort forward by distance from cursor (ascending)
+        forward.sort_by_key(|c| c.word_start.0);
+        // Sort backward by distance from cursor (descending, so closest first)
+        backward.sort_by_key(|c| std::cmp::Reverse(c.word_start.0));
+
+        // Interleave: forward gets even indices (aa, ac, ae...), backward gets odd (ab, ad, af...)
+        let limit = HELIX_JUMP_ALPHABET.len() * HELIX_JUMP_ALPHABET.len();
+        let mut ordered_candidates = Vec::with_capacity(forward.len() + backward.len());
+        let mut fwd_iter = forward.into_iter();
+        let mut bwd_iter = backward.into_iter();
+
+        loop {
+            if ordered_candidates.len() >= limit {
+                break;
+            }
+            if let Some(fwd) = fwd_iter.next() {
+                ordered_candidates.push(fwd);
+            } else if bwd_iter.len() == 0 {
+                break;
+            }
+
+            if ordered_candidates.len() >= limit {
+                break;
+            }
+            if let Some(bwd) = bwd_iter.next() {
+                ordered_candidates.push(bwd);
+            } else if fwd_iter.len() == 0 {
+                break;
+            }
+        }
+
+        // Now assign labels and build UI data
+        let mut labels = Vec::with_capacity(ordered_candidates.len());
+        let mut highlights = Vec::with_capacity(ordered_candidates.len());
+        let mut blocks = Vec::with_capacity(ordered_candidates.len());
+
+        let width_of = |text: &str| -> Pixels {
+            if text.is_empty() {
+                return px(0.0);
+            }
+
+            let run = gpui::TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+
+            text_system.layout_line(text, font_size, &[run], None).width
+        };
+
+        // Fast path for fixed-width fonts: no per-word measurement required; the label width will
+        // match the width of any two characters.
+        let is_monospace = {
+            let monospace_tolerance = px(0.5);
+            let a = width_of("iiiiiiii");
+            let b = width_of("wwwwwwww");
+            let c = width_of("00000000");
+            let d = width_of("11111111");
+            let diff_1 = if a > b { a - b } else { b - a };
+            let diff_2 = if c > d { c - d } else { d - c };
+            diff_1 <= monospace_tolerance && diff_2 <= monospace_tolerance
+        };
+
+        fn scan_hidden_prefix<F: Fn(&str) -> Pixels>(
+            buffer: &MultiBufferSnapshot,
+            range_start: MultiBufferOffset,
+            range_end: MultiBufferOffset,
+            word_end: MultiBufferOffset,
+            label_width: Pixels,
+            max_left_shift: Pixels,
+            min_label_scale: f32,
+            max_hidden_chars: usize,
+            width_of: &F,
+            hidden_prefix: &mut String,
+            hide_end_offset: &mut MultiBufferOffset,
+            hidden_width: &mut Pixels,
+            total_char_count: &mut usize,
+            word_char_count: &mut usize,
+        ) {
+            let mut offset = range_start;
+            for chunk in buffer.text_for_range(range_start..range_end) {
+                for (idx, ch) in chunk.char_indices() {
+                    let absolute = offset + idx;
+
+                    *total_char_count += 1;
+                    if *total_char_count > max_hidden_chars {
+                        return;
+                    }
+
+                    hidden_prefix.push(ch);
+                    let end_offset = absolute + ch.len_utf8();
+
+                    if absolute < word_end && is_jump_word_char(ch) {
+                        *word_char_count += 1;
+                    }
+
+                    if *word_char_count < 2 {
+                        continue;
+                    }
+
+                    *hide_end_offset = end_offset;
+                    *hidden_width = width_of(hidden_prefix.as_str());
+
+                    let effective_width = *hidden_width + max_left_shift;
+                    let scale_needed = if label_width > px(0.0) {
+                        (effective_width / label_width).min(1.0)
+                    } else {
+                        1.0
+                    };
+
+                    if scale_needed >= min_label_scale {
+                        return;
+                    }
+                }
+                offset += chunk.len();
+            }
+        }
+
+        for (label_index, candidate) in ordered_candidates.into_iter().enumerate() {
+            let start_anchor = buffer.anchor_after(candidate.word_start);
+            let end_anchor = buffer.anchor_after(candidate.word_end);
+
+            let label = [
+                HELIX_JUMP_ALPHABET[label_index / HELIX_JUMP_ALPHABET.len()],
+                HELIX_JUMP_ALPHABET[label_index % HELIX_JUMP_ALPHABET.len()],
+            ];
+
+            if is_monospace {
+                let hide_end_anchor = buffer.anchor_after(candidate.first_two_end);
+                highlights.push(start_anchor..hide_end_anchor);
+                labels.push(HelixJumpLabel {
+                    label,
+                    range: start_anchor..end_anchor,
+                });
+                blocks.push(Self::jump_label_block(
+                    start_anchor,
+                    label,
+                    accent,
+                    label_index,
+                    font.clone(),
+                    font_size,
+                    1.0,
+                    px(0.0),
+                ));
+                continue;
+            }
+
+            // In proportional fonts, labels like "mw" can be wider than the first two letters of a
+            // word like "if". We hide enough of the word to ensure the label doesn't overlap
+            // visible text.
+            //
+            // To avoid "eating" punctuation between targets, we only extend the hidden region past
+            // the end of the word into *whitespace*, and only when it doesn't eliminate all
+            // separation from the next word.
+            //
+            // For short words (e.g. `if`) we prefer shifting the label left into preceding
+            // whitespace (indentation) rather than shrinking the label or consuming punctuation.
+            const MAX_HIDDEN_CHARS: usize = 16;
+            const MIN_LABEL_SCALE: f32 = 1.00;
+            let label_text: String = label.iter().collect();
+            let label_width = width_of(&label_text);
+
+            // Compute how much we can shift the label left into whitespace immediately preceding
+            // the word. This helps avoid tiny labels on short words without hiding punctuation.
+            const MAX_LEFT_WS_CHARS: usize = 32;
+            let mut left_ws_rev = String::new();
+            let mut left_ws_count = 0usize;
+            let mut left_stopped_at_line_break = false;
+            let mut left_stopped_at_non_ws = false;
+            let mut left_hit_limit = false;
+
+            for ch in buffer.reversed_chars_at(candidate.word_start) {
+                if ch == '\n' || ch == '\r' {
+                    left_stopped_at_line_break = true;
+                    break;
+                }
+
+                if !ch.is_whitespace() {
+                    left_stopped_at_non_ws = true;
+                    break;
+                }
+
+                left_ws_count += 1;
+                if left_ws_count > MAX_LEFT_WS_CHARS {
+                    left_hit_limit = true;
+                    break;
+                }
+
+                left_ws_rev.push(ch);
+            }
+
+            let left_ws: String = left_ws_rev.chars().rev().collect();
+            let left_ws_width = width_of(&left_ws);
+
+            // Leave a small gap before the label when it's between tokens; for indentation at the
+            // start of a line, it's safe to use the full width.
+            let left_is_indentation =
+                left_stopped_at_line_break || (!left_stopped_at_non_ws && !left_hit_limit);
+            let min_left_gap = if left_is_indentation {
+                px(0.0)
+            } else {
+                px(2.0)
+            };
+            let max_left_shift = (left_ws_width - min_left_gap).max(px(0.0));
+
+            // Determine how much whitespace after the word is safe to hide (if needed).
+            let mut allowed_ws_end_offset = candidate.word_end;
+            let mut ws_count = 0usize;
+            let mut last_ws_start = candidate.word_end;
+            let mut ws_end_offset = candidate.word_end;
+            let mut next_non_ws = None;
+            let mut hit_line_break_after_word = false;
+
+            let mut ws_scan_offset = candidate.word_end;
+            'ws: for chunk in buffer.text_for_range(candidate.word_end..end_offset) {
+                for (idx, ch) in chunk.char_indices() {
+                    let absolute = ws_scan_offset + idx;
+                    if ch == '\n' || ch == '\r' {
+                        hit_line_break_after_word = true;
+                        break 'ws;
+                    }
+                    if !ch.is_whitespace() {
+                        next_non_ws = Some(ch);
+                        break 'ws;
+                    }
+
+                    ws_count += 1;
+                    last_ws_start = absolute;
+                    ws_end_offset = absolute + ch.len_utf8();
+                }
+                ws_scan_offset += chunk.len();
+            }
+
+            let mut is_end_of_line = hit_line_break_after_word && next_non_ws.is_none();
+            if !is_end_of_line {
+                is_end_of_line = matches!(
+                    buffer.chars_at(candidate.word_end).next(),
+                    None | Some('\n') | Some('\r')
+                );
+            }
+
+            if ws_count > 0 {
+                let next_is_word = match next_non_ws {
+                    Some(ch) => is_jump_word_char(ch),
+                    None => false,
+                };
+
+                if next_is_word {
+                    // Only hide whitespace between words if we can leave at least one whitespace
+                    // character visible, so adjacent labels remain visually separated.
+                    if ws_count > 1 {
+                        allowed_ws_end_offset = last_ws_start;
+                    }
+                } else {
+                    // Next is punctuation (e.g. `if (`) or end-of-range: it's safe to hide all the
+                    // leading whitespace.
+                    allowed_ws_end_offset = ws_end_offset;
+                }
+            }
+
+            let mut hidden_prefix = String::new();
+            let mut hide_end_offset = candidate.first_two_end;
+            let mut hidden_width = px(0.0);
+            let mut total_char_count = 0usize;
+            let mut word_char_count = 0usize;
+            let min_label_scale = if is_end_of_line { 1.0 } else { MIN_LABEL_SCALE };
+
+            // First, try to fit within the word itself (plus any available left shift).
+            scan_hidden_prefix(
+                buffer,
+                candidate.word_start,
+                candidate.word_end,
+                candidate.word_end,
+                label_width,
+                max_left_shift,
+                min_label_scale,
+                MAX_HIDDEN_CHARS,
+                &width_of,
+                &mut hidden_prefix,
+                &mut hide_end_offset,
+                &mut hidden_width,
+                &mut total_char_count,
+                &mut word_char_count,
+            );
+
+            // If still too small, fall back to hiding some whitespace after the word (if allowed).
+            if label_width > px(0.0)
+                && (hidden_width + max_left_shift) / label_width < MIN_LABEL_SCALE
+                && allowed_ws_end_offset > candidate.word_end
+            {
+                scan_hidden_prefix(
+                    buffer,
+                    candidate.word_end,
+                    allowed_ws_end_offset,
+                    candidate.word_end,
+                    label_width,
+                    max_left_shift,
+                    min_label_scale,
+                    MAX_HIDDEN_CHARS,
+                    &width_of,
+                    &mut hidden_prefix,
+                    &mut hide_end_offset,
+                    &mut hidden_width,
+                    &mut total_char_count,
+                    &mut word_char_count,
+                );
+            }
+
+            // Fallback for unexpected measurement failure.
+            if hidden_width <= px(0.0) {
+                hidden_width = width_of(&hidden_prefix);
+            }
+
+            let hide_end_anchor = buffer.anchor_after(hide_end_offset);
+            highlights.push(start_anchor..hide_end_anchor);
+
+            // Leave a tiny margin to account for rounding differences between measurement and paint.
+            let left_shift = if label_width > hidden_width {
+                (label_width - hidden_width).min(max_left_shift)
+            } else {
+                px(0.0)
+            };
+
+            let scale_factor = if label_width > px(0.0) {
+                let scale = ((hidden_width + left_shift) / label_width).min(1.0);
+                if scale < 1.0 { scale * 0.99 } else { 1.0 }
+            } else {
+                1.0
+            };
+            let scale_factor = if is_end_of_line { 1.0 } else { scale_factor };
+
+            labels.push(HelixJumpLabel {
+                label,
+                range: start_anchor..end_anchor,
+            });
+
+            blocks.push(Self::jump_label_block(
+                start_anchor,
+                label,
+                accent,
+                label_index,
+                font.clone(),
+                font_size,
+                scale_factor,
+                left_shift,
+            ));
+        }
+
+        // Sort highlights by position - the editor's binary search expects them sorted
+        highlights.sort_by(|a, b| a.start.cmp(&b.start, buffer));
+
+        HelixJumpUiData {
+            labels,
+            highlights,
+            blocks,
+        }
+    }
+
+    fn collect_jump_candidates(
+        buffer: &MultiBufferSnapshot,
+        start_offset: MultiBufferOffset,
+        end_offset: MultiBufferOffset,
+        skip_points: &[MultiBufferOffset],
+        skip_ranges: &[Range<MultiBufferOffset>],
+    ) -> Vec<JumpCandidate> {
+        let mut candidates = Vec::new();
+        let limit = HELIX_JUMP_ALPHABET.len() * HELIX_JUMP_ALPHABET.len();
+
+        let mut offset = start_offset;
+        let mut in_word = false;
+        let mut word_start = start_offset;
+        let mut first_two_end = start_offset;
+        let mut char_count = 0;
+
+        'chunks: for chunk in buffer.text_for_range(start_offset..end_offset) {
+            for (idx, ch) in chunk.char_indices() {
+                let absolute = offset + idx;
+                let is_word = is_jump_word_char(ch);
+                if is_word {
+                    if !in_word {
+                        in_word = true;
+                        word_start = absolute;
+                        char_count = 0;
+                    }
+                    if char_count == 1 {
+                        first_two_end = absolute + ch.len_utf8();
+                    }
+                    char_count += 1;
+                }
+
+                if !is_word && in_word {
+                    if char_count >= 2
+                        && !Self::should_skip_jump_candidate(
+                            word_start,
+                            absolute,
+                            skip_points,
+                            skip_ranges,
+                        )
+                    {
+                        candidates.push(JumpCandidate {
+                            word_start,
+                            word_end: absolute,
+                            first_two_end,
+                        });
+                    }
+                    in_word = false;
+                    if candidates.len() >= limit {
+                        break 'chunks;
+                    }
+                }
+            }
+            offset += chunk.len();
+        }
+
+        // Handle word at end of buffer
+        if in_word
+            && char_count >= 2
+            && candidates.len() < limit
+            && !Self::should_skip_jump_candidate(word_start, end_offset, skip_points, skip_ranges)
+        {
+            candidates.push(JumpCandidate {
+                word_start,
+                word_end: end_offset,
+                first_two_end,
+            });
+        }
+
+        candidates
+    }
+
+    fn selection_skip_offsets(
+        buffer: &MultiBufferSnapshot,
+        selections: &[Selection<Point>],
+        is_visual: bool,
+    ) -> (Vec<MultiBufferOffset>, Vec<Range<MultiBufferOffset>>) {
+        let mut skip_points = Vec::with_capacity(selections.len());
+        let mut skip_ranges = Vec::new();
+
+        for selection in selections {
+            let head_offset = buffer.point_to_offset(selection.head());
+            skip_points.push(head_offset);
+
+            // In visual mode, don't skip ranges so we can shrink the selection
+            if !is_visual && selection.start != selection.end {
+                let mut start = buffer.point_to_offset(selection.start);
+                let mut end = buffer.point_to_offset(selection.end);
+                if start > end {
+                    std::mem::swap(&mut start, &mut end);
+                }
+                skip_ranges.push(start..end);
+            }
+        }
+
+        (skip_points, skip_ranges)
+    }
+
+    fn should_skip_jump_candidate(
+        word_start: MultiBufferOffset,
+        word_end: MultiBufferOffset,
+        skip_points: &[MultiBufferOffset],
+        skip_ranges: &[Range<MultiBufferOffset>],
+    ) -> bool {
+        // Use inclusive end (<=) so cursor at last char of word skips that word
+        skip_points
+            .iter()
+            .copied()
+            .any(|offset| offset >= word_start && offset <= word_end)
+            || skip_ranges
+                .iter()
+                .any(|range| range.start < word_end && word_start < range.end)
+    }
+
+    fn jump_label_block(
+        anchor: Anchor,
+        label: [char; 2],
+        accent: Hsla,
+        label_index: usize,
+        font: Font,
+        font_size: Pixels,
+        scale_factor: f32,
+        left_shift: Pixels,
+    ) -> BlockProperties<Anchor> {
+        let text: SharedString = label.iter().collect::<String>().into();
+        BlockProperties {
+            placement: BlockPlacement::Near(anchor),
+            height: Some(0),
+            style: BlockStyle::Fixed,
+            render: Arc::new(move |_cx: &mut BlockContext| {
+                let scaled_font_size = (font_size * scale_factor).max(px(1.0));
+                div()
+                    .block_mouse_except_scroll()
+                    .relative()
+                    .left(-left_shift)
+                    .font(font.clone())
+                    .text_size(scaled_font_size)
+                    .text_color(accent)
+                    .child(text.clone())
+                    .into_any_element()
+            }),
+            priority: label_index,
+        }
+    }
+}
+
+#[derive(RegisterSetting)]
+struct HelixSettings {
+    jump_label_accent: Hsla,
+}
+
+impl Settings for HelixSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let helix = content.helix.clone().unwrap_or_default();
+        Self {
+            jump_label_accent: helix.jump_label_accent.unwrap_or(HELIX_JUMP_ACCENT),
+        }
+    }
+}
+
+const HELIX_JUMP_ALPHABET: &[char; 26] = &[
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z',
+];
+
+fn is_jump_word_char(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+/// A word candidate for jump labels, before label assignment.
+#[derive(Clone)]
+struct JumpCandidate {
+    word_start: MultiBufferOffset,
+    word_end: MultiBufferOffset,
+    first_two_end: MultiBufferOffset,
+}
+
+#[derive(Default)]
+struct HelixJumpUiData {
+    labels: Vec<HelixJumpLabel>,
+    highlights: Vec<Range<Anchor>>,
+    blocks: Vec<BlockProperties<Anchor>>,
 }
 
 #[cfg(test)]
@@ -876,7 +1587,11 @@ mod test {
     use util::path;
     use workspace::DeploySearch;
 
-    use crate::{VimAddon, state::Mode, test::VimTestContext};
+    use crate::{
+        VimAddon,
+        state::{Mode, Operator},
+        test::VimTestContext,
+    };
 
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
@@ -1722,6 +2437,20 @@ mod test {
                 third line"},
             Mode::HelixNormal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_starts_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇhello world\njump labels", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("g w");
+
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        )
     }
 
     #[gpui::test]

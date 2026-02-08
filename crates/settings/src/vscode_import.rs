@@ -192,6 +192,7 @@ impl VsCodeSettings {
                 ..GlobalLspSettingsContent::default()
             }),
             helix_mode: None,
+            helix: None,
             image_viewer: None,
             journal: None,
             language_models: None,
