@@ -949,15 +949,17 @@ pub(crate) fn font_name_with_fallbacks_shared<'a>(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
     use crate::{
-        black, blue, font, px, red, white, Hsla, TestAppContext, TestDispatcher, TextRun,
-        WindowTextSystem,
+        Hsla, TestAppContext, TestDispatcher, TextRun, WindowTextSystem, black, blue, font, px,
+        red, white,
     };
+    #[cfg(target_os = "macos")]
     use std::sync::Arc;
 
+    #[cfg(target_os = "macos")]
     fn build_text_system() -> WindowTextSystem {
         let dispatcher = TestDispatcher::new(0);
         let cx = TestAppContext::build(dispatcher, None);
@@ -978,6 +980,7 @@ mod tests {
 
     /// Creates a TextRun with specified length, font family, and color.
     /// Uses the crate-level `font()` function for proper SharedString handling.
+    #[cfg(target_os = "macos")]
     fn text_run(len: usize, family: &'static str, color: Hsla) -> TextRun {
         TextRun {
             len,
@@ -1220,10 +1223,7 @@ mod tests {
         let text = "AB";
 
         // Same color, different font families (guaranteed different font_ids)
-        let runs = vec![
-            text_run(1, "Helvetica", red()),
-            text_run(1, "Menlo", red()),
-        ];
+        let runs = vec![text_run(1, "Helvetica", red()), text_run(1, "Menlo", red())];
 
         let layout = text_system.layout_line(text, px(14.0), &runs, None);
 
@@ -1268,15 +1268,13 @@ mod tests {
         let expected_len = 3 + 4 + 3;
 
         assert_eq!(
-            total_glyphs,
-            expected_len,
+            total_glyphs, expected_len,
             "POST-LLM-03 violation: Merged FontRun length MUST equal sum of merged TextRun lengths\n\
              Contract: WindowTextSystem.layout_line() POST-LLM-03\n\
              EXPECTED: {} glyphs (3+4+3)\n\
              ACTUAL: {} glyphs\n\
              GUIDANCE: When merging runs, implementation MUST accumulate lengths. No characters lost or duplicated.",
-            expected_len,
-            total_glyphs
+            expected_len, total_glyphs
         );
     }
 
@@ -1306,15 +1304,13 @@ mod tests {
         let output_total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
 
         assert_eq!(
-            output_total_glyphs,
-            input_total_len,
+            output_total_glyphs, input_total_len,
             "POST-LLM-04 violation: Total length MUST be preserved across TextRun→FontRun conversion\n\
              Contract: WindowTextSystem.layout_line() POST-LLM-04\n\
              EXPECTED: {} characters (sum of input TextRun.len)\n\
              ACTUAL: {} glyphs (sum of output FontRun glyph counts)\n\
              GUIDANCE: Character count invariant. Every input character must appear exactly once in output.",
-            input_total_len,
-            output_total_glyphs
+            input_total_len, output_total_glyphs
         );
     }
 
@@ -1338,15 +1334,13 @@ mod tests {
         let output_total_glyphs: usize = layout.runs.iter().map(|r| r.glyphs.len()).sum();
 
         assert_eq!(
-            output_total_glyphs,
-            input_total_len,
+            output_total_glyphs, input_total_len,
             "POST-LLM-04 violation: Single TextRun case must also preserve length\n\
              Contract: WindowTextSystem.layout_line() POST-LLM-04\n\
              EXPECTED: {} characters\n\
              ACTUAL: {} glyphs\n\
              GUIDANCE: Length preservation applies to all cases, including single run.",
-            input_total_len,
-            output_total_glyphs
+            input_total_len, output_total_glyphs
         );
     }
 
@@ -1542,8 +1536,7 @@ mod tests {
             .collect();
 
         assert_eq!(
-            positions_unselected,
-            positions_selected,
+            positions_unselected, positions_selected,
             "INV-LLM-02 violation: Glyph positions MUST be identical regardless of selection/highlighting\n\
              Contract: WindowTextSystem.layout_line() INV-LLM-02\n\
              EXPECTED: Identical glyph positions for both scenarios\n\
@@ -1575,16 +1568,13 @@ mod tests {
         let layout_selected = text_system.layout_line(text, px(14.0), &runs_selected, None);
 
         assert_eq!(
-            layout_unselected.width,
-            layout_selected.width,
+            layout_unselected.width, layout_selected.width,
             "INV-LLM-02 violation: LineLayout width MUST be identical regardless of selection\n\
              Contract: WindowTextSystem.layout_line() INV-LLM-02\n\
              EXPECTED: Same width ({:?})\n\
              ACTUAL: Unselected={:?}, Selected={:?}\n\
              GUIDANCE: Width changes indicate glyph repositioning or ligature breaks. Selection must not affect shaping.",
-            layout_unselected.width,
-            layout_unselected.width,
-            layout_selected.width
+            layout_unselected.width, layout_unselected.width, layout_selected.width
         );
     }
 
@@ -1618,8 +1608,7 @@ mod tests {
         );
 
         assert_eq!(
-            layout.len,
-            0,
+            layout.len, 0,
             "ERRORS-LLM-01: Empty layout should have len=0"
         );
     }
