@@ -12,6 +12,7 @@ When reporting issues or seeking help, it's useful to know your Zed version and 
 
 - {#action zed::About}: Find your Zed version number
 - {#action zed::CopySystemSpecsIntoClipboard}: Populate your clipboard with Zed version number, operating system version, and hardware specs
+- {#action zed::CopyInstalledExtensionsIntoClipboard}: Populate your clipboard with a list of your installed extensions and versions
 
 ## Zed Log
 
