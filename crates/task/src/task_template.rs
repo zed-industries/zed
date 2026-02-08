@@ -423,6 +423,10 @@ fn substitute_all_template_variables_in_vec(
             variable_names,
             substituted_variables,
         )?;
+        // Prune arguments that became empty after substitution, but keep explicit empty args.
+        if new_value.is_empty() && new_value != *variable {
+            continue;
+        }
         expanded.push(new_value);
     }
 
