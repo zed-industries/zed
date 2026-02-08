@@ -287,6 +287,7 @@ impl VsCodeSettings {
             rounded_selection: self.read_bool("editor.roundedSelection"),
             scroll_beyond_last_line: None,
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
+            smooth_scroll: self.smooth_scroll_content(),
             scrollbar: self.scrollbar_content(),
             search: self.search_content(),
             search_wrap: None,
@@ -309,6 +310,13 @@ impl VsCodeSettings {
             completion_detail_alignment: None,
             diff_view_style: None,
         }
+    }
+
+    fn smooth_scroll_content(&self) -> Option<SmoothScrollContent> {
+        skip_default(SmoothScrollContent {
+            enabled: self.read_bool("editor.smoothScrolling"),
+            duration: None,
+        })
     }
 
     fn sticky_scroll_content(&self) -> Option<StickyScrollContent> {

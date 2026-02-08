@@ -1,10 +1,15 @@
+use std::time::Duration;
+
 use super::Axis;
 use crate::{
-    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
+    ScrollCursorCenterTopBottom, ScrollCursorTop,
+    display_map::DisplayRow,
+    scroll::{ScrollBehavior, ScrollOffset},
 };
 use gpui::{Context, Point, Window};
+use settings::Settings;
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
@@ -27,11 +32,24 @@ impl Editor {
         &mut self,
         scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
-        window: &mut Window,
+        behavior: ScrollBehavior,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let smooth_scroll = EditorSettings::get_global(cx).smooth_scroll;
+        let current_position = self.scroll_position(cx);
         self.scroll_manager.update_ongoing_scroll(axis);
-        self.set_scroll_position(scroll_position, window, cx);
+
+        let duration = match behavior {
+            ScrollBehavior::RequestAnimation if smooth_scroll.enabled => {
+                Duration::from_secs_f32(smooth_scroll.duration)
+            }
+            _ => Duration::ZERO,
+        };
+
+        self.scroll_manager
+            .scroll_to(current_position, scroll_position, duration);
+        cx.notify();
     }
 
     pub fn scroll_cursor_center_top_bottom(

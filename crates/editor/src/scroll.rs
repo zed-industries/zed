@@ -191,6 +191,97 @@ impl ActiveScrollbarState {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollBehavior {
+    Instant,
+    RequestAnimation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScrollAnimationPhase {
+    Intermediate,
+    Final,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollAnimation {
+    pub phase: ScrollAnimationPhase,
+    pub duration: Duration,
+    pub position: gpui::Point<ScrollOffset>,
+    pub start_position: gpui::Point<ScrollOffset>,
+    pub target_position: gpui::Point<ScrollOffset>,
+    pub start_time: Instant,
+}
+
+impl ScrollAnimation {
+    pub fn instant(target: gpui::Point<ScrollOffset>) -> Self {
+        Self {
+            phase: ScrollAnimationPhase::Final,
+            duration: Duration::ZERO,
+            position: target,
+            start_position: target,
+            target_position: target,
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn progress(&self) -> f32 {
+        if self.duration == Duration::ZERO || self.start_position == self.target_position {
+            return 1.0;
+        }
+
+        let elapsed = self.start_time.elapsed().as_secs_f32();
+        let duration = self.duration.as_secs_f32();
+
+        (elapsed / duration).min(1.0)
+    }
+
+    pub fn advance(&mut self) {
+        if self.is_finished() {
+            self.phase = ScrollAnimationPhase::Final;
+            self.position = self.target_position;
+        } else {
+            let progress = self.progress();
+            let start = self.start_position;
+            let target = self.target_position;
+
+            let current_x = self.interpolate(start.x, target.x, progress);
+            let current_y = self.interpolate(start.y, target.y, progress);
+
+            self.phase = ScrollAnimationPhase::Intermediate;
+            self.position = point(current_x, current_y);
+        }
+    }
+
+    pub fn restart(&mut self, target: gpui::Point<ScrollOffset>) {
+        self.advance();
+        self.start_position = self.position;
+        self.start_time = Instant::now();
+        self.target_position = target;
+        self.phase = if self.target_position == self.start_position {
+            ScrollAnimationPhase::Final
+        } else {
+            ScrollAnimationPhase::Intermediate
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.progress() >= 1.0
+    }
+
+    fn interpolate(&self, from: ScrollOffset, to: ScrollOffset, progress: f32) -> ScrollOffset {
+        let delta = to - from;
+        let easing_fn = Self::easing_fn();
+        let eased_progress = easing_fn(progress) as ScrollOffset;
+
+        from + delta * eased_progress
+    }
+
+    fn easing_fn() -> impl Fn(f32) -> f32 {
+        gpui::ease_out_cubic()
+    }
+}
+
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: Entity<SharedScrollAnchor>,
@@ -220,17 +311,20 @@ pub struct ScrollManager {
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
+    scroll_animation: Option<ScrollAnimation>,
     _save_scroll_position_task: Task<()>,
 }
 
 impl ScrollManager {
     pub fn new(cx: &mut Context<Editor>) -> Self {
+        let editor_settings = EditorSettings::get_global(cx);
+        let vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         let anchor = cx.new(|_| SharedScrollAnchor {
             scroll_anchor: ScrollAnchor::new(),
             display_map_id: None,
         });
         ScrollManager {
-            vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
+            vertical_scroll_margin,
             anchor,
             scroll_max_x: None,
             ongoing: OngoingScroll::new(),
@@ -244,6 +338,7 @@ impl ScrollManager {
             visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
+            scroll_animation: None,
             _save_scroll_position_task: Task::ready(()),
         }
     }
@@ -368,7 +463,7 @@ impl ScrollManager {
         self.sticky_header_line_count = count;
     }
 
-    fn set_scroll_position(
+    pub fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
         map: &DisplaySnapshot,
@@ -378,54 +473,30 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
-        let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => scroll_top,
-            ScrollBeyondLastLine::Off => {
-                if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
-                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
-                } else {
-                    scroll_top
-                }
-            }
-            ScrollBeyondLastLine::VerticalScrollMargin => {
-                if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().as_f64();
-                    scroll_top
-                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
-                        .max(0.)
-                } else {
-                    scroll_top
-                }
-            }
-        };
+        let (anchor, top_row) = self.calculate_scroll_anchor(scroll_position, map, cx);
 
-        let scroll_top_row = DisplayRow(scroll_top as u32);
-        let scroll_top_buffer_point = map
-            .clip_point(
-                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
-                Bias::Left,
+        if let Some(animation) = self.scroll_animation
+            && animation.phase == ScrollAnimationPhase::Intermediate
+        {
+            self.anchor.update(cx, |shared, _| {
+                shared.scroll_anchor = anchor;
+                shared.display_map_id = Some(map.display_map_id);
+            });
+            cx.notify();
+
+            WasScrolled(false)
+        } else {
+            self.set_anchor(
+                anchor,
+                map,
+                top_row,
+                local,
+                autoscroll,
+                workspace_id,
+                window,
+                cx,
             )
-            .to_point(map);
-        let top_anchor = map.buffer_snapshot().anchor_before(scroll_top_buffer_point);
-
-        self.set_anchor(
-            ScrollAnchor {
-                anchor: top_anchor,
-                offset: point(
-                    scroll_position.x.max(0.),
-                    scroll_top - top_anchor.to_display_point(map).row().as_f64(),
-                ),
-            },
-            map,
-            scroll_top_buffer_point.row,
-            local,
-            autoscroll,
-            workspace_id,
-            window,
-            cx,
-        )
+        }
     }
 
     fn set_anchor(
@@ -486,6 +557,55 @@ impl ScrollManager {
         cx.notify();
 
         WasScrolled(true)
+    }
+
+    fn calculate_scroll_anchor(
+        &self,
+        scroll_position: gpui::Point<ScrollOffset>,
+        map: &DisplaySnapshot,
+        cx: &App,
+    ) -> (ScrollAnchor, u32) {
+        let scroll_top = scroll_position.y.max(0.);
+        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scroll_top,
+            ScrollBeyondLastLine::Off => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().as_f64();
+                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                } else {
+                    scroll_top
+                }
+            }
+            ScrollBeyondLastLine::VerticalScrollMargin => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().as_f64();
+                    scroll_top
+                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                        .max(0.)
+                } else {
+                    scroll_top
+                }
+            }
+        };
+
+        let scroll_top_row = DisplayRow(scroll_top as u32);
+        let scroll_top_buffer_point = map
+            .clip_point(
+                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
+                Bias::Left,
+            )
+            .to_point(map);
+        let top_anchor = map.buffer_snapshot().anchor_before(scroll_top_buffer_point);
+
+        let anchor = ScrollAnchor {
+            anchor: top_anchor,
+            offset: point(
+                scroll_position.x.max(0.),
+                scroll_top - top_anchor.to_display_point(map).row().as_f64(),
+            ),
+        };
+
+        (anchor, scroll_top_buffer_point.row)
     }
 
     pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
@@ -627,6 +747,53 @@ impl ScrollManager {
     pub fn forbid_vertical_scroll(&self) -> bool {
         self.forbid_vertical_scroll
     }
+
+    pub fn scroll_animation(&self) -> Option<&ScrollAnimation> {
+        self.scroll_animation.as_ref()
+    }
+
+    pub fn scroll_to(
+        &mut self,
+        current_position: gpui::Point<ScrollOffset>,
+        target_position: gpui::Point<ScrollOffset>,
+        duration: Duration,
+    ) {
+        if duration == Duration::ZERO {
+            self.scroll_animation = Some(ScrollAnimation::instant(target_position));
+            return;
+        }
+
+        if self
+            .scroll_animation
+            .is_some_and(|a| a.target_position == target_position)
+        {
+            return;
+        }
+
+        if let Some(animation) = &mut self.scroll_animation {
+            animation.restart(target_position);
+        } else {
+            self.scroll_animation = Some(ScrollAnimation {
+                duration,
+                phase: ScrollAnimationPhase::Intermediate,
+                position: current_position,
+                start_position: current_position,
+                target_position,
+                start_time: Instant::now(),
+            })
+        }
+    }
+
+    pub fn cancel_animation(&mut self) {
+        self.scroll_animation = None;
+    }
+
+    pub fn update_animation(&mut self) -> Option<ScrollAnimation> {
+        self.scroll_animation.as_mut()?.advance();
+        self.scroll_animation
+            .take_if(|animation| animation.is_finished())
+            .or(self.scroll_animation)
+    }
 }
 
 impl Editor {
@@ -718,19 +885,32 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
-        let new_screen_top = DisplayPoint::new(row, 0);
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
+        if EditorSettings::get_global(cx).smooth_scroll.enabled {
+            let current_position = self.scroll_position(cx);
+            let new_position = point(current_position.x, row.0 as f64);
 
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        );
+            self.scroll(
+                new_position,
+                None,
+                ScrollBehavior::RequestAnimation,
+                window,
+                cx,
+            );
+        } else {
+            let snapshot = self.snapshot(window, cx).display_snapshot;
+            let new_screen_top = DisplayPoint::new(row, 0);
+            let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
+            let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
+
+            self.set_scroll_anchor(
+                ScrollAnchor {
+                    anchor: new_anchor,
+                    offset: Default::default(),
+                },
+                window,
+                cx,
+            );
+        }
     }
 
     pub(crate) fn set_scroll_position_internal(
@@ -798,6 +978,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.scroll_manager.cancel_animation();
+
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -859,7 +1041,13 @@ impl Editor {
             return;
         }
 
-        let mut current_position = self.scroll_position(cx);
+        // Use animation target if animating, otherwise current position
+        let mut current_position = self
+            .scroll_manager
+            .scroll_animation()
+            .map(|a| a.target_position)
+            .unwrap_or_else(|| self.scroll_position(cx));
+
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
@@ -899,7 +1087,14 @@ impl Editor {
                 amount.columns(visible_column_count),
                 amount.lines(visible_line_count),
             );
-        self.set_scroll_position(new_position, window, cx);
+
+        self.scroll(
+            new_position,
+            None,
+            ScrollBehavior::RequestAnimation,
+            window,
+            cx,
+        );
     }
 
     /// Returns an ordering. The newest selection is:
