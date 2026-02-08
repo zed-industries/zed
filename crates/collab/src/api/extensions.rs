@@ -13,7 +13,6 @@ use cloud_api_types::{ExtensionApiManifest, GetExtensionsResponse};
 use collections::HashMap;
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
-
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
 use util::{ResultExt, maybe};
