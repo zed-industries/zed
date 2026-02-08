@@ -4745,6 +4745,7 @@ impl GitPanel {
                                     }),
                             )
                         })
+                        .group("entries")
                         .size_full()
                         .flex_grow()
                         .with_width_from_item(self.max_width_item_index)
@@ -4781,25 +4782,64 @@ impl GitPanel {
         &self,
         ix: usize,
         header: &GitHeaderEntry,
-        _: bool,
-        _: &Window,
-        _: &Context<Self>,
+        has_write_access: bool,
+        _window: &Window,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+        let checkbox_id: ElementId = ElementId::Name(format!("header_{}_checkbox", ix).into());
+        let toggle_state = self.header_state(header.header);
+        let section = header.header;
+        let weak = cx.weak_entity();
+        let show_checkbox_persistently = !matches!(&toggle_state, ToggleState::Unselected);
 
         h_flex()
             .id(id)
             .h(self.list_item_height())
             .w_full()
-            .items_end()
-            .px_3()
-            .pb_1()
+            .items_center()
+            .pl_3()
+            .pr_1()
+            .gap_1p5()
+            .border_1()
+            .border_r_2()
             .child(
-                Label::new(header.title())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-                    .line_height_style(LineHeightStyle::UiLabel)
-                    .single_line(),
+                h_flex().flex_1().child(
+                    Label::new(header.title())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .line_height_style(LineHeightStyle::UiLabel)
+                        .single_line(),
+                ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .cursor_pointer()
+                    .child(
+                        Checkbox::new(checkbox_id, toggle_state)
+                            .disabled(!has_write_access)
+                            .fill()
+                            .elevation(ElevationIndex::Surface)
+                            .on_click_ext(move |_, _, window, cx| {
+                                if !has_write_access {
+                                    return;
+                                }
+
+                                weak.update(cx, |this, cx| {
+                                    this.toggle_staged_for_entry(
+                                        &GitListEntry::Header(GitHeaderEntry { header: section }),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                })
+                                .ok();
+                            }),
+                    )
+                    .when(!show_checkbox_persistently, |this| {
+                        this.visible_on_hover("entries")
+                    }),
             )
             .into_any_element()
     }
