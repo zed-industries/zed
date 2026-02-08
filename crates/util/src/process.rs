@@ -1,10 +1,32 @@
 use anyhow::{Context as _, Result};
+#[cfg(windows)]
+use std::mem::ManuallyDrop;
 use std::process::Stdio;
+
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::JobObjects::TerminateJobObject,
+};
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct SendHandle(HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for SendHandle {}
+#[cfg(windows)]
+unsafe impl Sync for SendHandle {}
 
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
 /// are killed when the process is terminated by using process groups.
 pub struct Child {
+    #[cfg(not(windows))]
     process: smol::process::Child,
+    #[cfg(windows)]
+    process: ManuallyDrop<smol::process::Child>,
+    #[cfg(windows)]
+    job: Option<SendHandle>,
 }
 
 impl std::ops::Deref for Child {
@@ -47,8 +69,32 @@ impl Child {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
-        // TODO(windows): create a job object and add the child process handle to it,
-        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{
+            Foundation::HANDLE,
+            System::JobObjects::{
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+                SetInformationJobObject,
+            },
+        };
+
+        let job = unsafe { CreateJobObjectW(None, None) }
+            .with_context(|| "failed to create job object")?;
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        }
+        .with_context(|| "failed to set job object information")?;
+
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
@@ -57,11 +103,32 @@ impl Child {
             .spawn()
             .with_context(|| format!("failed to spawn command {command:?}"))?;
 
-        Ok(Self { process })
+        let process_handle = HANDLE(process.as_raw_handle());
+        unsafe { AssignProcessToJobObject(job, process_handle) }
+            .with_context(|| "failed to assign process to job object")?;
+
+        Ok(Self {
+            process: ManuallyDrop::new(process),
+            job: Some(SendHandle(job)),
+        })
     }
 
+    #[cfg(not(windows))]
     pub fn into_inner(self) -> smol::process::Child {
         self.process
+    }
+
+    #[cfg(windows)]
+    pub fn into_inner(mut self) -> smol::process::Child {
+        if let Some(SendHandle(job)) = self.job.take() {
+            unsafe {
+                let _ = CloseHandle(job);
+            }
+        }
+
+        let process = unsafe { ManuallyDrop::take(&mut self.process) };
+        std::mem::forget(self);
+        process
     }
 
     #[cfg(not(windows))]
@@ -75,8 +142,24 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        // TODO(windows): terminate the job object in kill
-        self.process.kill()?;
+        if let Some(SendHandle(job)) = self.job.take() {
+            unsafe {
+                let _ = TerminateJobObject(job, 1);
+                let _ = CloseHandle(job);
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Child {
+    fn drop(&mut self) {
+        if let Some(SendHandle(job)) = self.job.take() {
+            unsafe {
+                let _ = TerminateJobObject(job, 1);
+                let _ = CloseHandle(job);
+            }
+        }
     }
 }
