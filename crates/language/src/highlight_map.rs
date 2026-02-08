@@ -11,7 +11,11 @@ pub struct HighlightId(pub u32);
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub(crate) fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
+    pub(crate) fn new(
+        capture_names: &[&str],
+        grammar_name: Option<&str>,
+        theme: &SyntaxTheme,
+    ) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
@@ -25,7 +29,8 @@ impl HighlightMap {
                         .enumerate()
                         .filter_map(|(i, (key, _))| {
                             let mut len = 0;
-                            let capture_parts = capture_name.split('.');
+                            // the final component may match the TS language name, for per-lang customization
+                            let capture_parts = capture_name.split('.').chain(grammar_name);
                             for key_part in key.split('.') {
                                 if capture_parts.clone().any(|part| part == key_part) {
                                     len += 1;
@@ -91,6 +96,7 @@ mod tests {
                 ("function", rgba(0x100000ff)),
                 ("function.method", rgba(0x200000ff)),
                 ("function.async", rgba(0x300000ff)),
+                ("function.async.javascript", rgba(0x700000ff)),
                 ("variable.builtin.self.rust", rgba(0x400000ff)),
                 ("variable.builtin", rgba(0x500000ff)),
                 ("variable", rgba(0x600000ff)),
@@ -102,13 +108,15 @@ mod tests {
 
         let capture_names = &[
             "function.special",
-            "function.async.rust",
+            "function.async",
             "variable.builtin.self",
+            "variable.builtin",
         ];
 
-        let map = HighlightMap::new(capture_names, &theme);
+        let map = HighlightMap::new(capture_names, Some("rust"), &theme);
         assert_eq!(map.get(0).name(&theme), Some("function"));
         assert_eq!(map.get(1).name(&theme), Some("function.async"));
-        assert_eq!(map.get(2).name(&theme), Some("variable.builtin"));
+        assert_eq!(map.get(2).name(&theme), Some("variable.builtin.self.rust"));
+        assert_eq!(map.get(3).name(&theme), Some("variable.builtin"));
     }
 }
