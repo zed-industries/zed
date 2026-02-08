@@ -259,7 +259,9 @@ pub fn release_notes_url(cx: &mut App) -> Option<String> {
         ReleaseChannel::Stable | ReleaseChannel::Preview => {
             let auto_updater = AutoUpdater::get(cx)?;
             let auto_updater = auto_updater.read(cx);
-            let current_version = &auto_updater.current_version;
+            let mut current_version = auto_updater.current_version.clone();
+            current_version.pre = semver::Prerelease::EMPTY;
+            current_version.build = semver::BuildMetadata::EMPTY;
             let release_channel = release_channel.dev_name();
             let path = format!("/releases/{release_channel}/{current_version}");
             auto_updater.client.http_client().build_url(&path)
@@ -740,8 +742,8 @@ impl AutoUpdater {
         fetched_version: Version,
     ) -> Result<Option<VersionCheckType>> {
         // For non-nightly releases, ignore build and pre-release fields as they're not provided by our endpoints right now.
-        installed_version.build = semver::BuildMetadata::EMPTY;
         installed_version.pre = semver::Prerelease::EMPTY;
+        installed_version.build = semver::BuildMetadata::EMPTY;
         let should_download = fetched_version > installed_version;
         let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));
         Ok(newer_version)
