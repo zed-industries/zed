@@ -786,6 +786,8 @@ impl Database {
                             entry_ids,
                             updated_statuses,
                             removed_statuses,
+                            updated_renamed_paths: Default::default(),
+                            removed_renamed_paths: Vec::new(),
                             current_merge_conflicts,
                             branch_summary,
                             head_commit_details,

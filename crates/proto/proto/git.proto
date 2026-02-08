@@ -126,6 +126,8 @@ message UpdateRepository {
     repeated StashEntry stash_entries = 13;
     optional string remote_upstream_url = 14;
     optional string remote_origin_url = 15;
+    map<string, string> updated_renamed_paths = 16;
+    repeated string removed_renamed_paths = 17;
 }
 
 message RemoveRepository {
