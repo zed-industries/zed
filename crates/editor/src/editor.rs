@@ -5405,13 +5405,45 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let text: Arc<str> = text.into();
+        self.replace_selections_with_text(text, autoindent_mode, window, cx, false);
+    }
+
+    fn replace_selections_with_text(
+        &mut self,
+        text: Arc<str>,
+        autoindent_mode: Option<AutoindentMode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        apply_linked_edits: bool,
+    ) {
         if self.read_only(cx) {
             return;
         }
 
-        let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
+            let mut linked_edits = HashMap::<_, Vec<_>>::default();
+
+            if apply_linked_edits && !this.linked_edit_ranges.is_empty() {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                for selection in &old_selections {
+                    let start_anchor = snapshot.anchor_before(selection.start);
+                    let end_anchor = snapshot.anchor_after(selection.end);
+                    if let Some(ranges) = this.linked_editing_ranges_for(
+                        start_anchor.text_anchor..end_anchor.text_anchor,
+                        cx,
+                    ) {
+                        for (buffer, edits) in ranges {
+                            linked_edits
+                                .entry(buffer)
+                                .or_default()
+                                .extend(edits.into_iter().map(|range| (range, text.clone())));
+                        }
+                    }
+                }
+            }
+
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -5433,12 +5465,72 @@ impl Editor {
                 anchors
             });
 
+            for (buffer, edits) in linked_edits {
+                buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let edits = edits
+                        .into_iter()
+                        .map(|(range, text)| {
+                            use text::ToPoint as TP;
+                            let end_point = TP::to_point(&range.end, &snapshot);
+                            let start_point = TP::to_point(&range.start, &snapshot);
+                            (start_point..end_point, text)
+                        })
+                        .sorted_by_key(|(range, _)| range.start);
+                    buffer.edit(edits, None, cx);
+                })
+            }
+
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select_anchors(selection_anchors);
             });
 
+            if apply_linked_edits {
+                refresh_linked_ranges(this, window, cx);
+            }
+
             cx.notify();
         });
+    }
+
+    pub fn delete_selections_with_linked_edits(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text: Arc<str> = Arc::from("");
+        self.replace_selections_with_text(text, None, window, cx, true);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_linked_edit_ranges_for_testing(
+        &mut self,
+        ranges: Vec<(Range<Point>, Vec<Range<Point>>)>,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let Some((buffer, _)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(self.selections.newest_anchor().start, cx)
+        else {
+            return None;
+        };
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let mut linked_ranges = Vec::with_capacity(ranges.len());
+        for (base_range, linked_ranges_points) in ranges {
+            let base_anchor = buffer.anchor_before(base_range.start)
+                ..buffer.anchor_after(base_range.end);
+            let linked_anchors = linked_ranges_points
+                .into_iter()
+                .map(|range| buffer.anchor_before(range.start)..buffer.anchor_after(range.end))
+                .collect();
+            linked_ranges.push((base_anchor, linked_anchors));
+        }
+        let mut map = HashMap::default();
+        map.insert(buffer_id, linked_ranges);
+        self.linked_edit_ranges = linked_editing_ranges::LinkedEditingRanges(map);
+        Some(())
     }
 
     fn trigger_completion_on_input(

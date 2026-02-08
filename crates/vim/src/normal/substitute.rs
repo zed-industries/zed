@@ -1,7 +1,5 @@
 use editor::{Editor, SelectionEffects, movement};
 use gpui::{Context, Window, actions};
-use language::Point;
-
 use crate::{
     Mode, Vim,
     motion::{Motion, MotionKind},
@@ -94,12 +92,7 @@ impl Vim {
                     MotionKind::Exclusive
                 };
                 vim.copy_selections_content(editor, kind, window, cx);
-                let selections = editor
-                    .selections
-                    .all::<Point>(&editor.display_snapshot(cx))
-                    .into_iter();
-                let edits = selections.map(|selection| (selection.start..selection.end, ""));
-                editor.edit(edits, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
             });
         });
         self.switch_mode(Mode::Insert, true, window, cx);
