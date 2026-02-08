@@ -1463,25 +1463,18 @@ impl ProjectSearchView {
     }
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let match_ranges = self.entity.read(cx).match_ranges.clone();
+        let first_match = self.entity.read(cx).match_ranges.first().cloned();
 
-        if match_ranges.is_empty() {
-            self.active_match_index = None;
-            self.results_editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
-            });
-        } else {
+        if let Some(first_match) = first_match {
             self.active_match_index = Some(0);
             self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
-                    let range_to_select = match_ranges
-                        .first()
-                        .map(|range| editor.range_for_match(range));
+                    let range_to_select = editor.range_for_match(&first_match);
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        s.select_ranges(range_to_select)
+                        s.select_ranges(Some(range_to_select))
                     });
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
@@ -1489,6 +1482,11 @@ impl ProjectSearchView {
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
             }
+        } else {
+            self.active_match_index = None;
+            self.results_editor.update(cx, |editor, cx| {
+                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
+            });
         }
 
         cx.emit(ViewEvent::UpdateTab);
