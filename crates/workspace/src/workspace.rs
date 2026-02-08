@@ -5643,6 +5643,11 @@ impl Workspace {
         if window.is_window_active() {
             self.update_active_view_for_followers(window, cx);
 
+            let git_store = self.project.read(cx).git_store().clone();
+            git_store.update(cx, |store, cx| {
+                store.reload_repositories(cx);
+            });
+
             if let Some(database_id) = self.database_id {
                 cx.background_spawn(persistence::DB.update_timestamp(database_id))
                     .detach();

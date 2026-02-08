@@ -6382,6 +6382,118 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_git_panel_updates_on_reload_repositories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                        "lib.rs": "pub fn hello() {}",
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project =
+            Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Verify initial state: only main.rs is modified.
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        assert_eq!(entries.len(), 2);
+        pretty_assertions::assert_matches!(
+            &entries[1],
+            GitListEntry::Status(entry) if entry.repo_path == repo_path("src/main.rs")
+        );
+
+        // Simulate an external git operation that Zed missed (e.g. after
+        // sleep/wake where FSEvents were lost). The FakeFs status change
+        // doesn't fire any worktree events, so the git store is unaware.
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("src/lib.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        cx.executor().run_until_parked();
+
+        // Panel still shows only main.rs because no events fired.
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        assert_eq!(
+            entries.len(),
+            2,
+            "panel should not yet see lib.rs (no events fired)"
+        );
+
+        // Trigger a full rescan of all repositories (as window activation does).
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        git_store.update(cx, |store, cx| {
+            store.reload_repositories(cx);
+        });
+
+        cx.executor().run_until_parked();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Now both files should appear.
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        assert_eq!(
+            entries.len(),
+            3,
+            "panel should show both modified files after reload"
+        );
+        pretty_assertions::assert_matches!(
+            &entries[1],
+            GitListEntry::Status(entry) if entry.repo_path == repo_path("src/lib.rs")
+        );
+        pretty_assertions::assert_matches!(
+            &entries[2],
+            GitListEntry::Status(entry) if entry.repo_path == repo_path("src/main.rs")
+        );
+    }
+
+    #[gpui::test]
     async fn test_bulk_staging(cx: &mut TestAppContext) {
         use GitListEntry::*;
 
