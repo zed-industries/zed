@@ -572,6 +572,7 @@ async fn open_workspaces(
                     let workspace_failed_to_open = open_local_workspace(
                         workspace_paths,
                         diff_paths.clone(),
+                        diff_all,
                         open_new_workspace,
                         reuse,
                         wait,
