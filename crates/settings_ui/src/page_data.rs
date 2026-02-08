@@ -2957,12 +2957,41 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
             .collect()
     }
 
+    fn language_selector_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Language Selector"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show in Command Palette",
+                description:
+                    "Show language selection commands in the command palette for all available languages.",
+                field: Box::new(SettingField {
+                    json_path: Some("language_selector.show_in_command_palette"),
+                    pick: |settings_content| {
+                        settings_content
+                            .language_selector
+                            .as_ref()
+                            .and_then(|settings| settings.show_in_command_palette.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .language_selector
+                            .get_or_insert_default()
+                            .show_in_command_palette = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Languages & Tools",
         items: {
             concat_sections!(
                 non_editor_language_settings_data(),
                 file_types_section(),
+                language_selector_section(),
                 diagnostics_section(),
                 inline_diagnostics_section(),
                 lsp_pull_diagnostics_section(),

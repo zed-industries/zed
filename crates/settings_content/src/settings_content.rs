@@ -202,6 +202,9 @@ pub struct SettingsContent {
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
 
+    /// Settings for the language selector.
+    pub language_selector: Option<LanguageSelectorSettingsContent>,
+
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -1115,6 +1118,16 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_width_columns: Option<usize>,
+}
+
+/// Settings for the language selector.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LanguageSelectorSettingsContent {
+    /// Whether to show "language: {language}" commands in the command palette
+    /// for all available languages.
+    ///
+    /// Default: false
+    pub show_in_command_palette: Option<bool>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

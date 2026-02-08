@@ -2605,6 +2605,48 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Language Selector
+
+- Description: Settings for the language selector.
+- Setting: `language_selector`
+- Default:
+
+```json [settings]
+{
+  "language_selector": {
+    "show_in_command_palette": false
+  }
+}
+```
+
+### Show in Command Palette
+
+- Description: Whether to show "language: {language}" commands in the command palette for all available languages.
+- Setting: `show_in_command_palette`
+- Default: `false`
+
+**Options**
+
+1. Show language commands in the command palette:
+
+```json [settings]
+{
+  "language_selector": {
+    "show_in_command_palette": true
+  }
+}
+```
+
+2. Hide language commands from the command palette:
+
+```json [settings]
+{
+  "language_selector": {
+    "show_in_command_palette": false
+  }
+}
+```
+
 ## Language Models
 
 - Description: Configuration for language model providers
