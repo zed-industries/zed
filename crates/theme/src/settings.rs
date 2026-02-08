@@ -136,9 +136,9 @@ pub struct ThemeSettings {
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
     /// The font used for inlay hints.
-    pub inlay_hint_font_family: Option<String>,
+    pub inlay_hints_font: Font,
     /// The font used for edit predictions.
-    pub edit_prediction_font_family: Option<String>,
+    pub edit_predictions_font: Font,
 }
 
 /// Returns the name of the default theme for the given [`Appearance`].
@@ -708,6 +708,14 @@ impl settings::Settings for ThemeSettings {
         let content = &content.theme;
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
+
+        let buffer_font_family = content.buffer_font_family.as_ref().unwrap();
+
+        let buffer_font_features = content.buffer_font_features.clone().unwrap().into_gpui();
+        let buffer_font_fallbacks =
+            font_fallbacks_from_settings(content.buffer_font_fallbacks.clone());
+        let buffer_font_weight = content.buffer_font_weight.unwrap().into_gpui();
+
         Self {
             ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
             ui_font: Font {
@@ -717,17 +725,37 @@ impl settings::Settings for ThemeSettings {
                 weight: content.ui_font_weight.unwrap().into_gpui(),
                 style: Default::default(),
             },
-            buffer_font: Font {
+            inlay_hints_font: Font {
                 family: content
-                    .buffer_font_family
+                    .inlay_hints_font_family
                     .as_ref()
-                    .unwrap()
+                    .unwrap_or(buffer_font_family)
                     .0
                     .clone()
                     .into(),
-                features: content.buffer_font_features.clone().unwrap().into_gpui(),
-                fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: content.buffer_font_weight.unwrap().into_gpui(),
+                features: buffer_font_features.clone(),
+                fallbacks: buffer_font_fallbacks.clone(),
+                weight: buffer_font_weight,
+                style: FontStyle::default(),
+            },
+            edit_predictions_font: Font {
+                family: content
+                    .edit_predictions_font_family
+                    .as_ref()
+                    .unwrap_or(buffer_font_family)
+                    .0
+                    .clone()
+                    .into(),
+                features: buffer_font_features.clone(),
+                fallbacks: buffer_font_fallbacks.clone(),
+                weight: buffer_font_weight,
+                style: FontStyle::default(),
+            },
+            buffer_font: Font {
+                family: buffer_font_family.0.clone().into(),
+                features: buffer_font_features,
+                fallbacks: buffer_font_fallbacks,
+                weight: buffer_font_weight,
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
@@ -740,8 +768,6 @@ impl settings::Settings for ThemeSettings {
             icon_theme: icon_theme_selection,
             ui_density: content.ui_density.unwrap_or_default().into(),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
-            inlay_hint_font_family: content.inlay_hints_font_family.clone(),
-            edit_prediction_font_family: content.edit_predictions_font_family.clone(),
         }
     }
 }

@@ -8647,50 +8647,12 @@ impl LineWithInvisibles {
         kind: ChunkKind,
         base_font: gpui::Font,
         editor_style: &EditorStyle,
-        highlight_style: Option<gpui::HighlightStyle>,
     ) -> gpui::Font {
-        let mut font = match kind {
-            ChunkKind::InlayHint => {
-                // Use inlay-specific font if configured
-                if let Some(inlay_font) = &editor_style.inlay_hints_font {
-                    let mut font = base_font.clone();
-                    font.family = inlay_font.clone();
-                    font
-                } else {
-                    base_font.clone()
-                }
-            }
-            ChunkKind::EditPrediction => {
-                // Use inlay-specific font if configured
-                if let Some(edit_prediction_font) = &editor_style.edit_prediction_font {
-                    let mut font = base_font.clone();
-                    font.family = edit_prediction_font.clone();
-                    font
-                } else {
-                    base_font.clone()
-                }
-            }
-            _ => base_font.clone(),
-        };
-
-        // Apply weight and style from highlight style or inlay_hints_style
-        if let Some(style) = highlight_style {
-            if let Some(weight) = style.font_weight {
-                font.weight = weight;
-            }
-            if let Some(font_style) = style.font_style {
-                font.style = font_style;
-            }
-        } else {
-            if let Some(weight) = editor_style.inlay_hints_style.font_weight {
-                font.weight = weight;
-            }
-            if let Some(font_style) = editor_style.inlay_hints_style.font_style {
-                font.style = font_style;
-            }
+        match kind {
+            ChunkKind::InlayHint => editor_style.inlay_hints_font.clone(),
+            ChunkKind::EditPrediction => editor_style.edit_predictions_font.clone(),
+            _ => base_font,
         }
-
-        font
     }
 
     fn from_chunks<'a>(
@@ -8802,7 +8764,6 @@ impl LineWithInvisibles {
                                 highlighted_chunk.kind,
                                 text_style.font(),
                                 editor_style,
-                                highlighted_chunk.style,
                             ),
                             color: text_style.color,
                             background_color: text_style.background_color,
@@ -8877,7 +8838,6 @@ impl LineWithInvisibles {
                                 highlighted_chunk.kind,
                                 text_style.font(),
                                 editor_style,
-                                highlighted_chunk.style,
                             ),
                             color: text_style.color,
                             background_color: text_style.background_color,

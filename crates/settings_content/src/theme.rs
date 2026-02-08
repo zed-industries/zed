@@ -177,12 +177,10 @@ pub struct ThemeSettingsContent {
     pub theme_overrides: HashMap<String, ThemeStyleContent>,
 
     /// The font used for inlay hints.
-    #[serde(alias = "inlay_hints.font_family")]
-    pub inlay_hints_font_family: Option<String>,
+    pub inlay_hints_font_family: Option<FontFamilyName>,
 
     /// The font used for edit predictions.
-    #[serde(alias = "edit_predictions.font_family")]
-    pub edit_predictions_font_family: Option<String>,
+    pub edit_predictions_font_family: Option<FontFamilyName>,
 }
 
 /// A font size value in pixels, wrapping around `f32` for custom settings UI rendering.
