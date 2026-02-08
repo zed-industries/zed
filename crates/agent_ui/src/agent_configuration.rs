@@ -595,12 +595,8 @@ impl AgentConfiguration {
                         } else {
                             parent.children(itertools::intersperse_with(
                                 context_server_ids.iter().cloned().map(|context_server_id| {
-                                    self.render_context_server(
-                                        context_server_id.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                    .into_any_element()
+                                    self.render_context_server(context_server_id, window, cx)
+                                        .into_any_element()
                                 }),
                                 || {
                                     Divider::horizontal()
