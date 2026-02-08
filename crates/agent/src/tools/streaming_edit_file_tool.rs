@@ -8,9 +8,13 @@ use crate::{
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
+use language::language_settings::{self, FormatOnSave};
 use language_model::LanguageModelToolResultContent;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use text::BufferSnapshot;
 use ui::SharedString;
+use util::ResultExt;
 use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
@@ -372,9 +377,45 @@ impl AgentTool for StreamingEditFileTool {
                 }
             }
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-                .await?;
+            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+                let settings = language_settings::language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                );
+                settings.format_on_save != FormatOnSave::Off
+            });
+
+            if format_on_save_enabled {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx);
+                });
+
+                let format_task = project.update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false,
+                        FormatTrigger::Save,
+                        cx,
+                    )
+                });
+                futures::select! {
+                    result = format_task.fuse() => { result.log_err(); },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
+            }
+
+            let save_task = project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+            futures::select! {
+                result = save_task.fuse() => { result?; },
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Edit cancelled by user");
+                }
+            };
 
             action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
@@ -657,7 +698,7 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -1183,6 +1224,15 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .ensure_final_newline_on_save = Some(false);
+                });
+            });
         });
     }
 }
