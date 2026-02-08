@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use cocoa::{
     appkit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF},
     base::{id, nil},
-    foundation::NSData,
+    foundation::{NSAutoreleasePool, NSData, NSString, NSUInteger, NSURL},
 };
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 use strum::IntoEnumIterator as _;
@@ -13,6 +13,9 @@ use crate::{
     ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, asset_cache::hash,
     platform::mac::ns_string,
 };
+
+#[allow(non_upper_case_globals)]
+const NSUTF8StringEncoding: NSUInteger = 4;
 
 pub struct Pasteboard {
     inner: id,
@@ -48,23 +51,71 @@ impl Pasteboard {
             let pasteboard_types: id = self.inner.types();
             let string_type: id = ns_string("public.utf8-plain-text");
 
+            let mut clipboard_str: Option<&[u8]> = None;
+
             if msg_send![pasteboard_types, containsObject: string_type] {
                 let data = self.inner.dataForType(string_type);
                 if data == nil {
-                    return None;
+                    clipboard_str = None;
                 } else if data.bytes().is_null() {
                     // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
                     // "If the length of the NSData object is 0, this property returns nil."
-                    return Some(self.read_string(&[]));
+                    clipboard_str = Some(&[]);
                 } else {
-                    let bytes =
-                        slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
-
-                    return Some(self.read_string(bytes));
+                    clipboard_str = Some(slice::from_raw_parts(
+                        data.bytes() as *mut u8,
+                        data.length() as usize,
+                    ));
                 }
             }
 
-            // If it wasn't a string, try the various supported image types.
+            let file_type: id = ns_string("public.file-url");
+            let mut clipboard_url: Option<&[u8]> = None;
+            let escape_url;
+
+            if msg_send![pasteboard_types, containsObject:file_type] {
+                let data = self.inner.dataForType(file_type);
+                if data == nil {
+                    clipboard_url = None;
+                } else if data.bytes().is_null() {
+                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+                    // "If the length of the NSData object is 0, this property returns nil."
+                    clipboard_url = Some(&[]);
+                } else {
+                    // Have to decode the path by creating NSURL
+                    let path = NSURL::alloc(nil)
+                        .initWithDataRepresentation_relativeToURL_(data, nil)
+                        .autorelease()
+                        .path(); /* (NSString) or nil */
+                    if path == nil {
+                        clipboard_url = Some(&[]);
+                    } else {
+                        let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                        let bytes = path.UTF8String() as *const u8;
+                        let path =
+                            str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap_or_default();
+
+                        escape_url = self.shell_escape_str(path);
+
+                        clipboard_url = Some(escape_url.as_bytes());
+                    }
+                }
+            }
+
+            match (clipboard_str, clipboard_url) {
+                (Some(clipboard_str), Some(clipboard_url)) => {
+                    return Some(self.read_url(clipboard_url, clipboard_str));
+                }
+                (Some(clipboard_str), _) => {
+                    return Some(self.read_string(clipboard_str));
+                }
+                (_, Some(clipboard_url)) => {
+                    return Some(self.read_url(&[], clipboard_url));
+                }
+                _ => {}
+            }
+
+            // If it wasn't a string or url, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = self.read_image(format) {
                     return Some(item);
@@ -115,6 +166,39 @@ impl Pasteboard {
 
             ClipboardItem {
                 entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+            }
+        }
+    }
+
+    fn read_url(&self, url_text_bytes: &[u8], str_text_bytes: &[u8]) -> ClipboardItem {
+        unsafe {
+            let url_text = String::from_utf8_lossy(url_text_bytes).to_string();
+            let str_text = String::from_utf8_lossy(str_text_bytes).to_string();
+            let metadata = self
+                .data_for_type(self.text_hash_type)
+                .and_then(|hash_bytes| {
+                    let hash_bytes = hash_bytes.try_into().ok()?;
+                    let hash = u64::from_be_bytes(hash_bytes);
+                    let metadata = self.data_for_type(self.metadata_type)?;
+
+                    if hash == ClipboardString::text_hash(&url_text) {
+                        String::from_utf8(metadata.to_vec()).ok()
+                    } else {
+                        None
+                    }
+                });
+
+            ClipboardItem {
+                entries: vec![ClipboardEntry::URL {
+                    path: ClipboardString {
+                        text: url_text,
+                        metadata: metadata.clone(),
+                    },
+                    string: ClipboardString {
+                        text: str_text,
+                        metadata,
+                    },
+                }],
             }
         }
     }
@@ -223,6 +307,51 @@ impl Pasteboard {
             self.inner
                 .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
         }
+    }
+
+    /// Escape a path for safe usage in the macOS Terminal / POSIX shell.
+    /// This mimics what happens when you copy from Finder and paste into Terminal.
+    /// Posix shell quoting rules: https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_02
+    fn shell_escape_str(&self, shell_str: &str) -> String {
+        let mut escaped = String::with_capacity(shell_str.len());
+
+        for ch in shell_str.chars() {
+            match ch {
+                // Whitespace
+                ' ' => escaped.push_str("\\ "),
+                '\t' => escaped.push_str("\\t"),
+                '\n' => escaped.push_str("\\n"),
+                // Shell metacharacters
+                '"' => escaped.push_str("\\\""),
+                '\'' => escaped.push_str("\\'"),
+                '\\' => escaped.push_str("\\\\"),
+                '$' => escaped.push_str("\\$"),
+                '`' => escaped.push_str("\\`"),
+                '!' => escaped.push_str("\\!"),
+                '#' => escaped.push_str("\\#"),
+                '&' => escaped.push_str("\\&"),
+                '*' => escaped.push_str("\\*"),
+                '(' => escaped.push_str("\\("),
+                ')' => escaped.push_str("\\)"),
+                '[' => escaped.push_str("\\["),
+                ']' => escaped.push_str("\\]"),
+                '{' => escaped.push_str("\\{"),
+                '}' => escaped.push_str("\\}"),
+                '|' => escaped.push_str("\\|"),
+                ';' => escaped.push_str("\\;"),
+                '<' => escaped.push_str("\\<"),
+                '>' => escaped.push_str("\\>"),
+                '~' => escaped.push_str("\\~"),
+                '?' => escaped.push_str("\\?"),
+                '=' => escaped.push_str("\\="),
+                '%' => escaped.push_str("\\%"),
+                ',' => escaped.push_str("\\,"),
+                '^' => escaped.push_str("\\^"),
+                // Default: pass through unchanged
+                _ => escaped.push(ch),
+            }
+        }
+        escaped
     }
 }
 
