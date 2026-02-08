@@ -224,6 +224,7 @@ impl MistralLanguageModel {
     fn stream_completion(
         &self,
         request: mistral::Request,
+        affinity: Option<String>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -243,7 +244,7 @@ impl MistralLanguageModel {
                 });
             };
             let request =
-                mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+                mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request, affinity);
             let response = request.await?;
             Ok(response)
         });
@@ -330,8 +331,8 @@ impl LanguageModel for MistralLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_mistral(request, self.model.clone(), self.max_output_tokens());
-        let stream = self.stream_completion(request, cx);
+        let (request, affinity) = into_mistral(request, self.model.clone(), self.max_output_tokens());
+        let stream = self.stream_completion(request, affinity, cx);
 
         async move {
             let stream = stream.await?;
@@ -346,7 +347,7 @@ pub fn into_mistral(
     request: LanguageModelRequest,
     model: mistral::Model,
     max_output_tokens: Option<u64>,
-) -> mistral::Request {
+) -> (mistral::Request, Option<String>) {
     let stream = true;
 
     let mut messages = Vec::new();
@@ -492,7 +493,7 @@ pub fn into_mistral(
         }
     }
 
-    mistral::Request {
+    (mistral::Request {
         model: model.id().to_string(),
         messages,
         stream,
@@ -526,7 +527,7 @@ pub fn into_mistral(
                 },
             })
             .collect(),
-    }
+    }, request.thread_id)
 }
 
 pub struct MistralEventMapper {
@@ -856,7 +857,7 @@ mod tests {
             temperature: Some(0.5),
             tools: vec![],
             tool_choice: None,
-            thread_id: None,
+            thread_id: Some("abcdef".into()),
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -864,12 +865,13 @@ mod tests {
             thinking_effort: None,
         };
 
-        let mistral_request = into_mistral(request, mistral::Model::MistralSmallLatest, None);
+        let (mistral_request, affinity) = into_mistral(request, mistral::Model::MistralSmallLatest, None);
 
         assert_eq!(mistral_request.model, "mistral-small-latest");
         assert_eq!(mistral_request.temperature, Some(0.5));
         assert_eq!(mistral_request.messages.len(), 2);
         assert!(mistral_request.stream);
+        assert_eq!(affinity, Some("abcdef".into()));
     }
 
     #[test]
@@ -898,7 +900,7 @@ mod tests {
             thinking_effort: None,
         };
 
-        let mistral_request = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
+        let (mistral_request, _) = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
 
         assert_eq!(mistral_request.messages.len(), 1);
         assert!(matches!(
