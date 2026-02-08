@@ -9901,7 +9901,9 @@ dependencies = [
  "log",
  "markup5ever_rcdom",
  "pretty_assertions",
+ "project",
  "pulldown-cmark 0.13.0",
+ "serde_json",
  "settings",
  "theme",
  "ui",
@@ -9909,6 +9911,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]

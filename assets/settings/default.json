@@ -195,6 +195,12 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to automatically open markdown files as a preview.
+  // When enabled, opening a markdown file will display the rendered preview
+  // instead of the raw markdown source.
+  //
+  // Default: false
+  "auto_preview_markdown": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,

@@ -11,12 +11,15 @@ use gpui::{
     IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
     Subscription, Task, WeakEntity, Window, list,
 };
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
+use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
-use workspace::item::{Item, ItemHandle};
-use workspace::{Pane, Workspace};
+use std::path::Path;
+use workspace::invalid_item_view::InvalidItemView;
+use workspace::item::{Item, ItemHandle, ProjectItem, SaveOptions};
+use workspace::{Pane, Workspace, WorkspaceSettings};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
@@ -30,8 +33,68 @@ use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Model for markdown files opened as previews.
+/// Wraps a Buffer and claims .md files when the auto_preview_markdown setting is enabled.
+pub struct MarkdownItem {
+    buffer: Entity<Buffer>,
+}
+
+impl MarkdownItem {
+    pub fn buffer(&self) -> &Entity<Buffer> {
+        &self.buffer
+    }
+}
+
+fn is_markdown_extension(ext: &str) -> bool {
+    matches!(ext.to_lowercase().as_str(), "md" | "markdown")
+}
+
+impl project::ProjectItem for MarkdownItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>> {
+        if !WorkspaceSettings::get_global(cx).auto_preview_markdown {
+            return None;
+        }
+
+        let extension = path.path.extension()?;
+        if !is_markdown_extension(extension) {
+            return None;
+        }
+
+        let buffer_task = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+
+        Some(cx.spawn({
+            async move |cx| -> Result<Entity<MarkdownItem>> {
+                let buffer = buffer_task.await?;
+                Ok(cx.new(|_| MarkdownItem { buffer }))
+            }
+        }))
+    }
+
+    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
+        let file = self.buffer.read(cx).file()?;
+        project::File::from_dyn(Some(file))?.project_entry_id()
+    }
+
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let buffer = self.buffer.read(cx);
+        let file = buffer.file()?;
+        Some(ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
+    fn is_dirty(&self) -> bool {
+        false
+    }
+}
+
 pub struct MarkdownPreviewView {
-    workspace: WeakEntity<Workspace>,
+    workspace: Option<WeakEntity<Workspace>>,
     image_cache: Entity<RetainAllImageCache>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
@@ -170,7 +233,7 @@ impl MarkdownPreviewView {
         MarkdownPreviewView::new(
             MarkdownPreviewMode::Default,
             editor,
-            workspace_handle,
+            Some(workspace_handle),
             language_registry,
             window,
             cx,
@@ -188,7 +251,7 @@ impl MarkdownPreviewView {
         MarkdownPreviewView::new(
             MarkdownPreviewMode::Follow,
             editor,
-            workspace_handle,
+            Some(workspace_handle),
             language_registry,
             window,
             cx,
@@ -198,7 +261,7 @@ impl MarkdownPreviewView {
     pub fn new(
         mode: MarkdownPreviewMode,
         active_editor: Entity<Editor>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Option<WeakEntity<Workspace>>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -222,8 +285,8 @@ impl MarkdownPreviewView {
             this.set_editor(active_editor, window, cx);
 
             if mode == MarkdownPreviewMode::Follow {
-                if let Some(workspace) = &workspace.upgrade() {
-                    cx.observe_in(workspace, window, |this, workspace, window, cx| {
+                if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
+                    cx.observe_in(&workspace, window, |this, workspace, window, cx| {
                         let item = workspace.read(cx).active_item(cx);
                         this.workspace_updated(item, window, cx);
                     })
@@ -539,6 +602,94 @@ impl Item for MarkdownPreviewView {
     }
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .map(|state| state.editor.read(cx).is_dirty(cx))
+            .unwrap_or(false)
+    }
+
+    fn can_save(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .map(|state| state.editor.read(cx).can_save(cx))
+            .unwrap_or(false)
+    }
+
+    fn save(
+        &mut self,
+        options: SaveOptions,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if let Some(editor_state) = &self.active_editor {
+            let editor = editor_state.editor.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.save(options, project, window, cx)
+                    })?
+                    .await
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+}
+
+impl ProjectItem for MarkdownPreviewView {
+    type Item = MarkdownItem;
+
+    fn for_project_item(
+        project: Entity<Project>,
+        _pane: Option<&Pane>,
+        item: Entity<MarkdownItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = item.read(cx).buffer().clone();
+        let language_registry = project.read(cx).languages().clone();
+
+        let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
+
+        let mut this = Self {
+            selected_block: 0,
+            active_editor: None,
+            focus_handle: cx.focus_handle(),
+            workspace: None,
+            contents: None,
+            list_state,
+            language_registry,
+            parsing_markdown_task: None,
+            image_cache: RetainAllImageCache::new(cx),
+            mode: MarkdownPreviewMode::Default,
+        };
+
+        this.set_editor(editor, window, cx);
+        this
+    }
+
+    fn for_broken_project_item(
+        abs_path: &Path,
+        is_local: bool,
+        e: &anyhow::Error,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InvalidItemView> {
+        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+    }
+}
+
+#[cfg(test)]
+fn is_markdown_file_by_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| is_markdown_extension(ext))
+        .unwrap_or(false)
 }
 
 impl Render for MarkdownPreviewView {
@@ -572,7 +723,7 @@ impl Render for MarkdownPreviewView {
                             };
 
                             let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
+                                RenderContext::new(this.workspace.clone(), window, cx)
                                     .with_checkbox_clicked_callback(cx.listener(
                                         move |this, e: &CheckboxClickedEvent, window, cx| {
                                             if let Some(editor) = this
@@ -673,5 +824,226 @@ impl Render for MarkdownPreviewView {
                 )
             }))
             .vertical_scrollbar_for(&self.list_state, window, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::ProjectItem as _;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::rel_path::rel_path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_markdown_item_try_open_when_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "readme.md": "# Hello\n\nThis is markdown",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.auto_preview_markdown = Some(true);
+            });
+        });
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let path = ProjectPath {
+            worktree_id,
+            path: rel_path("readme.md").into(),
+        };
+
+        let result = cx.update(|cx| MarkdownItem::try_open(&project, &path, cx));
+
+        assert!(
+            result.is_some(),
+            "MarkdownItem::try_open should return Some when setting is enabled for .md files"
+        );
+
+        let markdown_item = result.unwrap().await.expect("Should open successfully");
+
+        markdown_item.read_with(cx, |item, cx| {
+            let buffer = item.buffer().read(cx);
+            assert!(buffer.text().contains("# Hello"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_markdown_item_try_open_when_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "readme.md": "# Hello",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let path = ProjectPath {
+            worktree_id,
+            path: rel_path("readme.md").into(),
+        };
+
+        let result = cx.update(|cx| MarkdownItem::try_open(&project, &path, cx));
+
+        assert!(
+            result.is_none(),
+            "MarkdownItem::try_open should return None when setting is disabled (default)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_item_try_open_non_markdown(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.auto_preview_markdown = Some(true);
+            });
+        });
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let path = ProjectPath {
+            worktree_id,
+            path: rel_path("main.rs").into(),
+        };
+
+        let result = cx.update(|cx| MarkdownItem::try_open(&project, &path, cx));
+
+        assert!(
+            result.is_none(),
+            "MarkdownItem::try_open should return None for non-markdown files even when setting is enabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_item_entry_id_and_project_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "docs": {
+                    "readme.md": "# Docs",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+
+        cx.update_global::<SettingsStore, ()>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.auto_preview_markdown = Some(true);
+            });
+        });
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let path = ProjectPath {
+            worktree_id,
+            path: rel_path("docs/readme.md").into(),
+        };
+
+        let markdown_item = cx
+            .update(|cx| MarkdownItem::try_open(&project, &path, cx))
+            .unwrap()
+            .await
+            .expect("Should open successfully");
+
+        markdown_item.read_with(cx, |item, cx| {
+            let project_path = item.project_path(cx);
+            assert!(project_path.is_some());
+            let project_path = project_path.unwrap();
+            assert_eq!(project_path.worktree_id, worktree_id);
+            assert_eq!(project_path.path.as_ref(), "docs/readme.md");
+
+            let entry_id = item.entry_id(cx);
+            assert!(entry_id.is_some());
+        });
+    }
+
+    #[test]
+    fn test_is_markdown_extension() {
+        assert!(is_markdown_extension("md"));
+        assert!(is_markdown_extension("MD"));
+        assert!(is_markdown_extension("markdown"));
+        assert!(is_markdown_extension("MARKDOWN"));
+        assert!(is_markdown_extension("Md"));
+
+        assert!(!is_markdown_extension("rs"));
+        assert!(!is_markdown_extension("txt"));
+        assert!(!is_markdown_extension("html"));
+        assert!(!is_markdown_extension(""));
+    }
+
+    #[test]
+    fn test_is_markdown_file_by_extension() {
+        assert!(is_markdown_file_by_extension(std::path::Path::new(
+            "readme.md"
+        )));
+        assert!(is_markdown_file_by_extension(std::path::Path::new(
+            "docs/guide.markdown"
+        )));
+        assert!(is_markdown_file_by_extension(std::path::Path::new(
+            "README.MD"
+        )));
+
+        assert!(!is_markdown_file_by_extension(std::path::Path::new(
+            "main.rs"
+        )));
+        assert!(!is_markdown_file_by_extension(std::path::Path::new(
+            "file.txt"
+        )));
+        assert!(!is_markdown_file_by_extension(std::path::Path::new(
+            "noextension"
+        )));
     }
 }
