@@ -486,28 +486,24 @@ impl BranchListDelegate {
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let mut is_remote = false;
+            let is_remote;
             let result = match &entry {
-                Entry::Branch { branch, .. } => match branch.remote_name() {
-                    Some(remote_name) => {
-                        is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
-                            .await?
-                    }
-                    None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
-                            .await?
-                    }
-                },
+                Entry::Branch { branch, .. } => {
+                    is_remote = branch.is_remote();
+                    repo.update(cx, |repo, _| {
+                        repo.delete_branch(is_remote, branch.name().to_string())
+                    })
+                    .await?
+                }
                 _ => {
-                    log::error!("Failed to delete remote: wrong entry to delete");
+                    log::error!("Failed to delete entry: wrong entry to delete");
                     return Ok(());
                 }
             };
 
             if let Err(e) = result {
                 if is_remote {
-                    log::error!("Failed to delete remote: {}", e);
+                    log::error!("Failed to delete remote branch: {}", e);
                 } else {
                     log::error!("Failed to delete branch: {}", e);
                 }
@@ -517,7 +513,7 @@ impl BranchListDelegate {
                         if is_remote {
                             show_error_toast(
                                 workspace,
-                                format!("remote remove {}", entry.name()),
+                                format!("branch -dr {}", entry.name()),
                                 e,
                                 cx,
                             )

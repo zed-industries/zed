@@ -2415,11 +2415,12 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(branch_name)
+                repository_handle.delete_branch(is_remote, branch_name)
             })
             .await??;
 
@@ -5730,18 +5731,32 @@ impl Repository {
         )
     }
 
-    pub fn delete_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn delete_branch(
+        &mut self,
+        is_remote: bool,
+        branch_name: String,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
-            Some(format!("git branch -d {branch_name}").into()),
+            Some(
+                format!(
+                    "git branch {} {}",
+                    if is_remote { "-dr" } else { "-d" },
+                    branch_name
+                )
+                .into(),
+            ),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local(state) => state.backend.delete_branch(branch_name).await,
+                    RepositoryState::Local(state) => {
+                        state.backend.delete_branch(is_remote, branch_name).await
+                    }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitDeleteBranch {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
+                                is_remote,
                                 branch_name,
                             })
                             .await?;
