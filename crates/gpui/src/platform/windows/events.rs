@@ -959,10 +959,29 @@ impl WindowsWindowInner {
                 first_mouse: false,
             });
             let result = func(input);
-            let handled = !result.propagate || result.default_prevented;
+            let propagate = result.propagate;
+            let default_prevented = result.default_prevented;
+            let handled = !propagate || default_prevented;
             self.state.callbacks.input.set(Some(func));
 
-            if handled {
+            // Let Windows handle caption drag, standard caption buttons, and resize borders.
+            let hit_test = wparam.0 as u32;
+            let is_caption_drag = button == MouseButton::Left && hit_test == HTCAPTION;
+            let is_nc_button = button == MouseButton::Left
+                && matches!(hit_test, HTMINBUTTON | HTMAXBUTTON | HTCLOSE);
+            let is_nc_resize = button == MouseButton::Left
+                && matches!(
+                    hit_test,
+                    HTLEFT
+                        | HTRIGHT
+                        | HTTOP
+                        | HTBOTTOM
+                        | HTTOPLEFT
+                        | HTTOPRIGHT
+                        | HTBOTTOMLEFT
+                        | HTBOTTOMRIGHT
+                );
+            if handled && !(is_caption_drag || is_nc_button || is_nc_resize) {
                 return Some(0);
             }
         } else {
