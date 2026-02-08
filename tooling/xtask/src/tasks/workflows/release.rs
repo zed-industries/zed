@@ -27,32 +27,32 @@ pub(crate) fn release() -> Workflow {
         linux_aarch64: bundle_linux(
             Arch::AARCH64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            &[&linux_tests.run, &linux_clippy, &check_scripts],
         ),
         linux_x86_64: bundle_linux(
             Arch::X86_64,
             None,
-            &[&linux_tests, &linux_clippy, &check_scripts],
+            &[&linux_tests.run, &linux_clippy, &check_scripts],
         ),
         mac_aarch64: bundle_mac(
             Arch::AARCH64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            &[&macos_tests.run, &macos_clippy, &check_scripts],
         ),
         mac_x86_64: bundle_mac(
             Arch::X86_64,
             None,
-            &[&macos_tests, &macos_clippy, &check_scripts],
+            &[&macos_tests.run, &macos_clippy, &check_scripts],
         ),
         windows_aarch64: bundle_windows(
             Arch::AARCH64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            &[&windows_tests.run, &windows_clippy, &check_scripts],
         ),
         windows_x86_64: bundle_windows(
             Arch::X86_64,
             None,
-            &[&windows_tests, &windows_clippy, &check_scripts],
+            &[&windows_tests.run, &windows_clippy, &check_scripts],
         ),
     };
 
@@ -62,9 +62,12 @@ pub(crate) fn release() -> Workflow {
     let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
 
     let test_jobs = [
-        &macos_tests,
-        &linux_tests,
-        &windows_tests,
+        &macos_tests.build,
+        &macos_tests.run,
+        &linux_tests.build,
+        &linux_tests.run,
+        &windows_tests.build,
+        &windows_tests.run,
         &macos_clippy,
         &linux_clippy,
         &windows_clippy,
@@ -84,9 +87,12 @@ pub(crate) fn release() -> Workflow {
         .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
-        .add_job(macos_tests.name, macos_tests.job)
-        .add_job(linux_tests.name, linux_tests.job)
-        .add_job(windows_tests.name, windows_tests.job)
+        .add_job(macos_tests.build.name, macos_tests.build.job)
+        .add_job(macos_tests.run.name, macos_tests.run.job)
+        .add_job(linux_tests.build.name, linux_tests.build.job)
+        .add_job(linux_tests.run.name, linux_tests.run.job)
+        .add_job(windows_tests.build.name, windows_tests.build.job)
+        .add_job(windows_tests.run.name, windows_tests.run.job)
         .add_job(macos_clippy.name, macos_clippy.job)
         .add_job(linux_clippy.name, linux_clippy.job)
         .add_job(windows_clippy.name, windows_clippy.job)

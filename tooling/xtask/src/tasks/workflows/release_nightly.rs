@@ -22,12 +22,12 @@ pub fn release_nightly() -> Workflow {
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
-        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests, &clippy_job]),
-        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests, &clippy_job]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &tests.run, &clippy_job]),
+        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &tests.run, &clippy_job]),
+        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &tests.run, &clippy_job]),
+        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &tests.run, &clippy_job]),
+        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &tests.run, &clippy_job]),
+        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &tests.run, &clippy_job]),
     };
 
     let nix_linux_x86 = build_nix(
@@ -35,14 +35,14 @@ pub fn release_nightly() -> Workflow {
         Arch::X86_64,
         "default",
         None,
-        &[&style, &tests],
+        &[&style, &tests.run],
     );
     let nix_mac_arm = build_nix(
         Platform::Mac,
         Arch::AARCH64,
         "default",
         None,
-        &[&style, &tests],
+        &[&style, &tests.run],
     );
     let update_nightly_tag = update_nightly_tag_job(&bundle);
     let notify_on_failure = notify_on_failure(&bundle.jobs());
@@ -55,7 +55,8 @@ pub fn release_nightly() -> Workflow {
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
         .add_job(style.name, style.job)
-        .add_job(tests.name, tests.job)
+        .add_job(tests.build.name, tests.build.job)
+        .add_job(tests.run.name, tests.run.job)
         .add_job(clippy_job.name, clippy_job.job)
         .map(|mut workflow| {
             for job in bundle.into_jobs() {
