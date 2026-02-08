@@ -1113,6 +1113,7 @@ impl Window {
             window_decorations,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
+            drag_types,
         } = options;
 
         let window_bounds = window_bounds.unwrap_or_else(|| default_bounds(display_id, cx));
@@ -1131,6 +1132,7 @@ impl Window {
                 window_min_size,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
+                drag_types,
             },
         )?;
 
@@ -3929,13 +3931,18 @@ impl Window {
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
+            #[allow(deprecated)]
             PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
+                FileDropEvent::Entered {
+                    position,
+                    paths: _,
+                    items,
+                } => {
                     self.mouse_position = position;
                     if cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
-                            value: Arc::new(paths.clone()),
-                            view: cx.new(|_| paths).into(),
+                            value: Arc::new(items.clone()),
+                            view: cx.new(|_| items).into(),
                             cursor_offset: position,
                             cursor_style: None,
                         });

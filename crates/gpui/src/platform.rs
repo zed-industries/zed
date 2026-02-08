@@ -40,11 +40,12 @@ pub(crate) mod scap_screen_capture;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, DragType, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, TaskTiming, ThreadTaskTimings, Window, WindowControlArea, hash, point,
+    px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -1266,6 +1267,10 @@ pub struct WindowOptions {
 
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
+
+    /// Types of external content to accept via drag-drop.
+    /// Default: `[DragType::Files]` for backwards compatibility.
+    pub drag_types: SmallVec<[DragType; 2]>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1315,6 +1320,9 @@ pub(crate) struct WindowParams {
     pub window_min_size: Option<Size<Pixels>>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+
+    /// Types of external content to accept via drag-drop.
+    pub drag_types: SmallVec<[DragType; 2]>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1373,6 +1381,7 @@ impl Default for WindowOptions {
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
+            drag_types: smallvec::smallvec![DragType::Files],
         }
     }
 }
@@ -1661,8 +1670,10 @@ pub enum ClipboardEntry {
     String(ClipboardString),
     /// An image entry
     Image(Image),
-    /// A file entry
+    /// A file paths entry
     ExternalPaths(crate::ExternalPaths),
+    /// A URLs entry (http/https)
+    Urls(SmallVec<[url::Url; 2]>),
 }
 
 impl ClipboardItem {
@@ -1713,7 +1724,7 @@ impl ClipboardItem {
         if answer.is_empty() {
             for entry in self.entries.iter() {
                 if let ClipboardEntry::ExternalPaths(paths) = entry {
-                    for path in &paths.0 {
+                    for path in paths.paths() {
                         use std::fmt::Write as _;
                         _ = write!(answer, "{}", path.display());
                     }

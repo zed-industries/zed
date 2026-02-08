@@ -20,7 +20,7 @@ use windows::{
         Foundation::*,
         Graphics::Dwm::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Memory::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -961,6 +961,7 @@ impl WindowsDragDropHandler {
 
 #[allow(non_snake_case)]
 impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
+    #[allow(deprecated)]
     fn DragEnter(
         &self,
         pdataobj: windows::core::Ref<IDataObject>,
@@ -970,7 +971,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     ) -> windows::core::Result<()> {
         unsafe {
             let idata_obj = pdataobj.ok()?;
-            let config = FORMATETC {
+            let mut items = SmallVec::<[DropItem; 2]>::new();
+
+            // Check for file drops (CF_HDROP)
+            let file_config = FORMATETC {
                 cfFormat: CF_HDROP.0,
                 ptd: std::ptr::null_mut() as _,
                 dwAspect: DVASPECT_CONTENT.0,
@@ -978,34 +982,69 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 tymed: TYMED_HGLOBAL.0 as _,
             };
             let cursor_position = POINT { x: pt.x, y: pt.y };
-            if idata_obj.QueryGetData(&config as _) == S_OK {
-                *pdweffect = DROPEFFECT_COPY;
-                let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
-                    return Ok(());
-                };
-                if idata.u.hGlobal.is_invalid() {
-                    return Ok(());
-                }
-                let hdrop = HDROP(idata.u.hGlobal.0);
-                let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                with_file_names(hdrop, |file_name| {
-                    if let Some(path) = PathBuf::from_str(&file_name).log_err() {
-                        paths.push(path);
+
+            if idata_obj.QueryGetData(&file_config as _) == S_OK {
+                if let Some(mut idata) = idata_obj.GetData(&file_config as _).log_err() {
+                    if !idata.u.hGlobal.is_invalid() {
+                        let hdrop = HDROP(idata.u.hGlobal.0);
+                        with_file_names(hdrop, |file_name| {
+                            if let Some(path) = PathBuf::from_str(&file_name).log_err() {
+                                items.push(DropItem::Path(path));
+                            }
+                        });
                     }
-                });
-                ReleaseStgMedium(&mut idata);
+                    ReleaseStgMedium(&mut idata);
+                }
+            }
+
+            // Check for URL drops (CF_UNICODETEXT)
+            let url_config = FORMATETC {
+                cfFormat: CF_UNICODETEXT.0,
+                ptd: std::ptr::null_mut() as _,
+                dwAspect: DVASPECT_CONTENT.0,
+                lindex: -1,
+                tymed: TYMED_HGLOBAL.0 as _,
+            };
+
+            if items.is_empty() && idata_obj.QueryGetData(&url_config as _) == S_OK {
+                if let Some(mut idata) = idata_obj.GetData(&url_config as _).log_err() {
+                    if !idata.u.hGlobal.is_invalid() {
+                        let hglobal = idata.u.hGlobal;
+                        let ptr = GlobalLock(hglobal) as *const u16;
+                        if !ptr.is_null() {
+                            let len = (0..).take_while(|&i| *ptr.add(i) != 0).count();
+                            let slice = std::slice::from_raw_parts(ptr, len);
+                            let text = String::from_utf16_lossy(slice);
+                            GlobalUnlock(hglobal).log_err();
+
+                            // Try to parse as URL
+                            if let Ok(url) = url::Url::parse(&text) {
+                                if url.scheme() == "http" || url.scheme() == "https" {
+                                    items.push(DropItem::Url(url));
+                                }
+                            }
+                        }
+                    }
+                    ReleaseStgMedium(&mut idata);
+                }
+            }
+
+            if !items.is_empty() {
+                *pdweffect = DROPEFFECT_COPY;
                 let mut cursor_position = cursor_position;
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
                     .ok()
                     .log_err();
                 let scale_factor = self.0.state.scale_factor.get();
+                let items = ExternalDrop(items);
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position: logical_point(
                         cursor_position.x as f32,
                         cursor_position.y as f32,
                         scale_factor,
                     ),
-                    paths: ExternalPaths(paths),
+                    paths: items.to_external_paths(),
+                    items,
                 });
                 self.handle_drag_drop(input);
             } else {
