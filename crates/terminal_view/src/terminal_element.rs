@@ -145,13 +145,24 @@ impl BatchedTextRun {
             origin.y + self.start_point.line as f32 * dimensions.line_height,
         );
 
+        // Check whether this batch contains any Thai characters
+        let contains_thai = self
+            .text
+            .chars()
+            .any(|c| (0x0E01..=0x0E5B).contains(&(c as u32)));
+
         let _ = window
             .text_system()
             .shape_line(
                 self.text.clone().into(),
                 self.font_size.to_pixels(window.rem_size()),
                 std::slice::from_ref(&self.style),
-                Some(dimensions.cell_width),
+                // If Thai text is present, pass None so the shaper can freely position combining vowels and tone marks
+                if contains_thai {
+                    None
+                } else {
+                    Some(dimensions.cell_width)
+                },
             )
             .paint(
                 pos,
@@ -425,7 +436,16 @@ impl TerminalElement {
                                 && batch.start_point.column + batch.cell_count as i32
                                     == cell_point.column
                             {
-                                batch.append_char(cell.c);
+                                if !Self::is_thai_combining_mark(cell.c) {
+                                    // Append Thai combining vowel/tone mark to the current batch
+                                    // without incrementing cell_count, so it draws on top of
+                                    // the preceding consonant's position.
+                                    batch.append_char_internal(cell.c, false);
+                                } else {
+                                    // Regular character (English or Thai consonant) — increment cell_count as usual
+                                    batch.append_char(cell.c);
+                                }
+
                                 if let Some(chars) = zero_width_chars {
                                     batch.append_zero_width_chars(chars);
                                 }
@@ -535,6 +555,21 @@ impl TerminalElement {
             | 0xE0C0..=0xE0CA // Powerline separators: flames (E0C0-E0C3), pixelated (E0C4-E0C7), and ice (E0C8 & E0CA)
             | 0xE0CC..=0xE0D1 // Powerline separators: honeycombs (E0CC-E0CD) and lego (E0CE-E0D1)
             | 0xE0D2..=0xE0D7 // Powerline separators: trapezoid (E0D2 & E0D4) and inverted triangles (E0D6-E0D7)
+        )
+    }
+
+    /// Checks if a character is a Thai combining mark (vowel, tone mark, or diacritic)
+    /// that should not occupy its own cell in the terminal grid.
+    ///
+    /// Thai combining marks are rendered on top of the preceding consonant rather than
+    /// in a separate cell, so they must be appended to the current batch without
+    /// incrementing the cell count.
+    fn is_thai_combining_mark(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x0E31          | // Upper vowel shortener: ั
+            0x0E34..=0x0E3A | // Above/below vowels: ิ ี ึ ื ุ ู ฺ
+            0x0E47..=0x0E4E   // Tone marks and diacritics: ็ ่ ้ ๊ ๋ ์ ํ ๎
         )
     }
 
