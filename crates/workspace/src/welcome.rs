@@ -114,7 +114,10 @@ impl RenderOnce for SectionButton {
                             .size(rems_from_px(12.)),
                     ),
             )
-            .on_click(move |_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
+            .on_click(move |_, window, cx| {                                                                                                                                 
+                self.focus_handle                                                                                                                                            
+                    .dispatch_action(self.action.as_ref(), window, cx)                                                                                                       
+            })  
     }
 }
 
