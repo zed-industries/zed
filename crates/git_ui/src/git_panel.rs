@@ -2612,6 +2612,12 @@ impl GitPanel {
             return;
         };
 
+        self.commit_message_buffer(cx).update(cx, |buffer, cx| {
+            let start = buffer.anchor_before(0);
+            let end = buffer.anchor_after(buffer.len());
+            buffer.edit([(start..end, "")], None, cx);
+        });
+
         telemetry::event!("Git Commit Message Generated");
 
         let diff = repo.update(cx, |repo, cx| {
