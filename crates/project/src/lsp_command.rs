@@ -4780,23 +4780,25 @@ impl LspCommand for GetFoldingRanges {
         cx: AsyncApp,
     ) -> Result<Self::Response> {
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-        let max_point = snapshot.max_point();
+        let max_point = snapshot.max_point_utf16();
         Ok(message
             .unwrap_or_default()
             .into_iter()
             .filter(|range| range.start_line < range.end_line)
             .filter(|range| range.start_line <= max_point.row && range.end_line <= max_point.row)
             .map(|folding_range| {
-                let start_col = folding_range
-                    .start_character
-                    .unwrap_or(snapshot.line_len(folding_range.start_line));
-                let end_col = folding_range
-                    .end_character
-                    .unwrap_or(snapshot.line_len(folding_range.end_line));
-                let start = snapshot
-                    .anchor_after(language::Point::new(folding_range.start_line, start_col));
-                let end =
-                    snapshot.anchor_before(language::Point::new(folding_range.end_line, end_col));
+                let start_col = folding_range.start_character.unwrap_or(u32::MAX);
+                let end_col = folding_range.end_character.unwrap_or(u32::MAX);
+                let start = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.start_line, start_col)),
+                    Bias::Right,
+                );
+                let end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.end_line, end_col)),
+                    Bias::Left,
+                );
+                let start = snapshot.anchor_after(start);
+                let end = snapshot.anchor_before(end);
                 let collapsed_text =
                     folding_range
                         .collapsed_text

@@ -1080,4 +1080,115 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_lsp_folding_ranges_with_multibyte_characters(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, |settings| {
+            settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        // √ is 3 bytes in UTF-8 but 1 code unit in UTF-16.
+        // LSP character offsets are UTF-16, so interpreting them as byte
+        // offsets lands inside a multi-byte character and panics.
+        let mut folding_request = cx
+            .set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(vec![
+                        // Outer fold: start/end on ASCII-only lines (sanity check).
+                        FoldingRange {
+                            start_line: 0,
+                            start_character: Some(16),
+                            end_line: 8,
+                            end_character: Some(1),
+                            kind: None,
+                            collapsed_text: None,
+                        },
+                        // Inner fold whose start_character falls among multi-byte chars.
+                        // Line 1 is "    //√√√√√√√√√√"
+                        //   UTF-16 offsets: 0-3=' ', 4='/', 5='/', 6-15='√'×10
+                        //   Byte offsets:   0-3=' ', 4='/', 5='/', 6..35='√'×10 (3 bytes each)
+                        // start_character=8 (UTF-16) → after "    //√√", byte offset would be 12
+                        //   but naively using 8 as byte offset hits inside the first '√'.
+                        FoldingRange {
+                            start_line: 1,
+                            start_character: Some(8),
+                            end_line: 3,
+                            end_character: Some(5),
+                            kind: None,
+                            collapsed_text: None,
+                        },
+                    ]))
+                },
+            );
+
+        // Line 0: "fn multibyte() {"       (16 UTF-16 units)
+        // Line 1: "    //√√√√√√√√√√"       (16 UTF-16 units, 36 bytes)
+        // Line 2: "    let y = 2;"          (14 UTF-16 units)
+        // Line 3: "    //√√√|end"           (13 UTF-16 units; '|' is just a visual marker)
+        // Line 4: "    if true {"           (14 UTF-16 units)
+        // Line 5: "        let a = \"√√\";" (22 UTF-16 units, 28 bytes)
+        // Line 6: "    }"                   (5 UTF-16 units)
+        // Line 7: "    let z = 3;"          (14 UTF-16 units)
+        // Line 8: "}"                       (1 UTF-16 unit)
+        cx.set_state(
+            &[
+                "ˇfn multibyte() {\n",
+                "    //√√√√√√√√√√\n",
+                "    let y = 2;\n",
+                "    //√√√|end\n",
+                "    if true {\n",
+                "        let a = \"√√\";\n",
+                "    }\n",
+                "    let z = 3;\n",
+                "}\n",
+            ]
+            .concat(),
+        );
+        assert!(folding_request.next().await.is_some());
+        cx.run_until_parked();
+
+        // Fold the inner range whose start_character lands among √ chars.
+        // Fold spans from line 1 char 8 ("    //√√" visible) to line 3 char 5
+        // ("/√√√|end" visible after fold marker).
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(1), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                [
+                    "fn multibyte() {\n",
+                    "    //√√⋯/√√√|end\n",
+                    "    if true {\n",
+                    "        let a = \"√√\";\n",
+                    "    }\n",
+                    "    let z = 3;\n",
+                    "}\n",
+                ]
+                .concat(),
+            );
+        });
+
+        // Unfold, then fold the outer range to make sure it works too.
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_all(&crate::actions::UnfoldAll, window, cx);
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(0), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(editor.display_text(cx), "fn multibyte() {⋯\n",);
+        });
+    }
 }
