@@ -848,6 +848,40 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_go_test_main_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let example_test = r#"
+        package main
+
+        func TestMain(m *testing.M) {
+            os.Exit(m.Run())
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(example_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..example_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should NOT find go-test tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
     fn test_testify_suite_detection(cx: &mut TestAppContext) {
         let language = language("go", tree_sitter_go::LANGUAGE.into());
 
