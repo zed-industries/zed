@@ -568,33 +568,7 @@ fn open_with_tab(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let project = workspace.project().clone();
-
-    // Check if there's a worktree override from the project dropdown.
-    // This ensures the git picker shows info for the project the user
-    // explicitly selected in the title bar, not just the focused file's project.
-    // This is only relevant if for multi-projects workspaces.
-    let repository = workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            let project_ref = project.read(cx);
-            project_ref
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project_ref.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.read(cx).active_repository(cx));
+    let repository = crate::resolve_active_repository(workspace, cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
         GitPicker::new(workspace_handle, repository, tab, rems(34.), window, cx)

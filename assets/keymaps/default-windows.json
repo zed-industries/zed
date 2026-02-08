@@ -249,6 +249,8 @@
       "shift-alt-p": "agent::ManageProfiles",
       "ctrl-i": "agent::ToggleProfileSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AgentPanel` context
+      "alt-l": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
@@ -317,8 +319,11 @@
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AcpThread > Editor` context
       "alt-tab": "agent::CycleFavoriteModels",
+      "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-k": "agent::ToggleThinkingMode",
     },
   },
   {
@@ -732,8 +737,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -742,8 +747,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -1149,6 +1154,7 @@
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
+      "ctrl-shift-.": "agent::AddSelectionToThread",
     },
   },
   {
@@ -1397,6 +1403,20 @@
     "context": "MultiProjectDropdown",
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+    },
+  },
+  {
+    "context": "NotebookEditor",
+    "bindings": {
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel",
     },
   },
   {

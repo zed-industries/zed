@@ -13,7 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use git_ui::file_diff_view::FileDiffView;
+use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
@@ -39,6 +39,7 @@ pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -50,7 +51,9 @@ pub enum OpenRequestKind {
     Extension {
         extension_id: String,
     },
-    AgentPanel,
+    AgentPanel {
+        initial_prompt: Option<String>,
+    },
     SharedAgentThread {
         session_id: String,
     },
@@ -77,6 +80,7 @@ impl OpenRequest {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
+        this.diff_all = request.diff_all;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -110,8 +114,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if url == "zed://agent" {
-                this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
@@ -160,6 +164,17 @@ impl OpenRequest {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
             self.open_paths.push(decoded.into_owned())
         }
+    }
+
+    fn parse_agent_url(&mut self, agent_path: &str) {
+        // Format: "" or "?prompt=<text>"
+        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(key, value)| (key == "prompt").then_some(value))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into_owned())
+        });
+        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -242,6 +257,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub wsl: Option<String>,
 }
 
@@ -318,6 +334,7 @@ fn connect_to_cli(
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     diff_paths: &[[String; 2]],
+    diff_all: bool,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
@@ -346,14 +363,24 @@ pub async fn open_paths_with_positions(
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
-    for diff_pair in diff_paths {
-        let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-        let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+    if diff_all && !diff_paths.is_empty() {
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            FileDiffView::open(old_path, new_path, workspace, window, cx)
+            MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
-                items.push(Some(Ok(Box::new(diff_view))))
+                items.push(Some(Ok(Box::new(diff_view))));
+            }
+        }
+    } else {
+        for diff_pair in diff_paths {
+            let old_path = Path::new(&diff_pair[0]).canonicalize()?;
+            let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+            if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
+                FileDiffView::open(old_path, new_path, workspace, window, cx)
+            }) {
+                if let Some(diff_view) = diff_view.await.log_err() {
+                    items.push(Some(Ok(Box::new(diff_view))))
+                }
             }
         }
     }
@@ -394,6 +421,7 @@ pub async fn handle_cli_connection(
                 urls,
                 paths,
                 diff_paths,
+                diff_all,
                 wait,
                 wsl,
                 open_new_workspace,
@@ -407,6 +435,7 @@ pub async fn handle_cli_connection(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
+                                diff_all,
                                 wsl,
                             },
                             cx,
@@ -431,6 +460,7 @@ pub async fn handle_cli_connection(
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
+                    diff_all,
                     open_new_workspace,
                     reuse,
                     &responses,
@@ -451,6 +481,7 @@ pub async fn handle_cli_connection(
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     responses: &IpcSender<CliResponse>,
@@ -514,6 +545,7 @@ async fn open_workspaces(
                     let workspace_failed_to_open = open_local_workspace(
                         workspace_paths,
                         diff_paths.clone(),
+                        diff_all,
                         open_new_workspace,
                         reuse,
                         wait,
@@ -587,6 +619,7 @@ async fn open_workspaces(
 async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     wait: bool,
@@ -611,6 +644,7 @@ async fn open_local_workspace(
     let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
+        diff_all,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
@@ -998,6 +1032,7 @@ mod tests {
                 let errored = open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     None,
                     false,
                     true,
@@ -1089,6 +1124,7 @@ mod tests {
                 open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     open_new_workspace,
                     false,
                     false,
@@ -1162,6 +1198,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths,
                         vec![],
+                        false,
                         None,
                         false,
                         false,
@@ -1186,6 +1223,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths_reuse,
                         vec![],
+                        false,
                         None, // open_new_workspace will be overridden by reuse logic
                         true, // reuse = true
                         false,

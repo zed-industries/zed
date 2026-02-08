@@ -26,11 +26,6 @@
   // 5. "SublimeText"
   // 6. "TextMate"
   "base_keymap": "VSCode",
-  // Features that can be globally enabled or disabled
-  "features": {
-    // Which edit prediction provider to use.
-    "edit_prediction_provider": "zed",
-  },
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
@@ -296,6 +291,10 @@
   "completion_menu_scrollbar": "never",
   // Whether to align detail text in code completions context menus left or right.
   "completion_detail_alignment": "left",
+  // How to display diffs in the editor.
+  //
+  // Default: stacked
+  "diff_view_style": "stacked",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -934,6 +933,8 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-sonnet-4",
+      // Whether thinking is enabled.
+      "enable_thinking": false,
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -967,75 +968,26 @@
     // Per-tool permission rules for granular control over tool actions.
     // This setting only applies to the native Zed agent.
     "tool_permissions": {
+      // Here are some examples of tool-specific permissions.
       "tools": {
-        "terminal": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Dangerous rm commands
-            { "pattern": "rm\\s+-rf\\s+(/|\\.\\.|\"|~|\\*)" },
-            { "pattern": "rm\\s+-rf\\s*$" },
-            // Disk destruction
-            { "pattern": "> /dev/sd" },
-            { "pattern": "mkfs\\." },
-            { "pattern": "dd\\s+if=/dev/(zero|random)" },
-            // Fork bomb
-            { "pattern": ":\\(\\)\\{\\s*:\\|:&\\s*\\};:" },
-            // System files
-            { "pattern": "/etc/passwd" },
-            { "pattern": "/etc/shadow" },
-            // Windows destructive commands
-            { "pattern": "del /f /s /q c:\\\\" },
-            { "pattern": "format c:" },
-            { "pattern": "rd /s /q" },
-          ],
-          "always_confirm": [
-            // File deletion
-            { "pattern": "rm\\s" },
-            // Destructive git operations
-            { "pattern": "git\\s+(reset|clean)\\s+--hard" },
-            { "pattern": "git\\s+push\\s+(-f|--force)" },
-            // Database operations
-            { "pattern": "DROP\\s+TABLE", "case_sensitive": true },
-            { "pattern": "DELETE\\s+FROM", "case_sensitive": true },
-            // Privileged commands
-            { "pattern": "sudo\\s" },
-          ],
-        },
-        "edit_file": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // Secrets and credentials
-            { "pattern": "\\.env($|\\.)" },
-            { "pattern": "secrets?/" },
-            { "pattern": "\\.pem$" },
-            { "pattern": "\\.key$" },
-          ],
-        },
-        "delete_path": {
-          "default_mode": "confirm",
-          "always_deny": [
-            // System directories
-            { "pattern": "^/etc" },
-            { "pattern": "^/usr" },
-            { "pattern": "^/bin" },
-            { "pattern": "^/sbin" },
-            { "pattern": "^/var" },
-            { "pattern": "^/boot" },
-            { "pattern": "^/root" },
-            // Home directory root
-            { "pattern": "^~$" },
-            { "pattern": "^/Users/[^/]+$" },
-            { "pattern": "^/home/[^/]+$" },
-            // Git directory
-            { "pattern": "\\.git/?$" },
-            // Windows system directories
-            { "pattern": "^C:\\\\Windows" },
-            { "pattern": "^C:\\\\Program Files" },
-          ],
-        },
-        "fetch": {
-          "default_mode": "confirm",
-        },
+        // "terminal": {
+        //   "default_mode": "confirm",
+        //   "always_confirm": [
+        //     // Destructive git operations
+        //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+        //     { "pattern": "git\\s+push\\s+(-f|--force)" },
+        //   ],
+        // },
+        // "edit_file": {
+        //   "default_mode": "confirm",
+        //   "always_deny": [
+        //     // Secrets and credentials
+        //     { "pattern": "\\.env($|\\.)" },
+        //     { "pattern": "secrets?/" },
+        //     { "pattern": "\\.pem$" },
+        //     { "pattern": "\\.key$" },
+        //   ],
+        // },
       },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
@@ -1144,6 +1096,23 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+  // Controls how semantic tokens from language servers are used for syntax highlighting.
+  //
+  // Options:
+  // - "off": Do not request semantic tokens from language servers.
+  // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
+  // - "full": Use LSP semantic tokens exclusively to highlight the text, tree-sitter syntax highlighting is off.
+  //
+  // May require language server restart to properly apply.
+  "semantic_tokens": "off",
+
+  // Controls whether folding ranges from language servers are used instead of
+  // tree-sitter and indent-based folding.
+  //
+  // Options:
+  // - "off": Use tree-sitter and indent-based folding (default).
+  // - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+  "document_folding_ranges": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.
@@ -1376,6 +1345,8 @@
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
     // Whether to show warnings or not by default.
+    //
+    // Default: true
     "include_warnings": true,
     // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
@@ -1501,6 +1472,8 @@
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
+    // Which edit prediction provider to use.
+    "provider": "zed",
     // A list of globs representing files that edit predictions should be disabled for.
     // There's a sensible default list of globs already included.
     // Any addition to this list will be merged with the default list.
@@ -1542,6 +1515,18 @@
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+    },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1594,15 +1579,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2246,11 +2234,46 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    // The maximum amount of time to wait for responses from language servers, in seconds.
+    //
+    // A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    // indefinitely until completed).
+    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
       "dismiss_timeout_ms": 5000,
     },
+    // Rules for highlighting semantic tokens. User-defined rules are prepended to the default
+    // rules (viewable via "Show Default Semantic Token Rules"), so they take precedence.
+    //
+    // Each `rule` has the following properties:
+    // - `token_type`: The LSP semantic token type to customize. If omitted, the rule matches all token types.
+    // - `token_modifiers`: A list of LSP semantic token modifiers to match. All modifiers must be present
+    //    to match.
+    // - `style`: A list of styles from the current syntax theme to use. The first style found is used. Any
+    //    settings below override that style.
+    // - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., "#ff0000").
+    // - `background_color`: The background color to use for the token type, in hex format.
+    // - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
+    // - `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+    // - `font_weight`: One of "normal", "bold".
+    // - `font_style`: One of "normal", "italic".
+    //
+    // The first matching rule for a token is applied. Because user-defined rules are prepended to the
+    // default rules, a token can be entirely disabled by adding an empty rule that matches it.
+    //
+    // Example: Highlight unresolved references in red and bold:
+    // "semantic_token_rules": [
+    //   {
+    //     "token_type": "unresolvedReference",
+    //     "foreground_color": "#c93f3f",
+    //     "font_weight": "bold"
+    //   }
+    // ]
+    //
+    // Default rules are viewable via the "zed: show default semantic token rules" action.
+    "semantic_token_rules": [],
   },
   // Jupyter settings
   "jupyter": {
@@ -2270,6 +2293,12 @@
     // Maximum number of lines to keep in REPL's scrollback buffer.
     // Clamped with [4, 256] range.
     "max_lines": 32,
+    // Maximum number of lines of output to display before scrolling.
+    // Set to 0 to disable output height limits.
+    "output_max_height_lines": 0,
+    // Maximum number of columns of output to display before scaling images.
+    // Set to 0 to disable output width limits.
+    "output_max_width_columns": 0,
   },
   // Vim settings
   "vim": {

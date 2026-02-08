@@ -4,7 +4,6 @@ use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
 };
-use assistant_slash_commands::FileCommandMetadata;
 use client::{self, proto};
 use clock::ReplicaId;
 use cloud_llm_client::CompletionIntent;
@@ -1176,6 +1175,11 @@ impl TextThread {
     }
 
     pub fn contains_files(&self, cx: &App) -> bool {
+        // Mimics assistant_slash_commands::FileCommandMetadata.
+        #[derive(Serialize, Deserialize)]
+        pub struct FileCommandMetadata {
+            pub path: String,
+        }
         let buffer = self.buffer.read(cx);
         self.slash_command_output_sections.iter().any(|section| {
             section.is_valid(buffer)
@@ -2269,6 +2273,7 @@ impl TextThread {
             stop: Vec::new(),
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
             thinking_allowed: true,
+            thinking_effort: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

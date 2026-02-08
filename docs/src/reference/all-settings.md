@@ -1599,6 +1599,7 @@ While other options may be changed at a runtime and should be placed under `sett
 {
   "global_lsp_settings": {
     "button": true,
+    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1611,6 +1612,7 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 - `button`: Whether to show the LSP status button in the status bar
+- `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -2592,6 +2594,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
+- [`semantic_tokens`](#semantic-tokens)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`whitespace_map`](#whitespace-map)
@@ -2667,13 +2670,16 @@ Configuration for various AI model providers including API URLs and authenticati
 
 ## LSP Document Colors
 
-- Description: Whether to show document color information from the language server
+- Description: How to render LSP `textDocument/documentColor` colors in the editor
 - Setting: `lsp_document_colors`
-- Default: `true`
+- Default: `inlay`
 
 **Options**
 
-`boolean` values
+1. `inlay`: Render document colors as inlay hints near the color text.
+2. `background`: Draw a background behind the color text.
+3. `border`: Draw a border around the color text.
+4. `none`: Do not query and render document colors.
 
 ## Max Tabs
 
@@ -3293,6 +3299,71 @@ Non-negative `integer` values
 1. `always` always populate the search query with the word under the cursor
 2. `selection` only populate the search query when there is text selected
 3. `never` never populate the search query
+
+## Semantic Tokens
+
+- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Setting: `semantic_tokens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not request semantic tokens from language servers.
+2. `combined`: Use LSP semantic tokens together with tree-sitter highlighting.
+3. `full`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+
+To enable semantic tokens globally:
+
+```json [settings]
+{
+  "semantic_tokens": "combined"
+}
+```
+
+To enable semantic tokens for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "semantic_tokens": "full"
+    }
+  }
+}
+```
+
+May require language server restart to properly apply.
+
+## LSP Folding Ranges
+
+- Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
+- Setting: `document_folding_ranges`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter and indent-based folding.
+2. `on`: Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+
+To enable LSP folding ranges globally:
+
+```json [settings]
+{
+  "document_folding_ranges": "on"
+}
+```
+
+To enable LSP folding ranges for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_folding_ranges": "on"
+    }
+  }
+}
+```
 
 ## Use Smartcase Search
 
@@ -4109,7 +4180,17 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-1. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
+1. Use the current file's directory, falling back to the project directory, then the first project in the workspace.
+
+```json [settings]
+{
+  "terminal": {
+    "working_directory": "current_file_directory"
+  }
+}
+```
+
+2. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
 
 ```json [settings]
 {
@@ -4119,7 +4200,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-2. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
+3. Use the first project in this workspace's directory. Fallback to using this platform's home directory.
 
 ```json [settings]
 {
@@ -4129,7 +4210,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-3. Always use this platform's home directory if it can be found.
+4. Always use this platform's home directory if it can be found.
 
 ```json [settings]
 {
@@ -4139,7 +4220,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
-4. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
+5. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory.
 
 ```json [settings]
 {

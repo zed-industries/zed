@@ -31,7 +31,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::Theme;
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
@@ -328,7 +327,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -535,7 +534,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
@@ -1059,8 +1058,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.read(cx).breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.read(cx).breadcrumbs(cx)
     }
 
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
@@ -1190,7 +1189,7 @@ pub enum Dedup {
 
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant>;
     fn from_state_proto(
         project: Entity<Workspace>,
         id: ViewId,
@@ -1203,8 +1202,8 @@ pub trait FollowableItem: Item {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
@@ -1284,7 +1283,7 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
     }
 
     fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_proto(window, cx)
+        self.update(cx, |this, cx| this.to_state_proto(window, cx))
     }
 
     fn add_event_to_update_proto(
@@ -1295,8 +1294,9 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
         cx: &mut App,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
-            self.read(cx)
-                .add_event_to_update_proto(event, update, window, cx)
+            self.update(cx, |this, cx| {
+                this.add_event_to_update_proto(event, update, window, cx)
+            })
         } else {
             false
         }

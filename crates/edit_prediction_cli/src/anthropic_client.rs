@@ -47,6 +47,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             metadata: None,
+            output_config: None,
             stop_sequences: Vec::new(),
             temperature: None,
             top_k: None,
@@ -85,6 +86,7 @@ impl PlainLlmClient {
             tool_choice: None,
             system: None,
             metadata: None,
+            output_config: None,
             stop_sequences: Vec::new(),
             temperature: None,
             top_k: None,
@@ -267,13 +269,16 @@ impl BatchingLlmClient {
         max_tokens: u64,
         messages: Vec<Message>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<AnthropicResponse>> {
         let response = self.lookup(model, max_tokens, &messages, seed)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        if !cache_only {
+            self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        }
 
         Ok(None)
     }
@@ -557,6 +562,7 @@ impl BatchingLlmClient {
                         tool_choice: None,
                         system: None,
                         metadata: None,
+                        output_config: None,
                         stop_sequences: Vec::new(),
                         temperature: None,
                         top_k: None,
@@ -672,6 +678,7 @@ impl AnthropicClient {
         max_tokens: u64,
         messages: Vec<Message>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<AnthropicResponse>> {
         match self {
             AnthropicClient::Plain(plain_llm_client) => plain_llm_client
@@ -680,7 +687,7 @@ impl AnthropicClient {
                 .map(Some),
             AnthropicClient::Batch(batching_llm_client) => {
                 batching_llm_client
-                    .generate(model, max_tokens, messages, seed)
+                    .generate(model, max_tokens, messages, seed, cache_only)
                     .await
             }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),

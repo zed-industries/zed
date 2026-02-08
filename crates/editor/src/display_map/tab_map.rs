@@ -77,9 +77,10 @@ impl TabMap {
                     false,
                     Highlights::default(),
                 ) {
-                    // todo(performance use tabs bitmask)
-                    for (ix, _) in chunk.text.match_indices('\t') {
-                        let offset_from_edit = offset_from_edit + (ix as u32);
+                    let mut remaining_tabs = chunk.tabs;
+                    while remaining_tabs != 0 {
+                        let ix = remaining_tabs.trailing_zeros();
+                        let offset_from_edit = offset_from_edit + ix;
                         if first_tab_offset.is_none() {
                             first_tab_offset = Some(offset_from_edit);
                         }
@@ -93,6 +94,8 @@ impl TabMap {
                         } else if !was_expanded && !is_expanded {
                             break 'outer;
                         }
+
+                        remaining_tabs &= remaining_tabs - 1;
                     }
 
                     offset_from_edit += chunk.text.len() as u32;

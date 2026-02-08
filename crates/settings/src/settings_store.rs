@@ -33,8 +33,8 @@ use crate::editorconfig_store::EditorconfigStore;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, LspSettings, LspSettingsMap, ThemeName, UserSettingsContentExt,
-    VsCodeSettings, WorktreeId,
+    LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
+    UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
         UserSettingsContent, merge_from::MergeFrom,
@@ -150,6 +150,8 @@ pub struct SettingsStore {
 
     extension_settings: Option<Box<SettingsContent>>,
     server_settings: Option<Box<SettingsContent>>,
+
+    language_semantic_token_rules: HashMap<SharedString, SemanticTokenRules>,
 
     merged_settings: Rc<SettingsContent>,
 
@@ -272,11 +274,30 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
+        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
+    }
+
+    pub fn new_with_semantic_tokens(
+        cx: &mut App,
+        default_settings: &str,
+        default_semantic_tokens: &str,
+    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: Rc<SettingsContent> =
-            SettingsContent::parse_json_with_comments(default_settings)
-                .unwrap()
-                .into();
+        let mut default_settings: SettingsContent =
+            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+        if let Ok(semantic_token_rules) =
+            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
+        {
+            let global_lsp = default_settings
+                .global_lsp_settings
+                .get_or_insert_with(Default::default);
+            let existing_rules = global_lsp
+                .semantic_token_rules
+                .get_or_insert_with(Default::default);
+            existing_rules.rules.extend(semantic_token_rules.rules);
+        }
+
+        let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
             default_settings: default_settings.clone(),
@@ -284,6 +305,7 @@ impl SettingsStore {
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+            language_semantic_token_rules: HashMap::default(),
 
             merged_settings: default_settings,
             local_settings: BTreeMap::default(),
@@ -842,6 +864,29 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Sets language-specific semantic token rules.
+    ///
+    /// These rules are registered by language modules (e.g. the Rust language module)
+    /// and are stored separately from the global rules. They are only applied to
+    /// buffers of the matching language by the `SemanticTokenStylizer`.
+    ///
+    /// These should be registered before any `SemanticTokenStylizer` instances are
+    /// created (typically during `languages::init`), as existing cached stylizers
+    /// are not automatically invalidated.
+    pub fn set_language_semantic_token_rules(
+        &mut self,
+        language: SharedString,
+        rules: SemanticTokenRules,
+    ) {
+        self.language_semantic_token_rules.insert(language, rules);
+    }
+
+    /// Returns the language-specific semantic token rules for the given language,
+    /// if any have been registered.
+    pub fn language_semantic_token_rules(&self, language: &str) -> Option<&SemanticTokenRules> {
+        self.language_semantic_token_rules.get(language)
+    }
+
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
@@ -989,6 +1034,74 @@ impl SettingsStore {
             .map(|((_, path), content)| (path.clone(), &content.project))
     }
 
+    /// Configures common schema replacements shared between user and project
+    /// settings schemas.
+    ///
+    /// This sets up language-specific settings and LSP adapter settings that
+    /// are valid in both user and project settings.
+    fn configure_schema_generator(
+        generator: &mut schemars::SchemaGenerator,
+        params: &SettingsJsonSchemaParams,
+    ) {
+        let language_settings_content_ref = generator
+            .subschema_for::<LanguageSettingsContent>()
+            .to_value();
+
+        replace_subschema::<LanguageToSettingsMap>(generator, || {
+            json_schema!({
+                "type": "object",
+                "errorMessage": "No language with this name is installed.",
+                "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
+            })
+        });
+
+        generator.subschema_for::<LspSettings>();
+
+        let lsp_settings_definition = generator
+            .definitions()
+            .get("LspSettings")
+            .expect("LspSettings should be defined")
+            .clone();
+
+        replace_subschema::<LspSettingsMap>(generator, || {
+            let mut lsp_properties = serde_json::Map::new();
+
+            for adapter_name in params.lsp_adapter_names {
+                let mut base_lsp_settings = lsp_settings_definition
+                    .as_object()
+                    .expect("LspSettings should be an object")
+                    .clone();
+
+                if let Some(properties) = base_lsp_settings.get_mut("properties") {
+                    if let Some(properties_object) = properties.as_object_mut() {
+                        properties_object.insert(
+                            "initialization_options".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/initialization_options")
+                            }),
+                        );
+                        properties_object.insert(
+                            "settings".to_string(),
+                            serde_json::json!({
+                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/settings")
+                            }),
+                        );
+                    }
+                }
+
+                lsp_properties.insert(
+                    adapter_name.clone(),
+                    serde_json::Value::Object(base_lsp_settings),
+                );
+            }
+
+            json_schema!({
+                "type": "object",
+                "properties": lsp_properties
+            })
+        });
+    }
+
     pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
@@ -996,35 +1109,7 @@ impl SettingsStore {
             .into_generator();
 
         UserSettingsContent::json_schema(&mut generator);
-
-        let language_settings_content_ref = generator
-            .subschema_for::<LanguageSettingsContent>()
-            .to_value();
-
-        generator.subschema_for::<LspSettings>();
-
-        let lsp_settings_def = generator
-            .definitions()
-            .get("LspSettings")
-            .expect("LspSettings should be defined")
-            .clone();
-
-        replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
-            json_schema!({
-                "type": "object",
-                "properties": params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            language_settings_content_ref.clone(),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>(),
-                "errorMessage": "No language with this name is installed."
-            })
-        });
+        Self::configure_schema_generator(&mut generator, params);
 
         replace_subschema::<FontFamilyName>(&mut generator, || {
             json_schema!({
@@ -1047,40 +1132,24 @@ impl SettingsStore {
             })
         });
 
-        replace_subschema::<LspSettingsMap>(&mut generator, || {
-            let mut lsp_properties = serde_json::Map::new();
-
-            for adapter_name in params.lsp_adapter_names {
-                let mut base_lsp_settings = lsp_settings_def
-                    .as_object()
-                    .expect("LspSettings should be an object")
-                    .clone();
-
-                if let Some(properties) = base_lsp_settings.get_mut("properties") {
-                    if let Some(props_obj) = properties.as_object_mut() {
-                        props_obj.insert(
-                            "initialization_options".to_string(),
-                            serde_json::json!({
-                                "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}")
-                            }),
-                        );
-                    }
-                }
-
-                lsp_properties.insert(
-                    adapter_name.clone(),
-                    serde_json::Value::Object(base_lsp_settings),
-                );
-            }
-
-            json_schema!({
-                "type": "object",
-                "properties": lsp_properties,
-            })
-        });
-
         generator
             .root_schema_for::<UserSettingsContent>()
+            .to_value()
+    }
+
+    /// Generate JSON schema for project settings, including only settings valid
+    /// for project-level configurations.
+    pub fn project_json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .with_transform(AllowTrailingCommas)
+            .into_generator();
+
+        ProjectSettingsContent::json_schema(&mut generator);
+        Self::configure_schema_generator(&mut generator, params);
+
+        generator
+            .root_schema_for::<ProjectSettingsContent>()
             .to_value()
     }
 
@@ -2334,6 +2403,97 @@ mod tests {
             .as_str()
             .unwrap();
 
-        assert_eq!(init_options_ref, "zed://schemas/settings/lsp/rust-analyzer");
+        assert_eq!(
+            init_options_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+        );
+
+        let settings_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/settings/$ref")
+            .expect("settings should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(
+            settings_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/settings"
+        );
+    }
+
+    #[gpui::test]
+    fn test_lsp_project_settings_schema_generation(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+
+        let schema = store.project_json_schema(&SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string(), "TypeScript".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &[
+                "rust-analyzer".to_string(),
+                "typescript-language-server".to_string(),
+            ],
+        });
+
+        let properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+
+        assert!(properties.contains_key("rust-analyzer"));
+        assert!(properties.contains_key("typescript-language-server"));
+
+        let init_options_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/initialization_options/$ref")
+            .expect("initialization_options should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(
+            init_options_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/initialization_options"
+        );
+
+        let settings_ref = properties
+            .get("rust-analyzer")
+            .unwrap()
+            .pointer("/properties/settings/$ref")
+            .expect("settings should have a $ref")
+            .as_str()
+            .unwrap();
+
+        assert_eq!(
+            settings_ref,
+            "zed://schemas/settings/lsp/rust-analyzer/settings"
+        );
+    }
+
+    #[gpui::test]
+    fn test_project_json_schema_differs_from_user_schema(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+
+        let params = SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &["rust-analyzer".to_string()],
+        };
+
+        let user_schema = store.json_schema(&params);
+        let project_schema = store.project_json_schema(&params);
+
+        assert_ne!(user_schema, project_schema);
+
+        let user_schema_str = serde_json::to_string(&user_schema).unwrap();
+        let project_schema_str = serde_json::to_string(&project_schema).unwrap();
+
+        assert!(user_schema_str.contains("\"auto_update\""));
+        assert!(!project_schema_str.contains("\"auto_update\""));
     }
 }

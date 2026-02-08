@@ -1439,7 +1439,7 @@ impl WorkspaceDb {
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
         let kind;
-        let mut user = None;
+        let user: Option<String>;
         let mut host = None;
         let mut port = None;
         let mut distro = None;
@@ -1462,12 +1462,14 @@ impl WorkspaceDb {
                 kind = RemoteConnectionKind::Docker;
                 container_id = Some(options.container_id);
                 name = Some(options.name);
-                use_podman = Some(options.use_podman)
+                use_podman = Some(options.use_podman);
+                user = Some(options.remote_user);
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
                 kind = RemoteConnectionKind::Ssh;
                 host = Some(format!("mock-{}", options.id));
+                user = Some(format!("mock-user-{}", options.id));
             }
         }
         Self::get_or_create_remote_connection_query(
@@ -1724,6 +1726,7 @@ impl WorkspaceDb {
                 Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
+                    remote_user: user?,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
                 }))

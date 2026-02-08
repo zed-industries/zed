@@ -7,7 +7,7 @@ on:
 jobs:
   check-author:
     if: ${{ github.repository_owner == 'zed-industries' }}
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     outputs:
       should_congratulate: ${{ steps.check.outputs.should_congratulate }}
     steps:
