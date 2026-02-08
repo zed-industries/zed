@@ -361,15 +361,19 @@ impl TitleBar {
                     };
 
                     let is_open = multi_workspace.read(cx).is_sidebar_open();
-                    platform_titlebar.update(cx, |titlebar, _| {
-                        titlebar.set_workspace_sidebar_open(is_open);
+                    let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
+                    platform_titlebar.update(cx, |titlebar, cx| {
+                        titlebar.set_workspace_sidebar_open(is_open, cx);
+                        titlebar.set_sidebar_has_notifications(has_notifications, cx);
                     });
 
                     let platform_titlebar = platform_titlebar.clone();
                     let subscription = cx.observe(&multi_workspace, move |mw, cx| {
                         let is_open = mw.read(cx).is_sidebar_open();
-                        platform_titlebar.update(cx, |titlebar, _| {
-                            titlebar.set_workspace_sidebar_open(is_open);
+                        let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
+                        platform_titlebar.update(cx, |titlebar, cx| {
+                            titlebar.set_workspace_sidebar_open(is_open, cx);
+                            titlebar.set_sidebar_has_notifications(has_notifications, cx);
                         });
                     });
 
@@ -685,9 +689,16 @@ impl TitleBar {
             return None;
         }
 
+        let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
+
         Some(
             IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
                 .icon_size(IconSize::Small)
+                .when(has_notifications, |button| {
+                    button
+                        .indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                })
                 .tooltip(move |_, cx| {
                     Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
                 })

@@ -2989,18 +2989,18 @@ pub(crate) mod tests {
         }
     }
 
-    struct StubAgentServer<C> {
+    pub(crate) struct StubAgentServer<C> {
         connection: C,
     }
 
     impl<C> StubAgentServer<C> {
-        fn new(connection: C) -> Self {
+        pub(crate) fn new(connection: C) -> Self {
             Self { connection }
         }
     }
 
     impl StubAgentServer<StubAgentConnection> {
-        fn default_response() -> Self {
+        pub(crate) fn default_response() -> Self {
             let conn = StubAgentConnection::new();
             conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
                 acp::ContentChunk::new("Default response".into()),

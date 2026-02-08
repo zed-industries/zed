@@ -13,10 +13,15 @@ path = "src/sidebar.rs"
 
 [features]
 default = []
+test-support = []
 
 [dependencies]
+acp_thread.workspace = true
+agent_ui.workspace = true
+db.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
+serde_json.workspace = true
 gpui.workspace = true
 picker.workspace = true
 project.workspace = true
@@ -26,3 +31,13 @@ ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+editor.workspace = true
+feature_flags.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+recent_projects = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
