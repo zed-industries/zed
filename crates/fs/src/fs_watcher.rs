@@ -238,7 +238,8 @@ fn path_event_kind(event_kind: &EventKind) -> Option<PathEventKind> {
         EventKind::Create(_) => Some(PathEventKind::Created),
         EventKind::Modify(_) => Some(PathEventKind::Changed),
         EventKind::Remove(_) => Some(PathEventKind::Removed),
-        _ => Some(PathEventKind::Changed),
+        EventKind::Other | EventKind::Any => Some(PathEventKind::Changed),
+        _ => None,
     }
 }
 
@@ -312,5 +313,6 @@ mod tests {
             path_event_kind(&EventKind::Any),
             Some(PathEventKind::Changed),
         );
+        assert_eq!(path_event_kind(&EventKind::Access(AccessKind::Any)), None,);
     }
 }
