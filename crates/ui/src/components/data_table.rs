@@ -36,6 +36,13 @@ pub mod table_row {
     pub struct TableRow<T>(Vec<T>);
 
     impl<T> TableRow<T> {
+        pub fn from_element(element: T, length: usize) -> Self
+        where
+            T: Clone,
+        {
+            Self::from_vec(vec![element; length], length)
+        }
+
         /// Constructs a `TableRow` from a `Vec<T>`, panicking if the length does not match `expected_length`.
         ///
         /// Use this when you want to ensure at construction time that the row has the correct number of columns.
@@ -70,7 +77,8 @@ pub mod table_row {
         ///
         /// # Panics
         /// Panics if `col` is out of bounds (i.e., `col >= self.cols()`).
-        pub fn expect_get(&self, col: usize) -> &T {
+        pub fn expect_get(&self, col: impl Into<usize>) -> &T {
+            let col = col.into();
             self.0.get(col).unwrap_or_else(|| {
                 panic!(
                     "Expected table row of `{}` to have {col:?}",
@@ -79,8 +87,8 @@ pub mod table_row {
             })
         }
 
-        pub fn get(&self, col: usize) -> Option<&T> {
-            self.0.get(col)
+        pub fn get(&self, col: impl Into<usize>) -> Option<&T> {
+            self.0.get(col.into())
         }
 
         pub fn as_slice(&self) -> &[T] {
@@ -734,6 +742,7 @@ pub struct Table {
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     /// The number of columns in the table. Used to assert column numbers in `TableRow` collections
     cols: usize,
+    disable_base_cell_style: bool,
 }
 
 impl Table {
@@ -751,7 +760,17 @@ impl Table {
             use_ui_font: true,
             empty_table_callback: None,
             col_widths: None,
+            disable_base_cell_style: false,
         }
+    }
+
+    /// Disables based styling of row cell (paddings, text elipsis, nowrap, etc), keeping width settings
+    ///
+    /// Doesn't affect base style of header cell.
+    /// Doesn't remove overflow-hidden
+    pub fn disable_base_style(mut self) -> Self {
+        self.disable_base_cell_style = true;
+        self
     }
 
     /// Enables uniform list rendering.
@@ -962,10 +981,18 @@ pub fn render_table_row(
             .into_iter()
             .zip(column_widths.into_vec())
             .map(|(cell, width)| {
-                base_cell_style_text(width, table_context.use_ui_font, cx)
-                    .px_1()
-                    .py_0p5()
-                    .child(cell)
+                if table_context.disable_base_cell_style {
+                    div()
+                        .when_some(width, |this, width| this.w(width))
+                        .when(width.is_none(), |this| this.flex_1())
+                        .overflow_hidden()
+                        .child(cell)
+                } else {
+                    base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .px_1()
+                        .py_0p5()
+                        .child(cell)
+                }
             }),
     );
 
@@ -1059,6 +1086,7 @@ pub struct TableRenderContext {
     pub column_widths: Option<TableRow<Length>>,
     pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     pub use_ui_font: bool,
+    pub disable_base_cell_style: bool,
 }
 
 impl TableRenderContext {
@@ -1070,6 +1098,7 @@ impl TableRenderContext {
             column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
             use_ui_font: table.use_ui_font,
+            disable_base_cell_style: table.disable_base_cell_style,
         }
     }
 }
