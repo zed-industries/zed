@@ -29,6 +29,7 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 pub struct PaneGroup {
     pub root: Member,
     pub is_center: bool,
+    pub in_satellite: bool,
 }
 
 pub struct PaneRenderResult {
@@ -41,6 +42,7 @@ impl PaneGroup {
         Self {
             root,
             is_center: false,
+            in_satellite: false,
         }
     }
 
@@ -48,11 +50,16 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane),
             is_center: false,
+            in_satellite: false,
         }
     }
 
     pub fn set_is_center(&mut self, is_center: bool) {
         self.is_center = is_center;
+    }
+
+    pub fn set_in_satellite(&mut self, in_satellite: bool) {
+        self.in_satellite = in_satellite;
     }
 
     pub fn split(
@@ -206,7 +213,8 @@ impl PaneGroup {
     }
 
     pub fn mark_positions(&mut self, cx: &mut App) {
-        self.root.mark_positions(self.is_center, true, true, cx);
+        self.root
+            .mark_positions(self.in_satellite, self.is_center, true, true, cx);
     }
 
     pub fn render(
@@ -280,6 +288,7 @@ pub enum Member {
 impl Member {
     pub fn mark_positions(
         &mut self,
+        in_satellite: bool,
         in_center_group: bool,
         is_upper_left: bool,
         is_upper_right: bool,
@@ -298,6 +307,7 @@ impl Member {
                         Axis::Horizontal => is_upper_right && idx == len - 1,
                     };
                     member.mark_positions(
+                        in_satellite,
                         in_center_group,
                         member_upper_left,
                         member_upper_right,
@@ -306,6 +316,7 @@ impl Member {
                 }
             }
             Member::Pane(entity) => entity.update(cx, |pane, _| {
+                pane.in_satellite = in_satellite;
                 pane.in_center_group = in_center_group;
                 pane.is_upper_left = is_upper_left;
                 pane.is_upper_right = is_upper_right;

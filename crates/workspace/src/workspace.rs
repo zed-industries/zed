@@ -18,6 +18,7 @@ mod toast_layer;
 mod toolbar;
 pub mod utility_pane;
 pub mod welcome;
+pub mod workspace_satellite;
 mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
@@ -140,6 +141,7 @@ use crate::{
     item::ItemBufferKind,
     notifications::NotificationId,
     utility_pane::{UTILITY_PANE_MIN_WIDTH, utility_slot_for_dock_position},
+    workspace_satellite::WorkspaceSatellite,
 };
 use crate::{
     persistence::{
@@ -301,6 +303,8 @@ actions!(
         RestoreBanner,
         /// Toggles expansion of the selected item.
         ToggleExpandItem,
+        /// Detaches the active item into a new window.
+        DetachActiveItem,
     ]
 );
 
@@ -1190,6 +1194,7 @@ pub struct Workspace {
     panes: Vec<Entity<Pane>>,
     active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
+    satellites: Vec<WindowHandle<WorkspaceSatellite>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
@@ -1606,6 +1611,7 @@ impl Workspace {
             center,
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
+            satellites: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
@@ -3255,6 +3261,94 @@ impl Workspace {
         })
     }
 
+    pub fn create_satellite(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
+        let current_bounds = window.bounds();
+        let new_bounds = gpui::Bounds {
+            origin: current_bounds.origin,
+            size: gpui::Size {
+                width: gpui::px(800.0),
+                height: gpui::px(600.0),
+            },
+        };
+
+        let workspace = cx.entity();
+        let window_handle = cx.open_window(
+            gpui::WindowOptions {
+                window_bounds: Some(gpui::WindowBounds::Windowed(new_bounds)),
+                ..Default::default()
+            },
+            {
+                |window, cx| {
+                    cx.new(|cx| {
+                        WorkspaceSatellite::new(self.create_pane(window, cx), workspace, window, cx)
+                    })
+                }
+            },
+        )?;
+
+        let root = window_handle.read_with(cx, |satellite, _| satellite.root())?;
+
+        cx.subscribe_in(
+            &window_handle.entity(cx)?,
+            window,
+            Self::handle_satellite_event,
+        )
+        .detach();
+
+        self.satellites.push(window_handle);
+        self.set_active_pane(&root, window, cx);
+        self.panes.push(root.clone());
+
+        cx.emit(Event::PaneAdded(root));
+
+        Ok(window_handle)
+    }
+
+    pub fn detach_item(
+        &mut self,
+        item_to_detach: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
+        let source_pane = self
+            .panes_by_item
+            .get(&item_to_detach)
+            .and_then(|weak| weak.upgrade())
+            .ok_or_else(|| anyhow::anyhow!("Item not found in any pane"))?;
+
+        let satellite = self.create_satellite(window, cx)?;
+        satellite.update(cx, |satellite, window, cx| {
+            move_item(
+                &source_pane,
+                &satellite.root(),
+                item_to_detach,
+                0,
+                true,
+                window,
+                cx,
+            );
+        })?;
+
+        cx.notify();
+        Ok(satellite)
+    }
+
+    pub fn detach_active_item(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<WindowHandle<WorkspaceSatellite>> {
+        let active_item = self
+            .active_item(cx)
+            .ok_or_else(|| anyhow::anyhow!("No active item to detach"))?;
+
+        self.detach_item(active_item.item_id(), window, cx)
+    }
+
     pub fn close_inactive_items_and_panes(
         &mut self,
         action: &CloseInactiveTabsAndPanes,
@@ -3680,7 +3774,31 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
-        let pane = cx.new(|cx| {
+        let pane = self.create_pane(window, cx);
+        self.register_pane(pane.clone(), window, cx);
+
+        pane
+    }
+
+    fn register_pane(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        cx.subscribe_in(&pane, window, Self::handle_pane_event)
+            .detach();
+        self.panes.push(pane.clone());
+
+        window.focus(&pane.focus_handle(cx), cx);
+
+        cx.emit(Event::PaneAdded(pane.clone()));
+
+        pane
+    }
+
+    fn create_pane(&mut self, window: &mut Window, cx: &mut App) -> Entity<Pane> {
+        cx.new(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
@@ -3693,15 +3811,7 @@ impl Workspace {
             );
             pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
             pane
-        });
-        cx.subscribe_in(&pane, window, Self::handle_pane_event)
-            .detach();
-        self.panes.push(pane.clone());
-
-        window.focus(&pane.focus_handle(cx), cx);
-
-        cx.emit(Event::PaneAdded(pane.clone()));
-        pane
+        })
     }
 
     pub fn add_item_to_center(
@@ -4467,6 +4577,22 @@ impl Workspace {
         self.last_active_center_pane = Some(pane.downgrade());
     }
 
+    fn handle_satellite_event(
+        &mut self,
+        satellite: &Entity<WorkspaceSatellite>,
+        event: &workspace_satellite::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            workspace_satellite::Event::Closing => {
+                // TODO: we probably want to transfer back all items
+                let root = satellite.read(cx).root();
+                self.remove_pane(root, Some(self.active_pane().clone()), window, cx);
+            }
+        }
+    }
+
     fn handle_panel_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_active_view_for_followers(window, cx);
     }
@@ -4751,6 +4877,24 @@ impl Workspace {
     pub fn pane_for(&self, handle: &dyn ItemHandle) -> Option<Entity<Pane>> {
         let weak_pane = self.panes_by_item.get(&handle.item_id())?;
         weak_pane.upgrade()
+    }
+
+    pub fn satellite_for_pane(
+        &self,
+        pane: &Entity<Pane>,
+        cx: &App,
+    ) -> Option<WindowHandle<WorkspaceSatellite>> {
+        for satellite in &self.satellites {
+            let contains_pane = satellite
+                .read(cx)
+                .map(|satellite| satellite.center.panes().contains(&pane))
+                .unwrap_or(false);
+
+            if contains_pane {
+                return Some(*satellite);
+            }
+        }
+        None
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, window: &mut Window, cx: &mut Context<Self>) {
@@ -6268,6 +6412,9 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &DetachActiveItem, window, cx| {
+                workspace.detach_active_item(window, cx).log_err();
             }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);

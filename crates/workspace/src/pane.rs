@@ -423,6 +423,7 @@ pub struct Pane {
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
 
+    pub in_satellite: bool,
     pub in_center_group: bool,
     pub is_upper_left: bool,
     pub is_upper_right: bool,
@@ -592,6 +593,7 @@ impl Pane {
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
+            in_satellite: false,
             in_center_group: false,
             is_upper_left: false,
             is_upper_right: false,
@@ -4094,6 +4096,7 @@ fn default_render_tab_bar_buttons(
     if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
         return (None, None);
     }
+    let in_satellite = pane.in_satellite;
     let (can_clone, can_split_move) = match pane.active_item() {
         Some(active_item) if active_item.can_split(cx) => (true, false),
         Some(_) => (false, pane.items_len() > 1),
@@ -4127,8 +4130,10 @@ fn default_render_tab_bar_buttons(
                                 .boxed_clone(),
                             )
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
-                            .separator()
-                            .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .when(!in_satellite, |menu| {
+                                menu.separator()
+                                    .action("New Terminal", NewTerminal::default().boxed_clone())
+                            })
                     }))
                 }),
         )
