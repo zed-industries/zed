@@ -985,6 +985,7 @@ impl VsCodeSettings {
                     CloseWindowWhenNoItems::KeepWindowOpen
                 }
             }),
+            reduce_motion: None,
             zoomed_padding: None,
         }
     }

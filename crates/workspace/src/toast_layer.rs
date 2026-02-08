@@ -7,6 +7,7 @@ use gpui::{
     AnyView, DismissEvent, Entity, EntityId, FocusHandle, ManagedView, MouseButton, Subscription,
     Task,
 };
+use settings::should_reduce_motion;
 use ui::{animation::DefaultAnimations, prelude::*};
 use zed_actions::toast;
 
@@ -219,43 +220,58 @@ impl ToastLayer {
 impl Render for ToastLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_toast) = &self.active_toast else {
-            return div();
+            return div().into_any_element();
         };
 
-        div().absolute().size_full().bottom_0().left_0().child(
-            v_flex()
-                .id(("toast-layer-container", active_toast.id))
-                .absolute()
-                .w_full()
-                .bottom(px(0.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .track_focus(&active_toast.focus_handle)
-                .child(
-                    h_flex()
-                        .id("active-toast-container")
-                        .occlude()
-                        .on_hover(cx.listener(|this, hover_start, _window, cx| {
-                            if *hover_start {
-                                this.pause_dismiss_timer();
-                            } else {
-                                this.restart_dismiss_timer(cx);
-                            }
-                            cx.stop_propagation();
-                        }))
-                        .on_click(|_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .on_mouse_down(
-                            MouseButton::Middle,
-                            cx.listener(|this, _, _, cx| {
-                                this.hide_toast(cx);
-                            }),
-                        )
-                        .child(active_toast.toast.view()),
-                )
-                .animate_in(AnimationDirection::FromBottom, true),
-        )
+        let reduce_motion = should_reduce_motion(cx);
+
+        let toast_container = v_flex()
+            .id(("toast-layer-container", active_toast.id))
+            .absolute()
+            .w_full()
+            .bottom(px(0.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .track_focus(&active_toast.focus_handle)
+            .child(
+                h_flex()
+                    .id("active-toast-container")
+                    .occlude()
+                    .on_hover(cx.listener(|this, hover_start, _window, cx| {
+                        if *hover_start {
+                            this.pause_dismiss_timer();
+                        } else {
+                            this.restart_dismiss_timer(cx);
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_click(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_mouse_down(
+                        MouseButton::Middle,
+                        cx.listener(|this, _, _, cx| {
+                            this.hide_toast(cx);
+                        }),
+                    )
+                    .child(active_toast.toast.view()),
+            );
+
+        let toast_element = if reduce_motion {
+            toast_container.into_any_element()
+        } else {
+            toast_container
+                .animate_in(AnimationDirection::FromBottom, true)
+                .into_any_element()
+        };
+
+        div()
+            .absolute()
+            .size_full()
+            .bottom_0()
+            .left_0()
+            .child(toast_element)
+            .into_any_element()
     }
 }
