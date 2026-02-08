@@ -285,6 +285,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.max_output_tokens()
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
@@ -494,5 +498,78 @@ impl Render for ConfigurationView {
         } else {
             v_flex().size_full().child(api_key_section).into_any()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModel;
+    use strum::IntoEnumIterator;
+
+    #[gpui::test]
+    fn test_xai_supports_split_token_display(cx: &gpui::TestAppContext) {
+        cx.update(|cx| {
+            let state = cx.new(|_cx| State {
+                api_key_state: ApiKeyState::new("https://api.x.ai/v1".into(), (*API_KEY_ENV_VAR).clone()),
+            });
+            let http_client = http_client::FakeHttpClient::with_200_response();
+
+            for model in x_ai::Model::iter() {
+                if matches!(model, x_ai::Model::Custom { .. }) {
+                    continue;
+                }
+                let lm = XAiLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model: model.clone(),
+                    state: state.clone(),
+                    http_client: http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
+                };
+                assert!(
+                    lm.supports_split_token_display(),
+                    "expected supports_split_token_display() == true for model {}",
+                    model.id()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_xai_models_have_max_output_tokens(cx: &gpui::TestAppContext) {
+        cx.update(|cx| {
+            let state = cx.new(|_cx| State {
+                api_key_state: ApiKeyState::new("https://api.x.ai/v1".into(), (*API_KEY_ENV_VAR).clone()),
+            });
+            let http_client = http_client::FakeHttpClient::with_200_response();
+
+            for model in x_ai::Model::iter() {
+                if matches!(model, x_ai::Model::Custom { .. }) {
+                    continue;
+                }
+                let lm = XAiLanguageModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model: model.clone(),
+                    state: state.clone(),
+                    http_client: http_client.clone(),
+                    request_limiter: RateLimiter::new(4),
+                };
+                assert!(
+                    lm.max_output_tokens().is_some(),
+                    "expected max_output_tokens() to be Some for model {}, needed for split token display",
+                    model.id()
+                );
+                assert!(
+                    lm.max_output_tokens().unwrap() > 0,
+                    "expected max_output_tokens() > 0 for model {}",
+                    model.id()
+                );
+                assert!(
+                    lm.max_output_tokens().unwrap() < lm.max_token_count(),
+                    "expected max_output_tokens() < max_token_count() for model {}",
+                    model.id()
+                );
+            }
+        });
     }
 }
