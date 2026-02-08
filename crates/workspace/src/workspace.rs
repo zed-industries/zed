@@ -562,6 +562,16 @@ pub struct OpenTerminal {
     pub local: bool,
 }
 
+/// Opens a new terminal with the specified working directory.
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct SendToTerminal {
+    /// If true, sends a newline after selection
+    #[serde(default)]
+    pub append_newline: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkspaceId(i64);
 

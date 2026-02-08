@@ -6,7 +6,7 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{Editor, EditorSettings, ToOffset, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
@@ -50,13 +50,14 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
-    delete_unloaded_items,
+    CloseActiveItem, NewCenterTerminal, NewTerminal, Panel, ToolbarItemLocation, Workspace,
+    WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    with_active_or_new_workspace,
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
@@ -101,6 +102,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
+        workspace.register_action(TerminalView::send_to_terminal);
     })
     .detach();
     SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
@@ -843,6 +845,81 @@ impl TerminalView {
             self.clear_bell(cx);
             self.process_keystroke(&keystroke, cx);
         }
+    }
+
+    pub fn send_to_terminal(
+        _workspace: &mut Workspace,
+        action: &workspace::SendToTerminal,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let newline = action.append_newline.clone();
+        with_active_or_new_workspace(cx, move |workspace, _window, cx| {
+            let Some(active_item) = workspace.active_item(cx) else {
+                return;
+            };
+
+            let Some(editor) = active_item.act_as::<editor::Editor>(cx) else {
+                return;
+            };
+
+            let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+            let selection = editor.read(cx).selections.newest_anchor();
+
+            // Going to send selection **UNLESS** nothing is selected,
+            // then we'll use tree-sitter to figure out the thing to send.
+            let selection_range =
+                selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+            let (_selection_range, expression_text) =
+                if selection_range.start == selection_range.end {
+                    let cursor_offset = selection_range.start;
+                    if let Some((node, new_range)) =
+                        buffer.syntax_ancestor(cursor_offset..cursor_offset)
+                    {
+                        let new_text = buffer.text_for_range(new_range.clone()).collect::<String>();
+                        (new_range, new_text)
+                    } else {
+                        // I don't really understand this failure case, so I'll have to
+                        // figure out how to test it.
+                        (selection_range, "".to_string())
+                    }
+                } else {
+                    // This is the case where something is selected.
+                    let expression_text = buffer
+                        .text_for_range(selection_range.clone())
+                        .collect::<String>();
+                    (selection_range, expression_text)
+                };
+            let expression_text = expression_text.trim().to_string();
+            if expression_text.is_empty() {
+                return;
+            }
+
+            let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
+                return;
+            };
+
+            let Some(terminal_view) = terminal_panel.read(cx).pane().and_then(|pane| {
+                pane.read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+            }) else {
+                return;
+            };
+
+            let command = if newline {
+                format!("{}\n", expression_text)
+            } else {
+                expression_text
+            };
+
+            terminal_view.update(cx, |view, cx| {
+                view.terminal().update(cx, |terminal, _cx| {
+                    terminal.input(command.into_bytes());
+                });
+            });
+        });
+        return;
     }
 
     fn dispatch_context(&self, cx: &App) -> KeyContext {
@@ -1826,12 +1903,15 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, WindowHandle};
+    use language::{Language, LanguageConfig, LanguageMatcher, PointUtf16, tree_sitter_python};
     use project::{Entry, Project, ProjectPath, Worktree};
+    use serde_json::json;
     use std::path::Path;
+    use util::path;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::AppState;
+    use workspace::{AppState, OpenOptions, OpenVisible, SendToTerminal};
 
     // Working directory calculation tests
 
@@ -2003,17 +2083,23 @@ mod tests {
     /// Creates a worktree with 1 file: /root.txt
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
+        let (project, workspace, _) = init_test_with_fs(cx, params).await;
+        (project, workspace)
+    }
+
+    pub async fn init_test_with_fs(
+        cx: &mut TestAppContext,
+        params: Arc<AppState>,
+    ) -> (Entity<Project>, Entity<Workspace>, WindowHandle<Workspace>) {
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root(cx)
-            .unwrap();
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
 
-        (project, workspace)
+        (project, workspace, window)
     }
 
     /// Creates a worktree with 1 folder: /root{suffix}/
@@ -2291,6 +2377,370 @@ mod tests {
                 "Tab should show terminal title, not whitespace; got: '{}'",
                 text
             );
+        });
+    }
+
+    fn python_language() -> Arc<Language> {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Python".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["py".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_python::LANGUAGE.into()),
+        ))
+    }
+
+    #[gpui::test]
+    async fn test_send_to_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let params = cx.update(AppState::test);
+        params
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "test.py": ""
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let (project, _workspace, window) = init_test_with_fs(cx, params).await;
+        let python_lang = python_language();
+        project.update(cx, |project, _cx| {
+            project.languages().add(python_lang.clone());
+        });
+
+        let terminal_panel = window
+            .update(cx, |workspace, window, cx| {
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                workspace.add_panel(terminal_panel.clone(), window, cx);
+                terminal_panel
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(workspace::NewTerminal::default().boxed_clone(), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let _res = window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from(path!("/root/test.py"))],
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let code = r#"
+import pandas as pd
+
+df = pd.read_csv("data.csv")
+print(df.head())
+
+df.describe()
+"#;
+        let editor = window
+            .update(cx, |workspace, _, cx| {
+                workspace.active_item_as::<Editor>(cx).unwrap()
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.set_text(code, window, cx);
+                    editor.buffer().update(cx, |multi_buffer, cx| {
+                        multi_buffer
+                            .as_singleton()
+                            .unwrap()
+                            .update(cx, |buffer, cx| {
+                                buffer.set_language(Some(python_lang.clone()), cx);
+                            });
+                    });
+                })
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let selected_text = window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges([PointUtf16::new(1, 0)..PointUtf16::new(1, 9)]);
+                    });
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let selection = editor.selections.newest_anchor();
+                    let selection_range =
+                        selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+                    let expression_text = buffer
+                        .text_for_range(selection_range.clone())
+                        .collect::<String>();
+
+                    expression_text.trim().to_string()
+                })
+            })
+            .unwrap();
+
+        let buffer_text = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).snapshot(cx).text()
+        });
+        assert!(buffer_text.contains("import pandas as pd"));
+        assert!(buffer_text.contains("df.describe()"));
+        assert!(selected_text.eq("import pa"));
+        // I'm going to send three events. One with newline and two without.
+        // the terminal should then contain "import pa/nimport paimportpa".
+        // and we'll know both work
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: true,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        terminal_panel.update(cx, |panel, cx| {
+            let terminal_view = panel
+                .pane()
+                .unwrap()
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<TerminalView>()
+                .unwrap();
+            terminal_view.update(cx, |view, cx| {
+                view.terminal().update(cx, |t, _cx| {
+                    let text = t.get_content();
+                    assert!(
+                        text.contains("import pa\nimport paimport pa"),
+                        "text should be sent, got: '{}'",
+                        text
+                    );
+                    assert!(
+                        !text.contains("import pan"),
+                        "terminal should not contain the first unselected character"
+                    );
+                });
+            });
+        });
+    }
+
+    // This test looks upsettingly like the the above test case. It's a proof
+    // of concept to show it's working, but it's incomplete, as it doesn't
+    // cover the case where tree-sitter can't find anything to send.
+    //
+    // Once I have that tested, I'll have a good handle on everything that
+    // makes these two tests different, and will refactor.
+
+    #[gpui::test]
+    async fn test_send_to_terminal_treesitter(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let params = cx.update(AppState::test);
+        params
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "test.py": ""
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let (project, _workspace, window) = init_test_with_fs(cx, params).await;
+        let python_lang = python_language();
+        project.update(cx, |project, _cx| {
+            project.languages().add(python_lang.clone());
+        });
+
+        let terminal_panel = window
+            .update(cx, |workspace, window, cx| {
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                workspace.add_panel(terminal_panel.clone(), window, cx);
+                terminal_panel
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(workspace::NewTerminal::default().boxed_clone(), cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let _res = window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from(path!("/root/test.py"))],
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let code = r#"
+import pandas as pd
+
+df = pd.read_csv("data.csv")
+print(df.head())
+
+df.describe()
+"#;
+        let editor = window
+            .update(cx, |workspace, _, cx| {
+                workspace.active_item_as::<Editor>(cx).unwrap()
+            })
+            .unwrap();
+
+        window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.set_text(code, window, cx);
+                    editor.buffer().update(cx, |multi_buffer, cx| {
+                        multi_buffer
+                            .as_singleton()
+                            .unwrap()
+                            .update(cx, |buffer, cx| {
+                                buffer.set_language(Some(python_lang.clone()), cx);
+                            });
+                    });
+                })
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let selected_text = window
+            .update(cx, |_, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select_ranges([PointUtf16::new(3, 10)..PointUtf16::new(3, 10)]);
+                    });
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let selection = editor.selections.newest_anchor();
+                    let selection_range =
+                        selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+                    let expression_text = buffer
+                        .text_for_range(selection_range.clone())
+                        .collect::<String>();
+
+                    expression_text.trim().to_string()
+                })
+            })
+            .unwrap();
+
+        let buffer_text = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).snapshot(cx).text()
+        });
+        assert!(buffer_text.contains("import pandas as pd"));
+        assert!(buffer_text.contains("df.describe()"));
+        dbg!(&selected_text);
+        assert!(selected_text.eq(""));
+        // I'm going to send three events. One with newline and two without.
+        // the terminal should then contain "import pa/nimport paimportpa".
+        // and we'll know both work
+        window
+            .update(cx, |_workspace, window, cx| {
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: true,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+                window.dispatch_action(
+                    SendToTerminal {
+                        append_newline: false,
+                    }
+                    .boxed_clone(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        terminal_panel.update(cx, |panel, cx| {
+            let terminal_view = panel
+                .pane()
+                .unwrap()
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<TerminalView>()
+                .unwrap();
+            terminal_view.update(cx, |view, cx| {
+                view.terminal().update(cx, |t, _cx| {
+                    let text = t.get_content();
+                    assert!(
+                        text.contains("read_csv\nread_csvread_csv"),
+                        "text should be sent, got: '{}'",
+                        text
+                    );
+                    assert!(
+                        !text.contains("read_csv("),
+                        "terminal should not contain the first unselected character"
+                    );
+                });
+            });
         });
     }
 }
