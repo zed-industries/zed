@@ -1928,8 +1928,7 @@ impl Workspace {
             }
 
             window
-                .update(cx, |_, window, cx| {
-                    window.activate_window();
+                .update(cx, |_, _window, cx| {
                     workspace.update(cx, |this: &mut Workspace, cx| {
                         this.update_history(cx);
                     });
@@ -7968,10 +7967,12 @@ pub async fn restore_multiworkspace(
     } else {
         let (window, _items) = cx
             .update(|cx| {
-                open_paths(
-                    first.paths.paths(),
+                Workspace::new_local(
+                    first.paths.paths().to_vec(),
                     app_state.clone(),
-                    OpenOptions::default(),
+                    None,
+                    None,
+                    None,
                     cx,
                 )
             })
@@ -8018,7 +8019,7 @@ pub async fn restore_multiworkspace(
                     multi_workspace.activate_index(0, window, cx);
                 }
             })
-            .log_err();
+            .ok();
     } else {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
@@ -8026,7 +8027,7 @@ pub async fn restore_multiworkspace(
                     multi_workspace.activate_index(0, window, cx);
                 }
             })
-            .log_err();
+            .ok();
     }
 
     if state.sidebar_open {
@@ -8034,8 +8035,14 @@ pub async fn restore_multiworkspace(
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.open_sidebar(window, cx);
             })
-            .log_err();
+            .ok();
     }
+
+    window_handle
+        .update(cx, |_, window, _cx| {
+            window.activate_window();
+        })
+        .ok();
 
     Ok(window_handle)
 }
@@ -8266,6 +8273,12 @@ pub fn join_channel(
                 })
                 .await?;
 
+            window_handle
+                .update(cx, |_, window, _cx| {
+                    window.activate_window();
+                })
+                .ok();
+
             if result.is_ok() {
                 cx.update(|cx| {
                     cx.dispatch_action(&OpenChannelNotes);
@@ -8400,8 +8413,6 @@ pub fn open_workspace_by_id(
         cx,
     );
 
-    let is_new_window = requesting_window.is_none();
-
     cx.spawn(async move |cx| {
         let serialized_workspace = persistence::DB
             .workspace_for_id(workspace_id)
@@ -8485,9 +8496,6 @@ pub fn open_workspace_by_id(
             .await?;
 
         window.update(cx, |_, window, cx| {
-            if is_new_window {
-                window.activate_window();
-            }
             workspace.update(cx, |workspace, cx| {
                 workspace.serialize_workspace(window, cx);
             });
@@ -8618,17 +8626,28 @@ pub fn open_paths(
 
             Ok((existing, open_task))
         } else {
-            cx.update(move |cx| {
-                Workspace::new_local(
-                    abs_paths,
-                    app_state.clone(),
-                    open_options.replace_window,
-                    open_options.env,
-                    None,
-                    cx,
-                )
-            })
-            .await
+            let result = cx
+                .update(move |cx| {
+                    Workspace::new_local(
+                        abs_paths,
+                        app_state.clone(),
+                        open_options.replace_window,
+                        open_options.env,
+                        None,
+                        cx,
+                    )
+                })
+                .await;
+
+            if let Ok((ref window_handle, _)) = result {
+                window_handle
+                    .update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    })
+                    .log_err();
+            }
+
+            result
         };
 
         #[cfg(target_os = "windows")]
@@ -8680,9 +8699,13 @@ pub fn open_new(
         Some(Box::new(init)),
         cx,
     );
-    cx.spawn(async move |_cx| {
-        let (_workspace, _opened_paths) = task.await?;
-        // Init callback is called synchronously during workspace creation
+    cx.spawn(async move |cx| {
+        let (window, _opened_paths) = task.await?;
+        window
+            .update(cx, |_, window, _cx| {
+                window.activate_window();
+            })
+            .ok();
         Ok(())
     })
 }

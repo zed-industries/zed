@@ -1,9 +1,11 @@
+use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, Focusable, ManagedView,
-    MouseButton, Pixels, Render, Subscription, Window, actions, deferred, px,
+    MouseButton, Pixels, Render, Subscription, Task, Window, actions, deferred, px,
 };
 use project::Project;
+use std::path::PathBuf;
 use ui::prelude::*;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
@@ -132,7 +134,7 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
-    fn multi_workspace_enabled(&self, cx: &App) -> bool {
+    pub(crate) fn multi_workspace_enabled(&self, cx: &App) -> bool {
         cx.has_flag::<AgentV2FeatureFlag>()
     }
 
@@ -183,7 +185,6 @@ impl MultiWorkspace {
 
     pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
         if !self.multi_workspace_enabled(cx) {
-            // In single workspace mode, replace the current workspace
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
             cx.notify();
@@ -371,6 +372,38 @@ impl MultiWorkspace {
 
         self.focus_active_workspace(window, cx);
         cx.notify();
+    }
+
+    pub fn open_project(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace().clone();
+
+        if self.multi_workspace_enabled(cx) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(true, paths, window, cx)
+            })
+        } else {
+            cx.spawn_in(window, async move |_this, cx| {
+                let should_continue = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
+                    })?
+                    .await?;
+                if should_continue {
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_workspace_for_paths(true, paths, window, cx)
+                        })?
+                        .await
+                } else {
+                    Ok(())
+                }
+            })
+        }
     }
 }
 

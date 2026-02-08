@@ -11,7 +11,8 @@ use project::{Project, Worktree, git_store::Repository};
 use recent_projects::{RecentProjectEntry, delete_recent_project, get_recent_projects};
 use settings::WorktreeId;
 use ui::{ContextMenu, DocumentationAside, DocumentationSide, Tooltip, prelude::*};
-use workspace::{CloseIntent, Workspace};
+use util::ResultExt as _;
+use workspace::{MultiWorkspace, Workspace};
 
 actions!(project_dropdown, [RemoveSelectedFolder]);
 
@@ -400,36 +401,31 @@ impl ProjectDropdown {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = workspace.upgrade() else {
-            return;
-        };
+        if create_new_window {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_workspace_for_paths(false, paths, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        } else {
+            let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+                return;
+            };
 
-        workspace.update(cx, |workspace, cx| {
-            if create_new_window {
-                workspace.open_workspace_for_paths(false, paths, window, cx)
-            } else {
-                cx.spawn_in(window, {
-                    let paths = paths.clone();
-                    async move |workspace, cx| {
-                        let continue_replacing = workspace
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
-                            })?
-                            .await?;
-                        if continue_replacing {
-                            workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    workspace.open_workspace_for_paths(true, paths, window, cx)
-                                })?
-                                .await
-                        } else {
-                            Ok(())
-                        }
-                    }
-                })
-            }
-            .detach_and_log_err(cx);
-        });
+            cx.defer(move |cx| {
+                if let Some(task) = handle
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.open_project(paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.detach_and_log_err(cx);
+                }
+            });
+        }
     }
 
     /// Get all projects sorted alphabetically with their branch info.

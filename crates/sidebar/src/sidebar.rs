@@ -5,7 +5,7 @@ use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render, SharedString,
-    Subscription, Task, WeakEntity, Window, px,
+    Subscription, Task, Window, px,
 };
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
@@ -21,8 +21,8 @@ use ui::{CommonAnimationExt, Divider, HighlightedLabel, ListItem, Tab, Tooltip, 
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    CloseIntent, MultiWorkspace, NewWorkspaceInWindow, OpenOptions, OpenVisible,
-    Sidebar as WorkspaceSidebar, SidebarEvent, ToggleWorkspaceSidebar, Workspace,
+    MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
+    ToggleWorkspaceSidebar, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -290,63 +290,21 @@ impl WorkspacePickerDelegate {
         }
     }
 
-    fn open_recent_project(
-        workspace: WeakEntity<Workspace>,
-        paths: Vec<PathBuf>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(workspace) = workspace.upgrade() else {
+    fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
+        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
 
-        let has_worktrees = workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .is_some();
-
-        if has_worktrees {
-            workspace.update(cx, |_workspace, cx| {
-                cx.spawn_in(window, {
-                    let paths = paths.clone();
-                    async move |workspace, cx| {
-                        let continue_replacing = workspace
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
-                            })?
-                            .await?;
-                        if continue_replacing {
-                            workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    workspace.open_workspace_for_paths(true, paths, window, cx)
-                                })?
-                                .await
-                        } else {
-                            Ok(())
-                        }
-                    }
+        cx.defer(move |cx| {
+            if let Some(task) = handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.open_project(paths, window, cx)
                 })
-                .detach_and_log_err(cx);
-            });
-        } else {
-            workspace.update(cx, |workspace, cx| {
-                workspace
-                    .open_paths(
-                        paths,
-                        OpenOptions {
-                            visible: Some(OpenVisible::All),
-                            ..Default::default()
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
-                    .detach();
-            });
-        }
+                .log_err()
+            {
+                task.detach_and_log_err(cx);
+            }
+        });
     }
 }
 
@@ -526,8 +484,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
             }
             SidebarEntry::RecentProject(project_entry) => {
                 let paths = project_entry.paths.clone();
-                let workspace = self.multi_workspace.read(cx).workspace().downgrade();
-                Self::open_recent_project(workspace, paths, window, cx);
+                Self::open_recent_project(paths, window, cx);
             }
         }
     }

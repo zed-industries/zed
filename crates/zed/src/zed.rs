@@ -5894,18 +5894,14 @@ mod tests {
             .await
             .expect("failed to open first workspace");
 
-        cx.update(|cx| {
-            Workspace::new_local(
-                vec![dir2.into()],
-                app_state.clone(),
-                Some(window_a),
-                None,
-                None,
-                cx,
-            )
-        })
-        .await
-        .expect("failed to open second workspace into window A");
+        window_a
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project(vec![dir2.into()], window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to open second workspace into window A");
+        cx.run_until_parked();
 
         let (window_b, _) = cx
             .update(|cx| {
@@ -5927,6 +5923,16 @@ mod tests {
         // --- Flush serialization ---
         cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
         cx.run_until_parked();
+
+        // Verify all workspaces retained their session_ids.
+        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("expected session workspace locations");
+        assert_eq!(
+            locations.len(),
+            3,
+            "all 3 workspaces should have session_ids in the DB"
+        );
 
         // Close the original windows.
         window_a
