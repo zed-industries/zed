@@ -18,6 +18,7 @@ use language::{
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use text::Bias;
+use workspace::NotificationSource;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use zeta_prompt::{
     Event, ZetaPromptInput,
@@ -169,6 +170,7 @@ pub(crate) fn request_prediction_with_zeta1(
                         let error_message: SharedString = err.to_string().into();
                         show_app_notification(
                             NotificationId::unique::<ZedUpdateRequiredError>(),
+                            NotificationSource::Copilot,
                             cx,
                             move |cx| {
                                 cx.new(|cx| {

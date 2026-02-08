@@ -4,7 +4,7 @@ use fs::Fs;
 use migrator::{migrate_keymap, migrate_settings};
 use settings::{KeymapFile, Settings, SettingsStore};
 use util::ResultExt;
-use workspace::notifications::NotifyTaskExt;
+use workspace::notifications::{NotificationSource, NotifyTaskExt};
 
 use std::sync::Arc;
 
@@ -241,11 +241,19 @@ impl Render for MigrationBanner {
                         match migration_type {
                             Some(MigrationType::Keymap) => {
                                 cx.background_spawn(write_keymap_migration(fs.clone()))
-                                    .detach_and_notify_err(window, cx);
+                                    .detach_and_notify_err(
+                                        NotificationSource::Settings,
+                                        window,
+                                        cx,
+                                    );
                             }
                             Some(MigrationType::Settings) => {
                                 cx.background_spawn(write_settings_migration(fs.clone()))
-                                    .detach_and_notify_err(window, cx);
+                                    .detach_and_notify_err(
+                                        NotificationSource::Settings,
+                                        window,
+                                        cx,
+                                    );
                             }
                             None => unreachable!(),
                         }

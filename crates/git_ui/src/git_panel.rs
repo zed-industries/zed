@@ -76,7 +76,9 @@ use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
+    notifications::{
+        DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotificationSource, NotifyResultExt,
+    },
 };
 actions!(
     git_panel,
@@ -739,7 +741,7 @@ impl GitPanel {
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                workspace.show_error(error, cx);
+                                workspace.show_error(error, NotificationSource::Git, cx);
                             })
                             .ok();
                     }
@@ -1277,7 +1279,7 @@ impl GitPanel {
             cx.spawn_in(window, async move |_, mut cx| {
                 let item = open_task
                     .await
-                    .notify_async_err(&mut cx)
+                    .notify_async_err(NotificationSource::Git, &mut cx)
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
                     if let Some(diff_task) =
@@ -3752,7 +3754,7 @@ impl GitPanel {
             let _ = workspace.update(cx, |workspace, cx| {
                 struct CommitMessageError;
                 let notification_id = NotificationId::unique::<CommitMessageError>();
-                workspace.show_notification(notification_id, cx, |cx| {
+                workspace.show_notification(notification_id, NotificationSource::Git, cx, |cx| {
                     cx.new(|cx| {
                         ErrorMessagePrompt::new(
                             format!("Failed to generate commit message: {err}"),

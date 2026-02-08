@@ -36,7 +36,10 @@ use util::{
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
-use workspace::{SplitDirection, notifications::DetachAndPromptErr};
+use workspace::{
+    SplitDirection,
+    notifications::{DetachAndPromptErr, NotificationSource},
+};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
@@ -892,7 +895,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             workspace.update(cx, |workspace, cx| {
-                e.notify_err(workspace, cx);
+                e.notify_err(workspace, NotificationSource::Editor, cx);
             });
         }
     });
@@ -936,7 +939,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, NotificationSource::Editor, cx);
                 });
                 return;
             }
@@ -2136,7 +2139,7 @@ impl OnMatchingLines {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, NotificationSource::Editor, cx);
                 });
                 return;
             }
@@ -2153,7 +2156,7 @@ impl OnMatchingLines {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
+                    e.notify_err(workspace, NotificationSource::Editor, cx);
                 });
                 return;
             }

@@ -33,6 +33,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
+    notifications::NotificationSource,
 };
 use zed_actions::ExtensionCategoryFilter;
 
@@ -159,6 +160,7 @@ pub fn init(cx: &mut App) {
                                             // NOTE: using `anyhow::context` here ends up not printing
                                             // the error
                                             &format!("Failed to install dev extension: {}", err),
+                                            NotificationSource::Extension,
                                             cx,
                                         );
                                     })

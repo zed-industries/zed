@@ -27,7 +27,7 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{NotificationSource, Toast, Workspace, notifications::NotificationId};
 
 pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
     cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder));
@@ -452,7 +452,11 @@ impl TerminalInlineAssist {
                                         assist_id.0,
                                     );
 
-                                    workspace.show_toast(Toast::new(id, error), cx);
+                                    workspace.show_toast(
+                                        Toast::new(id, error),
+                                        NotificationSource::Agent,
+                                        cx,
+                                    );
                                 })
                             }
 

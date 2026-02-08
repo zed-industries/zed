@@ -12,7 +12,7 @@ use project::project_settings::ProjectSettings;
 use settings::Settings as _;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
+use workspace::{AppState, NotificationSource, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
@@ -37,7 +37,7 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
+                        workspace.show_error(&err, NotificationSource::Copilot, cx);
                     })
                 } else {
                     log::error!("{:?}", err);
@@ -88,7 +88,11 @@ fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
 
     cx.defer(move |cx| {
         workspace.update(cx, |workspace, cx| match message {
-            Some(message) => workspace.show_toast(Toast::new(NOTIFICATION_ID, message), cx),
+            Some(message) => workspace.show_toast(
+                Toast::new(NOTIFICATION_ID, message),
+                NotificationSource::Copilot,
+                cx,
+            ),
             None => workspace.dismiss_toast(&NOTIFICATION_ID, cx),
         });
     })

@@ -72,7 +72,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotificationSource, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
@@ -756,7 +756,11 @@ impl ProjectPanel {
                         {
                             match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
-                                    task.detach_and_notify_err(window, cx);
+                                    task.detach_and_notify_err(
+                                        NotificationSource::File,
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 None => {
                                     project_panel.discard_edit_state(window, cx);
@@ -1631,7 +1635,7 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(task) = self.confirm_edit(true, window, cx) {
-            task.detach_and_notify_err(window, cx);
+            task.detach_and_notify_err(NotificationSource::File, window, cx);
         }
     }
 
@@ -3009,13 +3013,15 @@ impl ProjectPanel {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) =
-                                task.await.notify_async_err(cx)
+                                task.await.notify_async_err(NotificationSource::File, cx)
                             {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
+                            if let Some(Some(entry)) =
+                                task.await.notify_async_err(NotificationSource::File, cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -3178,6 +3184,7 @@ impl ProjectPanel {
                                     notification_id.clone(),
                                     format!("Downloading 0/{} files...", total_files),
                                 ),
+                                NotificationSource::File,
                                 cx,
                             );
                         })
@@ -3198,6 +3205,7 @@ impl ProjectPanel {
                                             total_files
                                         ),
                                     ),
+                                    NotificationSource::File,
                                     cx,
                                 );
                             })
@@ -3231,6 +3239,7 @@ impl ProjectPanel {
                                     notification_id.clone(),
                                     format!("Downloaded {} files", total_files),
                                 ),
+                                NotificationSource::File,
                                 cx,
                             );
                         })

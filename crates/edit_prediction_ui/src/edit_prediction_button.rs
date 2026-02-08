@@ -38,8 +38,8 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
-    notifications::NotificationId,
+    NotificationSource, StatusItemView, Toast, Workspace, create_and_open_local_file,
+    item::ItemHandle, notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
@@ -137,6 +137,7 @@ impl Render for EditPredictionButton {
                                                     )
                                                 },
                                             ),
+                                            NotificationSource::Copilot,
                                             cx,
                                         );
                                     });
