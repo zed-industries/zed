@@ -113,6 +113,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether to automatically open a markdown preview when opening markdown files.
+    /// When enabled, opening a markdown file will also open a preview pane to the side.
+    ///
+    /// Default: false
+    pub auto_preview_markdown: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,

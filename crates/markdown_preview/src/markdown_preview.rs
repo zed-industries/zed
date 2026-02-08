@@ -39,4 +39,12 @@ pub fn init(cx: &mut App) {
         markdown_preview_view::MarkdownPreviewView::register(workspace, window, cx);
     })
     .detach();
+
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        markdown_preview_view::register_auto_preview(workspace, window, cx);
+    })
+    .detach();
 }

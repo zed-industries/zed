@@ -185,6 +185,8 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // Whether to automatically open a markdown preview when opening markdown files.
+  "auto_preview_markdown": false,
   // What draws Zed's window decorations (titlebar):
   // 1. Client application (Zed) draws its own window decorations
   //    "client"

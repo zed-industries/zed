@@ -16,7 +16,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
-use workspace::{Pane, Workspace};
+use workspace::{Pane, Workspace, WorkspaceSettings};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::CheckboxClickedEvent;
@@ -126,7 +126,98 @@ impl MarkdownPreviewView {
             }
         });
     }
+}
 
+pub fn register_auto_preview(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let workspace_handle = workspace.weak_handle();
+    cx.subscribe_in(
+        &workspace_handle.upgrade().expect("workspace should exist during registration"),
+        window,
+        move |workspace, _, event, window, cx| {
+            if let workspace::Event::ItemAdded { item } = event {
+                handle_item_added(workspace, item.as_ref(), window, cx);
+            }
+        },
+    )
+    .detach();
+}
+
+fn handle_item_added(
+    workspace: &mut Workspace,
+    item: &dyn ItemHandle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if !WorkspaceSettings::get_global(cx).auto_preview_markdown {
+        return;
+    }
+
+    let Some(editor) = item.act_as::<Editor>(cx) else {
+        return;
+    };
+    if !MarkdownPreviewView::is_markdown_file(&editor, cx) {
+        return;
+    }
+
+    // Don't auto-preview if the item was added to a pane that already has a markdown preview
+    // (this likely means it was opened from within a preview)
+    let has_preview_in_same_pane = workspace
+        .active_pane()
+        .read(cx)
+        .items_of_type::<MarkdownPreviewView>()
+        .next()
+        .is_some();
+    if has_preview_in_same_pane {
+        return;
+    }
+
+    if preview_exists_for_editor(workspace, &editor, cx) {
+        return;
+    }
+
+    let view = MarkdownPreviewView::create_markdown_view(workspace, editor.clone(), window, cx);
+    let pane = workspace
+        .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+        .unwrap_or_else(|| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                workspace::SplitDirection::Right,
+                window,
+                cx,
+            )
+        });
+
+    pane.update(cx, |pane, cx| {
+        pane.add_item(Box::new(view), false, false, None, window, cx);
+    });
+
+    editor.focus_handle(cx).focus(window, cx);
+    cx.notify();
+}
+
+fn preview_exists_for_editor(workspace: &Workspace, editor: &Entity<Editor>, cx: &App) -> bool {
+    for pane in workspace.panes() {
+        let pane_read = pane.read(cx);
+        for view in pane_read.items_of_type::<MarkdownPreviewView>() {
+            let view_read = view.read(cx);
+            if view_read.mode == MarkdownPreviewMode::Default
+                && view_read
+                    .active_editor
+                    .as_ref()
+                    .is_some_and(|state| state.editor == *editor)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+impl MarkdownPreviewView {
     fn find_existing_independent_preview_item_idx(
         pane: &Pane,
         editor: &Entity<Editor>,
@@ -159,7 +250,7 @@ impl MarkdownPreviewView {
         None
     }
 
-    fn create_markdown_view(
+    pub fn create_markdown_view(
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
