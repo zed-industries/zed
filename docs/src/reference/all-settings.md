@@ -2701,6 +2701,38 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
+## Unicode Shortcodes
+
+- Description: Configuration for automatic unicode shortcode replacement. When enabled, typing shortcodes like `\alpha` followed by a space will automatically replace them with their unicode equivalents like `α`. Can be configured globally or per-language.
+- Setting: `unicode_shortcodes`
+- Default:
+
+```json
+"unicode_shortcodes": {
+  "enabled": null,
+  "replacements": {}
+}
+```
+
+**Options**
+
+| Property       | Description                                                                     | Default |
+| -------------- | ------------------------------------------------------------------------------- | ------- |
+| `enabled`      | Whether unicode shortcode replacement is enabled                                | `false` |
+| `replacements` | Custom shortcode replacements (keys without backslash, values are replacements) | `{}`    |
+
+**Per-language example**
+
+```json
+"languages": {
+  "Lean": {
+    "unicode_shortcodes": {
+      "enabled": true
+    }
+  }
+}
+```
+
 ## Multi Cursor Modifier
 
 - Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.

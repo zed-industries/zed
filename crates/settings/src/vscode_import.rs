@@ -609,6 +609,7 @@ impl VsCodeSettings {
                         .collect()
                 }),
             word_diff_enabled: None,
+            unicode_shortcodes: None,
         }
     }
 
