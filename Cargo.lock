@@ -6038,6 +6038,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "proto",
+ "rpc",
  "semver",
  "serde",
  "serde_json",
