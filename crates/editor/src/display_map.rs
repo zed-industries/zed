@@ -1971,7 +1971,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style,
                 is_tab: chunk.is_tab,
-                kind: chunk.kind.into(),
+                kind: chunk.kind,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)

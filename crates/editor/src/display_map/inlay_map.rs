@@ -328,7 +328,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 }
 
                 let mut renderer = None;
-                let (mut highlight_style, chunk_special) = match inlay.id {
+                let (mut highlight_style, chunk_kind) = match inlay.id {
                     InlayId::EditPrediction(_) => (
                         self.highlight_styles.edit_prediction.map(|s| {
                             if inlay.text().chars().all(|c| c.is_whitespace()) {
@@ -475,7 +475,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         tabs: new_tabs,
                         newlines: new_newlines,
                         highlight_style,
-                        kind: chunk_special,
+                        kind: chunk_kind,
                         ..Chunk::default()
                     },
                     renderer,
