@@ -1651,7 +1651,6 @@ pub(crate) fn balancing_block(
     my_display_map_id: EntityId,
     companion: &Companion,
 ) -> Option<BlockProperties<Anchor>> {
-    dbg!("BALANCING BLOCK OF HEIGHT", my_block.height);
     let my_anchor = my_block.placement.start();
     let my_point = my_anchor.to_point(&my_snapshot);
     let their_point = companion
@@ -1755,7 +1754,7 @@ impl BlockMapWriter<'_> {
 
         self.block_map.sync(
             &wrap_snapshot,
-            edits.clone(),
+            edits,
             self.companion
                 .as_ref()
                 .map(BlockMapWriterCompanion::companion_view),
@@ -1777,7 +1776,6 @@ impl BlockMapWriter<'_> {
 
     #[ztracing::instrument(skip_all)]
     pub fn resize(&mut self, mut heights: HashMap<CustomBlockId, u32>) {
-        dbg!("RESIZE");
         let wrap_snapshot = self.block_map.wrap_snapshot.borrow().clone();
         let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Patch::default();

@@ -885,7 +885,7 @@ impl DisplayMap {
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
         self.block_map
-            .write(self_wrap_snapshot.clone(), self_wrap_edits.clone(), None)
+            .write(self_wrap_snapshot, self_wrap_edits, None)
             .disable_header_for_buffer(buffer_id);
     }
 
