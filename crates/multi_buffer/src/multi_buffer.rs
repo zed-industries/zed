@@ -8156,15 +8156,18 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
                     let chars = chunk.chars & mask;
                     let tabs = chunk.tabs & mask;
+                    let newlines = chunk.newlines & mask;
 
                     chunk.text = after;
                     chunk.chars = chunk.chars >> split_idx;
                     chunk.tabs = chunk.tabs >> split_idx;
+                    chunk.newlines = chunk.newlines >> split_idx;
 
                     Some(Chunk {
                         text: before,
                         chars,
                         tabs,
+                        newlines,
                         ..chunk.clone()
                     })
                 } else {
@@ -8209,6 +8212,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     Chunk {
                         text: "\n",
                         chars: 1u128,
+                        newlines: 1u128,
                         ..Default::default()
                     }
                 };
@@ -8306,10 +8310,12 @@ impl<'a> Iterator for ExcerptChunks<'a> {
         if self.has_footer {
             let text = "\n";
             let chars = 0b1;
+            let newlines = 0b1;
             self.has_footer = false;
             return Some(Chunk {
                 text,
                 chars,
+                newlines,
                 ..Default::default()
             });
         }

@@ -137,8 +137,14 @@ impl Chunk {
         self.chars
     }
 
+    #[inline(always)]
     pub fn tabs(&self) -> Bitmap {
         self.tabs
+    }
+
+    #[inline(always)]
+    pub fn newlines(&self) -> Bitmap {
+        self.newlines
     }
 
     #[inline(always)]
