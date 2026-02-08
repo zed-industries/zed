@@ -1665,7 +1665,7 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: my_block.style,
+        style: BlockStyle::Sticky,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
