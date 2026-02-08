@@ -489,6 +489,12 @@ impl VsCodeSettings {
         skip_default(GitPanelSettingsContent {
             button: self.read_bool("git.enabled"),
             fallback_branch_name: self.read_string("git.defaultBranchName"),
+            untracked_changes: self.read_enum("git.untrackedChanges", |value| match value {
+                "mixed" => Some(GitPanelUntrackedChanges::Mixed),
+                "separate" => Some(GitPanelUntrackedChanges::Separate),
+                "hidden" => Some(GitPanelUntrackedChanges::Hidden),
+                _ => None,
+            }),
             ..Default::default()
         })
     }

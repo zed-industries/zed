@@ -136,6 +136,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | ------------------------------------ | ---------------------------------------------- |
 | `git.enabled`                        | `git_panel.button`                             |
 | `git.defaultBranchName`              | `git_panel.fallback_branch_name`               |
+| `git.untrackedChanges`               | `git_panel.untracked_changes`                  |
 | `git.decorations.enabled`            | `git.inline_blame`, `project_panel.git_status` |
 | `git.blame.editorDecoration.enabled` | `git.inline_blame.enabled`                     |
 

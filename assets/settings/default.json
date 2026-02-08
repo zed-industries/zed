@@ -873,6 +873,11 @@
     // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
+    // How untracked files are displayed and staged in the git panel.
+    //
+    // Choices: classic, mixed, separate, hidden
+    // Default: classic
+    "untracked_changes": "classic",
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
