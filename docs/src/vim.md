@@ -539,6 +539,7 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
     "ctrl-f": "buffer_search::Deploy",      // vim default: page down
     "ctrl-o": "workspace::Open",            // vim default: go back
     "ctrl-s": "workspace::Save",            // vim default: show signature
+    "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
