@@ -58,7 +58,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
     Callout, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab,
@@ -631,6 +631,25 @@ impl AgentPanel {
         } else {
             None
         };
+
+        let mut was_enabled = AgentSettings::get_global(cx).enabled(cx);
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_enabled = AgentSettings::get_global(cx).enabled(cx);
+            if was_enabled != is_enabled {
+                was_enabled = is_enabled;
+                if !is_enabled {
+                    if matches!(
+                        this.active_view,
+                        ActiveView::AgentThread { .. } | ActiveView::TextThread { .. }
+                    ) {
+                        this.active_view = ActiveView::Uninitialized;
+                    }
+                    cx.emit(PanelEvent::Close);
+                }
+                cx.notify();
+            }
+        })
+        .detach();
 
         let mut panel = Self {
             active_view,
