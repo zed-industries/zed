@@ -36,11 +36,11 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     TokenUsage, env_var,
 };
+use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
-use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
@@ -410,7 +410,7 @@ impl BedrockLanguageModelProvider {
             http_client: self.http_client.clone(),
             handle: self.handle.clone(),
             state: self.state.clone(),
-            client: OnceCell::new(),
+            client: Mutex::new(None),
             request_limiter: RateLimiter::new(4),
         })
     }
@@ -513,71 +513,112 @@ struct BedrockModel {
     model: Model,
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
-    client: OnceCell<BedrockClient>,
+    client: Mutex<Option<BedrockClient>>,
     state: Entity<State>,
     request_limiter: RateLimiter,
 }
 
+impl Clone for BedrockModel {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            model: self.model.clone(),
+            http_client: self.http_client.clone(),
+            handle: self.handle.clone(),
+            client: Mutex::new(self.client.lock().clone()),
+            state: self.state.clone(),
+            request_limiter: self.request_limiter.clone(),
+        }
+    }
+}
+
 impl BedrockModel {
-    fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<&BedrockClient> {
-        self.client
-            .get_or_try_init_blocking(|| {
-                let (auth, endpoint, region) = cx.read_entity(&self.state, |state, _cx| {
-                    let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
-                    let region = state.get_region();
-                    (state.auth.clone(), endpoint, region)
-                });
+    fn create_client(&self, cx: &AsyncApp) -> anyhow::Result<BedrockClient> {
+        let (auth, endpoint, region) = cx.read_entity(&self.state, |state, _cx| {
+            let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
+            let region = state.get_region();
+            (state.auth.clone(), endpoint, region)
+        });
 
-                let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
-                    .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                    .http_client(self.http_client.clone())
-                    .region(Region::new(region))
-                    .timeout_config(TimeoutConfig::disabled());
+        let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+            .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+            .http_client(self.http_client.clone())
+            .region(Region::new(region))
+            .timeout_config(TimeoutConfig::disabled());
 
-                if let Some(endpoint_url) = endpoint
-                    && !endpoint_url.is_empty()
-                {
-                    config_builder = config_builder.endpoint_url(endpoint_url);
+        if let Some(endpoint_url) = endpoint
+            && !endpoint_url.is_empty()
+        {
+            config_builder = config_builder.endpoint_url(endpoint_url);
+        }
+
+        match auth {
+            Some(BedrockAuth::Automatic) | None => {
+                // Use default AWS credential provider chain
+            }
+            Some(BedrockAuth::NamedProfile { profile_name })
+            | Some(BedrockAuth::SingleSignOn { profile_name }) => {
+                if !profile_name.is_empty() {
+                    config_builder = config_builder.profile_name(profile_name);
                 }
+            }
+            Some(BedrockAuth::IamCredentials {
+                access_key_id,
+                secret_access_key,
+                session_token,
+            }) => {
+                let aws_creds = Credentials::new(
+                    access_key_id,
+                    secret_access_key,
+                    session_token,
+                    None,
+                    "zed-bedrock-provider",
+                );
+                config_builder = config_builder.credentials_provider(aws_creds);
+            }
+            Some(BedrockAuth::ApiKey { api_key }) => {
+                config_builder = config_builder
+                    .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
+                    .token_provider(Token::new(api_key, None));
+            }
+        }
 
-                match auth {
-                    Some(BedrockAuth::Automatic) | None => {
-                        // Use default AWS credential provider chain
-                    }
-                    Some(BedrockAuth::NamedProfile { profile_name })
-                    | Some(BedrockAuth::SingleSignOn { profile_name }) => {
-                        if !profile_name.is_empty() {
-                            config_builder = config_builder.profile_name(profile_name);
-                        }
-                    }
-                    Some(BedrockAuth::IamCredentials {
-                        access_key_id,
-                        secret_access_key,
-                        session_token,
-                    }) => {
-                        let aws_creds = Credentials::new(
-                            access_key_id,
-                            secret_access_key,
-                            session_token,
-                            None,
-                            "zed-bedrock-provider",
-                        );
-                        config_builder = config_builder.credentials_provider(aws_creds);
-                    }
-                    Some(BedrockAuth::ApiKey { api_key }) => {
-                        config_builder = config_builder
-                            .auth_scheme_preference(["httpBearerAuth".into()]) // https://github.com/smithy-lang/smithy-rs/pull/4241
-                            .token_provider(Token::new(api_key, None));
-                    }
-                }
+        let config = self.handle.block_on(config_builder.load());
 
-                let config = self.handle.block_on(config_builder.load());
+        Ok(BedrockClient::new(&config))
+    }
 
-                anyhow::Ok(BedrockClient::new(&config))
-            })
-            .context("initializing Bedrock client")?;
+    fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<BedrockClient> {
+        let mut guard = self.client.lock();
 
-        self.client.get().context("Bedrock client not initialized")
+        if let Some(client) = guard.as_ref() {
+            return Ok(client.clone());
+        }
+
+        let new_client = self
+            .create_client(cx)
+            .context("Failed to initialize Bedrock client")?;
+        *guard = Some(new_client.clone());
+        Ok(new_client)
+    }
+
+    fn invalidate_client(&self) {
+        *self.client.lock() = None;
+    }
+
+    fn is_credential_error(error: &BedrockError) -> bool {
+        match error {
+            BedrockError::ClientError(err) => {
+                let err_str = err.to_string().to_lowercase();
+                err_str.contains("expired")
+                    || err_str.contains("invalid credentials")
+                    || err_str.contains("unauthorized")
+                    || err_str.contains("access denied")
+                    || err_str.contains("forbidden")
+                    || err_str.contains("token")
+            }
+            _ => false,
+        }
     }
 
     fn stream_completion(
@@ -590,13 +631,58 @@ impl BedrockModel {
     > {
         let Ok(runtime_client) = self
             .get_or_init_client(cx)
-            .cloned()
             .context("Bedrock client not initialized")
         else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
+        let this = Arc::new(self.clone());
+        let request_clone = request.clone();
+
+        let task = Tokio::spawn(cx, async move {
+            let mut stream = bedrock::stream_completion(runtime_client, request).await?;
+
+            // Check first item to detect credential errors early
+            let first_item = stream.next().await;
+
+            match first_item {
+                Some(Err(ref err)) if BedrockModel::is_credential_error(err) => {
+                    // Credential error detected - try to refresh credentials and retry once
+                    this.invalidate_client();
+
+                    // Attempt to create a fresh client with refreshed credentials
+                    match this.get_or_init_client(cx) {
+                        Ok(fresh_client) => {
+                            // Successfully refreshed credentials - retry the request
+                            bedrock::stream_completion(fresh_client, request_clone).await
+                        }
+                        Err(refresh_err) => {
+                            // Failed to refresh credentials
+                            Err(anyhow!(
+                                "Failed to refresh AWS credentials: {}. Please ensure your AWS credentials are configured correctly (e.g., run 'aws sso login' for SSO profiles).",
+                                refresh_err
+                            ))
+                        }
+                    }
+                }
+                Some(first_result) => {
+                    // Prepend first item back to stream
+                    Ok(
+                        Box::pin(futures::stream::once(async move { first_result }).chain(stream))
+                            as BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>,
+                    )
+                }
+                None => {
+                    // Empty stream
+                    Ok(Box::pin(futures::stream::empty())
+                        as BoxStream<
+                            'static,
+                            Result<BedrockStreamingResponse, BedrockError>,
+                        >)
+                }
+            }
+        });
+
         async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
     }
 }

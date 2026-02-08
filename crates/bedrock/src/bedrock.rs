@@ -143,12 +143,12 @@ pub fn value_to_aws_document(value: &Value) -> Document {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Thinking {
     Enabled { budget_tokens: Option<u64> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u64,
@@ -163,7 +163,7 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {
     pub user_id: Option<String>,
 }
