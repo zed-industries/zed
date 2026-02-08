@@ -665,6 +665,88 @@ impl GitStore {
             .map(|id| self.repositories[id].clone())
     }
 
+    /// Opens a diff showing only staged changes (HEAD → Index).
+    /// Returns both a buffer containing the index content and a BufferDiff
+    /// with HEAD as the base text.
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+        };
+
+        let committed_text = repo.update(cx, |repo, cx| {
+            repo.load_committed_text(buffer_id, repo_path.clone(), cx)
+        });
+        let staged_text = repo.update(cx, |repo, cx| {
+            repo.load_staged_text(buffer_id, repo_path, cx)
+        });
+
+        let file = buffer.read(cx).file().cloned();
+        let language = buffer.read(cx).language().cloned();
+
+        cx.spawn(async move |_this, cx| {
+            let diff_bases_change = committed_text.await?;
+            let index_text = staged_text.await?;
+
+            let head_text = match &diff_bases_change {
+                DiffBasesChange::SetBoth(text) => text.clone(),
+                DiffBasesChange::SetEach { head, .. } => head.clone(),
+                DiffBasesChange::SetHead(text) => text.clone(),
+                DiffBasesChange::SetIndex(_) => None,
+            };
+
+            let index_content = index_text.unwrap_or_default();
+
+            let (index_buffer, diff) = cx.update(|cx| {
+                let index_buffer: Entity<language::Buffer> = cx.new(|cx| {
+                    let text_buffer = text::Buffer::new(
+                        text::ReplicaId::LOCAL,
+                        cx.entity_id().as_non_zero_u64().into(),
+                        index_content,
+                    );
+                    let mut buf = language::Buffer::build(
+                        text_buffer,
+                        file,
+                        language::Capability::ReadOnly,
+                    );
+                    if let Some(language) = language {
+                        buf.set_language(Some(language), cx);
+                    }
+                    buf
+                });
+                let index_snapshot = index_buffer.read(cx).text_snapshot();
+
+                let base_text = head_text.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::from(text.as_str())
+                });
+
+                let diff: Entity<BufferDiff> = cx.new(|cx: &mut gpui::Context<BufferDiff>| {
+                    let mut diff = BufferDiff::new(&index_snapshot, cx);
+                    let inner = cx.foreground_executor().block_on(diff.update_diff(
+                        index_snapshot.clone(),
+                        base_text,
+                        Some(false),
+                        None,
+                        cx,
+                    ));
+                    diff.set_snapshot(inner, &index_snapshot, cx).detach();
+                    diff
+                });
+                (index_buffer, diff)
+            });
+
+            Ok((index_buffer, diff))
+        })
+    }
+
     pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
