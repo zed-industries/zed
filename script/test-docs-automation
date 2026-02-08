@@ -1,0 +1,628 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROMPTS_DIR="$REPO_ROOT/.factory/prompts/docs-automation"
+OUTPUT_DIR="${TMPDIR:-/tmp}/docs-automation-test"
+
+# Default values
+BASE_BRANCH="main"
+# Use fast model for analysis, powerful model for writing
+ANALYSIS_MODEL="${ANALYSIS_MODEL:-gemini-3-flash-preview}"
+WRITING_MODEL="${WRITING_MODEL:-claude-opus-4-5-20251101}"
+DRY_RUN=false
+VERBOSE=false
+PR_NUMBER=""
+SOURCE_BRANCH=""
+
+# Patterns for files that could affect documentation
+DOCS_RELEVANT_PATTERNS=(
+    "crates/.*/src/.*\.rs"      # Rust source files
+    "assets/settings/.*"         # Settings schemas
+    "assets/keymaps/.*"          # Keymaps
+    "extensions/.*"              # Extensions
+    "docs/.*"                    # Docs themselves
+)
+
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Test the documentation automation workflow locally.
+
+OPTIONS:
+    -p, --pr NUMBER      PR number to analyze (uses gh pr diff)
+    -r, --branch BRANCH  Remote branch to compare (e.g., origin/feature-branch)
+    -b, --base BRANCH    Base branch to compare against (default: main)
+    -d, --dry-run        Preview changes without modifying files
+    -s, --skip-apply     Alias for --dry-run
+    -v, --verbose        Show full output from each phase
+    -o, --output DIR     Output directory for phase artifacts (default: $OUTPUT_DIR)
+    -h, --help           Show this help message
+
+EXAMPLES:
+    # Analyze a PR (most common use case)
+    $(basename "$0") --pr 12345
+
+    # Analyze a PR with dry run (no file changes)
+    $(basename "$0") --pr 12345 --dry-run
+
+    # Analyze a remote branch against main
+    $(basename "$0") --branch origin/feature-branch
+
+ENVIRONMENT:
+    FACTORY_API_KEY      Required: Your Factory API key
+    ANALYSIS_MODEL       Model for analysis (default: gemini-2.0-flash)
+    WRITING_MODEL        Model for writing (default: claude-opus-4-5-20251101)
+    GH_TOKEN             Required for --pr option (or gh auth login)
+
+EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--pr)
+            PR_NUMBER="$2"
+            shift 2
+            ;;
+        -r|--branch)
+            SOURCE_BRANCH="$2"
+            shift 2
+            ;;
+        -b|--base)
+            BASE_BRANCH="$2"
+            shift 2
+            ;;
+        -d|--dry-run|-s|--skip-apply)
+            DRY_RUN=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -o|--output)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+# Cleanup function for restoring original branch
+cleanup_on_exit() {
+    if [[ -f "$OUTPUT_DIR/original-branch.txt" ]]; then
+        ORIGINAL_BRANCH=$(cat "$OUTPUT_DIR/original-branch.txt")
+        CURRENT=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ "$CURRENT" != "$ORIGINAL_BRANCH" && -n "$ORIGINAL_BRANCH" ]]; then
+            echo ""
+            echo "Restoring original branch: $ORIGINAL_BRANCH"
+            git -C "$REPO_ROOT" checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+            if [[ "$CURRENT" == temp-analysis-* ]]; then
+                git -C "$REPO_ROOT" branch -D "$CURRENT" 2>/dev/null || true
+            fi
+        fi
+    fi
+}
+trap cleanup_on_exit EXIT
+
+# Check for required tools
+if ! command -v droid &> /dev/null; then
+    echo "Error: droid CLI not found. Install from https://app.factory.ai/cli"
+    exit 1
+fi
+
+if [[ -z "${FACTORY_API_KEY:-}" ]]; then
+    echo "Error: FACTORY_API_KEY environment variable is not set"
+    exit 1
+fi
+
+# Check gh CLI if PR mode
+if [[ -n "$PR_NUMBER" ]]; then
+    if ! command -v gh &> /dev/null; then
+        echo "Error: gh CLI not found. Install from https://cli.github.com/"
+        echo "Required for --pr option"
+        exit 1
+    fi
+fi
+
+# Create output directory
+mkdir -p "$OUTPUT_DIR"
+echo "========================================"
+echo "Documentation Automation Test"
+echo "========================================"
+echo "Output directory: $OUTPUT_DIR"
+echo "Analysis model: $ANALYSIS_MODEL"
+echo "Writing model: $WRITING_MODEL"
+echo "Started at: $(date '+%Y-%m-%d %H:%M:%S')"
+echo ""
+
+cd "$REPO_ROOT"
+
+# Get changed files based on mode
+echo "=== Getting changed files ==="
+
+if [[ -n "$PR_NUMBER" ]]; then
+    # PR mode: use gh pr diff like the workflow does
+    echo "Analyzing PR #$PR_NUMBER"
+    
+    # Get PR info for context
+    echo "Fetching PR details..."
+    gh pr view "$PR_NUMBER" --json title,headRefName,baseRefName,state > "$OUTPUT_DIR/pr-info.json" 2>/dev/null || true
+    if [[ -f "$OUTPUT_DIR/pr-info.json" ]]; then
+        PR_TITLE=$(jq -r '.title // "Unknown"' "$OUTPUT_DIR/pr-info.json")
+        PR_HEAD=$(jq -r '.headRefName // "Unknown"' "$OUTPUT_DIR/pr-info.json")
+        PR_BASE=$(jq -r '.baseRefName // "Unknown"' "$OUTPUT_DIR/pr-info.json")
+        PR_STATE=$(jq -r '.state // "Unknown"' "$OUTPUT_DIR/pr-info.json")
+        echo "  Title: $PR_TITLE"
+        echo "  Branch: $PR_HEAD -> $PR_BASE"
+        echo "  State: $PR_STATE"
+    fi
+    echo ""
+    
+    # Get the list of changed files
+    gh pr diff "$PR_NUMBER" --name-only > "$OUTPUT_DIR/changed_files.txt"
+    
+    # Also save the full diff for analysis
+    gh pr diff "$PR_NUMBER" > "$OUTPUT_DIR/pr-diff.patch" 2>/dev/null || true
+    
+    # Checkout the PR branch to have the code available for analysis
+    echo "Checking out PR branch for analysis..."
+    ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "$ORIGINAL_BRANCH" > "$OUTPUT_DIR/original-branch.txt"
+    
+    gh pr checkout "$PR_NUMBER" --force 2>/dev/null || {
+        echo "Warning: Could not checkout PR branch. Analysis will use current branch state."
+    }
+
+elif [[ -n "$SOURCE_BRANCH" ]]; then
+    # Remote branch mode
+    echo "Analyzing branch: $SOURCE_BRANCH"
+    echo "Base branch: $BASE_BRANCH"
+    
+    # Fetch the branches
+    git fetch origin 2>/dev/null || true
+    
+    # Resolve branch refs
+    SOURCE_REF="$SOURCE_BRANCH"
+    BASE_REF="origin/$BASE_BRANCH"
+    
+    # Get merge base
+    MERGE_BASE=$(git merge-base "$BASE_REF" "$SOURCE_REF" 2>/dev/null) || {
+        echo "Error: Could not find merge base between $BASE_REF and $SOURCE_REF"
+        exit 1
+    }
+    echo "Merge base: $MERGE_BASE"
+    
+    # Get changed files
+    git diff --name-only "$MERGE_BASE" "$SOURCE_REF" > "$OUTPUT_DIR/changed_files.txt"
+    
+    # Checkout the source branch for analysis
+    echo "Checking out $SOURCE_BRANCH for analysis..."
+    ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "$ORIGINAL_BRANCH" > "$OUTPUT_DIR/original-branch.txt"
+    
+    git checkout "$SOURCE_BRANCH" 2>/dev/null || git checkout -b "temp-analysis-$$" "$SOURCE_REF" || {
+        echo "Warning: Could not checkout branch. Analysis will use current branch state."
+    }
+
+else
+    # Current branch mode (original behavior)
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    echo "Analyzing current branch: $CURRENT_BRANCH"
+    echo "Base branch: $BASE_BRANCH"
+    
+    # Fetch the base branch
+    git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+    
+    # Get merge base
+    MERGE_BASE=$(git merge-base "origin/$BASE_BRANCH" HEAD 2>/dev/null || git merge-base "$BASE_BRANCH" HEAD)
+    echo "Merge base: $MERGE_BASE"
+    
+    git diff --name-only "$MERGE_BASE" HEAD > "$OUTPUT_DIR/changed_files.txt"
+fi
+
+if [[ ! -s "$OUTPUT_DIR/changed_files.txt" ]]; then
+    echo "No changed files found."
+    exit 0
+fi
+
+echo ""
+echo "Changed files ($(wc -l < "$OUTPUT_DIR/changed_files.txt" | tr -d ' ') files):"
+cat "$OUTPUT_DIR/changed_files.txt"
+echo ""
+
+# Early exit: Filter for docs-relevant files only
+echo "=== Filtering for docs-relevant files ==="
+DOCS_RELEVANT_FILES=""
+while IFS= read -r file; do
+    for pattern in "${DOCS_RELEVANT_PATTERNS[@]}"; do
+        if [[ "$file" =~ $pattern ]]; then
+            DOCS_RELEVANT_FILES="$DOCS_RELEVANT_FILES $file"
+            break
+        fi
+    done
+done < "$OUTPUT_DIR/changed_files.txt"
+
+# Trim leading space
+DOCS_RELEVANT_FILES="${DOCS_RELEVANT_FILES# }"
+
+if [[ -z "$DOCS_RELEVANT_FILES" ]]; then
+    echo "No docs-relevant files changed (only tests, configs, CI, etc.)"
+    echo "Skipping documentation analysis."
+    exit 0
+fi
+
+echo "Docs-relevant files: $(echo "$DOCS_RELEVANT_FILES" | wc -w | tr -d ' ')"
+echo "$DOCS_RELEVANT_FILES" | tr ' ' '\n' | head -20
+echo ""
+
+# Combined Phase: Analyze + Plan (using fast model)
+echo "=== Analyzing Changes & Planning Documentation Impact ==="
+echo "Model: $ANALYSIS_MODEL"
+echo "Started at: $(date '+%H:%M:%S')"
+echo ""
+
+CHANGED_FILES=$(tr '\n' ' ' < "$OUTPUT_DIR/changed_files.txt")
+
+# Write prompt to temp file to avoid escaping issues
+cat > "$OUTPUT_DIR/analysis-prompt.txt" << 'PROMPT_EOF'
+Analyze these code changes and determine if documentation updates are needed.
+
+## Documentation Guidelines
+
+### Requires Documentation Update
+- New user-facing features or commands
+- Changed keybindings or default behaviors
+- Modified settings schema or options
+- Deprecated or removed functionality
+
+### Does NOT Require Documentation Update
+- Internal refactoring without behavioral changes
+- Performance optimizations (unless user-visible)
+- Bug fixes that restore documented behavior
+- Test changes, CI/CD changes
+
+### In-Scope: docs/src/**/*.md
+### Out-of-Scope: CHANGELOG.md, README.md, code comments, rustdoc
+
+### Output Format Required
+You MUST output a JSON object with this exact structure:
+{
+  "updates_required": true or false,
+  "summary": "Brief description of changes",
+  "planned_changes": [
+    {
+      "file": "docs/src/path/to/file.md",
+      "section": "Section name",
+      "change_type": "update or add or deprecate",
+      "description": "What to change"
+    }
+  ],
+  "skipped_files": ["reason1", "reason2"]
+}
+
+Be conservative - only flag documentation updates for user-visible changes.
+
+## Changed Files
+PROMPT_EOF
+
+echo "$CHANGED_FILES" >> "$OUTPUT_DIR/analysis-prompt.txt"
+
+ANALYSIS_START=$(date +%s)
+
+droid exec \
+    -m "$ANALYSIS_MODEL" \
+    --auto low \
+    -f "$OUTPUT_DIR/analysis-prompt.txt" \
+    > "$OUTPUT_DIR/analysis.json" 2>&1 || true
+
+ANALYSIS_END=$(date +%s)
+ANALYSIS_DURATION=$((ANALYSIS_END - ANALYSIS_START))
+
+echo "Completed in ${ANALYSIS_DURATION}s"
+echo ""
+echo "--- Analysis Result ---"
+cat "$OUTPUT_DIR/analysis.json"
+echo ""
+echo "-----------------------"
+echo ""
+
+# Check if updates are required (parse JSON output)
+UPDATES_REQUIRED=$(grep -o '"updates_required":\s*true' "$OUTPUT_DIR/analysis.json" || echo "")
+
+if [[ -z "$UPDATES_REQUIRED" ]]; then
+    echo "=== No documentation updates required ==="
+    echo "Analysis determined no documentation changes are needed."
+    cat "$OUTPUT_DIR/analysis.json"
+    exit 0
+fi
+
+echo "Documentation updates ARE required."
+echo ""
+
+# Extract planned changes for the next phase
+ANALYSIS_OUTPUT=$(cat "$OUTPUT_DIR/analysis.json")
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    # Combined Preview Phase (dry-run): Show what would change
+    echo "=== Preview: Generating Proposed Changes ==="
+    echo "Model: $WRITING_MODEL"
+    echo "Started at: $(date '+%H:%M:%S')"
+    echo ""
+    
+    PREVIEW_START=$(date +%s)
+    
+    # Write preview prompt to temp file
+    cat > "$OUTPUT_DIR/preview-prompt.txt" << PREVIEW_EOF
+Generate a PREVIEW of the documentation changes. Do NOT modify any files.
+
+Based on this analysis:
+$ANALYSIS_OUTPUT
+
+For each planned change:
+1. Read the current file
+2. Show the CURRENT section that would be modified
+3. Show the PROPOSED new content
+4. Generate a unified diff
+
+Output format:
+---
+## File: [path]
+
+### Current:
+(paste exact current content)
+
+### Proposed:
+(paste proposed new content)
+
+### Diff:
+(unified diff with - and + lines)
+---
+
+Show the ACTUAL content, not summaries.
+PREVIEW_EOF
+    
+    droid exec \
+        -m "$WRITING_MODEL" \
+        --auto low \
+        -f "$OUTPUT_DIR/preview-prompt.txt" \
+        > "$OUTPUT_DIR/preview.md" 2>&1 || true
+    
+    PREVIEW_END=$(date +%s)
+    PREVIEW_DURATION=$((PREVIEW_END - PREVIEW_START))
+    
+    echo "Completed in ${PREVIEW_DURATION}s"
+    echo ""
+    echo "--- Proposed Changes ---"
+    cat "$OUTPUT_DIR/preview.md"
+    echo "------------------------"
+    
+    echo ""
+    echo "=== Dry run complete ==="
+    echo "Total time: Analysis ${ANALYSIS_DURATION}s + Preview ${PREVIEW_DURATION}s = $((ANALYSIS_DURATION + PREVIEW_DURATION))s"
+    echo "To apply changes, run without --dry-run flag."
+    echo "Output saved to: $OUTPUT_DIR/"
+    exit 0
+fi
+
+# Combined Phase: Apply Changes + Generate Summary (using writing model)
+echo "=== Applying Documentation Changes ==="
+echo "Model: $WRITING_MODEL"
+echo "Started at: $(date '+%H:%M:%S')"
+echo ""
+
+APPLY_START=$(date +%s)
+
+# Write apply prompt to temp file
+cat > "$OUTPUT_DIR/apply-prompt.txt" << APPLY_EOF
+Apply the documentation changes specified in this analysis:
+
+$ANALYSIS_OUTPUT
+
+Instructions:
+1. For each planned change, edit the specified file
+2. Follow the mdBook format and style from docs/AGENTS.md
+3. Use {#kb action::Name} syntax for keybindings
+4. After making changes, output a brief summary
+
+Output format:
+## Changes Applied
+- [file]: [what was changed]
+
+## Summary for PR
+[2-3 sentence summary suitable for a PR description]
+APPLY_EOF
+
+droid exec \
+    -m "$WRITING_MODEL" \
+    --auto medium \
+    -f "$OUTPUT_DIR/apply-prompt.txt" \
+    > "$OUTPUT_DIR/apply-report.md" 2>&1 || true
+
+APPLY_END=$(date +%s)
+APPLY_DURATION=$((APPLY_END - APPLY_START))
+
+echo "Completed in ${APPLY_DURATION}s"
+echo ""
+echo "--- Apply Report ---"
+cat "$OUTPUT_DIR/apply-report.md"
+echo "--------------------"
+echo ""
+
+# Format with Prettier (only changed files)
+echo "=== Formatting with Prettier ==="
+cd "$REPO_ROOT"
+
+CHANGED_DOCS=$(git diff --name-only docs/src/ 2>/dev/null | sed 's|^docs/||' | tr '\n' ' ')
+
+if [[ -n "$CHANGED_DOCS" ]]; then
+    echo "Formatting: $CHANGED_DOCS"
+    if command -v pnpm &> /dev/null; then
+        (cd docs && pnpm dlx prettier@3.5.0 $CHANGED_DOCS --write) 2>/dev/null || true
+    elif command -v prettier &> /dev/null; then
+        (cd docs && prettier --write $CHANGED_DOCS) 2>/dev/null || true
+    fi
+    echo "Done"
+else
+    echo "No changed docs files to format"
+fi
+echo ""
+
+# Generate summary from the apply report
+cp "$OUTPUT_DIR/apply-report.md" "$OUTPUT_DIR/phase6-summary.md"
+
+# Phase 7: Create Branch and PR
+echo "=== Phase 7: Create Branch and PR ==="
+
+# Check if there are actual changes
+if git -C "$REPO_ROOT" diff --quiet docs/src/; then
+    echo "No documentation changes detected after Phase 5"
+    echo ""
+    echo "=== Test Complete (no changes to commit) ==="
+    exit 0
+fi
+
+# Check if gh CLI is available
+if ! command -v gh &> /dev/null; then
+    echo "Warning: gh CLI not found. Skipping PR creation."
+    echo "Install from https://cli.github.com/ to enable automatic PR creation."
+    echo ""
+    echo "Documentation changes (git status):"
+    git -C "$REPO_ROOT" status --short docs/src/
+    echo ""
+    echo "To review the diff:"
+    echo "  git diff docs/src/"
+    echo ""
+    echo "To discard changes:"
+    echo "  git checkout docs/src/"
+    exit 0
+fi
+
+cd "$REPO_ROOT"
+
+# Daily batch branch - one branch per day, multiple commits accumulate
+BRANCH_NAME="docs/auto-update-$(date +%Y-%m-%d)"
+
+# Stash local changes from phase 5
+echo "Stashing documentation changes..."
+git stash push -m "docs-automation-changes" -- docs/src/
+
+# Check if branch already exists on remote
+if git ls-remote --exit-code --heads origin "$BRANCH_NAME" > /dev/null 2>&1; then
+    echo "Branch $BRANCH_NAME exists, checking out and updating..."
+    git fetch origin "$BRANCH_NAME"
+    git checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME"
+else
+    echo "Creating new branch $BRANCH_NAME from main..."
+    git fetch origin main
+    git checkout -B "$BRANCH_NAME" origin/main
+fi
+
+# Apply stashed changes
+echo "Applying documentation changes..."
+git stash pop || true
+
+# Stage and commit
+git add docs/src/
+
+# Get source PR info for attribution
+SOURCE_PR_INFO=""
+TRIGGER_INFO=""
+if [[ -n "$PR_NUMBER" ]]; then
+    # Fetch PR details: title, author, url
+    PR_DETAILS=$(gh pr view "$PR_NUMBER" --json title,author,url 2>/dev/null || echo "{}")
+    SOURCE_TITLE=$(echo "$PR_DETAILS" | jq -r '.title // "Unknown"')
+    SOURCE_AUTHOR=$(echo "$PR_DETAILS" | jq -r '.author.login // "Unknown"')
+    SOURCE_URL=$(echo "$PR_DETAILS" | jq -r '.url // ""')
+    
+    TRIGGER_INFO="Triggered by: PR #$PR_NUMBER"
+    SOURCE_PR_INFO="
+---
+**Source**: [#$PR_NUMBER]($SOURCE_URL) - $SOURCE_TITLE
+**Author**: @$SOURCE_AUTHOR
+"
+elif [[ -n "$SOURCE_BRANCH" ]]; then
+    TRIGGER_INFO="Triggered by: branch $SOURCE_BRANCH"
+    SOURCE_PR_INFO="
+---
+**Source**: Branch \`$SOURCE_BRANCH\`
+"
+fi
+
+# Build commit message
+SUMMARY=$(head -50 < "$OUTPUT_DIR/phase6-summary.md" 2>/dev/null || echo "Automated documentation update")
+
+git commit -m "docs: auto-update documentation
+
+${SUMMARY}
+
+${TRIGGER_INFO}
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>" || {
+    echo "Nothing to commit"
+    exit 0
+}
+
+# Push
+echo "Pushing to origin/$BRANCH_NAME..."
+git push -u origin "$BRANCH_NAME"
+
+# Build the PR body section for this update
+PR_BODY_SECTION="## Update from $(date '+%Y-%m-%d %H:%M')
+$SOURCE_PR_INFO
+$(cat "$OUTPUT_DIR/phase6-summary.md")
+"
+
+# Check if PR already exists for this branch
+EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number,url,body --jq '.[0]' 2>/dev/null || echo "")
+
+if [[ -n "$EXISTING_PR" && "$EXISTING_PR" != "null" ]]; then
+    PR_NUM=$(echo "$EXISTING_PR" | jq -r '.number')
+    PR_URL=$(echo "$EXISTING_PR" | jq -r '.url')
+    EXISTING_BODY=$(echo "$EXISTING_PR" | jq -r '.body // ""')
+    
+    # Append new summary to existing PR body
+    echo "Updating PR body with new summary..."
+    NEW_BODY="${EXISTING_BODY}
+
+---
+
+${PR_BODY_SECTION}"
+    
+    echo "$NEW_BODY" > "$OUTPUT_DIR/updated-pr-body.md"
+    gh pr edit "$PR_NUM" --body-file "$OUTPUT_DIR/updated-pr-body.md"
+    
+    echo ""
+    echo "=== Updated existing PR ==="
+    echo "PR #$PR_NUM: $PR_URL"
+    echo "New commit added and PR description updated."
+else
+    # Create new PR with full body
+    echo "Creating new PR..."
+    echo "$PR_BODY_SECTION" > "$OUTPUT_DIR/new-pr-body.md"
+    
+    PR_URL=$(gh pr create \
+        --title "docs: automated documentation update ($(date +%Y-%m-%d))" \
+        --body-file "$OUTPUT_DIR/new-pr-body.md" \
+        --base main 2>&1) || {
+        echo "Failed to create PR: $PR_URL"
+        exit 1
+    }
+    echo ""
+    echo "=== PR Created ==="
+    echo "$PR_URL"
+fi
+
+echo ""
+echo "=== Test Complete ==="
+echo "Total time: Analysis ${ANALYSIS_DURATION}s + Apply ${APPLY_DURATION}s = $((ANALYSIS_DURATION + APPLY_DURATION))s"
+echo "All outputs saved to: $OUTPUT_DIR/"
