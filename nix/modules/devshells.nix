@@ -15,6 +15,9 @@
         (zed-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
         })).env; # exfil `env`; it's not in drvAttrs
+
+      # Musl cross-compiler for building remote_server
+      muslCross = pkgs.pkgsCross.musl64;
     in
     {
       devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
@@ -54,6 +57,8 @@
             };
             PROTOC = "${pkgs.protobuf}/bin/protoc";
             ZED_ZSTD_MUSL_LIB = "${pkgs.pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
+            # For aws-lc-sys musl cross-compilation
+            CC_x86_64_unknown_linux_musl = "${muslCross.stdenv.cc}/bin/x86_64-unknown-linux-musl-gcc";
           };
       };
     };

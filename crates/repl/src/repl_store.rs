@@ -11,6 +11,7 @@ use settings::{Settings, SettingsStore};
 
 use crate::kernels::{
     list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+    wsl_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -153,7 +154,12 @@ impl ReplStore {
                 Some(cx.spawn(async move |_, _| {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
-                        .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
+                        .map(|specs| {
+                            specs
+                                .into_iter()
+                                .map(KernelSpecification::JupyterServer)
+                                .collect()
+                        })
                 }))
             }
             _ => None,
@@ -162,6 +168,7 @@ impl ReplStore {
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
+        let wsl_kernel_specifications = wsl_kernel_specifications(cx.background_executor().clone());
 
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
@@ -171,6 +178,10 @@ impl ReplStore {
                 .into_iter()
                 .map(KernelSpecification::Jupyter)
                 .collect::<Vec<_>>();
+
+            if let Ok(wsl_specs) = wsl_kernel_specifications.await {
+                all_specs.extend(wsl_specs);
+            }
 
             if let Some(remote_task) = remote_kernel_specifications
                 && let Ok(remote_specs) = remote_task.await
@@ -261,8 +272,16 @@ impl ReplStore {
                     runtime_specification.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                KernelSpecification::Remote(remote_spec) => {
+                KernelSpecification::JupyterServer(remote_spec) => {
                     remote_spec.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
+                KernelSpecification::SshRemote(spec) => {
+                    spec.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
+                KernelSpecification::WslRemote(spec) => {
+                    spec.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
             })

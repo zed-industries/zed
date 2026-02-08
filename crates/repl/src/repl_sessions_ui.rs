@@ -82,12 +82,15 @@ pub fn init(cx: &mut App) {
                 let workspace = Workspace::for_window(window, cx);
                 let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
-                let is_local_project = project
+                let is_local_or_ssh_remote = project
                     .as_ref()
-                    .map(|project| project.read(cx).is_local())
+                    .map(|project| {
+                        let p = project.read(cx);
+                        p.is_local() || p.is_remote()
+                    })
                     .unwrap_or(false);
 
-                if !is_local_project {
+                if !is_local_or_ssh_remote {
                     return;
                 }
 

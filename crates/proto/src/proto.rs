@@ -359,6 +359,9 @@ messages!(
     (GetSharedAgentThreadResponse, Foreground),
     (FindSearchCandidatesChunk, Background),
     (FindSearchCandidatesCancelled, Background),
+    (SpawnKernel, Background),
+    (SpawnKernelResponse, Background),
+    (KillKernel, Background),
 );
 
 request_messages!(
@@ -555,6 +558,8 @@ request_messages!(
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
     (FindSearchCandidatesChunk, Ack),
+    (SpawnKernel, SpawnKernelResponse),
+    (KillKernel, Ack),
 );
 
 lsp_messages!(
@@ -620,6 +625,8 @@ entity_messages!(
     SemanticTokens,
     JoinProject,
     LeaveProject,
+    SpawnKernel,
+    KillKernel,
     LinkedEditingRange,
     LoadCommitDiff,
     LspQuery,
