@@ -356,6 +356,15 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// The layout of window control buttons in the title bar (Linux only).
+    ///
+    /// This can be set to "auto" to follow the system configuration,
+    /// or a custom string in the format "left:right".
+    ///
+    /// Example: "close:minimize,maximize"
+    ///
+    /// Default: "auto"
+    pub button_layout: Option<String>,
 }
 
 /// Configuration of audio in Zed.

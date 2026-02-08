@@ -559,6 +559,13 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn refresh(&self, request_frame_options: RequestFrameOptions) {
+        let mut cb = self.callbacks.borrow_mut();
+        if let Some(fun) = cb.request_frame.as_mut() {
+            fun(request_frame_options);
+        }
+    }
+
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         if let xdg_surface::Event::Configure { serial } = event {
             {

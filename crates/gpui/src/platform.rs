@@ -222,6 +222,11 @@ pub(crate) trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
+    /// Returns the window button layout configuration.
+    fn button_layout(&self) -> WindowButtonLayout {
+        WindowButtonLayout::default()
+    }
+
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
@@ -456,6 +461,86 @@ impl Default for WindowControls {
             maximize: true,
             minimize: true,
             window_menu: true,
+        }
+    }
+}
+
+/// A button type in window controls
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowButton {
+    /// Minimize button
+    Minimize,
+    /// Maximize button
+    Maximize,
+    /// Close button
+    Close,
+}
+
+impl WindowButton {
+    /// Returns a stable element ID for this button type
+    pub fn id(&self) -> &'static str {
+        match self {
+            WindowButton::Minimize => "minimize",
+            WindowButton::Maximize => "maximize-or-restore",
+            WindowButton::Close => "close",
+        }
+    }
+}
+
+/// Maximum number of buttons per side in the titlebar
+pub const MAX_BUTTONS_PER_SIDE: usize = 3;
+
+/// Window control button layout configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowButtonLayout {
+    /// Buttons displayed on the left side of the titlebar
+    pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+    /// Buttons displayed on the right side of the titlebar
+    pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+}
+
+impl Default for WindowButtonLayout {
+    fn default() -> Self {
+        Self {
+            left: [None; MAX_BUTTONS_PER_SIDE],
+            right: [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close),
+            ],
+        }
+    }
+}
+
+impl WindowButtonLayout {
+    /// Parse a GNOME-style button-layout string.
+    /// Format: "button1,button2:button3,button4"
+    /// Left of colon = left side, right of colon = right side
+    pub fn parse(layout_string: &str) -> Self {
+        fn parse_side(s: &str) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
+            let mut result = [None; MAX_BUTTONS_PER_SIDE];
+            let mut i = 0;
+            for name in s.split(',') {
+                if i >= MAX_BUTTONS_PER_SIDE {
+                    break;
+                }
+                if let Some(btn) = match name.trim() {
+                    "minimize" => Some(WindowButton::Minimize),
+                    "maximize" => Some(WindowButton::Maximize),
+                    "close" => Some(WindowButton::Close),
+                    _ => None,
+                } {
+                    result[i] = Some(btn);
+                    i += 1;
+                }
+            }
+            result
+        }
+
+        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
+        Self {
+            left: parse_side(left_str),
+            right: parse_side(right_str),
         }
     }
 }
@@ -2023,5 +2108,115 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_button_layout_parse_standard() {
+        let layout = WindowButtonLayout::parse("close,minimize:maximize");
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_right_only() {
+        let layout = WindowButtonLayout::parse("minimize,maximize,close");
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_left_only() {
+        let layout = WindowButtonLayout::parse("close,minimize,maximize:");
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize)
+            ]
+        );
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_with_whitespace() {
+        let layout = WindowButtonLayout::parse(" close , minimize : maximize ");
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_empty() {
+        let layout = WindowButtonLayout::parse("");
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_invalid_buttons() {
+        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo");
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_gnome_style() {
+        let layout = WindowButtonLayout::parse("close");
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Close), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_elementary_style() {
+        let layout = WindowButtonLayout::parse("close:maximize");
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_default() {
+        let layout = WindowButtonLayout::default();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
     }
 }

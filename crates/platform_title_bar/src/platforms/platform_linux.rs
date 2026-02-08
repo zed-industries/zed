@@ -1,46 +1,77 @@
-use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
+use gpui::{
+    Action, AnyElement, Hsla, MAX_BUTTONS_PER_SIDE, MouseButton, WindowButton, prelude::*, svg,
+};
 use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
-    close_window_action: Box<dyn Action>,
+    id: &'static str,
+    buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+    close_action: Box<dyn Action>,
 }
 
 impl LinuxWindowControls {
-    pub fn new(close_window_action: Box<dyn Action>) -> Self {
+    pub fn new(
+        id: &'static str,
+        buttons: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+        close_action: Box<dyn Action>,
+    ) -> Self {
         Self {
-            close_window_action,
+            id,
+            buttons,
+            close_action,
         }
     }
 }
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_maximized = window.is_maximized();
+        let button_elements: Vec<AnyElement> = self
+            .buttons
+            .iter()
+            .filter_map(|b| *b)
+            .map(|button| {
+                create_window_button(button, button.id(), is_maximized, &*self.close_action, cx)
+            })
+            .collect();
+
         h_flex()
-            .id("generic-window-controls")
-            .px_3()
-            .gap_3()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(WindowControl::new(
-                "minimize",
-                WindowControlType::Minimize,
-                cx,
-            ))
-            .child(WindowControl::new(
-                "maximize-or-restore",
-                if window.is_maximized() {
-                    WindowControlType::Restore
-                } else {
-                    WindowControlType::Maximize
-                },
-                cx,
-            ))
-            .child(WindowControl::new_close(
-                "close",
-                WindowControlType::Close,
-                self.close_window_action,
-                cx,
-            ))
+            .id(self.id)
+            .when(!button_elements.is_empty(), |el| {
+                el.gap_3()
+                    .px_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .children(button_elements)
+            })
+    }
+}
+
+fn create_window_button(
+    button: WindowButton,
+    id: &'static str,
+    is_maximized: bool,
+    close_action: &dyn Action,
+    cx: &mut App,
+) -> AnyElement {
+    match button {
+        WindowButton::Minimize => {
+            WindowControl::new(id, WindowControlType::Minimize, cx).into_any_element()
+        }
+        WindowButton::Maximize => WindowControl::new(
+            id,
+            if is_maximized {
+                WindowControlType::Restore
+            } else {
+                WindowControlType::Maximize
+            },
+            cx,
+        )
+        .into_any_element(),
+        WindowButton::Close => {
+            WindowControl::new_close(id, WindowControlType::Close, close_action.boxed_clone(), cx)
+                .into_any_element()
+        }
     }
 }
 

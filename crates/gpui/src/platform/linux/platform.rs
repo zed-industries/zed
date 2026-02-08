@@ -26,7 +26,7 @@ use crate::{
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams, px,
+    RunnableVariant, Task, ThermalState, WindowAppearance, WindowButtonLayout, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -143,6 +143,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
+    pub(crate) button_layout: WindowButtonLayout,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
@@ -169,6 +170,7 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
+            button_layout: WindowButtonLayout::default(),
             callbacks,
             signal,
             menus: Vec::new(),
@@ -617,6 +619,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn window_appearance(&self) -> WindowAppearance {
         self.with_common(|common| common.appearance)
+    }
+
+    fn button_layout(&self) -> WindowButtonLayout {
+        self.with_common(|common| common.button_layout)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

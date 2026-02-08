@@ -453,6 +453,8 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // The layout of window control buttons in the title bar (Linux only).
+    "button_layout": "auto",
   },
   "audio": {
     // Opt into the new audio system.

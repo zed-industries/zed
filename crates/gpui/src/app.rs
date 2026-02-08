@@ -44,7 +44,7 @@ use crate::{
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1120,6 +1120,11 @@ impl App {
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
+    }
+
+    /// Returns the window button layout configuration.
+    pub fn button_layout(&self) -> WindowButtonLayout {
+        self.platform.button_layout()
     }
 
     /// Reads data from the platform clipboard.
