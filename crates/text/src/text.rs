@@ -2148,6 +2148,39 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    /// Converts a `(row, column)` pair from an external source into an internal [`Point`].
+    ///
+    /// Many tools report columns in terms of Unicode scalar values ("characters") rather than
+    /// UTF-8 byte offsets. Zed's internal [`Point::column`] is a UTF-8 byte offset, so this method
+    /// converts a character-based column into a byte offset on the given row.
+    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
+        let row = row.min(self.max_point().row);
+        let line_start_offset = Point::new(row, 0).to_offset(self);
+        let line_end_offset = if row >= self.max_point().row {
+            self.len()
+        } else {
+            Point::new(row + 1, 0).to_previous_offset(self)
+        };
+
+        let line: String = self
+            .text_for_range(line_start_offset..line_end_offset)
+            .collect();
+
+        if column == 0 {
+            return Point::new(row, 0);
+        }
+
+        let mut chars_seen: u32 = 0;
+        for (byte_index, _) in line.char_indices() {
+            if chars_seen == column {
+                return Point::new(row, byte_index as u32);
+            }
+            chars_seen += 1;
+        }
+
+        Point::new(row, line.len() as u32)
+    }
+
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,

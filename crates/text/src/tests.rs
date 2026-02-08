@@ -30,6 +30,29 @@ fn test_edit() {
     assert_eq!(buffer.text(), "ghiamnoef");
 }
 
+#[test]
+fn test_point_for_row_and_column_from_external_source() {
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "a这个b\nsecond",
+    );
+    let snapshot = buffer.snapshot();
+
+    assert_eq!(
+        snapshot.point_for_row_and_column_from_external_source(0, 2),
+        Point::new(0, 4)
+    );
+    assert_eq!(
+        snapshot.point_for_row_and_column_from_external_source(0, 4),
+        Point::new(0, 8)
+    );
+    assert_eq!(
+        snapshot.point_for_row_and_column_from_external_source(1, 3),
+        Point::new(1, 3)
+    );
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")

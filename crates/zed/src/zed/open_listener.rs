@@ -15,7 +15,6 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
-use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, open_remote_project};
@@ -351,7 +350,7 @@ pub async fn open_paths_with_positions(
             {
                 let row = row.saturating_sub(1);
                 let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
-                caret_positions.insert(path.clone(), Point::new(row, col));
+                caret_positions.insert(path.clone(), (row, col));
             }
             path
         })
@@ -391,13 +390,20 @@ pub async fn open_paths_with_positions(
         let Some(Ok(item)) = item else {
             continue;
         };
-        let Some(point) = caret_positions.remove(path) else {
+        let Some((row, col)) = caret_positions.remove(path) else {
             continue;
         };
         if let Some(active_editor) = item.downcast::<Editor>() {
             workspace
                 .update(cx, |_, window, cx| {
                     active_editor.update(cx, |editor, cx| {
+                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                            return;
+                        };
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let point = buffer_snapshot
+                            .text
+                            .point_for_row_and_column_from_external_source(row, col);
                         editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })
