@@ -5,7 +5,7 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod thread_history;
-mod thread_view;
+pub(crate) mod thread_view;
 
 pub use mode_selector::ModeSelector;
 pub use model_selector::AcpModelSelector;
