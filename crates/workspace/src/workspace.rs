@@ -5961,7 +5961,7 @@ impl Workspace {
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
         } else if self.project.read(cx).is_local() {
-if !paths.is_empty() || self.has_any_items_open(cx) {
+            if !paths.is_empty() || self.has_any_items_open(cx) {
                 // Use LocalFromFile if this workspace was opened from a workspace file
                 let location = if let Some(source) = &self.workspace_file_source {
                     SerializedWorkspaceLocation::LocalFromFile {

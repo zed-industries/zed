@@ -900,7 +900,7 @@ impl Domain for WorkspaceDb {
             DROP TABLE user_toolchains;
             ALTER TABLE user_toolchains2 RENAME TO user_toolchains;
         ),
-// Add workspace file tracking
+        // Add workspace file tracking
         sql!(
             ALTER TABLE workspaces ADD COLUMN workspace_file_path TEXT;
             ALTER TABLE workspaces ADD COLUMN workspace_file_kind TEXT;
