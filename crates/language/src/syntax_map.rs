@@ -416,6 +416,7 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse(
         &mut self,
         text: &BufferSnapshot,
@@ -425,6 +426,7 @@ impl SyntaxSnapshot {
         self.reparse_(text, registry, root_language, None).ok();
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse_with_timeout(
         &mut self,
         text: &BufferSnapshot,
