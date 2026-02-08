@@ -38,6 +38,11 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                         })
                     }) {
                         notification_windows.push(window);
+                        if let Some(window) = notification_windows.last() {
+                            window
+                                .update(cx, |_, window, _| window.request_user_attention(true))
+                                .log_err();
+                        }
                     }
                 }
             }
