@@ -30,8 +30,8 @@ struct BladeAtlasState {
 #[cfg(gles)]
 unsafe impl Send for BladeAtlasState {}
 
-impl BladeAtlasState {
-    fn destroy(&mut self) {
+impl Drop for BladeAtlasState {
+    fn drop(&mut self) {
         self.storage.destroy(&self.gpu);
         self.upload_belt.destroy(&self.gpu);
     }
@@ -55,10 +55,6 @@ impl BladeAtlas {
             initializations: Vec::new(),
             uploads: Vec::new(),
         }))
-    }
-
-    pub(crate) fn destroy(&self) {
-        self.0.lock().destroy();
     }
 
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
