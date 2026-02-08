@@ -857,7 +857,12 @@ where
         };
         Bounds { origin, size }
     }
+}
 
+impl<T> Bounds<T>
+where
+    T: Sub<Output = T> + Half + Clone + Debug + Default + PartialEq,
+{
     /// Constructs a `Bounds` from a corner point and size. The specified corner will be placed at
     /// the specified origin.
     pub fn from_corner_and_size(corner: Corner, origin: Point<T>, size: Size<T>) -> Bounds<T> {
@@ -874,6 +879,22 @@ where
             Corner::BottomRight => Point {
                 x: origin.x - size.width.clone(),
                 y: origin.y - size.height.clone(),
+            },
+            Corner::TopCenter => Point {
+                x: origin.x - size.width.half(),
+                y: origin.y,
+            },
+            Corner::BottomCenter => Point {
+                x: origin.x - size.width.half(),
+                y: origin.y - size.height.clone(),
+            },
+            Corner::LeftCenter => Point {
+                x: origin.x,
+                y: origin.y - size.height.half(),
+            },
+            Corner::RightCenter => Point {
+                x: origin.x - size.width.clone(),
+                y: origin.y - size.height.half(),
             },
         };
 
@@ -892,6 +913,43 @@ where
             y: center.y - size.height.half(),
         };
         Self::new(origin, size)
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
+{
+    /// Returns the top center point of the bounds.
+    pub fn top_center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone() + self.size.width.half(),
+            y: self.origin.y.clone(),
+        }
+    }
+
+    /// Returns the bottom center point of the bounds.
+    pub fn bottom_center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone() + self.size.width.half(),
+            y: self.origin.y.clone() + self.size.height.clone(),
+        }
+    }
+
+    /// Returns the left center point of the bounds.
+    pub fn left_center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone(),
+            y: self.origin.y.clone() + self.size.height.half(),
+        }
+    }
+
+    /// Returns the right center point of the bounds.
+    pub fn right_center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone() + self.size.width.clone(),
+            y: self.origin.y.clone() + self.size.height.half(),
+        }
     }
 }
 
@@ -1356,7 +1414,12 @@ where
             y: self.origin.y.clone() + self.size.height.clone(),
         }
     }
+}
 
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
+{
     /// Returns the requested corner point of the bounds.
     ///
     /// # Returns
@@ -1380,6 +1443,10 @@ where
             Corner::TopRight => self.top_right(),
             Corner::BottomLeft => self.bottom_left(),
             Corner::BottomRight => self.bottom_right(),
+            Corner::TopCenter => self.top_center(),
+            Corner::BottomCenter => self.bottom_center(),
+            Corner::LeftCenter => self.left_center(),
+            Corner::RightCenter => self.right_center(),
         }
     }
 }
@@ -2126,6 +2193,14 @@ pub enum Corner {
     BottomLeft,
     /// The bottom right corner
     BottomRight,
+    /// The top center position
+    TopCenter,
+    /// The bottom center position
+    BottomCenter,
+    /// The left center position
+    LeftCenter,
+    /// The right center position
+    RightCenter,
 }
 
 impl Corner {
@@ -2144,6 +2219,10 @@ impl Corner {
             Corner::TopRight => Corner::BottomLeft,
             Corner::BottomLeft => Corner::TopRight,
             Corner::BottomRight => Corner::TopLeft,
+            Corner::TopCenter => Corner::BottomCenter,
+            Corner::BottomCenter => Corner::TopCenter,
+            Corner::LeftCenter => Corner::RightCenter,
+            Corner::RightCenter => Corner::LeftCenter,
         }
     }
 
@@ -2164,14 +2243,31 @@ impl Corner {
                 Corner::TopRight => Corner::BottomRight,
                 Corner::BottomLeft => Corner::TopLeft,
                 Corner::BottomRight => Corner::TopRight,
+                Corner::TopCenter => Corner::BottomCenter,
+                Corner::BottomCenter => Corner::TopCenter,
+                Corner::LeftCenter => Corner::LeftCenter,
+                Corner::RightCenter => Corner::RightCenter,
             },
             Axis::Horizontal => match self {
                 Corner::TopLeft => Corner::TopRight,
                 Corner::TopRight => Corner::TopLeft,
                 Corner::BottomLeft => Corner::BottomRight,
                 Corner::BottomRight => Corner::BottomLeft,
+                Corner::TopCenter => Corner::TopCenter,
+                Corner::BottomCenter => Corner::BottomCenter,
+                Corner::LeftCenter => Corner::RightCenter,
+                Corner::RightCenter => Corner::LeftCenter,
             },
         }
+    }
+
+    /// Returns true if at the center.
+    #[inline]
+    pub fn is_center(&self) -> bool {
+        matches!(
+            self,
+            Self::TopCenter | Self::BottomCenter | Self::LeftCenter | Self::RightCenter
+        )
     }
 }
 
@@ -2194,7 +2290,7 @@ pub struct Corners<T: Clone + Debug + Default + PartialEq> {
 
 impl<T> Corners<T>
 where
-    T: Clone + Debug + Default + PartialEq,
+    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
 {
     /// Constructs `Corners` where all sides are set to the same specified value.
     ///
@@ -2229,23 +2325,48 @@ where
         }
     }
 
-    /// Returns the requested corner.
+    /// Returns the requested corner value, supporting all eight corner positions.
+    ///
+    /// For the four basic corners (TopLeft, TopRight, BottomLeft, BottomRight),
+    /// this returns the corresponding field value directly.
+    ///
+    /// For the center positions (TopCenter, BottomCenter, LeftCenter, RightCenter),
+    /// this calculates the average of the two adjacent corners.
     ///
     /// # Returns
     ///
-    /// A `Point<T>` representing the corner requested by the parameter.
+    /// A value of type `T` representing the corner requested by the parameter.
     ///
     /// # Examples
+    ///
+    /// Basic corner positions:
     ///
     /// ```
     /// # use gpui::{Corner, Corners};
     /// let corners = Corners {
-    ///     top_left: 1,
-    ///     top_right: 2,
-    ///     bottom_left: 3,
-    ///     bottom_right: 4
+    ///     top_left: 10,
+    ///     top_right: 20,
+    ///     bottom_left: 30,
+    ///     bottom_right: 40
     /// };
-    /// assert_eq!(corners.corner(Corner::BottomLeft), 3);
+    /// assert_eq!(corners.corner(Corner::TopLeft), 10);
+    /// assert_eq!(corners.corner(Corner::BottomRight), 40);
+    /// ```
+    ///
+    /// Center positions (calculated as average of adjacent corners):
+    ///
+    /// ```
+    /// # use gpui::{Corner, Corners};
+    /// let corners = Corners {
+    ///     top_left: 10,
+    ///     top_right: 20,
+    ///     bottom_left: 30,
+    ///     bottom_right: 40
+    /// };
+    /// assert_eq!(corners.corner(Corner::TopCenter), 15);
+    /// assert_eq!(corners.corner(Corner::BottomCenter), 35);
+    /// assert_eq!(corners.corner(Corner::LeftCenter), 20);
+    /// assert_eq!(corners.corner(Corner::RightCenter), 30);
     /// ```
     #[must_use]
     pub fn corner(&self, corner: Corner) -> T {
@@ -2254,6 +2375,10 @@ where
             Corner::TopRight => self.top_right.clone(),
             Corner::BottomLeft => self.bottom_left.clone(),
             Corner::BottomRight => self.bottom_right.clone(),
+            Corner::TopCenter => (self.top_left.clone() + self.top_right.clone()).half(),
+            Corner::BottomCenter => (self.bottom_left.clone() + self.bottom_right.clone()).half(),
+            Corner::LeftCenter => (self.top_left.clone() + self.bottom_left.clone()).half(),
+            Corner::RightCenter => (self.top_right.clone() + self.bottom_right.clone()).half(),
         }
     }
 }
