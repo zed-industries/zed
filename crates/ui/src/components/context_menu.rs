@@ -482,6 +482,11 @@ impl ContextMenu {
         self
     }
 
+    pub fn context_self(mut self) -> Self {
+        self.action_context = Some(self.focus_handle.clone());
+        self
+    }
+
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Header(title.into()));
         self
