@@ -1,0 +1,78 @@
+name: "Close Stale Draft PRs"
+on:
+  schedule:
+    # TODO: Update to regular schedule after testing
+    - cron: "0 0 31 12 *"
+  workflow_dispatch:
+    inputs:
+      debug-only:
+        description: "Run in dry-run mode (no changes made)"
+        type: boolean
+        default: false
+
+jobs:
+  stale-draft-prs:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DAYS_BEFORE_STALE: 60
+      DAYS_BEFORE_CLOSE: 14
+      DRY_RUN: ${{ inputs.debug-only || false }}
+    steps:
+      - name: Process stale draft PRs
+        run: |
+          echo "Processing stale draft PRs..."
+          echo "Dry run mode: $DRY_RUN"
+
+          STALE_DATE=$(date -d "-${DAYS_BEFORE_STALE} days" -Iseconds)
+          CLOSE_DATE=$(date -d "-$((DAYS_BEFORE_STALE + DAYS_BEFORE_CLOSE)) days" -Iseconds)
+
+          STALE_MESSAGE="This draft PR has been open for over 60 days without activity. If you're still working on this, please leave a comment or push an update. Otherwise, it will be closed in 14 days.
+
+          If this PR is intentionally a long-running draft, add the \`never stale\` label to exempt it."
+
+          CLOSE_MESSAGE="This draft PR was closed due to inactivity. Feel free to reopen it if you'd like to continue working on it."
+
+          # Find all draft PRs
+          gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --state open \
+            --json number,updatedAt,labels \
+            --limit 1000 | jq -c '.[]' | while read -r pr; do
+
+            PR_NUMBER=$(echo "$pr" | jq -r '.number')
+            UPDATED_AT=$(echo "$pr" | jq -r '.updatedAt')
+            HAS_NEVER_STALE=$(echo "$pr" | jq -r '.labels[]?.name // empty' | grep -q "^never stale$" && echo "true" || echo "false")
+            HAS_STALE_LABEL=$(echo "$pr" | jq -r '.labels[]?.name // empty' | grep -q "^stale$" && echo "true" || echo "false")
+
+            if [ "$HAS_NEVER_STALE" = "true" ]; then
+              echo "PR #$PR_NUMBER: Skipping (has 'never stale' label)"
+              continue
+            fi
+
+            # Check if PR should be closed (stale for more than DAYS_BEFORE_CLOSE)
+            if [ "$HAS_STALE_LABEL" = "true" ] && [[ "$UPDATED_AT" < "$CLOSE_DATE" ]]; then
+              echo "PR #$PR_NUMBER: Closing (stale and inactive for over $((DAYS_BEFORE_STALE + DAYS_BEFORE_CLOSE)) days)"
+              if [ "$DRY_RUN" != "true" ]; then
+                gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$CLOSE_MESSAGE"
+                gh pr close "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
+              fi
+              continue
+            fi
+
+            # Check if PR should be marked as stale
+            if [ "$HAS_STALE_LABEL" = "false" ] && [[ "$UPDATED_AT" < "$STALE_DATE" ]]; then
+              echo "PR #$PR_NUMBER: Marking as stale (inactive for over $DAYS_BEFORE_STALE days)"
+              if [ "$DRY_RUN" != "true" ]; then
+                gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "stale"
+                gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$STALE_MESSAGE"
+              fi
+              continue
+            fi
+
+            echo "PR #$PR_NUMBER: No action needed"
+          done
+
+          echo "Done processing draft PRs."
