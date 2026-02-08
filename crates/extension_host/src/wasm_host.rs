@@ -11,7 +11,7 @@ use extension::{
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
     WorktreeDelegate,
 };
-use fs::{Fs, normalize_path};
+use fs::Fs;
 use futures::future::LocalBoxFuture;
 use futures::{
     Future, FutureExt, StreamExt as _,
@@ -722,14 +722,57 @@ impl WasmHost {
         Ok(ctx.build())
     }
 
-    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        let path = normalize_path(&extension_work_dir.join(path));
+    pub async fn writeable_path_from_extension(
+        &self,
+        id: &Arc<str>,
+        path: &Path,
+    ) -> Result<PathBuf> {
+        let canonical_work_dir = self
+            .fs
+            .canonicalize(&self.work_dir)
+            .await
+            .with_context(|| format!("canonicalizing work dir {:?}", self.work_dir))?;
+        let extension_work_dir = canonical_work_dir.join(id.as_ref());
+
+        let absolute = if path.is_relative() {
+            extension_work_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        let normalized = util::paths::normalize_lexically(&absolute)
+            .map_err(|_| anyhow!("path {path:?} escapes its parent"))?;
+
+        // Canonicalize the nearest existing ancestor to resolve any symlinks
+        // in the on-disk portion of the path. Components beyond that ancestor
+        // are re-appended, which lets this work for destinations that don't
+        // exist yet (e.g. nested directories created by tar extraction).
+        let mut existing = normalized.as_path();
+        let mut tail_components = Vec::new();
+        let canonical_prefix = loop {
+            match self.fs.canonicalize(existing).await {
+                Ok(canonical) => break canonical,
+                Err(_) => {
+                    if let Some(file_name) = existing.file_name() {
+                        tail_components.push(file_name.to_owned());
+                    }
+                    existing = existing
+                        .parent()
+                        .context(format!("cannot resolve path {path:?}"))?;
+                }
+            }
+        };
+
+        let mut resolved = canonical_prefix;
+        for component in tail_components.into_iter().rev() {
+            resolved.push(component);
+        }
+
         anyhow::ensure!(
-            path.starts_with(&extension_work_dir),
-            "cannot write to path {path:?}",
+            resolved.starts_with(&extension_work_dir),
+            "cannot write to path {resolved:?}",
         );
-        Ok(path)
+        Ok(resolved)
     }
 }
 
@@ -918,5 +961,121 @@ impl CacheStore for IncrementalCompilationCache {
     fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
         self.cache.insert(key.to_vec(), value);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use node_runtime::NodeRuntime;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            extension::init(cx);
+            gpui_tokio::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_writeable_path_rejects_escape_attempts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/work",
+            json!({
+                "test-extension": {
+                    "legit.txt": "legitimate content"
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree("/outside", json!({ "secret.txt": "sensitive data" }))
+            .await;
+        fs.insert_symlink("/work/test-extension/escape", PathBuf::from("/outside"))
+            .await;
+
+        let host = cx.update(|cx| {
+            WasmHost::new(
+                fs.clone(),
+                FakeHttpClient::with_200_response(),
+                NodeRuntime::unavailable(),
+                Arc::new(ExtensionHostProxy::default()),
+                PathBuf::from("/work"),
+                cx,
+            )
+        });
+
+        let extension_id: Arc<str> = "test-extension".into();
+
+        // A path traversing through a symlink that points outside the work dir
+        // must be rejected. Canonicalization resolves the symlink before the
+        // prefix check, so this is caught.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/escape/secret.txt"),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "symlink escape should be rejected, but got: {result:?}",
+        );
+
+        // A path using `..` to escape the extension work dir must be rejected.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/../../outside/secret.txt"),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "parent traversal escape should be rejected, but got: {result:?}",
+        );
+
+        // A legitimate path within the extension work dir should succeed.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/legit.txt"),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "legitimate path should be accepted, but got: {result:?}",
+        );
+
+        // A relative path with non-existent intermediate directories should
+        // succeed, mirroring the integration test pattern where an extension
+        // downloads a tar to e.g. "gleam-v1.2.3" (creating the directory)
+        // and then references "gleam-v1.2.3/gleam" inside it.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("new-dir/nested/binary"))
+            .await;
+        assert!(
+            result.is_ok(),
+            "relative path with non-existent parents should be accepted, but got: {result:?}",
+        );
+
+        // A symlink deeper than the immediate parent must still be caught.
+        // Here "escape" is a symlink to /outside, so "escape/deep/file.txt"
+        // has multiple non-existent components beyond the symlink.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("escape/deep/nested/file.txt"))
+            .await;
+        assert!(
+            result.is_err(),
+            "symlink escape through deep non-existent path should be rejected, but got: {result:?}",
+        );
     }
 }
