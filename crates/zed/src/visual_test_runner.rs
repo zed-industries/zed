@@ -197,9 +197,19 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
         });
         prompt_store::init(cx);
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        project::AgentRegistryStore::init_global(cx);
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            false,
+            cx,
+        );
         settings_ui::init(cx);
 
         // Initialize agent_ui (needed for agent thread tests)
