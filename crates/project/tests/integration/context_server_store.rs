@@ -610,8 +610,8 @@ async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Verify that server_ids includes both enabled and disabled servers
-    cx.read(|cx| {
-        let server_ids = store.read(cx).server_ids(cx);
+    cx.update(|cx| {
+        let server_ids = store.read(cx).server_ids().to_vec();
         assert!(
             server_ids.contains(&enabled_server_id),
             "server_ids should include enabled server"
@@ -882,26 +882,25 @@ fn assert_server_events(
         let expected_event_count = expected_events.len();
         let subscription = cx.subscribe(store, {
             let received_event_count = received_event_count.clone();
-            move |_, event, _| match event {
-                Event::ServerStatusChanged {
+            move |_, event, _| {
+                let ServerStatusChangedEvent {
                     server_id: actual_server_id,
                     status: actual_status,
-                } => {
-                    let (expected_server_id, expected_status) = &expected_events[ix];
+                } = event;
+                let (expected_server_id, expected_status) = &expected_events[ix];
 
-                    assert_eq!(
-                        actual_server_id, expected_server_id,
-                        "Expected different server id at index {}",
-                        ix
-                    );
-                    assert_eq!(
-                        actual_status, expected_status,
-                        "Expected different status at index {}",
-                        ix
-                    );
-                    ix += 1;
-                    *received_event_count.borrow_mut() += 1;
-                }
+                assert_eq!(
+                    actual_server_id, expected_server_id,
+                    "Expected different server id at index {}",
+                    ix
+                );
+                assert_eq!(
+                    actual_status, expected_status,
+                    "Expected different status at index {}",
+                    ix
+                );
+                ix += 1;
+                *received_event_count.borrow_mut() += 1;
             }
         });
         ServerEvents {
