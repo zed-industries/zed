@@ -53,8 +53,12 @@ struct WorkspaceThreadEntry {
 }
 
 impl WorkspaceThreadEntry {
-    fn new(index: usize, workspace: &Entity<Workspace>, cx: &App) -> Self {
-        let thread_info = Self::thread_info(workspace, cx);
+    fn new(
+        index: usize,
+        workspace: &Entity<Workspace>,
+        persisted_titles: &HashMap<String, String>,
+        cx: &App,
+    ) -> Self {
         let workspace_ref = workspace.read(cx);
 
         let worktrees: Vec<_> = workspace_ref
@@ -82,6 +86,18 @@ impl WorkspaceThreadEntry {
             .collect::<Vec<_>>()
             .join("\n")
             .into();
+
+        let thread_info = Self::thread_info(workspace, cx).or_else(|| {
+            if worktrees.is_empty() {
+                return None;
+            }
+            let path_key = sorted_paths_key(&worktrees);
+            let title = persisted_titles.get(&path_key)?;
+            Some(AgentThreadInfo {
+                title: SharedString::from(title.clone()),
+                status: AgentThreadStatus::Completed,
+            })
+        });
 
         Self {
             index,
@@ -802,12 +818,16 @@ impl Sidebar {
         multi_workspace: &MultiWorkspace,
         cx: &App,
     ) -> (Vec<WorkspaceThreadEntry>, usize) {
+        let persisted_titles = read_thread_title_map().unwrap_or_default();
+
         #[allow(unused_mut)]
         let mut entries: Vec<WorkspaceThreadEntry> = multi_workspace
             .workspaces()
             .iter()
             .enumerate()
-            .map(|(index, workspace)| WorkspaceThreadEntry::new(index, workspace, cx))
+            .map(|(index, workspace)| {
+                WorkspaceThreadEntry::new(index, workspace, &persisted_titles, cx)
+            })
             .collect();
 
         #[cfg(any(test, feature = "test-support"))]
@@ -868,14 +888,21 @@ impl Sidebar {
         workspaces
             .iter()
             .filter_map(|workspace| {
-                let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-                Some(cx.subscribe_in(
-                    &agent_panel,
-                    window,
-                    |this, _, _event: &AgentPanelEvent, window, cx| {
+                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                    Some(cx.subscribe_in(
+                        &agent_panel,
+                        window,
+                        |this, _, _event: &AgentPanelEvent, window, cx| {
+                            this.queue_refresh(this.multi_workspace.clone(), window, cx);
+                        },
+                    ))
+                } else {
+                    // Panel hasn't loaded yet — observe the workspace so we
+                    // re-subscribe once the panel appears on its dock.
+                    Some(cx.observe_in(workspace, window, |this, _, window, cx| {
                         this.queue_refresh(this.multi_workspace.clone(), window, cx);
-                    },
-                ))
+                    }))
+                }
             })
             .collect()
     }
