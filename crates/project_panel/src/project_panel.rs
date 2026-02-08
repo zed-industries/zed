@@ -58,7 +58,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
+    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
     IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
     ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
     WithScrollbar, prelude::*, v_flex,
@@ -4982,6 +4982,7 @@ impl ProjectPanel {
         let path = details.path.clone();
         let path_for_external_paths = path.clone();
         let path_for_dragged_selection = path.clone();
+        let is_root = path.is_empty();
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
@@ -5410,6 +5411,20 @@ impl ProjectPanel {
                         ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
+                    .when(is_root, |this| {
+                        this.end_hover_slot(
+                            IconButton::new("collapse-all-folders", IconName::ListCollapse)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Collapse All",
+                                    &CollapseAllEntries,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                                })),
+                        )
+                    })
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
