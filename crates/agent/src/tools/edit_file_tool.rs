@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
+use util::markdown::MarkdownInlineCode;
 use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
@@ -328,24 +329,26 @@ impl AgentTool for EditFileTool {
         cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(input) => self
-                .project
-                .read(cx)
-                .find_project_path(&input.path, cx)
-                .and_then(|project_path| {
-                    self.project
-                        .read(cx)
-                        .short_full_path_for_project_path(&project_path, cx)
-                })
-                .unwrap_or(input.path.to_string_lossy().into_owned())
-                .into(),
+            Ok(input) => {
+                let path = self
+                    .project
+                    .read(cx)
+                    .find_project_path(&input.path, cx)
+                    .and_then(|project_path| {
+                        self.project
+                            .read(cx)
+                            .short_full_path_for_project_path(&project_path, cx)
+                    })
+                    .unwrap_or(input.path.to_string_lossy().into_owned());
+                format!("{}", MarkdownInlineCode(&path)).into()
+            }
             Err(raw_input) => {
                 if let Some(input) =
                     serde_json::from_value::<EditFileToolPartialInput>(raw_input).ok()
                 {
                     let path = input.path.trim();
                     if !path.is_empty() {
-                        return self
+                        let resolved_path = self
                             .project
                             .read(cx)
                             .find_project_path(&input.path, cx)
@@ -354,8 +357,8 @@ impl AgentTool for EditFileTool {
                                     .read(cx)
                                     .short_full_path_for_project_path(&project_path, cx)
                             })
-                            .unwrap_or(input.path)
-                            .into();
+                            .unwrap_or(input.path);
+                        return format!("{}", MarkdownInlineCode(&resolved_path)).into();
                     }
 
                     let description = input.display_description.trim();
@@ -1777,7 +1780,7 @@ mod tests {
                     })),
                     cx
                 ),
-                "src/main.rs"
+                "`src/main.rs`"
             );
             assert_eq!(
                 tool.initial_title(
@@ -1801,7 +1804,7 @@ mod tests {
                     })),
                     cx
                 ),
-                "src/main.rs"
+                "`src/main.rs`"
             );
             assert_eq!(
                 tool.initial_title(
@@ -1818,6 +1821,43 @@ mod tests {
             assert_eq!(
                 tool.initial_title(Err(serde_json::Value::Null), cx),
                 DEFAULT_UI_TEXT
+            );
+
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "__init__.py",
+                        "display_description": "",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "`__init__.py`"
+            );
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "frontend/__tests__/storage.test.js",
+                        "display_description": "",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "`frontend/__tests__/storage.test.js`"
+            );
+            assert_eq!(
+                tool.initial_title(
+                    Err(json!({
+                        "path": "src/__init__/__pycache__/module.py",
+                        "display_description": "",
+                        "old_string": "old code",
+                        "new_string": "new code"
+                    })),
+                    cx
+                ),
+                "`src/__init__/__pycache__/module.py`"
             );
         });
     }
