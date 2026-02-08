@@ -614,8 +614,10 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx
-                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+            markdown: cx.new(|cx| {
+                Markdown::new(content.into(), Some(language_registry.clone()), None, cx)
+                    .skip_partial_links(true)
+            }),
         }
     }
 
