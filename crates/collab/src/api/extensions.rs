@@ -52,13 +52,17 @@ async fn get_extensions(RawQuery(query): RawQuery) -> Result<Json<GetExtensionsR
         )
     })?;
 
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        tracing::error!(status, "upstream extensions service returned an error");
-        return Err(Error::http(
-            StatusCode::BAD_GATEWAY,
-            "upstream extensions service returned an error".into(),
-        ));
+    let status = response.status();
+    if !status.is_success() {
+        let upstream_status =
+            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let body = response.text().await.unwrap_or_default();
+        tracing::error!(
+            status = status.as_u16(),
+            body,
+            "upstream extensions service returned an error"
+        );
+        return Err(Error::http(upstream_status, body));
     }
 
     let body: GetExtensionsResponse = response.json().await.map_err(|error| {
