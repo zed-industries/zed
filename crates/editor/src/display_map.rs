@@ -92,7 +92,7 @@ pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
-use collections::{HashMap, HashSet, IndexSet};
+use collections::{HashMap, HashSet, IndexSet, hash_map};
 use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
@@ -103,7 +103,7 @@ use multi_buffer::{
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::project_settings::DiagnosticSeverity;
-use project::{InlayId, lsp_store::TokenType};
+use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch};
@@ -225,6 +225,7 @@ pub struct DisplayMap {
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
+    lsp_folding_crease_ids: HashMap<BufferId, Vec<CreaseId>>,
 }
 
 // test change
@@ -463,6 +464,7 @@ impl DisplayMap {
             clip_at_line_ends: false,
             masked: false,
             companion: None,
+            lsp_folding_crease_ids: HashMap::default(),
         }
     }
 
@@ -671,6 +673,7 @@ impl DisplayMap {
             semantic_token_highlights: self.semantic_token_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
+            use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
     }
@@ -694,6 +697,7 @@ impl DisplayMap {
             semantic_token_highlights: self.semantic_token_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
+            use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
         }
     }
@@ -1330,6 +1334,82 @@ impl DisplayMap {
     ) -> Vec<(CreaseId, Range<Anchor>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
+    }
+
+    /// Replaces the LSP folding-range creases for a single buffer.
+    /// Converts the supplied buffer-anchor ranges into multi-buffer creases
+    /// by mapping them through the appropriate excerpts.
+    pub(super) fn set_lsp_folding_ranges(
+        &mut self,
+        buffer_id: BufferId,
+        ranges: Vec<LspFoldingRange>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let old_ids = self
+            .lsp_folding_crease_ids
+            .remove(&buffer_id)
+            .unwrap_or_default();
+        if !old_ids.is_empty() {
+            self.crease_map.remove(old_ids, &snapshot);
+        }
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        let excerpt_ids = snapshot
+            .excerpts()
+            .filter(|(_, buf, _)| buf.remote_id() == buffer_id)
+            .map(|(id, _, _)| id)
+            .collect::<Vec<_>>();
+
+        let base_placeholder = self.fold_placeholder.clone();
+        let creases = ranges.into_iter().filter_map(|folding_range| {
+            let mb_range = excerpt_ids.iter().find_map(|&id| {
+                snapshot.anchor_range_in_excerpt(id, folding_range.range.clone())
+            })?;
+            let placeholder = if let Some(collapsed_text) = folding_range.collapsed_text {
+                FoldPlaceholder {
+                    render: Arc::new({
+                        let collapsed_text = collapsed_text.clone();
+                        move |fold_id, _fold_range, cx: &mut gpui::App| {
+                            use gpui::{Element as _, ParentElement as _};
+                            FoldPlaceholder::fold_element(fold_id, cx)
+                                .child(collapsed_text.clone())
+                                .into_any()
+                        }
+                    }),
+                    constrain_width: false,
+                    merge_adjacent: base_placeholder.merge_adjacent,
+                    type_tag: base_placeholder.type_tag,
+                    collapsed_text: Some(collapsed_text),
+                }
+            } else {
+                base_placeholder.clone()
+            };
+            Some(Crease::simple(mb_range, placeholder))
+        });
+
+        let new_ids = self.crease_map.insert(creases, &snapshot);
+        if !new_ids.is_empty() {
+            self.lsp_folding_crease_ids.insert(buffer_id, new_ids);
+        }
+    }
+
+    /// Removes all LSP folding-range creases for a single buffer.
+    pub(super) fn clear_lsp_folding_ranges(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        if let hash_map::Entry::Occupied(entry) = self.lsp_folding_crease_ids.entry(buffer_id) {
+            let old_ids = entry.remove();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            self.crease_map.remove(old_ids, &snapshot);
+        }
+    }
+
+    /// Returns `true` when at least one buffer has LSP folding-range creases.
+    pub(super) fn has_lsp_folding_ranges(&self) -> bool {
+        !self.lsp_folding_crease_ids.is_empty()
     }
 
     #[instrument(skip_all)]
@@ -2000,6 +2080,9 @@ pub struct DisplaySnapshot {
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
+    /// When true, LSP folding ranges are used via the crease map and the
+    /// indent-based fallback in `crease_for_buffer_row` is skipped.
+    pub(crate) use_lsp_folding_ranges: bool,
 }
 
 impl DisplaySnapshot {
@@ -2615,7 +2698,8 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
-        } else if self.starts_indent(MultiBufferRow(start.row))
+        } else if !self.use_lsp_folding_ranges
+            && self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);

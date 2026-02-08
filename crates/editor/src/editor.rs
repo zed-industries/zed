@@ -17,8 +17,10 @@ mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
+mod document_colors;
 mod editor_settings;
 mod element;
+mod folding_ranges;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
@@ -28,7 +30,6 @@ mod inlays;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
-mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
@@ -58,8 +59,9 @@ pub use display_map::{
 };
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
-    CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
-    HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    CompletionDetailAlignment, CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode,
+    EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings,
+    ShowMinimap,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -76,7 +78,9 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
+pub use split::{
+    SplitDiff, SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff,
+};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -95,6 +99,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
+use document_colors::LspColorData;
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
@@ -141,7 +146,6 @@ use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
     LanguageServerId,
 };
-use lsp_colors::LspColorData;
 use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -246,7 +250,7 @@ pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
-pub const FETCH_COLORS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
+pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
@@ -327,6 +331,7 @@ pub enum HideMouseCursorOrigin {
 
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
+    cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -1328,6 +1333,8 @@ pub struct Editor {
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
     refresh_colors_task: Task<()>,
+    use_document_folding_ranges: bool,
+    refresh_folding_ranges_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
@@ -2063,13 +2070,7 @@ impl Editor {
             constrain_width: false,
             render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
-                div()
-                    .id(fold_id)
-                    .bg(cx.theme().colors().ghost_element_background)
-                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .rounded_xs()
-                    .size_full()
+                FoldPlaceholder::fold_element(fold_id, cx)
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -2159,13 +2160,13 @@ impl Editor {
                         );
                     }
                     project::Event::LanguageServerRemoved(_server_id) => {
+                        editor.registered_buffers.clear();
+                        editor.register_visible_buffers(cx);
+                        editor.update_lsp_data(None, window, cx);
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
-                        editor.registered_buffers.clear();
-                        editor.register_visible_buffers(cx);
-                        editor.refresh_semantic_token_highlights(cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {
@@ -2552,6 +2553,8 @@ impl Editor {
             pull_diagnostics_task: Task::ready(()),
             colors: None,
             refresh_colors_task: Task::ready(()),
+            use_document_folding_ranges: false,
+            refresh_folding_ranges_task: Task::ready(()),
             inlay_hints: None,
             next_color_inlay_id: 0,
             post_scroll_update: Task::ready(()),
@@ -2640,6 +2643,7 @@ impl Editor {
                                 .update_in(cx, |editor, window, cx| {
                                     editor.register_visible_buffers(cx);
                                     editor.refresh_colors_for_visible_range(None, window, cx);
+                                    editor.refresh_folding_ranges(None, window, cx);
                                     editor.refresh_inlay_hints(
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
@@ -2732,6 +2736,7 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
+            editor.use_document_folding_ranges = true;
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
 
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
@@ -7593,6 +7598,7 @@ impl Editor {
                 constrain_width: false,
                 merge_adjacent: false,
                 type_tag: Some(type_id),
+                collapsed_text: None,
             };
             let creases = new_newlines
                 .into_iter()
@@ -23952,8 +23958,9 @@ impl Editor {
                     self.tasks
                         .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
                     self.semantic_token_state.invalidate_buffer(buffer_id);
-                    self.display_map.update(cx, |display_map, _| {
+                    self.display_map.update(cx, |display_map, cx| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
+                        display_map.clear_lsp_folding_ranges(*buffer_id, cx);
                     });
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
@@ -24198,6 +24205,10 @@ impl Editor {
 
             if language_settings_changed || accents_changed {
                 self.colorize_brackets(true, cx);
+            }
+
+            if language_settings_changed {
+                self.clear_disabled_lsp_folding_ranges(window, cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -25227,9 +25238,12 @@ impl Editor {
     ) {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
+            self.update_semantic_tokens(Some(buffer_id), None, cx);
+        } else {
+            self.refresh_semantic_token_highlights(cx);
         }
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
-        self.update_semantic_tokens(for_buffer, None, cx);
+        self.refresh_folding_ranges(for_buffer, window, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {

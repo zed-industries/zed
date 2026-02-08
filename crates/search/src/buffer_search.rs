@@ -22,15 +22,14 @@ use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div,
+    WeakEntity, Window, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use settings::Settings;
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
@@ -46,53 +45,12 @@ use workspace::{
     },
 };
 
-pub use registrar::DivRegistrar;
+pub use registrar::{DivRegistrar, register_pane_search_actions};
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-/// Opens the buffer search interface with the specified configuration.
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
-#[action(namespace = buffer_search)]
-#[serde(deny_unknown_fields)]
-pub struct Deploy {
-    #[serde(default = "util::serde::default_true")]
-    pub focus: bool,
-    #[serde(default)]
-    pub replace_enabled: bool,
-    #[serde(default)]
-    pub selection_search_enabled: bool,
-}
-
-actions!(
-    buffer_search,
-    [
-        /// Deploys the search and replace interface.
-        DeployReplace,
-        /// Dismisses the search bar.
-        Dismiss,
-        /// Focuses back on the editor.
-        FocusEditor
-    ]
-);
-
-impl Deploy {
-    pub fn find() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: false,
-            selection_search_enabled: false,
-        }
-    }
-
-    pub fn replace() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: true,
-            selection_search_enabled: false,
-        }
-    }
-}
+pub use zed_actions::buffer_search::{Deploy, DeployReplace, Dismiss, FocusEditor};
 
 pub enum Event {
     UpdateLocation,

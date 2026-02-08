@@ -2696,7 +2696,7 @@ impl AcpThreadView {
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<CloudThinkingToggleFeatureFlag>() {
+        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
             return None;
         }
 

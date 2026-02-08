@@ -11,7 +11,7 @@ use futures::{
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
 use itertools::Itertools;
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
-use lsp::{AdapterServerCapabilities, LSP_REQUEST_TIMEOUT, LanguageServerId};
+use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
 use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
 use smol::future::yield_now;
@@ -206,10 +206,13 @@ impl LspStore {
                 return Task::ready(None);
             }
 
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             let request_task = client.request_lsp(
                 upstream_project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
             );

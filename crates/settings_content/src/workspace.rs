@@ -830,3 +830,33 @@ impl SemanticTokens {
         self != &Self::Full
     }
 }
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentFoldingRanges {
+    /// Do not request folding ranges from language servers; use tree-sitter and indent-based folding.
+    #[default]
+    Off,
+    /// Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+    On,
+}
+
+impl DocumentFoldingRanges {
+    /// Returns true if LSP folding ranges should be requested from language servers.
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+}

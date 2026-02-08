@@ -15,6 +15,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
+use settings::DiffViewStyle;
 use text::{BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -332,7 +333,7 @@ impl FeatureFlag for SplitDiffFeatureFlag {
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-struct SplitDiff;
+pub struct SplitDiff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
@@ -408,7 +409,8 @@ impl SplittableEditor {
         }
     }
 
-    pub fn new_unsplit(
+    pub fn new(
+        style: DiffViewStyle,
         rhs_multibuffer: Entity<MultiBuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -441,17 +443,26 @@ impl SplittableEditor {
             }),
         ];
 
+        let this = cx.weak_entity();
         window.defer(cx, {
             let workspace = workspace.downgrade();
             let rhs_editor = rhs_editor.downgrade();
             move |window, cx| {
                 workspace
                     .update(cx, |workspace, cx| {
-                        rhs_editor.update(cx, |editor, cx| {
-                            editor.added_to_workspace(workspace, window, cx);
-                        })
+                        rhs_editor
+                            .update(cx, |editor, cx| {
+                                editor.added_to_workspace(workspace, window, cx);
+                            })
+                            .ok();
                     })
                     .ok();
+                if style == DiffViewStyle::SideBySide {
+                    this.update(cx, |this, cx| {
+                        this.split(&Default::default(), window, cx);
+                    })
+                    .ok();
+                }
             }
         });
         let split_state = cx.new(|cx| SplitEditorState::new(cx));
@@ -466,7 +477,7 @@ impl SplittableEditor {
         }
     }
 
-    fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn split(&mut self, _: &SplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if !cx.has_flag::<SplitDiffFeatureFlag>() {
             return;
         }
@@ -2003,6 +2014,8 @@ impl LhsEditor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use buffer_diff::BufferDiff;
     use collections::HashSet;
     use fs::FakeFs;
@@ -2014,8 +2027,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::Project;
     use rand::rngs::StdRng;
-    use settings::SettingsStore;
-    use std::sync::Arc;
+    use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use workspace::Workspace;
 
@@ -2043,7 +2055,8 @@ mod tests {
             multibuffer
         });
         let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new_unsplit(
+            let mut editor = SplittableEditor::new(
+                DiffViewStyle::Stacked,
                 rhs_multibuffer.clone(),
                 project.clone(),
                 workspace,
@@ -3932,6 +3945,136 @@ mod tests {
         assert_eq!(
             lhs_pos.x, rhs_pos.x,
             "LHS should have same horizontal scroll position as RHS after autoscroll"
+        )
+    }
+
+    #[gpui::test]
+    async fn test_edit_line_before_soft_wrapped_line_preceding_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+
+        let base_text = "
+            first line
+            aaaa bbbb cccc dddd eeee ffff
+            original
+        "
+        .unindent();
+
+        let current_text = "
+            first line
+            aaaa bbbb cccc dddd eeee ffff
+            modified
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content_with_widths(
+            &editor,
+            px(400.0),
+            px(200.0),
+            "
+                    § <no file>
+                    § -----
+                    first line
+                    aaaa bbbb cccc dddd eeee ffff
+                    § spacer
+                    § spacer
+                    modified"
+                .unindent(),
+            "
+                    § <no file>
+                    § -----
+                    first line
+                    aaaa bbbb\x20
+                    cccc dddd\x20
+                    eeee ffff
+                    original"
+                .unindent(),
+            &mut cx,
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(Point::new(0, 0)..Point::new(0, 10), "edited first")],
+                None,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content_with_widths(
+            &editor,
+            px(400.0),
+            px(200.0),
+            "
+                    § <no file>
+                    § -----
+                    edited first
+                    aaaa bbbb cccc dddd eeee ffff
+                    § spacer
+                    § spacer
+                    modified"
+                .unindent(),
+            "
+                    § <no file>
+                    § -----
+                    first line
+                    aaaa bbbb\x20
+                    cccc dddd\x20
+                    eeee ffff
+                    original"
+                .unindent(),
+            &mut cx,
+        );
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(&buffer_snapshot, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content_with_widths(
+            &editor,
+            px(400.0),
+            px(200.0),
+            "
+                    § <no file>
+                    § -----
+                    edited first
+                    aaaa bbbb cccc dddd eeee ffff
+                    § spacer
+                    § spacer
+                    modified"
+                .unindent(),
+            "
+                    § <no file>
+                    § -----
+                    first line
+                    aaaa bbbb\x20
+                    cccc dddd\x20
+                    eeee ffff
+                    original"
+                .unindent(),
+            &mut cx,
         );
     }
 

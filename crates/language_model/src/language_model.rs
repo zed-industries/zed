@@ -592,6 +592,11 @@ pub trait LanguageModel: Send + Sync {
         self.provider_name()
     }
 
+    /// Returns whether this model is the "latest", so we can highlight it in the UI.
+    fn is_latest(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {

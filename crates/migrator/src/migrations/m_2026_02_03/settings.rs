@@ -1,11 +1,16 @@
 use anyhow::Result;
 use serde_json::Value;
 
-pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
-    let Some(obj) = value.as_object_mut() else {
-        return Ok(());
-    };
+use crate::migrations::migrate_settings;
 
+pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
+    migrate_settings(value, |obj| {
+        migrate_one(obj);
+        Ok(())
+    })
+}
+
+fn migrate_one(obj: &mut serde_json::Map<String, Value>) {
     if let Some(edit_predictions) = obj.get_mut("edit_predictions") {
         if let Some(edit_predictions_obj) = edit_predictions.as_object_mut() {
             migrate_provider_field(edit_predictions_obj, "provider");
@@ -17,8 +22,6 @@ pub fn migrate_experimental_sweep_mercury(value: &mut Value) -> Result<()> {
             migrate_provider_field(features_obj, "edit_prediction_provider");
         }
     }
-
-    Ok(())
 }
 
 fn migrate_provider_field(obj: &mut serde_json::Map<String, Value>, field_name: &str) {
