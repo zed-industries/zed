@@ -2519,6 +2519,7 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
+    window_state.lock().external_files_dragged = false;
 }
 
 async fn synthetic_drag(
