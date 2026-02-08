@@ -10,15 +10,15 @@ use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkMan
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
-    div,
+    PromptLevel, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
+    anchored, deferred, div,
 };
 use menu;
 use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
+use settings::{Settings, SettingsStore, TerminalBlink, TerminalConfirmOnKill, WorkingDirectory};
 use std::{
     cmp,
     ops::{Range, RangeInclusive},
@@ -53,7 +53,8 @@ use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
     delete_unloaded_items,
     item::{
-        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+        BreadcrumbText, CloseConfirmation, Item, ItemEvent, SerializableItem, TabContentParams,
+        TabTooltipContent,
     },
     register_serializable_item,
     searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -1302,6 +1303,29 @@ impl Item for TerminalView {
                     .into_any_element()
             }
         }))))
+    }
+
+    fn close_confirmation(&self, cx: &App) -> Option<CloseConfirmation> {
+        let confirm_on_kill = TerminalSettings::get_global(cx).confirm_on_kill;
+        let terminal = self.terminal().read(cx);
+        let title = terminal.title(true);
+
+        match confirm_on_kill {
+            TerminalConfirmOnKill::Never => None,
+            TerminalConfirmOnKill::Always => {
+                if !terminal.has_running_process() {
+                    return None;
+                }
+                let message = "Do you want to terminate the active terminal session?";
+                Some(CloseConfirmation {
+                    level: PromptLevel::Warning,
+                    message: message.into(),
+                    detail: Some(title.into()),
+                    confirm_button: "Terminate".into(),
+                    cancel_button: "Cancel".into(),
+                })
+            }
+        }
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {

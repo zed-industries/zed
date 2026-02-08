@@ -4,9 +4,9 @@ use crate::{
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
-        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, CloseConfirmation, ClosePosition, Item, ItemBufferKind, ItemHandle,
+        ItemSettings, PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -21,9 +21,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
-    deferred, prelude::*,
+    Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptButton,
+    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -1944,6 +1944,29 @@ impl Pane {
             for item_to_close in items_to_close {
                 let mut should_close = true;
                 let mut should_save = true;
+                let confirmation =
+                    pane.update_in(cx, |_, _, cx| item_to_close.close_confirmation(cx))?;
+                if let Some(confirmation) = confirmation {
+                    let CloseConfirmation {
+                        level,
+                        message,
+                        detail,
+                        confirm_button,
+                        cancel_button,
+                    } = confirmation;
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        let buttons = [
+                            PromptButton::ok(confirm_button),
+                            PromptButton::cancel(cancel_button),
+                        ];
+                        let detail = detail.as_ref().map(|detail| detail.as_ref());
+                        window.prompt(level, message.as_ref(), detail, &buttons, cx)
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        Ok(1..) | Err(_) => return Ok(()),
+                    }
+                }
                 if save_intent == SaveIntent::Close {
                     workspace.update(cx, |workspace, cx| {
                         if Self::skip_save_on_close(item_to_close.as_ref(), workspace, cx) {

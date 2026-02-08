@@ -6092,7 +6092,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6126,6 +6126,24 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .copy_on_select = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Confirm On Kill",
+                description: "Whether to confirm killing terminals when they have child processes.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.confirm_on_kill"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.confirm_on_kill.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .confirm_on_kill = value;
                     },
                 }),
                 metadata: None,

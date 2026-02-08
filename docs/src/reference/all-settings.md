@@ -3803,6 +3803,34 @@ List of `integer` column numbers
 }
 ```
 
+### Terminal: Confirm On Kill
+
+- Description: Whether to confirm killing terminals when they have child processes.
+- Setting: `confirm_on_kill`
+- Default: `never`
+
+**Options**
+
+1. Never confirm
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": "never"
+  }
+}
+```
+
+2. Always confirm
+
+```json [settings]
+{
+  "terminal": {
+    "confirm_on_kill": "always"
+  }
+}
+```
+
 ### Terminal: Cursor Shape
 
 - Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
