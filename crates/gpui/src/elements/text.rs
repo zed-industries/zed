@@ -68,22 +68,6 @@ impl Element for &'static str {
     }
 }
 
-impl IntoElement for &'static str {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-impl IntoElement for String {
-    type Element = SharedString;
-
-    fn into_element(self) -> Self::Element {
-        self.into()
-    }
-}
-
 impl Element for SharedString {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
@@ -134,11 +118,11 @@ impl Element for SharedString {
     }
 }
 
-impl IntoElement for SharedString {
-    type Element = Self;
+impl<T: Into<SharedString>> IntoElement for T {
+    type Element = SharedString;
 
     fn into_element(self) -> Self::Element {
-        self
+        self.into()
     }
 }
 
