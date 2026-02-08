@@ -1,6 +1,5 @@
 use editor::render_breadcrumb_text;
 use gpui::{Context, EventEmitter, IntoElement, Render, Subscription, Window};
-use theme::ActiveTheme;
 use ui::prelude::*;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -44,7 +43,7 @@ impl Render for Breadcrumbs {
             return element.into_any_element();
         };
 
-        let Some(segments) = active_item.breadcrumbs(cx.theme(), cx) else {
+        let Some(segments) = active_item.breadcrumbs(cx) else {
             return element.into_any_element();
         };
 

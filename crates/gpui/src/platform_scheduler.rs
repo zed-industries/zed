@@ -53,21 +53,19 @@ impl Scheduler for PlatformScheduler {
             unparker.unpark();
         });
         let mut cx = Context::from_waker(&waker);
-
+        if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+            return true;
+        }
         loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => return true,
-                Poll::Pending => {
-                    if let Some(deadline) = deadline {
-                        let now = Instant::now();
-                        if now >= deadline {
-                            return false;
-                        }
-                        parker.park_timeout(deadline - now);
-                    } else {
-                        parker.park();
-                    }
+            match deadline {
+                Some(deadline) if !parker.park_deadline(deadline) && deadline <= Instant::now() => {
+                    return false;
                 }
+                Some(_) => (),
+                None => parker.park(),
+            }
+            if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+                break true;
             }
         }
     }

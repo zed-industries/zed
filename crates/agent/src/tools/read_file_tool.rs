@@ -79,9 +79,7 @@ impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
 
-    fn name() -> &'static str {
-        "read_file"
-    }
+    const NAME: &'static str = "read_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Read

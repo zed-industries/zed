@@ -1,28 +1,20 @@
+use crate::shell_parser::extract_commands;
 use url::Url;
 
-/// Extracts a regex pattern from a terminal command based on the first token (command name).
+/// Extracts the command name from a shell command using the shell parser.
 ///
-/// Returns `None` for commands starting with `./`, `/`, or other path-like prefixes.
-/// This is a deliberate security decision: we only allow pattern-based "always allow"
-/// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
-/// scripts or absolute paths which could be manipulated by an attacker.
-pub fn extract_terminal_pattern(command: &str) -> Option<String> {
-    let first_token = command.split_whitespace().next()?;
+/// This parses the command properly to extract just the command name (first word),
+/// handling shell syntax correctly. Returns `None` if parsing fails or if the
+/// command name contains path separators (for security reasons).
+fn extract_command_name(command: &str) -> Option<String> {
+    let commands = extract_commands(command)?;
+    let first_command = commands.first()?;
+
+    let first_token = first_command.split_whitespace().next()?;
+
     // Only allow alphanumeric commands with hyphens/underscores.
     // Reject paths like "./script.sh" or "/usr/bin/python" to prevent
     // users from accidentally allowing arbitrary script execution.
-    if first_token
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-    {
-        Some(format!("^{}\\s", regex::escape(first_token)))
-    } else {
-        None
-    }
-}
-
-pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
-    let first_token = command.split_whitespace().next()?;
     if first_token
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
@@ -31,6 +23,21 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Extracts a regex pattern from a terminal command based on the first token (command name).
+///
+/// Returns `None` for commands starting with `./`, `/`, or other path-like prefixes.
+/// This is a deliberate security decision: we only allow pattern-based "always allow"
+/// rules for well-known command names (like `cargo`, `npm`, `git`), not for arbitrary
+/// scripts or absolute paths which could be manipulated by an attacker.
+pub fn extract_terminal_pattern(command: &str) -> Option<String> {
+    let command_name = extract_command_name(command)?;
+    Some(format!("^{}\\b", regex::escape(&command_name)))
+}
+
+pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
+    extract_command_name(command)
 }
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
@@ -71,19 +78,19 @@ mod tests {
     fn test_extract_terminal_pattern() {
         assert_eq!(
             extract_terminal_pattern("cargo build --release"),
-            Some("^cargo\\s".to_string())
+            Some("^cargo\\b".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("npm install"),
-            Some("^npm\\s".to_string())
+            Some("^npm\\b".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("git-lfs pull"),
-            Some("^git\\-lfs\\s".to_string())
+            Some("^git\\-lfs\\b".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("my_script arg"),
-            Some("^my_script\\s".to_string())
+            Some("^my_script\\b".to_string())
         );
         assert_eq!(extract_terminal_pattern("./script.sh arg"), None);
         assert_eq!(extract_terminal_pattern("/usr/bin/python arg"), None);

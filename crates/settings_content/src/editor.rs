@@ -53,6 +53,7 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
     /// Time to wait in milliseconds before showing the informational hover box.
+    /// This delay also applies to auto signature help when `auto_signature_help` is enabled.
     ///
     /// Default: 300
     pub hover_popover_delay: Option<DelayMs>,

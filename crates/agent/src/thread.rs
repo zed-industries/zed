@@ -18,7 +18,8 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
-use cloud_llm_client::{CompletionIntent, Plan};
+use cloud_api_types::Plan;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::stream;
@@ -315,6 +316,17 @@ impl UserMessage {
                         }
                         MentionUri::Diagnostics { .. } => {
                             write!(&mut diagnostics_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::TerminalSelection { .. } => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "console",
+                                    text: content
+                                }
+                            )
+                            .ok();
                         }
                     }
 
@@ -623,26 +635,63 @@ impl ToolPermissionContext {
     ///
     /// This is the canonical source for permission option generation.
     /// Tests should use this function rather than manually constructing options.
+    ///
+    /// # Shell Compatibility for Terminal Tool
+    ///
+    /// For the terminal tool, "Always allow" options are only shown when the user's
+    /// shell supports POSIX-like command chaining syntax (`&&`, `||`, `;`, `|`).
+    ///
+    /// **Why this matters:** When a user sets up an "always allow" pattern like `^cargo`,
+    /// we need to parse the command to extract all sub-commands and verify that EVERY
+    /// sub-command matches the pattern. Otherwise, an attacker could craft a command like
+    /// `cargo build && rm -rf /` that would bypass the security check.
+    ///
+    /// **Supported shells:** Posix (sh, bash, dash, zsh), Fish 3.0+, PowerShell 7+/Pwsh,
+    /// Cmd, Xonsh, Csh, Tcsh
+    ///
+    /// **Unsupported shells:** Nushell (uses `and`/`or` keywords), Elvish (uses `and`/`or`
+    /// keywords), Rc (Plan 9 shell - no `&&`/`||` operators)
+    ///
+    /// For unsupported shells, we hide the "Always allow" UI options entirely, and if
+    /// the user has `always_allow` rules configured in settings, `ToolPermissionDecision::from_input`
+    /// will return a `Deny` with an explanatory error message.
     pub fn build_permission_options(&self) -> acp_thread::PermissionOptions {
         use crate::pattern_extraction::*;
+        use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
         let input_value = &self.input_value;
 
-        let (pattern, pattern_display) = match tool_name.as_str() {
-            "terminal" => (
+        // Check if the user's shell supports POSIX-like command chaining.
+        // See the doc comment above for the full explanation of why this is needed.
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
+            ShellKind::system().supports_posix_chaining()
+        } else {
+            true
+        };
+
+        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
+            (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
-            ),
-            "edit_file" | "delete_path" | "move_path" | "create_directory" | "save_file" => (
+            )
+        } else if tool_name == EditFileTool::NAME
+            || tool_name == DeletePathTool::NAME
+            || tool_name == MovePathTool::NAME
+            || tool_name == CreateDirectoryTool::NAME
+            || tool_name == SaveFileTool::NAME
+        {
+            (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
-            ),
-            "fetch" => (
+            )
+        } else if tool_name == FetchTool::NAME {
+            (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
-            ),
-            _ => (None, None),
+            )
+        } else {
+            (None, None)
         };
 
         let mut choices = Vec::new();
@@ -662,27 +711,29 @@ impl ToolPermissionContext {
             });
         };
 
-        push_choice(
-            format!("Always for {}", tool_name.replace('_', " ")),
-            format!("always_allow:{}", tool_name),
-            format!("always_deny:{}", tool_name),
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::RejectAlways,
-        );
-
-        if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-            let button_text = match tool_name.as_str() {
-                "terminal" => format!("Always for `{}` commands", display),
-                "fetch" => format!("Always for `{}`", display),
-                _ => format!("Always for `{}`", display),
-            };
+        if shell_supports_always_allow {
             push_choice(
-                button_text,
-                format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                format!("Always for {}", tool_name.replace('_', " ")),
+                format!("always_allow:{}", tool_name),
+                format!("always_deny:{}", tool_name),
                 acp::PermissionOptionKind::AllowAlways,
                 acp::PermissionOptionKind::RejectAlways,
             );
+
+            if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
+                let button_text = if tool_name == TerminalTool::NAME {
+                    format!("Always for `{}` commands", display)
+                } else {
+                    format!("Always for `{}`", display)
+                };
+                push_choice(
+                    button_text,
+                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::RejectAlways,
+                );
+            }
         }
 
         push_choice(
@@ -733,16 +784,16 @@ pub struct Thread {
     /// Used to signal that the turn should end at the next message boundary.
     has_queued_message: bool,
     pending_message: Option<AgentMessage>,
-    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
     #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
-    context_server_registry: Entity<ContextServerRegistry>,
+    pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
     project_context: Entity<ProjectContext>,
-    templates: Arc<Templates>,
+    pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
@@ -1229,21 +1280,17 @@ impl Thread {
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            let parent_tools = self.tools.clone();
-            self.add_tool(SubagentTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.project_context.clone(),
-                self.context_server_registry.clone(),
-                self.templates.clone(),
-                self.depth(),
-                parent_tools,
-            ));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
         }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -1745,10 +1792,7 @@ impl Thread {
         };
 
         let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                None => false,
-            }
+            plan.is_some()
         } else {
             true
         };
@@ -2299,8 +2343,8 @@ impl Thread {
             .iter()
             .filter_map(|(tool_name, tool)| {
                 // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == "streaming_edit_file" {
-                    "edit_file"
+                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
+                    EditFileTool::NAME
                 } else {
                     tool_name.as_ref()
                 };
@@ -2309,10 +2353,10 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        ("streaming_edit_file", false) | ("edit_file", true) => None,
-                        ("streaming_edit_file", true) => {
+                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
+                        (StreamingEditFileTool::NAME, true) => {
                             // Expose streaming tool as "edit_file"
-                            Some((SharedString::from("edit_file"), tool.clone()))
+                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
                         }
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
@@ -2648,7 +2692,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2757,7 +2801,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {

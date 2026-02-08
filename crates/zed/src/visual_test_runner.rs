@@ -60,6 +60,7 @@ use {
     image::RgbaImage,
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings_ui::SettingsWindow,
     std::{
         any::Any,
         path::{Path, PathBuf},
@@ -69,6 +70,7 @@ use {
     },
     watch,
     workspace::{AppState, Workspace},
+    zed_actions::OpenSettingsAt,
 };
 
 // All macOS-specific constants grouped together
@@ -162,6 +164,11 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     // Create AppState using the test initialization
     let app_state = cx.update(|cx| init_app_state(cx));
 
+    // Set the global app state so settings_ui and other subsystems can find it
+    cx.update(|cx| {
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+    });
+
     // Initialize all Zed subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
@@ -183,6 +190,18 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        settings_ui::init(cx);
+
+        // Initialize agent_ui (needed for agent thread tests)
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            true, // is_eval - skip language model settings initialization
+            cx,
+        );
 
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
@@ -476,6 +495,40 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
         Err(e) => {
             eprintln!("✗ diff_review_button: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 7: Tool Permissions Settings UI visual test
+    println!("\n--- Test 7: tool_permissions_settings ---");
+    match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ tool_permissions_settings: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ tool_permissions_settings: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ tool_permissions_settings: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 8: Settings UI sub-page auto-open visual tests
+    println!("\n--- Test 8: settings_ui_subpage_auto_open (2 variants) ---");
+    match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ settings_ui_subpage_auto_open: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ settings_ui_subpage_auto_open: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ settings_ui_subpage_auto_open: FAILED - {}", e);
             failed += 1;
         }
     }
@@ -845,7 +898,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     theme::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
-    Arc::new(AppState {
+    let app_state = Arc::new(AppState {
         client,
         fs,
         languages,
@@ -854,7 +907,9 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         node_runtime: NodeRuntime::unavailable(),
         build_window_options: |_, _| Default::default(),
         session,
-    })
+    });
+    AppState::set_global(Arc::downgrade(&app_state), cx);
+    app_state
 }
 
 /// Runs visual tests for breakpoint hover states in the editor gutter.
@@ -1142,6 +1197,171 @@ fn run_breakpoint_hover_visual_tests(
         (TestResult::BaselineUpdated(p), _, _)
         | (_, TestResult::BaselineUpdated(p), _)
         | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
+    }
+}
+
+/// Runs visual tests for the settings UI sub-page auto-open feature.
+///
+/// This test verifies that when opening settings via OpenSettingsAt with a path
+/// that maps to a single SubPageLink, the sub-page is automatically opened.
+///
+/// This test captures two states:
+/// 1. Settings opened with a path that maps to multiple items (no auto-open)
+/// 2. Settings opened with a path that maps to a single SubPageLink (auto-opens sub-page)
+#[cfg(target_os = "macos")]
+fn run_settings_ui_subpage_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Create a workspace window for dispatching actions
+    let window_size = size(px(1280.0), px(800.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window")?;
+
+    cx.run_until_parked();
+
+    // Test 1: Open settings with a path that maps to multiple items (e.g., "agent")
+    // This should NOT auto-open a sub-page since multiple items match
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for multiple items")?;
+
+    cx.run_until_parked();
+
+    // Find the settings window
+    let settings_window_1 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test1_result = run_visual_test(
+        "settings_ui_no_auto_open",
+        settings_window_1.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Close the settings window
+    let _ = cx.update_window(settings_window_1.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Test 2: Open settings with a path that maps to a single SubPageLink
+    // "edit_predictions.providers" maps to the "Configure Providers" SubPageLink
+    // This should auto-open the sub-page
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "edit_predictions.providers".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt for single SubPageLink")?;
+
+    cx.run_until_parked();
+
+    // Find the new settings window
+    let settings_window_2 = cx
+        .update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<SettingsWindow>())
+        })
+        .context("Settings window not found for sub-page test")?;
+
+    // Refresh and capture screenshot
+    cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let test2_result = run_visual_test(
+        "settings_ui_subpage_auto_open",
+        settings_window_2.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Clean up: close the settings window
+    let _ = cx.update_window(settings_window_2.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Clean up: close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return combined result
+    match (&test1_result, &test2_result) {
+        (TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
+        (TestResult::BaselineUpdated(p), _) | (_, TestResult::BaselineUpdated(p)) => {
+            Ok(TestResult::BaselineUpdated(p.clone()))
+        }
     }
 }
 
@@ -1806,7 +2026,12 @@ fn run_subagent_visual_tests(
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = cx
-        .read(|cx| thread_view.read(cx).thread().cloned())
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.read(cx).thread.clone())
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the subagent response
@@ -1946,7 +2171,7 @@ fn run_subagent_visual_tests(
     )?;
 
     // Expand the first subagent
-    thread_view.update(cx, |view: &mut agent_ui::acp::AcpThreadView, cx| {
+    thread_view.update(cx, |view: &mut agent_ui::acp::AcpServerView, cx| {
         view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
     });
 
@@ -2211,7 +2436,12 @@ fn run_agent_thread_view_test(
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     let thread = cx
-        .read(|cx| thread_view.read(cx).thread().cloned())
+        .read(|cx| {
+            thread_view
+                .read(cx)
+                .as_active_thread()
+                .map(|active| active.read(cx).thread.clone())
+        })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
 
     // Send the message to trigger the image response
@@ -2317,4 +2547,214 @@ fn run_agent_thread_view_test(
             Ok(TestResult::BaselineUpdated(p.clone()))
         }
     }
+}
+
+/// Visual test for the Tool Permissions Settings UI page
+///
+/// Takes two screenshots:
+/// 1. The settings page showing the "Configure Tool Rules" item
+/// 2. The tool permissions sub-page after clicking Configure
+#[cfg(target_os = "macos")]
+fn run_tool_permissions_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    _update_baseline: bool,
+) -> Result<TestResult> {
+    use zed_actions::OpenSettingsAt;
+
+    // Create a minimal workspace to dispatch the settings action from
+    let window_size = size(px(900.0), px(700.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open workspace window for settings test")?;
+
+    cx.run_until_parked();
+
+    // Dispatch the OpenSettingsAt action to open settings at the tool_permissions path
+    workspace_window
+        .update(cx, |_workspace, window, cx| {
+            window.dispatch_action(
+                Box::new(OpenSettingsAt {
+                    path: "agent.tool_permissions".to_string(),
+                }),
+                cx,
+            );
+        })
+        .context("Failed to dispatch OpenSettingsAt action")?;
+
+    cx.run_until_parked();
+
+    // Give the settings window time to open and render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Find the settings window - it should be the newest window (last in the list)
+    let all_windows = cx.update(|cx| cx.windows());
+    let settings_window = all_windows.last().copied().context("No windows found")?;
+
+    // Save screenshot 1: Settings page showing "Configure Tool Rules" item
+    let output_dir = std::env::var("VISUAL_TEST_OUTPUT_DIR")
+        .unwrap_or_else(|_| "target/visual_tests".to_string());
+    std::fs::create_dir_all(&output_dir).ok();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    let output_path = PathBuf::from(&output_dir).join("tool_permissions_settings.png");
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&output_path);
+        println!("Screenshot 1 saved to: {}", output_path.display());
+    }
+
+    // Navigate to the tool permissions sub-page using the public API
+    let settings_window_handle = settings_window
+        .downcast::<settings_ui::SettingsWindow>()
+        .context("Failed to downcast to SettingsWindow")?;
+
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.navigate_to_sub_page("agent.tool_permissions", window, cx);
+        })
+        .context("Failed to navigate to tool permissions sub-page")?;
+
+    cx.run_until_parked();
+
+    // Give the sub-page time to render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    // Save screenshot 2: The tool permissions sub-page (list of tools)
+    let subpage_output_path = PathBuf::from(&output_dir).join("tool_permissions_subpage.png");
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&subpage_output_path);
+        println!(
+            "Screenshot 2 (tool list) saved to: {}",
+            subpage_output_path.display()
+        );
+    }
+
+    // Now navigate into a specific tool (Terminal) to show the tool config page
+    // We need to use push_dynamic_sub_page since the tool pages are nested
+    settings_window_handle
+        .update(cx, |settings_window, window, cx| {
+            settings_window.push_dynamic_sub_page(
+                "Terminal",
+                "Configure Tool Rules",
+                None,
+                settings_ui::pages::render_terminal_tool_config,
+                window,
+                cx,
+            );
+        })
+        .context("Failed to navigate to Terminal tool config")?;
+
+    cx.run_until_parked();
+
+    // Give the tool config page time to render
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+    }
+
+    // Refresh and redraw
+    cx.update_window(settings_window, |_, window, cx| {
+        window.draw(cx).clear();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    cx.update_window(settings_window, |_, window, _cx| {
+        window.refresh();
+    })
+    .ok();
+    cx.run_until_parked();
+
+    // Save screenshot 3: Individual tool config page
+    let tool_config_output_path =
+        PathBuf::from(&output_dir).join("tool_permissions_tool_config.png");
+
+    if let Ok(screenshot) = cx.capture_screenshot(settings_window) {
+        let _: Result<(), _> = screenshot.save(&tool_config_output_path);
+        println!(
+            "Screenshot 3 (tool config) saved to: {}",
+            tool_config_output_path.display()
+        );
+    }
+
+    // Clean up - close the settings window
+    let _ = cx.update_window(settings_window, |_, window, _cx| {
+        window.remove_window();
+    });
+
+    // Close the workspace window
+    let _ = cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    });
+
+    cx.run_until_parked();
+
+    // Give background tasks time to finish
+    for _ in 0..5 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Return success - we're just capturing screenshots, not comparing baselines
+    Ok(TestResult::Passed)
 }

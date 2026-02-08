@@ -702,7 +702,7 @@ impl SyntaxSnapshot {
                             text.as_rope(),
                             step_start_byte,
                             &included_ranges,
-                            Some(old_tree.clone()),
+                            Some(old_tree),
                             budget,
                         );
                         match result {
@@ -779,7 +779,26 @@ impl SyntaxSnapshot {
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        for range in &changed_ranges {
+                        // Handle invalidation and reactivation of injections on comment update
+                        let mut expanded_ranges: Vec<_> = changed_ranges
+                            .iter()
+                            .map(|range| {
+                                let start_row = range.start.to_point(text).row.saturating_sub(1);
+                                let end_row = range.end.to_point(text).row.saturating_add(2);
+                                text.point_to_offset(Point::new(start_row, 0))
+                                    ..text.point_to_offset(Point::new(end_row, 0)).min(text.len())
+                            })
+                            .collect();
+                        expanded_ranges.sort_unstable_by_key(|r| r.start);
+                        expanded_ranges.dedup_by(|b, a| {
+                            let overlaps = b.start <= a.end;
+                            if overlaps {
+                                a.end = a.end.max(b.end);
+                            }
+                            overlaps
+                        });
+
+                        for range in &expanded_ranges {
                             changed_regions.insert(
                                 ChangedRegion {
                                     depth: step.depth + 1,
@@ -799,7 +818,7 @@ impl SyntaxSnapshot {
                             ),
                             registry,
                             step.depth + 1,
-                            &changed_ranges,
+                            &expanded_ranges,
                             &mut combined_injection_ranges,
                             &mut queue,
                         );
@@ -1431,7 +1450,7 @@ fn parse_text(
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
-    old_tree: Option<tree_sitter::Tree>,
+    old_tree: Option<&tree_sitter::Tree>,
     parse_budget: &mut Option<Duration>,
 ) -> anyhow::Result<tree_sitter::Tree> {
     with_parser(|parser| {
@@ -1459,7 +1478,7 @@ fn parse_text(
                     chunks.seek(start_byte + offset);
                     chunks.next().unwrap_or("").as_bytes()
                 },
-                old_tree.as_ref(),
+                old_tree,
                 progress_callback
                     .as_mut()
                     .map(|progress_callback| tree_sitter::ParseOptions {

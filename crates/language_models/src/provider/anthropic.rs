@@ -779,6 +779,7 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => anthropic::ToolChoice::None,
         }),
         metadata: None,
+        output_config: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,

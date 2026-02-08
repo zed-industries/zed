@@ -41,9 +41,7 @@ impl AgentTool for SaveFileTool {
     type Input = SaveFileToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "save_file"
-    }
+    const NAME: &'static str = "save_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -72,7 +70,7 @@ impl AgentTool for SaveFileTool {
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
-            let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+            let decision = decide_permission_from_settings(Self::NAME, &path_str, settings);
             match decision {
                 ToolPermissionDecision::Allow => {}
                 ToolPermissionDecision::Deny(reason) => {
@@ -113,7 +111,7 @@ impl AgentTool for SaveFileTool {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
             let context = crate::ToolPermissionContext {
-                tool_name: "save_file".to_string(),
+                tool_name: Self::NAME.to_string(),
                 input_value: first_path,
             };
             Some(event_stream.authorize(title, context, cx))

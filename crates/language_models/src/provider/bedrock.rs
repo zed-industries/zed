@@ -1404,7 +1404,7 @@ impl Render for ConfigurationView {
                             .child(Label::new("Select the models you would like access to:"))
                             .child(ButtonLink::new(
                                 "Bedrock Model Catalog",
-                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess",
+                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog",
                             )),
                     ),
             )

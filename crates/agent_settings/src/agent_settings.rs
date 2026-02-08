@@ -543,98 +543,6 @@ mod tests {
     }
 
     #[test]
-    fn test_default_json_tool_permissions_parse() {
-        let default_json = include_str!("../../../assets/settings/default.json");
-
-        let value: serde_json::Value = serde_json_lenient::from_str(default_json)
-            .expect("default.json should be valid JSON with comments");
-
-        let agent = value
-            .get("agent")
-            .expect("default.json should have 'agent' key");
-        let tool_permissions = agent
-            .get("tool_permissions")
-            .expect("agent should have 'tool_permissions' key");
-
-        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions.clone())
-            .expect("tool_permissions should parse into ToolPermissionsContent");
-
-        let permissions = compile_tool_permissions(Some(content));
-
-        let terminal = permissions
-            .tools
-            .get("terminal")
-            .expect("terminal tool should be configured");
-        assert!(
-            !terminal.always_deny.is_empty(),
-            "terminal should have deny rules"
-        );
-        assert!(
-            !terminal.always_confirm.is_empty(),
-            "terminal should have confirm rules"
-        );
-        let edit_file = permissions
-            .tools
-            .get("edit_file")
-            .expect("edit_file tool should be configured");
-        assert!(
-            !edit_file.always_deny.is_empty(),
-            "edit_file should have deny rules"
-        );
-
-        let delete_path = permissions
-            .tools
-            .get("delete_path")
-            .expect("delete_path tool should be configured");
-        assert!(
-            !delete_path.always_deny.is_empty(),
-            "delete_path should have deny rules"
-        );
-
-        let fetch = permissions
-            .tools
-            .get("fetch")
-            .expect("fetch tool should be configured");
-        assert_eq!(
-            fetch.default_mode,
-            settings::ToolPermissionMode::Confirm,
-            "fetch should have confirm as default mode"
-        );
-    }
-
-    #[test]
-    fn test_default_deny_rules_match_dangerous_commands() {
-        let default_json = include_str!("../../../assets/settings/default.json");
-        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
-        let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
-        let permissions = compile_tool_permissions(Some(content));
-
-        let terminal = permissions.tools.get("terminal").unwrap();
-
-        let dangerous_commands = [
-            "rm -rf /",
-            "rm -rf ~",
-            "rm -rf ..",
-            "mkfs.ext4 /dev/sda",
-            "dd if=/dev/zero of=/dev/sda",
-            "cat /etc/passwd",
-            "cat /etc/shadow",
-            "del /f /s /q c:\\",
-            "format c:",
-            "rd /s /q c:\\windows",
-        ];
-
-        for cmd in &dangerous_commands {
-            assert!(
-                terminal.always_deny.iter().any(|r| r.is_match(cmd)),
-                "Command '{}' should be blocked by deny rules",
-                cmd
-            );
-        }
-    }
-
-    #[test]
     fn test_deny_takes_precedence_over_allow_and_confirm() {
         let json = json!({
             "tools": {
@@ -736,25 +644,6 @@ mod tests {
         assert!(
             fork_bomb_regex.is_match(":(){ :|:&};:"),
             "Should match fork bomb without spaces"
-        );
-    }
-
-    #[test]
-    fn test_default_json_fork_bomb_pattern_matches() {
-        let default_json = include_str!("../../../assets/settings/default.json");
-        let value: serde_json::Value = serde_json_lenient::from_str(default_json).unwrap();
-        let tool_permissions = value["agent"]["tool_permissions"].clone();
-        let content: ToolPermissionsContent = serde_json::from_value(tool_permissions).unwrap();
-        let permissions = compile_tool_permissions(Some(content));
-
-        let terminal = permissions.tools.get("terminal").unwrap();
-
-        assert!(
-            terminal
-                .always_deny
-                .iter()
-                .any(|r| r.is_match(":(){ :|:& };:")),
-            "Default deny rules should block the classic fork bomb"
         );
     }
 

@@ -225,6 +225,46 @@ where
             old
         }
     }
+
+    /// Returns the edit that touches the given old position.
+    ///
+    /// An edit is considered to touch the given old position if edit.old.start <= old <= edit.old.end (note, inclusive on the right).
+    ///
+    /// If there are no edits touching the given old position, an empty edit with appropriate (empty) old and new ranges is returned.
+    pub fn edit_for_old_position(&self, old: T) -> Edit<T> {
+        let edits = self.edits();
+
+        let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&old)) {
+            Ok(ix) => ix,
+            Err(ix) => {
+                if ix == 0 {
+                    return Edit {
+                        old: old..old,
+                        new: old..old,
+                    };
+                } else {
+                    ix - 1
+                }
+            }
+        };
+
+        if let Some(edit) = edits.get(ix) {
+            if old > edit.old.end {
+                let translated = edit.new.end + (old - edit.old.end);
+                Edit {
+                    new: translated..translated,
+                    old: old..old,
+                }
+            } else {
+                edit.clone()
+            }
+        } else {
+            Edit {
+                old: old..old,
+                new: old..old,
+            }
+        }
+    }
 }
 
 impl<T> Patch<T> {

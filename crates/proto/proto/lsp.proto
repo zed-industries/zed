@@ -109,6 +109,7 @@ message Symbol {
   PointUtf16 end = 8;
   bytes signature = 9;
   uint64 language_server_id = 10;
+  optional string container_name = 11;
 }
 
 message GetDocumentSymbols {
@@ -144,6 +145,34 @@ message InlayHints {
 message InlayHintsResponse {
   repeated InlayHint hints = 1;
   repeated VectorClockEntry version = 2;
+}
+
+message SemanticTokens {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  optional uint64 for_server = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message SemanticTokensResponse {
+  // Only `data` or `edits` may be set.
+  // `oneof` does not allow `repeated` fields.
+  repeated uint32 data = 1;
+  repeated SemanticTokensEdit edits = 2;
+  optional string result_id = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message SemanticTokensEdit {
+  uint32 start = 1;
+  uint32 delete_count = 2;
+  repeated uint32 data = 3;
+}
+
+message RefreshSemanticTokens {
+  uint64 project_id = 1;
+  uint64 server_id = 2;
+  optional uint64 request_id = 3;
 }
 
 message PointUtf16 {
@@ -820,6 +849,7 @@ message LspQuery {
     GetTypeDefinition get_type_definition = 12;
     GetImplementation get_implementation = 13;
     InlayHints inlay_hints = 14;
+    SemanticTokens semantic_tokens = 16;
   }
 }
 
@@ -843,6 +873,7 @@ message LspResponse {
     GetImplementationResponse get_implementation_response = 11;
     GetReferencesResponse get_references_response = 12;
     InlayHintsResponse inlay_hints_response = 13;
+    SemanticTokensResponse semantic_tokens_response = 14;
   }
   uint64 server_id = 7;
 }

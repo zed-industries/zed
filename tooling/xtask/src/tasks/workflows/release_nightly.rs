@@ -5,7 +5,7 @@ use crate::tasks::workflows::{
         prep_release_artifacts,
     },
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
-    run_tests::{clippy, run_platform_tests},
+    run_tests::{clippy, run_platform_tests_no_filter},
     runners::{Arch, Platform, ReleaseChannel},
     steps::{CommonJobConditions, FluentBuilder, NamedJob},
 };
@@ -17,7 +17,7 @@ use gh_workflow::*;
 pub fn release_nightly() -> Workflow {
     let style = check_style();
     // run only on windows as that's our fastest platform right now.
-    let tests = run_platform_tests(Platform::Windows);
+    let tests = run_platform_tests_no_filter(Platform::Windows);
     let clippy_job = clippy(Platform::Windows);
     let nightly = Some(ReleaseChannel::Nightly);
 

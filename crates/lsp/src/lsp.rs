@@ -318,13 +318,63 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,
     // List of code actions supported by the LspAdapter matching the server
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
+
+// See the VSCode docs [1] and the LSP Spec [2]
+//
+// [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
+// [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
+    SemanticTokenType::NAMESPACE,
+    SemanticTokenType::CLASS,
+    SemanticTokenType::ENUM,
+    SemanticTokenType::INTERFACE,
+    SemanticTokenType::STRUCT,
+    SemanticTokenType::TYPE_PARAMETER,
+    SemanticTokenType::TYPE,
+    SemanticTokenType::PARAMETER,
+    SemanticTokenType::VARIABLE,
+    SemanticTokenType::PROPERTY,
+    SemanticTokenType::ENUM_MEMBER,
+    SemanticTokenType::DECORATOR,
+    SemanticTokenType::FUNCTION,
+    SemanticTokenType::METHOD,
+    SemanticTokenType::MACRO,
+    SemanticTokenType::new("label"), // Not in the spec, but in the docs.
+    SemanticTokenType::COMMENT,
+    SemanticTokenType::STRING,
+    SemanticTokenType::KEYWORD,
+    SemanticTokenType::NUMBER,
+    SemanticTokenType::REGEXP,
+    SemanticTokenType::OPERATOR,
+    SemanticTokenType::MODIFIER, // Only in the spec, not in the docs.
+    // Language specific things below.
+    // C#
+    SemanticTokenType::EVENT,
+    // Rust
+    SemanticTokenType::new("lifetime"),
+];
+pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
+    SemanticTokenModifier::DECLARATION,
+    SemanticTokenModifier::DEFINITION,
+    SemanticTokenModifier::READONLY,
+    SemanticTokenModifier::STATIC,
+    SemanticTokenModifier::DEPRECATED,
+    SemanticTokenModifier::ABSTRACT,
+    SemanticTokenModifier::ASYNC,
+    SemanticTokenModifier::MODIFICATION,
+    SemanticTokenModifier::DOCUMENTATION,
+    SemanticTokenModifier::DEFAULT_LIBRARY,
+    // Language specific things below.
+    // Rust
+    SemanticTokenModifier::new("constant"),
+];
 
 impl LanguageServer {
     /// Starts a language server process.
@@ -659,7 +709,12 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
+    pub fn default_initialize_params(
+        &self,
+        pull_diagnostics: bool,
+        augments_syntax_tokens: bool,
+        cx: &App,
+    ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
             || {
                 vec![WorkspaceFolder {
@@ -735,6 +790,9 @@ impl LanguageServer {
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
                         dynamic_registration: Some(true),
+                    }),
+                    semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
                     }),
                     ..WorkspaceClientCapabilities::default()
                 }),
@@ -835,6 +893,20 @@ impl LanguageServer {
                             ],
                         }),
                         dynamic_registration: Some(true),
+                    }),
+                    semantic_tokens: Some(SemanticTokensClientCapabilities {
+                        dynamic_registration: Some(false),
+                        requests: SemanticTokensClientCapabilitiesRequests {
+                            range: None,
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        },
+                        token_types: SEMANTIC_TOKEN_TYPES.to_vec(),
+                        token_modifiers: SEMANTIC_TOKEN_MODIFIERS.to_vec(),
+                        formats: vec![TokenFormat::RELATIVE],
+                        overlapping_token_support: Some(true),
+                        multiline_token_support: Some(true),
+                        server_cancel_support: Some(true),
+                        augments_syntax_tokens: Some(augments_syntax_tokens),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -1206,6 +1278,11 @@ impl LanguageServer {
     /// Get the id of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
+    }
+
+    /// Get the process ID of the running language server, if available.
+    pub fn process_id(&self) -> Option<u32> {
+        self.server.lock().as_ref().map(|child| child.id())
     }
 
     /// Language server's binary information.
@@ -1914,7 +1991,7 @@ mod tests {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(false, cx);
+                let params = server.default_initialize_params(false, false, cx);
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };

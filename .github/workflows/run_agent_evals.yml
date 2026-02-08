@@ -34,24 +34,18 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: cargo build --package=eval
       run: cargo build --package=eval
-      shell: bash -euxo pipefail {0}
     - name: run_agent_evals::agent_evals::run_eval
       run: cargo run --package=eval -- --repetitions=8 --concurrency=1 --model "${MODEL_NAME}"
-      shell: bash -euxo pipefail {0}
       env:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -61,8 +55,10 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 600
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

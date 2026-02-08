@@ -8,11 +8,12 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor, ToggleSplitDiff,
+    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -216,7 +217,7 @@ impl ProjectDiff {
 
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx);
             })
         })
@@ -286,35 +287,36 @@ impl ProjectDiff {
                 window,
                 cx,
             );
-            diff_display_editor
-                .primary_editor()
-                .update(cx, |editor, cx| {
-                    editor.disable_diagnostics(cx);
-                    editor.set_show_diff_review_button(true, cx);
+            match branch_diff.read(cx).diff_base() {
+                DiffBase::Head => {}
+                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
+                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                    cx,
+                ),
+            }
+            diff_display_editor.rhs_editor().update(cx, |editor, cx| {
+                editor.disable_diagnostics(cx);
+                editor.set_show_diff_review_button(true, cx);
 
-                    match branch_diff.read(cx).diff_base() {
-                        DiffBase::Head => {
-                            editor.register_addon(GitPanelAddon {
-                                workspace: workspace.downgrade(),
-                            });
-                        }
-                        DiffBase::Merge { .. } => {
-                            editor.register_addon(BranchDiffAddon {
-                                branch_diff: branch_diff.clone(),
-                            });
-                            editor.start_temporary_diff_override();
-                            editor.set_render_diff_hunk_controls(
-                                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                                cx,
-                            );
-                        }
+                match branch_diff.read(cx).diff_base() {
+                    DiffBase::Head => {
+                        editor.register_addon(GitPanelAddon {
+                            workspace: workspace.downgrade(),
+                        });
                     }
-                });
+                    DiffBase::Merge { .. } => {
+                        editor.register_addon(BranchDiffAddon {
+                            branch_diff: branch_diff.clone(),
+                        });
+                        editor.start_temporary_diff_override();
+                    }
+                }
+            });
             diff_display_editor
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
 
-        let primary_editor = editor.read(cx).primary_editor().clone();
+        let primary_editor = editor.read(cx).rhs_editor().clone();
         let review_comment_subscription =
             cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
                 if let EditorEvent::ReviewCommentsChanged { total_count } = event {
@@ -441,7 +443,7 @@ impl ProjectDiff {
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
                 editor.move_to_beginning(&Default::default(), window, cx);
             });
         });
@@ -450,7 +452,7 @@ impl ProjectDiff {
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
-                editor.primary_editor().update(cx, |editor, cx| {
+                editor.rhs_editor().update(cx, |editor, cx| {
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::focused()),
                         window,
@@ -477,8 +479,7 @@ impl ProjectDiff {
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
-        let is_split = self.editor.read(cx).is_split();
-        let editor = self.editor.read(cx).primary_editor().read(cx);
+        let editor = self.editor.read(cx).rhs_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
         let prev_next = snapshot.diff_hunks().nth(1).is_some();
         let mut selection = true;
@@ -492,7 +493,7 @@ impl ProjectDiff {
             if let Some((excerpt_id, _, range)) = self
                 .editor
                 .read(cx)
-                .primary_editor()
+                .rhs_editor()
                 .read(cx)
                 .active_excerpt(cx)
             {
@@ -538,7 +539,6 @@ impl ProjectDiff {
             selection,
             stage_all,
             unstage_all,
-            is_split,
         }
     }
 
@@ -601,7 +601,7 @@ impl ProjectDiff {
         let conflict_addon = self
             .editor
             .read(cx)
-            .primary_editor()
+            .rhs_editor()
             .read(cx)
             .addon::<ConflictAddon>()
             .expect("project diff editor should have a conflict addon");
@@ -633,12 +633,7 @@ impl ProjectDiff {
         };
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
-            let was_empty = editor
-                .primary_editor()
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .is_empty();
+            let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
             let (_, is_newly_added) = editor.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
@@ -651,7 +646,7 @@ impl ProjectDiff {
         });
 
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |editor, cx| {
+            editor.rhs_editor().update(cx, |editor, cx| {
                 if was_empty {
                     editor.change_selections(
                         SelectionEffects::no_scroll(),
@@ -835,7 +830,7 @@ impl Item for ProjectDiff {
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |primary_editor, cx| {
+            editor.rhs_editor().update(cx, |primary_editor, cx| {
                 primary_editor.deactivated(window, cx);
             })
         });
@@ -848,7 +843,7 @@ impl Item for ProjectDiff {
         cx: &mut Context<Self>,
     ) -> bool {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |primary_editor, cx| {
+            editor.rhs_editor().update(cx, |primary_editor, cx| {
                 primary_editor.navigate(data, window, cx)
             })
         })
@@ -881,7 +876,7 @@ impl Item for ProjectDiff {
 
     fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
         // TODO(split-diff) SplitEditor should be searchable
-        Some(Box::new(self.editor.read(cx).primary_editor().clone()))
+        Some(Box::new(self.editor.read(cx).rhs_editor().clone()))
     }
 
     fn for_each_project_item(
@@ -891,7 +886,7 @@ impl Item for ProjectDiff {
     ) {
         self.editor
             .read(cx)
-            .primary_editor()
+            .rhs_editor()
             .read(cx)
             .for_each_project_item(cx, f)
     }
@@ -903,7 +898,7 @@ impl Item for ProjectDiff {
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |primary_editor, _| {
+            editor.rhs_editor().update(cx, |primary_editor, _| {
                 primary_editor.set_nav_history(Some(nav_history));
             })
         });
@@ -950,7 +945,7 @@ impl Item for ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |primary_editor, cx| {
+            editor.rhs_editor().update(cx, |primary_editor, cx| {
                 primary_editor.save(options, project, window, cx)
             })
         })
@@ -973,7 +968,7 @@ impl Item for ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.editor.update(cx, |editor, cx| {
-            editor.primary_editor().update(cx, |primary_editor, cx| {
+            editor.rhs_editor().update(cx, |primary_editor, cx| {
                 primary_editor.reload(project, window, cx)
             })
         })
@@ -988,7 +983,9 @@ impl Item for ProjectDiff {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
-            Some(self.editor.read(cx).primary_editor().clone().into())
+            Some(self.editor.read(cx).rhs_editor().clone().into())
+        } else if type_id == TypeId::of::<SplittableEditor>() {
+            Some(self.editor.clone().into())
         } else {
             None
         }
@@ -1295,7 +1292,6 @@ struct ButtonStates {
     selection: bool,
     stage_all: bool,
     unstage_all: bool,
-    is_split: bool,
 }
 
 impl Render for ProjectDiffToolbar {
@@ -1434,24 +1430,6 @@ impl Render for ProjectDiffToolbar {
                                 ),
                             )
                         },
-                    )
-                    .child(
-                        Button::new(
-                            "toggle-split",
-                            if button_states.is_split {
-                                "Stacked View"
-                            } else {
-                                "Split View"
-                            },
-                        )
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Toggle Split View",
-                            &ToggleSplitDiff,
-                            &focus_handle,
-                        ))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&ToggleSplitDiff, window, cx);
-                        })),
                     )
                     .child(
                         Button::new("commit", "Commit")
@@ -1902,7 +1880,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
         assert_state_with_diff(
             &editor,
             cx,
@@ -1962,7 +1940,7 @@ mod tests {
                 window,
                 cx,
             );
-            diff.editor.read(cx).primary_editor().clone()
+            diff.editor.read(cx).rhs_editor().clone()
         });
         assert_state_with_diff(
             &editor,
@@ -1983,7 +1961,7 @@ mod tests {
                 window,
                 cx,
             );
-            diff.editor.read(cx).primary_editor().clone()
+            diff.editor.read(cx).rhs_editor().clone()
         });
         assert_state_with_diff(
             &editor,
@@ -2035,8 +2013,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let diff_editor =
-            diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
+        let diff_editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
 
         assert_state_with_diff(
             &diff_editor,
@@ -2160,7 +2137,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).primary_editor().clone());
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
@@ -2274,7 +2251,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).primary_editor().clone());
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
@@ -2321,7 +2298,7 @@ mod tests {
         cx.run_until_parked();
 
         cx.update(|window, cx| {
-            let editor = diff.read(cx).editor.read(cx).primary_editor().clone();
+            let editor = diff.read(cx).editor.read(cx).rhs_editor().clone();
             let excerpt_ids = editor.read(cx).buffer().read(cx).excerpt_ids();
             assert_eq!(excerpt_ids.len(), 1);
             let excerpt_id = excerpt_ids[0];
@@ -2338,7 +2315,7 @@ mod tests {
                 .read(cx)
                 .editor
                 .read(cx)
-                .primary_editor()
+                .rhs_editor()
                 .read(cx)
                 .addon::<ConflictAddon>()
                 .unwrap()
@@ -2423,7 +2400,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
 
         assert_state_with_diff(
             &editor,
@@ -2534,7 +2511,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).primary_editor().clone());
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
 
         assert_state_with_diff(
             &editor,
@@ -2628,7 +2605,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).primary_editor().clone());
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
 
         fs.set_head_and_index_for_repo(
             Path::new(path!("/project/.git")),

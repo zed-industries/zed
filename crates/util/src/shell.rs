@@ -256,6 +256,41 @@ impl ShellKind {
         Self::new(&get_system_shell(), cfg!(windows))
     }
 
+    /// Returns whether this shell's command chaining syntax can be parsed by brush-parser.
+    ///
+    /// This is used to determine if we can safely parse shell commands to extract sub-commands
+    /// for security purposes (e.g., preventing shell injection in "always allow" patterns).
+    ///
+    /// The brush-parser handles `;` (sequential execution) and `|` (piping), which are
+    /// supported by all common shells. It also handles `&&` and `||` for conditional
+    /// execution, `$()` and backticks for command substitution, and process substitution.
+    ///
+    /// # Shell Notes
+    ///
+    /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are boolean
+    ///   operators on values (e.g., `$true and $false`), not command chaining operators.
+    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish does
+    ///   not have `&&` or `||` operators. Its `and`/`or` are special commands that operate
+    ///   on values, not command chaining (e.g., `and $true $false`).
+    /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
+    ///   have `&&`/`||` operators for conditional chaining.
+    pub fn supports_posix_chaining(&self) -> bool {
+        matches!(
+            self,
+            ShellKind::Posix
+                | ShellKind::Fish
+                | ShellKind::PowerShell
+                | ShellKind::Pwsh
+                | ShellKind::Cmd
+                | ShellKind::Xonsh
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Nushell
+                | ShellKind::Elvish
+                | ShellKind::Rc
+        )
+    }
+
     pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
         let program = program.as_ref();
         let program = program
@@ -482,9 +517,8 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Pwsh
-            | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
-            ShellKind::Nushell | ShellKind::Elvish => ";",
+            ShellKind::PowerShell | ShellKind::Nushell | ShellKind::Elvish => ";",
         }
     }
 
@@ -643,11 +677,7 @@ impl ShellKind {
     pub fn quote_cmd(arg: &str) -> Cow<'_, str> {
         let crt_quoted = Self::quote_windows(arg, true);
 
-        let needs_cmd_escaping = crt_quoted.contains('"')
-            || crt_quoted.contains('%')
-            || crt_quoted
-                .chars()
-                .any(|c| matches!(c, '^' | '<' | '>' | '&' | '|' | '(' | ')'));
+        let needs_cmd_escaping = crt_quoted.contains(['"', '%', '^', '<', '>', '&', '|', '(', ')']);
 
         if !needs_cmd_escaping {
             return crt_quoted;

@@ -1,3 +1,4 @@
+pub mod batches;
 pub mod responses;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -527,6 +528,52 @@ pub enum ResponseStreamResult {
 pub struct ResponseStreamEvent {
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
+}
+
+pub async fn non_streaming_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+) -> Result<Response, RequestError> {
+    let uri = format!("{api_url}/chat/completions");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        serde_json::from_str(&body).map_err(|e| RequestError::Other(e.into()))
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: "openai".to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
 }
 
 pub async fn stream_completion(
