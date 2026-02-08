@@ -679,6 +679,18 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
             Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
         })
     }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<agent::Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout_ms: Option<u64>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn agent::SubagentHandle>> {
+        unimplemented!()
+    }
 }
 
 struct LanguageModelInterceptor {

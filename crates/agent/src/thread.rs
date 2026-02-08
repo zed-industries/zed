@@ -63,22 +63,13 @@ pub const MAX_SUBAGENT_DEPTH: u8 = 4;
 pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
 
 /// Context passed to a subagent thread for lifecycle management
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
 
-    /// ID of the tool call that spawned this subagent
-    pub tool_use_id: LanguageModelToolUseId,
-
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
-
-    /// Prompt to send when subagent completes successfully
-    pub summary_prompt: String,
-
-    /// Prompt to send when context is running low (≤25% remaining)
-    pub context_low_prompt: String,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -587,6 +578,16 @@ pub trait TerminalHandle {
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
+pub trait SubagentHandle {
+    fn id(&self) -> acp::SessionId;
+    fn wait_for_summary(
+        &self,
+        summary_prompt: String,
+        context_low_prompt: String,
+        cx: &AsyncApp,
+    ) -> Task<Result<String>>;
+}
+
 pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
@@ -595,6 +596,16 @@ pub trait ThreadEnvironment {
         output_byte_limit: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+
+    fn create_subagent(
+        &self,
+        parent_thread: Entity<Thread>,
+        label: String,
+        initial_prompt: String,
+        timeout_ms: Option<u64>,
+        allowed_tools: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>>;
 }
 
 #[derive(Debug)]
@@ -1077,6 +1088,7 @@ impl Thread {
                         }),
                 )
                 .raw_output(output),
+            None,
         );
     }
 
@@ -1167,7 +1179,7 @@ impl Thread {
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
             imported: db_thread.imported,
-            subagent_context: None,
+            subagent_context: db_thread.subagent_context,
             running_subagents: Vec::new(),
         }
     }
@@ -1188,6 +1200,7 @@ impl Thread {
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
+            subagent_context: self.subagent_context.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1323,12 +1336,12 @@ impl Thread {
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
+            self.add_tool(SubagentTool::new(cx.weak_entity(), environment));
         }
     }
 
@@ -1778,6 +1791,7 @@ impl Thread {
                             acp::ToolCallStatus::Completed
                         })
                         .raw_output(tool_result.output.clone()),
+                    None,
                 );
                 this.update(cx, |this, _cx| {
                     this.pending_message()
@@ -2048,6 +2062,7 @@ impl Thread {
                     .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.clone()),
+                None,
             );
         }
 
@@ -2492,51 +2507,18 @@ impl Thread {
         self.subagent_context.is_some()
     }
 
+    pub fn parent_thread_id(&self) -> Option<acp::SessionId> {
+        self.subagent_context
+            .as_ref()
+            .map(|c| c.parent_thread_id.clone())
+    }
+
     pub fn depth(&self) -> u8 {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
-    }
-
-    pub fn submit_user_message(
-        &mut self,
-        content: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let content = content.into();
-        self.messages.push(Message::User(UserMessage {
-            id: UserMessageId::new(),
-            content: vec![UserMessageContent::Text(content)],
-        }));
-        cx.notify();
-        self.send_existing(cx)
-    }
-
-    pub fn interrupt_for_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.context_low_prompt.clone();
-        self.cancel(cx).detach();
-        self.submit_user_message(prompt, cx)
-    }
-
-    pub fn request_final_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.summary_prompt.clone();
-        self.submit_user_message(prompt, cx)
     }
 
     fn build_request_messages(
@@ -2970,10 +2952,13 @@ impl ThreadEventStream {
         &self,
         tool_use_id: &LanguageModelToolUseId,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields)
+                    .meta(meta)
+                    .into(),
             )))
             .ok();
     }
@@ -3081,7 +3066,16 @@ impl ToolCallEventStream {
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
         self.stream
-            .update_tool_call_fields(&self.tool_use_id, fields);
+            .update_tool_call_fields(&self.tool_use_id, fields, None);
+    }
+
+    pub fn update_fields_with_meta(
+        &self,
+        fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
+    ) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields, meta);
     }
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
@@ -3091,19 +3085,6 @@ impl ToolCallEventStream {
                 acp_thread::ToolCallUpdateDiff {
                     id: acp::ToolCallId::new(self.tool_use_id.to_string()),
                     diff,
-                }
-                .into(),
-            )))
-            .ok();
-    }
-
-    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateSubagentThread {
-                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
-                    thread,
                 }
                 .into(),
             )))
@@ -3418,6 +3399,12 @@ impl std::ops::DerefMut for ToolCallEventStreamReceiver {
 impl From<&str> for UserMessageContent {
     fn from(text: &str) -> Self {
         Self::Text(text.into())
+    }
+}
+
+impl From<String> for UserMessageContent {
+    fn from(text: String) -> Self {
+        Self::Text(text)
     }
 }
 

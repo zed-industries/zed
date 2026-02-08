@@ -238,10 +238,7 @@ async fn test_subagent_uses_read_file_tool(cx: &mut TestAppContext) {
     // Create subagent context
     let subagent_context = crate::SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("subagent-tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize what you found".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     // Create parent tools that will be passed to the subagent
@@ -297,7 +294,7 @@ async fn test_subagent_uses_read_file_tool(cx: &mut TestAppContext) {
     // Submit a user message to the subagent
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Read the file src/lib.rs", cx)
+            thread.send(UserMessageId::new(), ["Read the file src/lib.rs"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -435,10 +432,7 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
     // Create subagent context
     let subagent_context = crate::SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("subagent-tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize what you changed".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     // Create subagent - tools should be rebound to use subagent's thread
@@ -477,7 +471,11 @@ async fn test_subagent_uses_edit_file_tool(cx: &mut TestAppContext) {
     // Submit a user message to the subagent
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Update the version in config.rs to 2.0.0", cx)
+            thread.send(
+                UserMessageId::new(),
+                ["Update the version in config.rs to 2.0.0"],
+                cx,
+            )
         })
         .unwrap();
     cx.run_until_parked();

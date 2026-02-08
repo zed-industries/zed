@@ -169,6 +169,18 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
         Task::ready(Ok(self.handle.clone() as Rc<dyn crate::TerminalHandle>))
     }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout_ms: Option<u64>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        unimplemented!()
+    }
 }
 
 /// Environment that creates multiple independent terminal handles for testing concurrent terminals.
@@ -199,6 +211,18 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
         self.handles.borrow_mut().push(handle.clone());
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
+    }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout_ms: Option<u64>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        unimplemented!()
     }
 }
 
@@ -3911,10 +3935,7 @@ async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let subagent = cx.new(|cx| {
@@ -3956,10 +3977,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: MAX_SUBAGENT_DEPTH,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
@@ -4000,10 +4018,7 @@ async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize your work".to_string(),
-        context_low_prompt: "Context low, wrap up".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4027,7 +4042,9 @@ async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
 
     let task_prompt = "Find all TODO comments in the codebase";
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), [task_prompt], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4059,10 +4076,7 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Please summarize what you found".to_string(),
-        context_low_prompt: "Context low, wrap up".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4086,7 +4100,7 @@ async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
 
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Do some work", cx)
+            thread.send(UserMessageId::new(), ["Do some work"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -4140,10 +4154,7 @@ async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppCont
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let subagent = cx.new(|cx| {
@@ -4222,10 +4233,7 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let subagent = cx.new(|cx| {
@@ -4246,7 +4254,9 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work".to_string()], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4298,7 +4308,7 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade()));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4353,10 +4363,7 @@ async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContex
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4379,7 +4386,9 @@ async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContex
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work".to_string()], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4412,10 +4421,7 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize your work".to_string(),
-        context_low_prompt: "Context low, stop and summarize".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4443,7 +4449,7 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
 
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Do some work", cx)
+            thread.send(UserMessageId::new(), ["Do some work"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -4494,10 +4500,7 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4520,7 +4523,9 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work"], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4583,7 +4588,7 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade()));
 
     let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
     let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
@@ -4613,10 +4618,7 @@ async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let project = thread.read_with(cx, |t, _| t.project.clone());
@@ -4639,7 +4641,9 @@ async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work"], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4675,10 +4679,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
 
     let depth_1_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("root-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-1"),
         depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let depth_1_subagent = cx.new(|cx| {
@@ -4701,10 +4702,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
 
     let depth_2_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("depth-1-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-2"),
         depth: 2,
-        summary_prompt: "Summarize depth 2".to_string(),
-        context_low_prompt: "Context low depth 2".to_string(),
     };
 
     let depth_2_subagent = cx.new(|cx| {
@@ -4727,7 +4725,7 @@ async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
 
     depth_2_subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Nested task", cx)
+            thread.send(UserMessageId::new(), ["Nested task".to_string()], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -4760,10 +4758,7 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     let subagent_context = SubagentContext {
         parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
         depth: 1,
-        summary_prompt: "Summarize what you did".to_string(),
-        context_low_prompt: "Context low".to_string(),
     };
 
     let subagent = cx.new(|cx| {
@@ -4790,7 +4785,11 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     subagent
         .update(cx, |thread, cx| {
-            thread.submit_user_message("Use the echo tool to echo 'hello world'", cx)
+            thread.send(
+                UserMessageId::new(),
+                ["Use the echo tool to echo 'hello world'".to_string()],
+                cx,
+            )
         })
         .unwrap();
     cx.run_until_parked();
@@ -4857,10 +4856,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     for i in 0..MAX_PARALLEL_SUBAGENTS {
         let subagent_context = SubagentContext {
             parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-            tool_use_id: language_model::LanguageModelToolUseId::from(format!("tool-use-{}", i)),
             depth: 1,
-            summary_prompt: "Summarize".to_string(),
-            context_low_prompt: "Context low".to_string(),
         };
 
         let subagent = cx.new(|cx| {
@@ -4891,7 +4887,7 @@ async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade()));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -4953,7 +4949,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade()));
 
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -5024,7 +5020,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_ok(), "subagent tool should complete successfully");
 
-    let summary = result.unwrap();
+    let summary = result.unwrap().summary;
     assert!(
         summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
         "summary should contain subagent's response: {}",
