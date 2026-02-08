@@ -396,6 +396,89 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_absolute_path_lookup(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let home_dir = util::paths::home_dir();
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            home_dir.as_ref(),
+            json!({
+                "a": {
+                    "file1.txt": "",
+                    "b": {
+                        "file2.txt": "",
+                    },
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [home_dir.as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    // Test cases: (query, expected_matches, description)
+    let test_cases = vec![
+        (
+            home_dir.join("a/b/file2.txt").to_string_lossy().to_string(),
+            vec![rel_path("a/b/file2.txt").into()],
+            "absolute path exists",
+        ),
+        (
+            format!("{}:42", home_dir.join("a/file1.txt").to_string_lossy()),
+            vec![rel_path("a/file1.txt").into()],
+            "absolute path with line number",
+        ),
+        (
+            format!("{}:10:5", home_dir.join("a/file1.txt").to_string_lossy()),
+            vec![rel_path("a/file1.txt").into()],
+            "absolute path with line:col",
+        ),
+        (
+            home_dir
+                .join("a/b/nonexistent.txt")
+                .to_string_lossy()
+                .to_string(),
+            vec![],
+            "nonexistent absolute path",
+        ),
+        (
+            "a/file1.txt".to_string(),
+            vec![rel_path("a/file1.txt").into()],
+            "relative path fallback",
+        ),
+        (
+            "~/a/file1.txt".to_string(),
+            vec![rel_path("a/file1.txt").into()],
+            "~ path inside project",
+        ),
+        (
+            "~/a/b/file2.txt:5".to_string(),
+            vec![rel_path("a/b/file2.txt").into()],
+            "~ path with line number inside project",
+        ),
+    ];
+
+    for (query, expected, description) in test_cases {
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker.delegate.update_matches(query.clone(), window, cx)
+            })
+            .await;
+        picker.update(cx, |picker, _| {
+            let matches = collect_search_matches(picker).search_paths_only();
+            assert_eq!(
+                matches, expected,
+                "Test case '{}' failed for query: {}",
+                description, query
+            )
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
