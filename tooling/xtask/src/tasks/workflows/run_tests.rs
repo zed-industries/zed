@@ -384,6 +384,9 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         name: format!("clippy_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Windows, |this| {
+                this.add_step(steps::enable_long_paths())
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(
@@ -416,6 +419,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Windows, |this| {
+                this.add_step(steps::enable_long_paths())
+            })
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -441,10 +447,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |job| job.add_step(steps::cargo_install_nextest()),
-            )
+            .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(platform))
             .when(filter_packages, |job| {
                 job.add_step(
