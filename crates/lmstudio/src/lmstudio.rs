@@ -354,13 +354,18 @@ pub struct ResponseMessageDelta {
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<&str>,
     request: ChatCompletionRequest,
 ) -> Result<ChatResponse> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
 
     let serialized_request = serde_json::to_string(&request)?;
     let request = request_builder.body(AsyncBody::from(serialized_request))?;
@@ -386,13 +391,18 @@ pub async fn complete(
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<&str>,
     request: ChatCompletionRequest,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = http::Request::builder()
+    let mut request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -434,13 +444,18 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<&str>,
     _: Option<Duration>,
 ) -> Result<Vec<ModelEntry>> {
     let uri = format!("{api_url}/models");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
 
     let request = request_builder.body(AsyncBody::default())?;
 
