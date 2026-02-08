@@ -56,6 +56,15 @@ impl Render for StatusBar {
                     })
                     // This border is to avoid a transparent gap in the rounded corners
                     .mb(px(-1.))
+                    // Running on Wayland and using some scaling levels other than 100% causes a
+                    // 1px gap above the status bar; adding a margin avoids this.
+                    .mt({
+                        if gpui::guess_compositor() == "Wayland" && window.scale_factor() != 1.0 {
+                            px(-1.)
+                        } else {
+                            px(0.)
+                        }
+                    })
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
