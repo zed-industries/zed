@@ -437,6 +437,11 @@ impl ContextServerStore {
                     .into_iter()
                     .map(|(id, _)| ContextServerId(id)),
             )
+            .chain(
+                self.context_server_settings
+                    .keys()
+                    .map(|id| ContextServerId(id.clone())),
+            )
             .collect()
     }
 

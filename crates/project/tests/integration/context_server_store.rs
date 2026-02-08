@@ -553,6 +553,92 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
+    const ENABLED_SERVER_ID: &str = "enabled-server";
+    const DISABLED_SERVER_ID: &str = "disabled-server";
+
+    let enabled_server_id = ContextServerId(ENABLED_SERVER_ID.into());
+    let disabled_server_id = ContextServerId(DISABLED_SERVER_ID.into());
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    // Configure one enabled and one disabled server
+    set_context_server_configuration(
+        vec![
+            (
+                enabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+            (
+                disabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: false,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+        ],
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify that server_ids includes both enabled and disabled servers
+    cx.read(|cx| {
+        let server_ids = store.read(cx).server_ids(cx);
+        assert!(
+            server_ids.contains(&enabled_server_id),
+            "server_ids should include enabled server"
+        );
+        assert!(
+            server_ids.contains(&disabled_server_id),
+            "server_ids should include disabled server"
+        );
+    });
+
+    // Verify that the enabled server is running and the disabled server is not
+    cx.read(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&enabled_server_id),
+            Some(ContextServerStatus::Running),
+            "enabled server should be running"
+        );
+        // Disabled server should not be in the servers map (status returns None)
+        // but should still be in server_ids
+        assert_eq!(
+            store.read(cx).status_for_server(&disabled_server_id),
+            None,
+            "disabled server should not have a status (not in servers map)"
+        );
+    });
+}
+
 fn set_context_server_configuration(
     context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
     cx: &mut TestAppContext,
