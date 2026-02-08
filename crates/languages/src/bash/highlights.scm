@@ -37,6 +37,12 @@
 
 (comment) @comment
 
+; Shebang
+((program
+  .
+  (comment) @keyword.directive)
+  (#match? @keyword.directive "^#![ \t]*/"))
+
 (function_definition name: (word) @function)
 (command_name (word) @function)
 
