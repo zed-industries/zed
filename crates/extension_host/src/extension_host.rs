@@ -1261,7 +1261,10 @@ impl ExtensionStore {
             }));
         }
 
-        self.proxy.register_grammars(grammars_to_add);
+        if !grammars_to_add.is_empty() {
+            self.proxy.register_grammars(grammars_to_add);
+        }
+
         let languages_to_add = new_index
             .languages
             .iter()
