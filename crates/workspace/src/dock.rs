@@ -261,7 +261,7 @@ impl From<&dyn PanelHandle> for AnyView {
     }
 }
 
-/// A container with a fixed [`DockPosition`] adjacent to a certain widown edge.
+/// A container with a fixed [`DockPosition`] adjacent to a certain window edge.
 /// Can contain multiple panels and show/hide itself with all contents.
 pub struct Dock {
     position: DockPosition,
@@ -633,6 +633,12 @@ impl Dock {
                             .is_some_and(|p| p.panel_id() == Entity::entity_id(panel))
                         {
                             this.set_open(false, window, cx);
+                            // Serialize workspace to persist dock visibility change
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.serialize_workspace(window, cx);
+                                })
+                                .ok();
                         }
                     }
                 },
