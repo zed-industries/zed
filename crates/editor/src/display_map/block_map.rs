@@ -707,7 +707,6 @@ impl BlockMap {
         }
     }
 
-    // FIXME
     pub(crate) fn insert_block_raw(
         &mut self,
         block: BlockProperties<Anchor>,
@@ -1766,7 +1765,7 @@ impl BlockMapWriter<'_> {
             let companion_ids = inverse.companion_writer.insert(companion_blocks);
             companion
                 .companion
-                .custom_block_to_companion_custom_block(companion.display_map_id)
+                .custom_block_to_balancing_block(companion.display_map_id)
                 .borrow_mut()
                 .extend(ids.iter().copied().zip(companion_ids));
         }
@@ -1807,7 +1806,7 @@ impl BlockMapWriter<'_> {
                         && companion.inverse.is_some()
                         && let Some(companion_block_id) = companion
                             .companion
-                            .custom_block_to_companion_custom_block(companion.display_map_id)
+                            .custom_block_to_balancing_block(companion.display_map_id)
                             .borrow()
                             .get(&block.id)
                             .copied()
@@ -1895,7 +1894,7 @@ impl BlockMapWriter<'_> {
                     companion_block_ids.extend(
                         companion
                             .companion
-                            .custom_block_to_companion_custom_block(companion.display_map_id)
+                            .custom_block_to_balancing_block(companion.display_map_id)
                             .borrow()
                             .get(&block.id)
                             .copied(),
@@ -1922,7 +1921,7 @@ impl BlockMapWriter<'_> {
         {
             companion
                 .companion
-                .custom_block_to_companion_custom_block(companion.display_map_id)
+                .custom_block_to_balancing_block(companion.display_map_id)
                 .borrow_mut()
                 .retain(|id, _| !block_ids.contains(&id));
             inverse.companion_writer.remove(companion_block_ids);

@@ -4154,9 +4154,8 @@ mod tests {
         let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             *mapping.borrow().get(&block_ids[0]).unwrap()
         });
 
@@ -4315,9 +4314,8 @@ mod tests {
         let (lhs_block_id_1, lhs_block_id_2) = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             (
                 *mapping.borrow().get(&block_ids[0]).unwrap(),
                 *mapping.borrow().get(&block_ids[1]).unwrap(),
@@ -4405,9 +4403,8 @@ mod tests {
         let lhs_block_id_2 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             *mapping.borrow().get(&block_ids[1]).unwrap()
         });
 
@@ -4550,9 +4547,8 @@ mod tests {
         let (lhs_block_id_1, lhs_block_id_2) = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             (
                 *mapping.borrow().get(&block_ids[0]).unwrap(),
                 *mapping.borrow().get(&block_ids[1]).unwrap(),
@@ -4640,9 +4636,8 @@ mod tests {
         let lhs_block_id_2 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             *mapping.borrow().get(&block_ids[1]).unwrap()
         });
 
@@ -4702,9 +4697,8 @@ mod tests {
         let lhs_block_id_3 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.custom_block_to_companion_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             *mapping.borrow().get(&new_block_ids[0]).unwrap()
         });
 

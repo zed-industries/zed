@@ -229,8 +229,6 @@ pub struct DisplayMap {
     lsp_folding_crease_ids: HashMap<BufferId, Vec<CreaseId>>,
 }
 
-// test change
-
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
@@ -239,8 +237,8 @@ pub(crate) struct Companion {
     lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
-    rhs_custom_blocks_to_lhs_custom_blocks: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
-    lhs_custom_blocks_to_rhs_custom_blocks: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
+    rhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
+    lhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
 }
 
 impl Companion {
@@ -257,8 +255,8 @@ impl Companion {
             lhs_excerpt_to_rhs_excerpt: Default::default(),
             rhs_rows_to_lhs_rows,
             lhs_rows_to_rhs_rows,
-            rhs_custom_blocks_to_lhs_custom_blocks: Default::default(),
-            lhs_custom_blocks_to_rhs_custom_blocks: Default::default(),
+            rhs_custom_block_to_balancing_block: Default::default(),
+            lhs_custom_block_to_balancing_block: Default::default(),
         }
     }
 
@@ -266,14 +264,14 @@ impl Companion {
         self.rhs_display_map_id == display_map_id
     }
 
-    pub(crate) fn custom_block_to_companion_custom_block(
+    pub(crate) fn custom_block_to_balancing_block(
         &self,
         display_map_id: EntityId,
     ) -> &RefCell<HashMap<CustomBlockId, CustomBlockId>> {
         if self.is_rhs(display_map_id) {
-            &self.rhs_custom_blocks_to_lhs_custom_blocks
+            &self.rhs_custom_block_to_balancing_block
         } else {
-            &self.lhs_custom_blocks_to_rhs_custom_blocks
+            &self.lhs_custom_block_to_balancing_block
         }
     }
 
@@ -480,20 +478,30 @@ impl DisplayMap {
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
-        // FIXME assert that caller is the RHS?
         let this = cx.weak_entity();
-        // Reverting to no companion, recompute the block map to clear spacers.
-        // FIXME also remove any leftover custom blocks originated on the LHS
+        // Reverting to no companion, recompute the block map to clear spacers
+        // and balancing blocks.
         let Some((companion_display_map, companion)) = companion else {
-            self.companion = None;
+            let Some((_, companion)) = self.companion.take() else {
+                return;
+            };
             let (snapshot, edits) = self.sync_through_wrap(cx);
             let edits = edits.compose([text::Edit {
                 old: WrapRow(0)..snapshot.max_point().row(),
                 new: WrapRow(0)..snapshot.max_point().row(),
             }]);
-            self.block_map.read(snapshot, edits, None);
+            self.block_map.write(snapshot, edits, None).remove(
+                companion
+                    .read(cx)
+                    .lhs_custom_block_to_balancing_block
+                    .borrow()
+                    .values()
+                    .copied()
+                    .collect(),
+            );
             return;
         };
+        assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
         let snapshot = self.unfold_intersecting([Anchor::min()..Anchor::max()], true, cx);
 
@@ -547,13 +555,9 @@ impl DisplayMap {
                     .insert_block_raw(their_block, companion_wrap_snapshot.buffer());
                 companion.update(cx, |companion, _cx| {
                     companion
-                        .rhs_custom_blocks_to_lhs_custom_blocks
+                        .custom_block_to_balancing_block(self.entity_id)
                         .borrow_mut()
                         .insert(block.id, their_id);
-                    companion
-                        .lhs_custom_blocks_to_rhs_custom_blocks
-                        .borrow_mut()
-                        .insert(their_id, block.id);
                 });
             }
             companion_display_map.block_map.read(
