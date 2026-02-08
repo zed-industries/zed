@@ -385,6 +385,15 @@ pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes the active item across all panes.
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct CloseItemInAllPanes {
+    #[serde(default)]
+    pub save_intent: Option<SaveIntent>,
+}
+
 /// Sends a sequence of keystrokes to the active element.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
@@ -3287,6 +3296,61 @@ impl Workspace {
         }
     }
 
+    pub fn close_item_in_all_panes(
+        &mut self,
+        action: &CloseItemInAllPanes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_item) = self.active_pane().read(cx).active_item() else {
+            return;
+        };
+
+        let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
+
+        if let Some(project_path) = active_item.project_path(cx) {
+            self.close_items_with_project_path(&project_path, save_intent, window, cx);
+        } else {
+            let item_id = active_item.item_id();
+            self.active_pane().update(cx, |pane, cx| {
+                pane.close_item_by_id(item_id, save_intent, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        }
+    }
+
+    /// Closes all items with the given project path across all panes.
+    pub fn close_items_with_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        save_intent: SaveIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panes_and_items: Vec<_> = self
+            .panes()
+            .iter()
+            .map(|pane| {
+                let items_to_close: Vec<_> = pane
+                    .read(cx)
+                    .items()
+                    .filter(|item| item.project_path(cx).as_ref() == Some(project_path))
+                    .map(|item| item.item_id())
+                    .collect();
+                (pane.clone(), items_to_close)
+            })
+            .collect();
+
+        for (pane, items_to_close) in panes_and_items {
+            for item_id in items_to_close {
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(item_id, save_intent, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
+    }
+
     fn close_all_internal(
         &mut self,
         retain_active_pane: bool,
@@ -6164,6 +6228,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
+            .on_action(cx.listener(Self::close_item_in_all_panes))
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
@@ -11938,6 +12003,71 @@ mod tests {
                 workspace.panes
             );
         })
+    }
+
+    #[gpui::test]
+    async fn test_close_item_in_all_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add item to pane A with project path
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx)
+        });
+
+        // Split to create pane B
+        let pane_b = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
+        });
+
+        // Add item with SAME project path to pane B
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
+        });
+
+        // Verify both panes have 1 item each
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 1);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 1);
+
+        // Close item in all panes (pane_b is active after split)
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(
+                &CloseItemInAllPanes {
+                    save_intent: Some(SaveIntent::Close),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+
+        // Item in pane A should be closed
+        assert_eq!(
+            pane_a.read_with(cx, |pane, _| pane.items_len()),
+            0,
+            "Item in pane A should be closed"
+        );
+
+        // Pane B should also have 0 items
+        assert_eq!(
+            pane_b.read_with(cx, |pane, _| pane.items_len()),
+            0,
+            "Item in pane B should be closed"
+        );
     }
 
     mod register_project_item_tests {
