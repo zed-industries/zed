@@ -38,7 +38,7 @@ pub(crate) struct RenderImageParams {
     pub(crate) frame_index: usize,
 }
 
-/// A cached and processed image, in BGRA format
+/// A cached and processed image, in RGBA format
 pub struct RenderImage {
     /// The ID associated with this image
     pub id: ImageId,
