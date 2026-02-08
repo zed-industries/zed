@@ -2659,9 +2659,23 @@ impl Editor {
                     let vim_mode = vim_mode_setting::VimModeSetting::try_get(cx)
                         .map(|vim_mode| vim_mode.0)
                         .unwrap_or(false);
+
+                    let display_map = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_adjusted_display(&display_map);
+
+                    if let Some(nav_history) = editor.nav_history.as_mut() {
+                        let new_positions: Vec<Anchor> = selections
+                            .iter()
+                            .map(|s| display_map.display_point_to_anchor(s.head(), Bias::Left))
+                            .collect();
+                        let row = new_positions
+                            .first()
+                            .map(|a| a.to_point(&display_map.buffer_snapshot()).row)
+                            .unwrap_or(0);
+                        nav_history.push_change(new_positions, row, cx);
+                    }
+
                     if !vim_mode {
-                        let display_map = editor.display_snapshot(cx);
-                        let selections = editor.selections.all_adjusted_display(&display_map);
                         let pop_state = editor
                             .change_list
                             .last()
@@ -2674,7 +2688,7 @@ impl Editor {
                             })
                             .unwrap_or(false);
                         let new_positions = selections
-                            .into_iter()
+                            .iter()
                             .map(|s| display_map.display_point_to_anchor(s.head(), Bias::Left))
                             .collect();
                         editor

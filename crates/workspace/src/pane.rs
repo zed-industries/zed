@@ -1,3 +1,5 @@
+use crate::searchable::Direction;
+
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
@@ -251,6 +253,10 @@ actions!(
         GoToOlderTag,
         /// Navigates forward in the tag stack.
         GoToNewerTag,
+        /// Navigates to the previous change across all tabs.
+        GoToPreviousChange,
+        /// Navigates to the next change across all tabs.
+        GoToNextChange,
         /// Joins this pane into the next pane.
         JoinIntoNext,
         /// Joins all panes into one.
@@ -450,6 +456,8 @@ struct NavHistoryState {
     closed_stack: VecDeque<NavigationEntry>,
     tag_stack: VecDeque<TagStackEntry>,
     tag_stack_pos: usize,
+    change_stack: VecDeque<ChangeStackEntry>,
+    change_stack_pos: Option<usize>,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
@@ -486,6 +494,14 @@ pub struct NavigationEntry {
 pub struct TagStackEntry {
     pub origin: NavigationEntry,
     pub target: NavigationEntry,
+}
+
+/// Entry in the change stack for cross-tab change navigation.
+#[derive(Clone)]
+pub struct ChangeStackEntry {
+    pub item: Arc<dyn WeakItemHandle + Send + Sync>,
+    pub data: Arc<dyn Any + Send + Sync>,
+    pub row: u32,
 }
 
 #[derive(Clone)]
@@ -558,6 +574,8 @@ impl Pane {
                 closed_stack: Default::default(),
                 tag_stack: Default::default(),
                 tag_stack_pos: Default::default(),
+                change_stack: Default::default(),
+                change_stack_pos: None,
                 paths_by_item: Default::default(),
                 pane: handle,
                 next_timestamp,
@@ -944,6 +962,42 @@ impl Pane {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .navigate_tag_history(pane, TagNavigationMode::Newer, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_previous_change(
+        &mut self,
+        _: &GoToPreviousChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_change_history(pane, Direction::Prev, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    pub fn go_to_next_change(
+        &mut self,
+        _: &GoToNextChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .navigate_change_history(pane, Direction::Next, window, cx)
                         .detach_and_log_err(cx)
                 })
             })
@@ -4256,6 +4310,8 @@ impl Render for Pane {
             .on_action(cx.listener(Self::navigate_forward))
             .on_action(cx.listener(Self::go_to_older_tag))
             .on_action(cx.listener(Self::go_to_newer_tag))
+            .on_action(cx.listener(Self::go_to_previous_change))
+            .on_action(cx.listener(Self::go_to_next_change))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -4523,6 +4579,22 @@ impl ItemNavHistory {
     pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingForward, cx)
     }
+
+    pub fn push_change<D: 'static + Any + Send + Sync>(
+        &mut self,
+        data: D,
+        row: u32,
+        cx: &mut App,
+    ) {
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history
+                .push_change(self.item.clone(), Arc::new(data), row, cx);
+        }
+    }
 }
 
 impl NavHistory {
@@ -4734,6 +4806,72 @@ impl NavHistory {
             }
         }
     }
+
+    pub fn push_change(
+        &mut self,
+        item: Arc<dyn WeakItemHandle + Send + Sync>,
+        data: Arc<dyn Any + Send + Sync>,
+        row: u32,
+        cx: &mut App,
+    ) {
+        let mut state = self.0.lock();
+
+        state.change_stack_pos = None;
+
+        let item_id = item.id();
+        let should_update_last = state
+            .change_stack
+            .back()
+            .is_some_and(|last| last.item.id() == item_id && last.row == row);
+
+        if should_update_last {
+            if let Some(last) = state.change_stack.back_mut() {
+                last.data = data;
+            }
+        } else {
+            if state.change_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                state.change_stack.pop_front();
+            }
+
+            state.change_stack.push_back(ChangeStackEntry {
+                item,
+                data,
+                row,
+            });
+        }
+
+        state.did_update(cx);
+    }
+
+    pub fn pop_change(&mut self, direction: Direction) -> Option<ChangeStackEntry> {
+        let mut state = self.0.lock();
+        if state.change_stack.is_empty() {
+            return None;
+        }
+
+        let next_pos = match direction {
+            Direction::Prev => {
+                let current_pos = state.change_stack_pos.unwrap_or(state.change_stack.len());
+                current_pos.checked_sub(1)?
+            }
+            Direction::Next => {
+                let current_pos = state.change_stack_pos?;
+                let next = current_pos + 1;
+                if next >= state.change_stack.len() {
+                    return None;
+                }
+                next
+            }
+        };
+
+        state.change_stack_pos = Some(next_pos);
+        state.change_stack.get(next_pos).cloned()
+    }
+
+    pub fn last_change(&self) -> Option<ChangeStackEntry> {
+        let state = self.0.lock();
+        state.change_stack.back().cloned()
+    }
 }
 
 impl NavHistoryState {
@@ -4838,6 +4976,280 @@ mod tests {
     use settings::SettingsStore;
     use theme::LoadThemes;
     use util::TryFutureExt;
+
+    #[gpui::test]
+    async fn test_change_stack_push_and_pop_prev(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state1".to_string(), 10, cx);
+            nav_history.push_change("state2".to_string(), 20, cx);
+            nav_history.push_change("state3".to_string(), 30, cx);
+        });
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.row, 30);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.row, 20);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.row, 10);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_pop_next(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state1".to_string(), 10, cx);
+            nav_history.push_change("state2".to_string(), 20, cx);
+            nav_history.push_change("state3".to_string(), 30, cx);
+        });
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_none());
+
+        pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.row, 30);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_push_resets_position(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state1".to_string(), 10, cx);
+            nav_history.push_change("state2".to_string(), 20, cx);
+        });
+
+        pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state3".to_string(), 30, cx);
+        });
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_none());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.row, 30);
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_updates_existing_entry_for_same_row(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state1".to_string(), 10, cx);
+            nav_history.push_change("state2".to_string(), 10, cx);
+        });
+
+        let stack_len = pane.read_with(cx, |pane, _| {
+            pane.nav_history.0.lock().change_stack.len()
+        });
+        assert_eq!(stack_len, 1);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_some());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_respects_max_length(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            for i in 0..(MAX_NAVIGATION_HISTORY_LEN + 10) {
+                nav_history.push_change(format!("state{}", i), i as u32, cx);
+            }
+        });
+
+        let stack_len = pane.read_with(cx, |pane, _| {
+            pane.nav_history.0.lock().change_stack.len()
+        });
+        assert_eq!(stack_len, MAX_NAVIGATION_HISTORY_LEN);
+
+        let first_row = pane.read_with(cx, |pane, _| {
+            pane.nav_history.0.lock().change_stack.front().unwrap().row
+        });
+        assert_eq!(first_row, 10);
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_none());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_change_stack_bidirectional_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, _window, cx| {
+            let mut nav_history = pane.nav_history_for_item(&*item);
+            nav_history.push_change("state1".to_string(), 10, cx);
+            nav_history.push_change("state2".to_string(), 20, cx);
+            nav_history.push_change("state3".to_string(), 30, cx);
+            nav_history.push_change("state4".to_string(), 40, cx);
+        });
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert_eq!(entry.unwrap().row, 40);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert_eq!(entry.unwrap().row, 30);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert_eq!(entry.unwrap().row, 40);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert!(entry.is_none());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert_eq!(entry.unwrap().row, 30);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert_eq!(entry.unwrap().row, 20);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert_eq!(entry.unwrap().row, 10);
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Prev)
+        });
+        assert!(entry.is_none());
+
+        let entry = pane.update_in(cx, |pane, _window, _cx| {
+            pane.nav_history_mut().pop_change(Direction::Next)
+        });
+        assert_eq!(entry.unwrap().row, 20);
+    }
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {

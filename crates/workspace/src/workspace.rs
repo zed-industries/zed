@@ -68,6 +68,7 @@ pub use pane_group::{
     ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
     SplitDirection,
 };
+use searchable::Direction;
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -2152,6 +2153,72 @@ impl Workspace {
             |history, _cx| history.pop_tag(mode),
             cx,
         )
+    }
+
+    pub fn navigate_change_history(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(pane_entity) = pane.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+
+        let Some(entry) = pane_entity.update(cx, |pane, _cx| {
+            pane.nav_history_mut().pop_change(direction)
+        }) else {
+            return Task::ready(Ok(()));
+        };
+
+        Self::focus_and_navigate(&pane_entity, &entry, window, cx)
+            .or_else(|| self.reopen_and_navigate(pane_entity, pane, entry, window, cx))
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
+    fn focus_and_navigate(
+        pane_entity: &Entity<Pane>,
+        entry: &ChangeStackEntry,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Task<Result<()>>> {
+        let (item, index) = entry.item.upgrade().and_then(|item| {
+            let index = pane_entity.read(cx).index_for_item(item.as_ref())?;
+            Some((item, index))
+        })?;
+
+        window.focus(&pane_entity.read(cx).focus_handle(cx), cx);
+        pane_entity.update(cx, |pane, cx| {
+            pane.activate_item(index, true, true, window, cx);
+        });
+        item.navigate_to_position(entry.data.clone(), window, cx);
+        Some(Task::ready(Ok(())))
+    }
+
+    fn reopen_and_navigate(
+        &mut self,
+        pane_entity: Entity<Pane>,
+        pane: WeakEntity<Pane>,
+        entry: ChangeStackEntry,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let (project_path, _abs_path) = pane_entity
+            .read(cx)
+            .nav_history()
+            .path_for_item(entry.item.id())?;
+
+        let open_task = self.open_path(project_path, Some(pane.clone()), true, window, cx);
+        let data = entry.data;
+
+        Some(cx.spawn_in(window, async move |_workspace, cx| {
+            let item = open_task.await?;
+            pane.update_in(cx, |_pane, window, cx| {
+                item.navigate_to_position(data, window, cx);
+            })?;
+            Ok(())
+        }))
     }
 
     fn navigate_history_impl(

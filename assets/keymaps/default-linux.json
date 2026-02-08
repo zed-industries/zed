@@ -150,8 +150,6 @@
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
-      "ctrl-shift-backspace": "editor::GoToPreviousChange",
-      "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
     },
   },
@@ -421,6 +419,8 @@
   {
     "context": "Pane",
     "bindings": {
+      "ctrl-shift-backspace": "pane::GoToPreviousChange",
+      "ctrl-shift-alt-backspace": "pane::GoToNextChange",
       "alt-1": ["pane::ActivateItem", 0],
       "alt-2": ["pane::ActivateItem", 1],
       "alt-3": ["pane::ActivateItem", 2],
