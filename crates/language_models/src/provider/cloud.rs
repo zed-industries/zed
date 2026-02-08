@@ -608,7 +608,7 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, OpenAi)
+        matches!(self.model.provider, OpenAi | XAi)
     }
 
     fn telemetry_id(&self) -> String {
@@ -1213,6 +1213,29 @@ mod tests {
     use super::*;
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::LanguageModelCompletionError;
+
+    #[test]
+    fn test_split_token_display_supported_providers() {
+        use cloud_llm_client::LanguageModelProvider::*;
+
+        // OpenAi and XAi should support split token display
+        for provider in [OpenAi, XAi] {
+            assert!(
+                matches!(provider, OpenAi | XAi),
+                "expected supports_split_token_display for {:?}",
+                provider
+            );
+        }
+
+        // Anthropic and Google should not support split token display
+        for provider in [Anthropic, Google] {
+            assert!(
+                !matches!(provider, OpenAi | XAi),
+                "expected no split token display for {:?}",
+                provider
+            );
+        }
+    }
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
