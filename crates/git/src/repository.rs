@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
+use futures::future::try_join;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::{BranchType, ErrorCode};
@@ -338,8 +339,12 @@ pub struct FileHistoryEntry {
 
 #[derive(Debug, Clone)]
 pub struct FileHistory {
+    /// Currently loaded history entries.
     pub entries: Vec<FileHistoryEntry>,
     pub path: RepoPath,
+    /// Total number of commits in the file's history. When all entries are
+    /// loaded, this should match `entries.len()`.
+    pub total_count: usize,
 }
 
 #[derive(Debug)]
@@ -1751,7 +1756,13 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                // TODO!: The `--follow` flag has been removed in the meantime
+                // so we can actually get this to not load duplicate commits and
+                // we can actually test automatically loading more commits in
+                // the file history. When the proper fix has been merged to
+                // `main`, these changes should be reverted, in favor of the
+                // changes introduced in `main`.
+                let mut args = vec!["--no-optional-locks", "log", &format_string];
 
                 let skip_str;
                 let limit_str;
@@ -1768,12 +1779,31 @@ impl GitRepository for RealGitRepository {
 
                 args.push("--");
 
-                let output = new_smol_command(&git_binary_path)
+                // TODO!: Eventually add the `--follow` flag here so that, at
+                // the end, the total number of loaded commits in the
+                // `FileHistory` does match the count.
+                let count_command = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .args(vec!["log", "--oneline", "--", path.as_unix_str()])
+                    .output();
+
+                let log_command = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(&args)
                     .arg(path.as_unix_str())
-                    .output()
-                    .await?;
+                    .output();
+
+                let (count_output, output) = try_join(count_command, log_command).await?;
+
+                // Calculate the total number of commits. Since `--oneline` is
+                // used, the number of commits is simply the number of lines in
+                // the command's output.
+                if !count_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&count_output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+                let stdout = std::str::from_utf8(&count_output.stdout)?;
+                let total_count = stdout.lines().count();
 
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1809,7 +1839,11 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(FileHistory { entries, path })
+                Ok(FileHistory {
+                    entries,
+                    path,
+                    total_count,
+                })
             })
             .boxed()
     }
