@@ -1819,7 +1819,7 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.add_workspace(workspace.clone(), cx);
+                        multi_workspace.activate(workspace.clone(), cx);
                         workspace
                     })?;
                     (window, workspace)

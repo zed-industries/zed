@@ -6,6 +6,8 @@ mod ssh_config;
 
 use std::{path::PathBuf, sync::Arc};
 
+use fs::Fs;
+
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
@@ -328,14 +330,11 @@ impl ModalView for RecentProjects {}
 impl RecentProjects {
     fn new(
         delegate: RecentProjectsDelegate,
+        fs: Option<Arc<dyn Fs>>,
         rem_width: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let fs = delegate
-            .workspace
-            .upgrade()
-            .map(|ws| ws.read(cx).app_state().fs.clone());
         let picker = cx.new(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
@@ -378,10 +377,11 @@ impl RecentProjects {
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
+        let fs = Some(workspace.app_state().fs.clone());
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true, focus_handle);
 
-            Self::new(delegate, 34., window, cx)
+            Self::new(delegate, fs, 34., window, cx)
         })
     }
 
@@ -392,10 +392,13 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let fs = workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().fs.clone());
         cx.new(|cx| {
             let delegate =
                 RecentProjectsDelegate::new(workspace, create_new_window, true, focus_handle);
-            let list = Self::new(delegate, 34., window, cx);
+            let list = Self::new(delegate, fs, 34., window, cx);
             list.picker.focus_handle(cx).focus(window, cx);
             list
         })

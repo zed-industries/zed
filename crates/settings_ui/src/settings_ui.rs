@@ -4760,26 +4760,30 @@ pub mod test {
             .await
             .expect("Failed to create worktree_c");
 
-        let (_workspace1, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project1.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace1, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project1.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
-        let _workspace1_handle = cx.window_handle().downcast::<Workspace>().unwrap();
-
-        let (_workspace2, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project2.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project2.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
         let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4901,14 +4905,17 @@ pub mod test {
             .await
             .expect("Failed to create worktree_a");
 
-        let (_workspace1, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project1.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace1, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project1.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
         let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4948,14 +4955,17 @@ pub mod test {
             .await
             .expect("Failed to create worktree_b");
 
-        let (_workspace2, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project2.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project2.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
         cx.run_until_parked();
