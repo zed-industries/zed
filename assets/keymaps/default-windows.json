@@ -979,6 +979,8 @@
       "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage",
+      "up": "git_panel::PrevCommitEditorHistoryEntry",
+      "down": "git_panel::NextCommitEditorHistoryEntry",
     },
   },
   {

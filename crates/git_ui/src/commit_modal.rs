@@ -9,7 +9,7 @@ use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
 };
 
-use editor::{Editor, EditorElement};
+use editor::{Editor, EditorElement, EditorEvent};
 use gpui::*;
 use util::ResultExt;
 use workspace::{
@@ -177,6 +177,7 @@ impl CommitModal {
     ) -> Self {
         let panel = git_panel.read(cx);
         let suggested_commit_message = panel.suggest_commit_message(cx);
+        let git_panel_for_subscription = git_panel.clone();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
@@ -192,6 +193,21 @@ impl CommitModal {
                 editor
             })
         });
+
+        cx.subscribe_in(
+            &commit_editor,
+            window,
+            move |_this, commit_editor, event, _window, cx| match event {
+                EditorEvent::Edited { .. } => {
+                    let text = commit_editor.read(cx).text(cx);
+                    git_panel_for_subscription.update(cx, |git_panel, _cx| {
+                        git_panel.commit_editor_history.set_pending_edit(text);
+                    });
+                }
+                _ => {}
+            },
+        )
+        .detach();
 
         let commit_message = commit_editor.read(cx).text(cx);
 
