@@ -12148,3 +12148,133 @@ mod disable_ai_settings_tests {
         });
     }
 }
+
+#[gpui::test]
+async fn test_buffer_reload_during_truncate_then_write(cx: &mut gpui::TestAppContext) {
+    // Reproduces #38109: scanner catches a truncated file mid-write,
+    // buffer reloads to empty, and the final write has the same mtime.
+    // Without size in DiskState, the buffer stays stuck empty.
+    use worktree::WorktreeModelHandle as _;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "original content that should not be lost",
+    }));
+
+    let project =
+        Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(dir.path().join("file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "original content that should not be lost");
+        assert!(!buffer.is_dirty());
+    });
+
+    let file_path = dir.path().join("file.txt");
+
+    // Truncate the file (first half of std::fs::write).
+    std::fs::write(&file_path, "").unwrap();
+    let truncated_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+
+    // Scanner picks up the truncation.
+    tree.flush_fs_events(cx).await;
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "",
+            "buffer should be empty after reloading truncated file"
+        );
+    });
+
+    // Write actual content (second half of std::fs::write).
+    std::fs::write(&file_path, "new content from AI agent").unwrap();
+
+    // Force mtime to match the truncated file's mtime, simulating
+    // coarse-grained timestamps or rapid sequential writes.
+    let times = std::fs::FileTimes::new().set_modified(truncated_mtime);
+    let file_handle = std::fs::File::options()
+        .write(true)
+        .open(&file_path)
+        .unwrap();
+    file_handle.set_times(times).unwrap();
+    drop(file_handle);
+
+    tree.flush_fs_events(cx).await;
+
+    // Size changed (0 -> 25 bytes) even though mtime is the same.
+    buffer.read_with(cx, |buffer, _| {
+        let file = buffer.file().expect("buffer should have a file");
+        assert!(
+            matches!(file.disk_state(), DiskState::Present { .. }),
+            "disk state should be Present, got {:?}",
+            file.disk_state()
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "new content from AI agent",
+            "buffer should recover when size changes even if mtime matches"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_recovers_from_truncate_when_mtime_differs(cx: &mut gpui::TestAppContext) {
+    // Control: same sequence without forcing mtime to match.
+    // APFS nanosecond precision means the mtime naturally differs,
+    // so the buffer recovers without the size fix.
+    use worktree::WorktreeModelHandle as _;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "original content",
+    }));
+
+    let project =
+        Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(dir.path().join("file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "original content");
+    });
+
+    let file_path = dir.path().join("file.txt");
+
+    // Truncate
+    std::fs::write(&file_path, "").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "", "buffer should be empty after truncation");
+    });
+
+    // Write new content (mtime will naturally differ on APFS)
+    std::fs::write(&file_path, "recovered content").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    // Different mtime triggers reload via the existing path.
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "recovered content",
+            "buffer should recover when mtime differs after truncate-then-write"
+        );
+    });
+}
