@@ -991,7 +991,7 @@
       },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
-    "single_file_review": true,
+    "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
     "default_profile": "write",
