@@ -1,9 +1,9 @@
-use crate::{SuppressNotification, Toast, Workspace};
+use crate::{MultiWorkspace, SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
-    AnyEntity, AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, Context,
+    AnyEntity, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
-    Task, TextStyleRefinement, UnderlineStyle, svg,
+    Task, TextStyleRefinement, UnderlineStyle, WeakEntity, svg,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
@@ -1037,14 +1037,18 @@ pub fn show_app_notification<V: Notification + 'static>(
             .insert(id.clone(), build_notification.clone());
 
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
-                workspace_window
-                    .update(cx, |workspace, _window, cx| {
-                        workspace.show_notification_without_handling_dismiss_events(
-                            &id,
-                            cx,
-                            |cx| build_notification(cx),
-                        );
+            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                multi_workspace
+                    .update(cx, |multi_workspace, _window, cx| {
+                        for workspace in multi_workspace.workspaces() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.show_notification_without_handling_dismiss_events(
+                                    &id,
+                                    cx,
+                                    |cx| build_notification(cx),
+                                );
+                            });
+                        }
                     })
                     .ok(); // Doesn't matter if the windows are dropped
             }
@@ -1058,11 +1062,15 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
     cx.defer(move |cx| {
         GLOBAL_APP_NOTIFICATIONS.lock().remove(&id);
         for window in cx.windows() {
-            if let Some(workspace_window) = window.downcast::<Workspace>() {
+            if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
                 let id = id.clone();
-                workspace_window
-                    .update(cx, |workspace, _window, cx| {
-                        workspace.dismiss_notification(&id, cx)
+                multi_workspace
+                    .update(cx, |multi_workspace, _window, cx| {
+                        for workspace in multi_workspace.workspaces() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.dismiss_notification(&id, cx)
+                            });
+                        }
                     })
                     .ok();
             }
@@ -1076,7 +1084,11 @@ pub trait NotifyResultExt {
     fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
     -> Option<Self::Ok>;
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
+    fn notify_workspace_async_err(
+        self,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Option<Self::Ok>;
 
     /// Notifies the active workspace if there is one, otherwise notifies all workspaces.
     fn notify_app_err(self, cx: &mut App) -> Option<Self::Ok>;
@@ -1099,17 +1111,18 @@ where
         }
     }
 
-    fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<T> {
+    fn notify_workspace_async_err(
+        self,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
                 log::error!("{err:?}");
-                cx.update_root(|view, _, cx| {
-                    if let Ok(workspace) = view.downcast::<Workspace>() {
-                        workspace.update(cx, |workspace, cx| workspace.show_error(&err, cx))
-                    }
-                })
-                .ok();
+                workspace
+                    .update(cx, |workspace, cx| workspace.show_error(&err, cx))
+                    .ok();
                 None
             }
         }
@@ -1137,7 +1150,12 @@ where
 }
 
 pub trait NotifyTaskExt {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App);
+    fn detach_and_notify_err(
+        self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    );
 }
 
 impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
@@ -1145,9 +1163,16 @@ where
     E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
+    fn detach_and_notify_err(
+        self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         window
-            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
+            .spawn(cx, async move |mut cx| {
+                self.await.notify_workspace_async_err(workspace, &mut cx)
+            })
             .detach();
     }
 }

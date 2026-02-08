@@ -8,7 +8,7 @@ use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
 use task::SharedTaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
-use workspace::Workspace;
+use workspace::MultiWorkspace;
 
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
@@ -52,14 +52,16 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
 pub async fn init_test_workspace(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
-) -> WindowHandle<Workspace> {
+) -> WindowHandle<MultiWorkspace> {
     let workspace_handle =
-        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
     let debugger_panel = workspace_handle
-        .update(cx, |_, window, cx| {
-            cx.spawn_in(window, async move |this, cx| {
-                DebugPanel::load(this, cx).await
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |_workspace, cx| {
+                cx.spawn_in(window, async move |this, cx| {
+                    DebugPanel::load(this, cx).await
+                })
             })
         })
         .unwrap()
@@ -67,9 +69,10 @@ pub async fn init_test_workspace(
         .expect("Failed to load debug panel");
 
     let terminal_panel = workspace_handle
-        .update(cx, |_, window, cx| {
-            cx.spawn_in(window, async |this, cx| {
-                TerminalPanel::load(this, cx.clone()).await
+        .update(cx, |multi, window, cx| {
+            let weak_workspace = multi.workspace().downgrade();
+            cx.spawn_in(window, async move |_, cx| {
+                TerminalPanel::load(weak_workspace, cx.clone()).await
             })
         })
         .unwrap()
@@ -77,9 +80,11 @@ pub async fn init_test_workspace(
         .expect("Failed to load terminal panel");
 
     workspace_handle
-        .update(cx, |workspace, window, cx| {
-            workspace.add_panel(debugger_panel, window, cx);
-            workspace.add_panel(terminal_panel, window, cx);
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.add_panel(debugger_panel, window, cx);
+                workspace.add_panel(terminal_panel, window, cx);
+            });
         })
         .unwrap();
     workspace_handle
@@ -87,39 +92,45 @@ pub async fn init_test_workspace(
 
 #[track_caller]
 pub fn active_debug_session_panel(
-    workspace: WindowHandle<Workspace>,
+    workspace: WindowHandle<MultiWorkspace>,
     cx: &mut TestAppContext,
 ) -> Entity<DebugSession> {
     workspace
-        .update(cx, |workspace, _window, cx| {
-            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            debug_panel
-                .update(cx, |this, _| this.active_session())
-                .unwrap()
+        .update(cx, |multi, _window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+                debug_panel
+                    .update(cx, |this, _| this.active_session())
+                    .unwrap()
+            })
         })
         .unwrap()
 }
 
 pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
-    workspace: &WindowHandle<Workspace>,
+    workspace: &WindowHandle<MultiWorkspace>,
     cx: &mut gpui::TestAppContext,
     config: DebugTaskDefinition,
     configure: T,
 ) -> Result<Entity<Session>> {
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
-    workspace.update(cx, |workspace, window, cx| {
-        workspace.start_debug_session(
-            config.to_scenario(),
-            SharedTaskContext::default(),
-            None,
-            None,
-            window,
-            cx,
-        )
+    workspace.update(cx, |multi, window, cx| {
+        multi.workspace().update(cx, |workspace, cx| {
+            workspace.start_debug_session(
+                config.to_scenario(),
+                SharedTaskContext::default(),
+                None,
+                None,
+                window,
+                cx,
+            )
+        })
     })?;
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
         workspace
+            .workspace()
+            .read(cx)
             .panel::<DebugPanel>(cx)
             .and_then(|panel| panel.read(cx).active_session())
             .map(|session| session.read(cx).running_state().read(cx).session())
@@ -131,7 +142,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 }
 
 pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
-    workspace: &WindowHandle<Workspace>,
+    workspace: &WindowHandle<MultiWorkspace>,
     cx: &mut gpui::TestAppContext,
     configure: T,
 ) -> Result<Entity<Session>> {

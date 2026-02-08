@@ -99,7 +99,6 @@ use workspace::{
     CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
     Workspace,
     item::{BreadcrumbText, Item, ItemBufferKind},
-    notifications::NotifyTaskExt,
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -541,21 +540,21 @@ impl EditorElement {
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format_selections(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.organize_imports(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
@@ -565,49 +564,49 @@ impl EditorElement {
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion_replace(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion_insert(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_code_action(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.rename(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_rename(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }

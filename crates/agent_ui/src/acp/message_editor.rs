@@ -815,8 +815,13 @@ impl MessageEditor {
         }
 
         if self.prompt_capabilities.borrow().image
-            && let Some(task) =
-                paste_images_as_context(self.editor.clone(), self.mention_set.clone(), window, cx)
+            && let Some(task) = paste_images_as_context(
+                self.editor.clone(),
+                self.mention_set.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
         {
             task.detach();
             return;
@@ -1084,6 +1089,7 @@ impl MessageEditor {
 
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
+        let workspace = self.workspace.clone();
 
         let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
@@ -1134,7 +1140,14 @@ impl MessageEditor {
                     images.push(gpui::Image::from_bytes(format, content));
                 }
 
-                crate::mention_set::insert_images_as_context(images, editor, mention_set, cx).await;
+                crate::mention_set::insert_images_as_context(
+                    images,
+                    editor,
+                    mention_set,
+                    workspace,
+                    cx,
+                )
+                .await;
                 Ok(())
             })
             .detach_and_log_err(cx);

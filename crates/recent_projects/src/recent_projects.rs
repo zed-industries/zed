@@ -4,7 +4,7 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(target_os = "windows")]
 mod wsl_picker;
@@ -27,13 +27,13 @@ use picker::{
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
-    with_active_or_new_workspace,
+    CloseIntent, HistoryManager, ModalView, MultiWorkspace, OpenOptions, PathList,
+    SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
@@ -48,9 +48,10 @@ pub struct RecentProjectEntry {
 pub async fn get_recent_projects(
     current_workspace_id: Option<WorkspaceId>,
     limit: Option<usize>,
+    fs: Arc<dyn fs::Fs>,
 ) -> Vec<RecentProjectEntry> {
     let workspaces = WORKSPACE_DB
-        .recent_workspaces_on_disk()
+        .recent_workspaces_on_disk(fs.as_ref())
         .await
         .unwrap_or_default();
 
@@ -176,7 +177,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
-                replace_window: window.window_handle().downcast::<Workspace>(),
+                replace_window: window.window_handle().downcast::<MultiWorkspace>(),
                 ..Default::default()
             };
 
@@ -232,10 +233,8 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &OpenDevContainer, cx| {
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let is_local = workspace.project().read(cx).is_local();
-
-            cx.spawn_in(window, async move |_, cx| {
-                if !is_local {
+            if !workspace.project().read(cx).is_local() {
+                cx.spawn_in(window, async move |_, cx| {
                     cx.prompt(
                         gpui::PromptLevel::Critical,
                         "Cannot open Dev Container from remote project",
@@ -244,21 +243,16 @@ pub fn init(cx: &mut App) {
                     )
                     .await
                     .ok();
-                    return;
-                }
-
-                cx.update(|_, cx| {
-                    with_active_or_new_workspace(cx, move |workspace, window, cx| {
-                        let fs = workspace.project().read(cx).fs().clone();
-                        let handle = cx.entity().downgrade();
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            RemoteServerProjects::new_dev_container(fs, window, handle, cx)
-                        });
-                    });
                 })
-                .log_err();
-            })
-            .detach();
+                .detach();
+                return;
+            }
+
+            let fs = workspace.project().read(cx).fs().clone();
+            let handle = cx.entity().downgrade();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::new_dev_container(fs, window, handle, cx)
+            });
         });
     });
 
@@ -338,6 +332,10 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let fs = delegate
+            .workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().fs.clone());
         let picker = cx.new(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
@@ -350,8 +348,9 @@ impl RecentProjects {
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         cx.spawn_in(window, async move |this, cx| {
+            let Some(fs) = fs else { return };
             let workspaces = WORKSPACE_DB
-                .recent_workspaces_on_disk()
+                .recent_workspaces_on_disk(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -361,7 +360,7 @@ impl RecentProjects {
                     picker.update_matches(picker.query(cx), window, cx)
                 })
             })
-            .ok()
+            .ok();
         })
         .detach();
         Self {
@@ -609,7 +608,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let app_state = workspace.app_state().clone();
 
                         let replace_window = if replace_current_window {
-                            window.window_handle().downcast::<Workspace>()
+                            window.window_handle().downcast::<MultiWorkspace>()
                         } else {
                             None
                         };
@@ -884,10 +883,18 @@ impl RecentProjectsDelegate {
     ) {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _, _) = self.workspaces[selected_match.candidate_id];
+            let fs = self
+                .workspace
+                .upgrade()
+                .map(|ws| ws.read(cx).app_state().fs.clone());
             cx.spawn_in(window, async move |this, cx| {
-                let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+                WORKSPACE_DB
+                    .delete_workspace_by_id(workspace_id)
+                    .await
+                    .log_err();
+                let Some(fs) = fs else { return };
                 let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
+                    .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
@@ -904,6 +911,7 @@ impl RecentProjectsDelegate {
                             .update(cx, |this, cx| this.delete_history(workspace_id, cx));
                     }
                 })
+                .ok();
             })
             .detach();
         }
@@ -987,31 +995,40 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
-        workspace
-            .update(cx, |workspace, _, _| assert!(!workspace.is_edited()))
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert!(!multi_workspace.workspace().read(cx).is_edited())
+            })
             .unwrap();
 
-        let editor = workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
+        let editor = multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
                     .unwrap()
             })
             .unwrap();
-        workspace
+        multi_workspace
             .update(cx, |_, window, cx| {
                 editor.update(cx, |editor, cx| editor.insert("EDIT", window, cx));
             })
             .unwrap();
-        workspace
-            .update(cx, |workspace, _, _| assert!(workspace.is_edited(), "After inserting more text into the editor without saving, we should have a dirty project"))
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert!(
+                    multi_workspace.workspace().read(cx).is_edited(),
+                    "After inserting more text into the editor without saving, we should have a dirty project"
+                )
+            })
             .unwrap();
 
-        let recent_projects_picker = open_recent_projects(&workspace, cx);
-        workspace
+        let recent_projects_picker = open_recent_projects(&multi_workspace, cx);
+        multi_workspace
             .update(cx, |_, _, cx| {
                 recent_projects_picker.update(cx, |picker, cx| {
                     assert_eq!(picker.query(cx), "");
@@ -1035,11 +1052,15 @@ mod tests {
             !cx.has_pending_prompt(),
             "Should have no pending prompt on dirty project before opening the new recent project"
         );
-        cx.dispatch_action(*workspace, menu::Confirm);
-        workspace
-            .update(cx, |workspace, _, cx| {
+        cx.dispatch_action(*multi_workspace, menu::Confirm);
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
                 assert!(
-                    workspace.active_modal::<RecentProjects>(cx).is_none(),
+                    multi_workspace
+                        .workspace()
+                        .read(cx)
+                        .active_modal::<RecentProjects>(cx)
+                        .is_none(),
                     "Should remove the modal after selecting new recent project"
                 )
             })
@@ -1053,10 +1074,10 @@ mod tests {
             !cx.has_pending_prompt(),
             "Should have no pending prompt after cancelling"
         );
-        workspace
-            .update(cx, |workspace, _, _| {
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
                 assert!(
-                    workspace.is_edited(),
+                    multi_workspace.workspace().read(cx).is_edited(),
                     "Should be in the same dirty project after cancelling"
                 )
             })
@@ -1064,18 +1085,20 @@ mod tests {
     }
 
     fn open_recent_projects(
-        workspace: &WindowHandle<Workspace>,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
         cx: &mut TestAppContext,
     ) -> Entity<Picker<RecentProjectsDelegate>> {
         cx.dispatch_action(
-            (*workspace).into(),
+            (*multi_workspace).into(),
             OpenRecent {
                 create_new_window: false,
             },
         );
-        workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_modal::<RecentProjects>(cx)
                     .unwrap()
                     .read(cx)

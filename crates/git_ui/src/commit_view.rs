@@ -774,7 +774,7 @@ impl CommitView {
                 callback(repo, &sha, stash, commit_view_entity, workspace_weak, cx).await?;
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(workspace.weak_handle(), window, cx);
     }
 
     async fn close_commit_view(

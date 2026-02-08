@@ -36,7 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
+    ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -120,6 +121,7 @@ pub fn init(cx: &mut App) {
 
             if let Some(room) = ActiveCall::global(cx).read(cx).room() {
                 let romo_id_fut = room.read(cx).room_id();
+                let workspace_handle = cx.weak_entity();
                 cx.spawn(async move |workspace, cx| {
                     let room_id = romo_id_fut.await.context("Failed to get livekit room")?;
                     workspace.update(cx, |workspace, cx| {
@@ -134,7 +136,7 @@ pub fn init(cx: &mut App) {
                         );
                     })
                 })
-                .detach_and_notify_err(window, cx);
+                .detach_and_notify_err(workspace_handle, window, cx);
             } else {
                 workspace.show_error(&"There’s no active call; join one first.", cx);
             }
@@ -2177,12 +2179,13 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            cx.spawn_in(window, async move |this, cx| {
+            let workspace = self.workspace.clone();
+            cx.spawn_in(window, async move |this, mut cx| {
                 if answer.await? == 0 {
                     channel_store
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
-                        .notify_async_err(cx);
+                        .notify_workspace_async_err(workspace, &mut cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
@@ -2211,12 +2214,13 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, async move |_, cx| {
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, mut cx| {
             if answer.await? == 0 {
                 user_store
                     .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .notify_async_err(cx);
+                    .notify_workspace_async_err(workspace, &mut cx);
             }
             anyhow::Ok(())
         })
@@ -2267,13 +2271,15 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let Some(handle) = window.window_handle().downcast::<Workspace>() else {
+
+        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
         workspace::join_channel(
             channel_id,
             workspace.read(cx).app_state().clone(),
             Some(handle),
+            Some(self.workspace.clone()),
             cx,
         )
         .detach_and_prompt_err("Failed to join channel", window, cx, |_, _, _| None)
@@ -2316,12 +2322,13 @@ impl CollabPanel {
                             .full_width()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                cx.spawn_in(window, async move |_, cx| {
+                                let workspace = this.workspace.clone();
+                                cx.spawn_in(window, async move |_, mut cx| {
                                     client
-                                        .connect(true, cx)
+                                        .connect(true, &mut cx)
                                         .await
                                         .into_response()
-                                        .notify_async_err(cx);
+                                        .notify_workspace_async_err(workspace, &mut cx);
                                 })
                                 .detach()
                             })),

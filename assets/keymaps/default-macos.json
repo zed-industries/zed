@@ -655,6 +655,7 @@
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
+      "cmd-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
       "alt-cmd-y": "workspace::ToggleAllDocks",
       // For 0px parameter, uses UI font size value.
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
@@ -712,6 +713,13 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    },
+  },
+  {
+    "context": "WorkspaceSidebar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "multi_workspace::NewWorkspaceInWindow",
     },
   },
   {

@@ -114,7 +114,9 @@ impl RenderOnce for SectionButton {
                             .size(rems_from_px(12.)),
                     ),
             )
-            .on_click(move |_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
+            .on_click(move |_, window, cx| {
+                self.focus_handle.dispatch_action(&*self.action, window, cx)
+            })
     }
 }
 
@@ -225,9 +227,13 @@ impl WelcomePage {
             .detach();
 
         if fallback_to_recent_projects {
+            let fs = workspace
+                .upgrade()
+                .map(|ws| ws.read(cx).app_state().fs.clone());
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+                let Some(fs) = fs else { return };
                 let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
+                    .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();
@@ -267,21 +273,18 @@ impl WelcomePage {
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
             if let Some((_workspace_id, location, paths)) = recent_workspaces.get(action.index) {
-                let paths = paths.clone();
-                let location = location.clone();
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
-                let workspace = self.workspace.clone();
 
                 if is_local {
+                    let paths = paths.clone();
                     let paths = paths.paths().to_vec();
-                    cx.spawn_in(window, async move |_, cx| {
-                        let _ = workspace.update_in(cx, |workspace, window, cx| {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
                             workspace
                                 .open_workspace_for_paths(true, paths, window, cx)
-                                .detach();
-                        });
-                    })
-                    .detach();
+                                .detach_and_log_err(cx);
+                        })
+                        .log_err();
                 } else {
                     use zed_actions::OpenRecent;
                     window.dispatch_action(OpenRecent::default().boxed_clone(), cx);

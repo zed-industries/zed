@@ -124,6 +124,7 @@ impl ProjectDiff {
             return;
         }
         let workspace = cx.entity();
+        let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
                 let this = cx
@@ -138,7 +139,7 @@ impl ProjectDiff {
                     .ok();
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(workspace_weak, window, cx);
     }
 
     pub fn deploy_at(
