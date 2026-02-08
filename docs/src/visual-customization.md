@@ -113,14 +113,15 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
-    "show_branch_name": true,       // Show/hide branch name
-    "show_project_items": true,     // Show/hide project host and name
-    "show_onboarding_banner": true, // Show/hide onboarding banners
-    "show_user_picture": true,      // Show/hide user avatar
-    "show_user_menu": true,         // Show/hide app user button
-    "show_sign_in": true,           // Show/hide sign-in button
-    "show_menus": false             // Show/hide menus
+    "show_branch_icon": false,        // Show/hide branch icon beside branch switcher
+    "show_branch_name": true,         // Show/hide branch name
+    "show_project_items": true,       // Show/hide project host and name
+    "show_onboarding_banner": true,   // Show/hide onboarding banners
+    "show_user_picture": true,        // Show/hide user avatar
+    "show_user_menu": true,           // Show/hide app user button
+    "show_sign_in": true,             // Show/hide sign-in button
+    "show_menus": false,              // Show/hide menus
+    "show_menus_on_hover": false      // Automatically show menus on hover
   },
 ```
 

@@ -453,6 +453,8 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // Whether to show the menus in the titlebar on hover.
+    "show_menus_on_hover": false,
   },
   "audio": {
     // Opt into the new audio system.
