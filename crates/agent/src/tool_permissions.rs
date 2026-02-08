@@ -1,8 +1,8 @@
 use crate::AgentTool;
-use crate::shell_parser::extract_commands;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
+use shell_command_parser::extract_commands;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 use util::shell::ShellKind;

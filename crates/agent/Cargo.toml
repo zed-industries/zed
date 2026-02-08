@@ -19,7 +19,6 @@ workspace = true
 
 [dependencies]
 acp_thread.workspace = true
-brush-parser.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
@@ -58,6 +57,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shell_command_parser.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 sqlez.workspace = true

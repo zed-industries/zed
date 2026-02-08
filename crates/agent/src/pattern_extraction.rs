@@ -1,4 +1,4 @@
-use crate::shell_parser::extract_commands;
+use shell_command_parser::extract_commands;
 use std::path::{Path, PathBuf};
 use url::Url;
 
