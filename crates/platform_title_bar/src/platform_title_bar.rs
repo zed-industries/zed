@@ -24,6 +24,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    override_background: Option<Hsla>,
 }
 
 impl PlatformTitleBar {
@@ -37,7 +38,12 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            override_background: None,
         }
+    }
+
+    pub fn set_background_override(&mut self, color: Option<Hsla>) {
+        self.override_background = color;
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -52,6 +58,10 @@ impl PlatformTitleBar {
     }
 
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+        if let Some(override_color) = self.override_background {
+            return override_color;
+        }
+
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if window.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background

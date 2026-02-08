@@ -31,8 +31,7 @@ use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
 use project_dropdown::ProjectDropdown;
 use remote::RemoteConnectionOptions;
-use settings::Settings;
-use settings::WorktreeId;
+use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -41,6 +40,7 @@ use ui::{
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
 
@@ -150,7 +150,26 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title_bar_settings = *TitleBarSettings::get_global(cx);
+        // Get settings location from first visible worktree for local settings override
+        let settings_location =
+            self.project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    SettingsLocation {
+                        worktree_id: worktree.id(),
+                        path: RelPath::empty(),
+                    }
+                });
+
+        let title_bar_settings = TitleBarSettings::get(settings_location, cx).clone();
+
+        // Set background override on platform titlebar
+        self.platform_titlebar.update(cx, |titlebar, _| {
+            titlebar.set_background_override(title_bar_settings.background);
+        });
 
         let show_menus = show_menus(cx);
 

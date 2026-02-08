@@ -510,6 +510,7 @@ impl VsCodeSettings {
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
+            title_bar: None,
         }
     }
 

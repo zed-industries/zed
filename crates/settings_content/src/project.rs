@@ -10,7 +10,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SlashCommandSettings, fallible_options,
+    RootUserSettings, SlashCommandSettings, TitleBarSettingsContent, fallible_options,
 };
 
 #[with_fallible_options]
@@ -79,6 +79,9 @@ pub struct ProjectSettingsContent {
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Configuration for the title bar.
+    pub title_bar: Option<TitleBarSettingsContent>,
 }
 
 #[with_fallible_options]
