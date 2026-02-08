@@ -2059,7 +2059,7 @@ impl Vim {
             collapse_matches: !HelixModeSetting::get_global(cx).0,
             input_enabled: self.editor_input_enabled(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: self.mode.is_visual(),
+            cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
         }
