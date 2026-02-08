@@ -25539,19 +25539,25 @@ fn comment_delimiter_for_newline(
     let comment_candidate = snapshot
         .chars_for_range(range.clone())
         .skip(num_of_whitespaces)
-        .take(max_len_of_delimiter)
+        .take(max_len_of_delimiter + 2)
         .collect::<String>();
-    let (delimiter, trimmed_len) = delimiters
+    let (delimiter, trimmed_len, is_repl) = delimiters
         .iter()
         .filter_map(|delimiter| {
             let prefix = delimiter.trim_end();
             if comment_candidate.starts_with(prefix) {
-                Some((delimiter, prefix.len()))
+                let is_repl = if let Some(stripped_comment) = comment_candidate.strip_prefix(prefix)
+                {
+                    stripped_comment.starts_with(" %%")
+                } else {
+                    false
+                };
+                Some((delimiter, prefix.len(), is_repl))
             } else {
                 None
             }
         })
-        .max_by_key(|(_, len)| *len)?;
+        .max_by_key(|(_, len, _)| *len)?;
 
     if let Some(BlockCommentConfig {
         start: block_start, ..
@@ -25560,7 +25566,7 @@ fn comment_delimiter_for_newline(
         let block_start_trimmed = block_start.trim_end();
         if block_start_trimmed.starts_with(delimiter.trim_end()) {
             let line_content = snapshot
-                .chars_for_range(range)
+                .chars_for_range(range.clone())
                 .skip(num_of_whitespaces)
                 .take(block_start_trimmed.len())
                 .collect::<String>();
@@ -25574,7 +25580,20 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
-        Some(delimiter.clone())
+        if !is_repl {
+            return Some(delimiter.clone());
+        }
+
+        let line_content_after_cursor: String = snapshot
+            .chars_for_range(range)
+            .skip(start_point.column as usize)
+            .collect();
+
+        if line_content_after_cursor.trim().is_empty() {
+            return None;
+        } else {
+            return Some(delimiter.clone());
+        }
     } else {
         None
     }
