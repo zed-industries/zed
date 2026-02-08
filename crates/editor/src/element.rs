@@ -8847,8 +8847,7 @@ impl LineWithInvisibles {
 
                         if editor_mode.is_full() {
                             match highlighted_chunk.kind {
-                                ChunkKind::InlayHint => {}
-                                _ => {
+                                ChunkKind::None => {
                                     // Line wrap pads its contents with fake whitespaces,
                                     // avoid printing them
                                     let is_soft_wrapped = is_row_soft_wrapped(row);
@@ -8877,6 +8876,7 @@ impl LineWithInvisibles {
                                         ))
                                     }
                                 }
+                                _ => {}
                             }
                         }
 
