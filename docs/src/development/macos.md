@@ -84,7 +84,7 @@ Before making any UI changes, generate baseline images from a known-good state:
 
 ```sh
 git checkout origin/main
-UPDATE_BASELINE=1 cargo run -p zed --bin visual_test_runner --features visual-tests
+UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 git checkout -
 ```
 
