@@ -61,6 +61,9 @@ use util::{
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
+const INTERNET_EVENT_CLASS: u32 = 0x4755524c; // 'GURL'
+const AE_GET_URL: u32 = 0x4755524c; // 'GURL'
+const DIRECT_OBJECT_KEY: u32 = 0x2d2d2d2d; // '----'
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -135,8 +138,8 @@ unsafe fn build_classes() {
                 handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
             );
             decl.add_method(
-                sel!(application:openURLs:),
-                open_urls as extern "C" fn(&mut Object, Sel, id, id),
+                sel!(handleGetURLEvent:withReplyEvent:),
+                handle_get_url_event as extern "C" fn(&mut Object, Sel, id, id),
             );
 
             decl.add_method(
@@ -1172,7 +1175,7 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     }
 }
 
-extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
+extern "C" fn will_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
 
@@ -1186,6 +1189,17 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
             let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
             let _: () = msg_send![user_defaults, setObject: false_value forKey: name];
         }
+
+        // Register kAEGetURL Apple Event handler so that URL open requests are
+        // delivered synchronously before applicationDidFinishLaunching:, replacing
+        // application:openURLs: which has non-deterministic timing.
+        let event_manager: id = msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+        let _: () = msg_send![event_manager,
+            setEventHandler: this as id
+            andSelector: sel!(handleGetURLEvent:withReplyEvent:)
+            forEventClass: INTERNET_EVENT_CLASS
+            andEventID: AE_GET_URL
+        ];
     }
 }
 
@@ -1271,27 +1285,36 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
-    let urls = unsafe {
-        (0..urls.count())
-            .filter_map(|i| {
-                let url = urls.objectAtIndex(i);
-                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
-                    Ok(string) => Some(string.to_string()),
-                    Err(err) => {
-                        log::error!("error converting path to string: {}", err);
-                        None
-                    }
+extern "C" fn handle_get_url_event(this: &mut Object, _: Sel, event: id, _reply: id) {
+    unsafe {
+        let descriptor: id = msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT_KEY];
+        if descriptor == nil {
+            return;
+        }
+        let url_string: id = msg_send![descriptor, stringValue];
+        if url_string == nil {
+            return;
+        }
+        let utf8_ptr = url_string.UTF8String() as *mut c_char;
+        if utf8_ptr.is_null() {
+            return;
+        }
+        let url_str = CStr::from_ptr(utf8_ptr);
+        match url_str.to_str() {
+            Ok(string) => {
+                let urls = vec![string.to_string()];
+                let platform = get_mac_platform(this);
+                let mut lock = platform.0.lock();
+                if let Some(mut callback) = lock.open_urls.take() {
+                    drop(lock);
+                    callback(urls);
+                    platform.0.lock().open_urls.get_or_insert(callback);
                 }
-            })
-            .collect::<Vec<_>>()
-    };
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.open_urls.take() {
-        drop(lock);
-        callback(urls);
-        platform.0.lock().open_urls.get_or_insert(callback);
+            }
+            Err(err) => {
+                log::error!("error converting URL to string: {}", err);
+            }
+        }
     }
 }
 
