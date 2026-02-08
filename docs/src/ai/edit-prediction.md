@@ -1,3 +1,8 @@
+---
+title: AI Code Completion in Zed - Zeta, Copilot, Supermaven
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Supermaven, or Codestral. Multi-line predictions on every keystroke.
+---
+
 # Edit Prediction
 
 Edit Prediction is Zed's LLM mechanism for predicting the code you want to write.

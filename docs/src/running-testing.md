@@ -1,3 +1,8 @@
+---
+title: Running and Testing Code - Zed
+description: Run, test, and debug your code without leaving Zed. Tasks, REPL, and debugger integration.
+---
+
 # Running & Testing
 
 This section covers how to run, test, and debug your code without leaving Zed.

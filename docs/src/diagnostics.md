@@ -1,3 +1,8 @@
+---
+title: Diagnostics - Errors and Warnings in Zed
+description: View and navigate errors, warnings, and code diagnostics from language servers in Zed.
+---
+
 # Diagnostics
 
 Zed gets its diagnostics from the language servers and supports both push and pull variants of the LSP which makes it compatible with all existing language servers.

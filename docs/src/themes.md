@@ -1,3 +1,8 @@
+---
+title: Themes - Zed
+description: Browse, install, and create themes for Zed. Includes built-in themes and community theme extensions.
+---
+
 # Themes
 
 Zed comes with a number of built-in themes, with more themes available as extensions.

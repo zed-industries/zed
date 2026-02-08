@@ -1,3 +1,8 @@
+---
+title: Snippets - Zed
+description: Create and use code snippets in Zed with tab stops, placeholders, variables, and language-scoped triggers.
+---
+
 # Snippets
 
 Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).

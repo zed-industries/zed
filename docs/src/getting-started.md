@@ -1,3 +1,8 @@
+---
+title: Getting Started with Zed
+description: Get started with Zed, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
+---
+
 # Getting Started
 
 Welcome to Zed! We are excited to have you. Zed is a powerful multiplayer code editor designed to stay out of your way and help you build what's next.

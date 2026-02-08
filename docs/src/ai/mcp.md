@@ -1,3 +1,8 @@
+---
+title: Model Context Protocol (MCP) in Zed
+description: Install and configure MCP servers in Zed to extend your AI agent with external tools, data sources, and integrations.
+---
+
 # Model Context Protocol
 
 Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to interact with context servers.

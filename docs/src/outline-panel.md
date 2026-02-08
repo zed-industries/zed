@@ -1,3 +1,8 @@
+---
+title: Outline Panel - Zed
+description: Navigate code structure with Zed's outline panel. View symbols, jump to definitions, and browse file outlines.
+---
+
 # Outline Panel
 
 In addition to the modal outline (`cmd-shift-o`), Zed offers an outline panel. The outline panel can be deployed via `cmd-shift-b` (`outline panel: toggle focus` via the command palette), or by clicking the `Outline Panel` button in the status bar.

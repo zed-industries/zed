@@ -1,3 +1,8 @@
+---
+title: REPL - Jupyter Kernels in Zed
+description: Run code interactively in Zed with built-in Jupyter kernel support. Execute Python, TypeScript, R, and more inline.
+---
+
 # REPL
 
 ## Getting started

@@ -1,3 +1,8 @@
+---
+title: AI Coding Agent - Zed Agent Panel
+description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling, checkpoints, and multi-model support.
+---
+
 # Agent Panel
 
 The Agent Panel is where you interact with AI agents that can read, write, and run code in your project. Use it for code generation, refactoring, debugging, documentation, and general questions.
