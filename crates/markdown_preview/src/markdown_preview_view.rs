@@ -310,6 +310,10 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &self.active_editor {
+            // if there is already a task to update the ui and the current task is also debounced (not high priority), do nothing
+            if wait_for_debounce && self.parsing_markdown_task.is_some() {
+                return;
+            }
             self.parsing_markdown_task = Some(self.parse_markdown_in_background(
                 wait_for_debounce,
                 state.editor.clone(),
@@ -351,6 +355,7 @@ impl MarkdownPreviewView {
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
+                view.parsing_markdown_task = None;
                 cx.notify();
             })
         })
