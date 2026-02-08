@@ -1511,9 +1511,15 @@ impl TextThreadEditor {
                     .selections
                     .all_adjusted(&editor.display_snapshot(cx))
                     .into_iter()
-                    .filter_map(|s| {
-                        (!s.is_empty())
-                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    .map(|s| {
+                        if s.is_empty() {
+                            let row = multi_buffer::MultiBufferRow(s.start.row);
+                            let line_start = text::Point::new(s.start.row, 0);
+                            let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                            snapshot.anchor_after(line_start)..snapshot.anchor_before(line_end)
+                        } else {
+                            snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end)
+                        }
                     })
                     .collect::<Vec<_>>()
             });
