@@ -791,6 +791,12 @@ impl CodeCell {
         !self.outputs.is_empty()
     }
 
+    fn outputs_are_images_only(&self) -> bool {
+        self.outputs
+            .iter()
+            .all(|output| matches!(output, Output::Image { .. }))
+    }
+
     pub fn clear_outputs(&mut self) {
         self.outputs.clear();
         self.execution_duration = None;
@@ -1055,11 +1061,8 @@ impl Render for CodeCell {
         } else {
             None
         };
-        let output_max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
-            window,
-            cx,
-        );
+        let output_max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
         // get the language from the editor's buffer
         let language_name = self
             .editor
@@ -1141,11 +1144,11 @@ impl Render for CodeCell {
                                     div()
                                         .id((ElementId::from(self.id.to_string()), "output-scroll"))
                                         .w_full()
-                                        .when_some(output_max_width, |div, max_w| {
-                                            div.max_w(max_w).overflow_x_scroll()
+                                        .when_some(output_max_width, |div, max_width| {
+                                            div.max_w(max_width).overflow_x_scroll()
                                         })
-                                        .when_some(output_max_height, |div, max_h| {
-                                            div.max_h(max_h).overflow_y_scroll()
+                                        .when_some(output_max_height, |div, max_height| {
+                                            div.max_h(max_height).overflow_y_scroll()
                                         })
                                         .children(self.outputs.iter().map(|output| {
                                             let content = match output {
