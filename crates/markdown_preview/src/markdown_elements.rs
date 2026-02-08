@@ -1,6 +1,6 @@
 use gpui::{
-    DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
-    UnderlineStyle, px,
+    px, DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
+    UnderlineStyle,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
@@ -278,7 +278,11 @@ pub enum Link {
 }
 
 impl Link {
-    pub fn identify(file_location_directory: Option<PathBuf>, text: String) -> Option<Link> {
+    pub fn identify(
+        file_location_directory: Option<PathBuf>,
+        worktree_root: Option<PathBuf>,
+        text: String,
+    ) -> Option<Link> {
         if text.starts_with("http") {
             return Some(Link::Web { url: text });
         }
@@ -287,6 +291,20 @@ impl Link {
         let decoded_text = urlencoding::decode(&text)
             .map(|s| s.into_owned())
             .unwrap_or(text);
+
+        // Handle absolute paths starting with "/" - resolve relative to worktree root
+        if decoded_text.starts_with('/') {
+            if let Some(worktree_root) = worktree_root {
+                let relative_path = decoded_text.trim_start_matches('/');
+                let path = worktree_root.join(relative_path);
+                if path.exists() {
+                    return Some(Link::Path {
+                        display_path: PathBuf::from(&decoded_text),
+                        path,
+                    });
+                }
+            }
+        }
 
         let path = PathBuf::from(&decoded_text);
         if path.is_absolute() && path.exists() {
@@ -333,8 +351,9 @@ impl Image {
         text: String,
         source_range: Range<usize>,
         file_location_directory: Option<PathBuf>,
+        worktree_root: Option<PathBuf>,
     ) -> Option<Self> {
-        let link = Link::identify(file_location_directory, text)?;
+        let link = Link::identify(file_location_directory, worktree_root, text)?;
         Some(Self {
             source_range,
             link,

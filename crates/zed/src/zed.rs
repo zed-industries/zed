@@ -1825,6 +1825,7 @@ fn show_markdown_app_notification<F>(
         markdown_preview::markdown_parser::parse_markdown(
             &message.0,
             file_location_directory,
+            None,
             language_registry,
         )
         .await

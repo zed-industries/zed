@@ -334,15 +334,23 @@ impl MarkdownPreviewView {
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
 
-            let (contents, file_location) = view.update(cx, |_, cx| {
+            let (contents, file_location, worktree_root) = view.update(cx, |_, cx| {
                 let editor = editor.read(cx);
                 let contents = editor.buffer().read(cx).snapshot(cx).text();
                 let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
-                (contents, file_location)
+                let worktree_root =
+                    MarkdownPreviewView::get_worktree_root_for_active_editor(editor, cx);
+                (contents, file_location, worktree_root)
             })?;
 
             let parsing_task = cx.background_spawn(async move {
-                parse_markdown(&contents, file_location, Some(language_registry)).await
+                parse_markdown(
+                    &contents,
+                    file_location,
+                    worktree_root,
+                    Some(language_registry),
+                )
+                .await
             });
             let contents = parsing_task.await;
             view.update(cx, move |view, cx| {
@@ -386,6 +394,17 @@ impl MarkdownPreviewView {
         } else {
             None
         }
+    }
+
+    fn get_worktree_root_for_active_editor(editor: &Editor, cx: &App) -> Option<PathBuf> {
+        let file = editor.file_at(MultiBufferOffset(0), cx)?;
+        if !file.is_local() {
+            return None;
+        }
+
+        let project = editor.project()?.clone();
+        let worktree = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)?;
+        Some(worktree.read(cx).abs_path().to_path_buf())
     }
 
     fn get_block_index_under_cursor(&self, selection_range: Range<MultiBufferOffset>) -> usize {
