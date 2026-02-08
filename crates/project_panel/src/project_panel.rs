@@ -100,6 +100,13 @@ struct State {
 }
 
 impl State {
+    fn is_unfolded(&self, entry_id: &ProjectEntryId) -> bool {
+        self.unfolded_dir_ids.contains(entry_id)
+            || self.edit_state.as_ref().map_or(false, |edit_state| {
+                edit_state.temporarily_unfolded == Some(*entry_id)
+            })
+    }
+
     fn derive(old: &Self) -> Self {
         Self {
             last_worktree_root_id: None,
@@ -199,6 +206,7 @@ struct EditState {
     processing_filename: Option<Arc<RelPath>>,
     previously_focused: Option<SelectedEntry>,
     validation_state: ValidationState,
+    temporarily_unfolded: Option<ProjectEntryId>,
 }
 
 impl EditState {
@@ -2063,6 +2071,7 @@ impl ProjectPanel {
             previously_focused: self.selection,
             depth: 0,
             validation_state: ValidationState::None,
+            temporarily_unfolded: (new_entry_id != entry_id).then_some(new_entry_id),
         });
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
@@ -2120,6 +2129,7 @@ impl ProjectPanel {
                     previously_focused: None,
                     depth: 0,
                     validation_state: ValidationState::None,
+                    temporarily_unfolded: None,
                 });
                 let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
@@ -3762,19 +3772,6 @@ impl ProjectPanel {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
-                        let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
-                            hash_map::Entry::Occupied(e) => e.into_mut(),
-                            hash_map::Entry::Vacant(e) => {
-                                // The first time a worktree's root entry becomes available,
-                                // mark that root entry as expanded.
-                                if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
-                                } else {
-                                    &[]
-                                }
-                            }
-                        };
-
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
                         if let Some(edit_state) = &new_state.edit_state
@@ -3809,7 +3806,7 @@ impl ProjectPanel {
                             }
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
-                                if !new_state.unfolded_dir_ids.contains(&entry.id)
+                                if !new_state.is_unfolded(&entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
                                     let mut child_entries =
@@ -3940,6 +3937,20 @@ impl ProjectPanel {
                                         Some((entry.id, worktree_snapshot.id(), width_estimate))
                                 }
                             }
+
+                            let expanded_dir_ids =
+                                match new_state.expanded_dir_ids.entry(worktree_id) {
+                                    hash_map::Entry::Occupied(e) => e.into_mut(),
+                                    hash_map::Entry::Vacant(e) => {
+                                        // The first time a worktree's root entry becomes available,
+                                        // mark that root entry as expanded.
+                                        if let Some(entry) = worktree_snapshot.root_entry() {
+                                            e.insert(vec![entry.id]).as_slice()
+                                        } else {
+                                            &[]
+                                        }
+                                    }
+                                };
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
@@ -5523,6 +5534,25 @@ impl ProjectPanel {
                             // entries are unmarked.
                             if !this.marked_entries.contains(&selection) {
                                 this.marked_entries.clear();
+                            }
+
+                            if this
+                                .state
+                                .edit_state
+                                .as_ref()
+                                .is_some_and(|state| state.processing_filename.is_none())
+                            {
+                                match this.confirm_edit(false, window, cx) {
+                                    Some(task) => {
+                                        task.detach_and_notify_err(window, cx);
+                                    }
+                                    None => {
+
+                                        this.state.edit_state = None;
+                                        this.update_visible_entries(None, false, false, window, cx);
+                                        cx.notify();
+                                    }
+                                }
                             }
                             this.deploy_context_menu(event.position, entry_id, window, cx);
                         },
