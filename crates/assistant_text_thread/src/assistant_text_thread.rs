@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod assistant_text_thread_tests;
+mod context_server_command;
 mod text_thread;
 mod text_thread_store;
 

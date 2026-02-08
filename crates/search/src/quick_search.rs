@@ -12,7 +12,7 @@ use crate::{
     ToggleWholeWord,
 };
 use editor::EditorSettings;
-use editor::{Editor, EditorEvent, RowHighlightOptions};
+use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText, Subscription,
@@ -129,7 +129,6 @@ enum HistoryDirection {
     Previous,
 }
 
-struct SearchMatchHighlight;
 struct SearchMatchLineHighlight;
 
 pub fn init(cx: &mut App) {
@@ -1557,7 +1556,8 @@ impl QuickSearchDelegate {
                 let highlight_range =
                     editor::Anchor::range_in_buffer(excerpt_id, anchor_range.clone());
 
-                editor.highlight_background::<SearchMatchHighlight>(
+                editor.highlight_background(
+                    HighlightKey::QuickSearchView,
                     &[highlight_range],
                     |_, theme| theme.colors().search_match_background,
                     cx,

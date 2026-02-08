@@ -1,9 +1,13 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Context, Entity, Task, prelude::*};
+use gpui::{App, Context, Entity, Global, Task, prelude::*};
 use project::Project;
 use std::rc::Rc;
+
+struct GlobalThreadStore(Entity<ThreadStore>);
+
+impl Global for GlobalThreadStore {}
 
 // TODO: Remove once ACP thread loading is fully handled elsewhere.
 pub fn load_agent_thread(
@@ -37,6 +41,15 @@ pub struct ThreadStore {
 }
 
 impl ThreadStore {
+    pub fn init_global(cx: &mut App) {
+        let thread_store = cx.new(|cx| Self::new(cx));
+        cx.set_global(GlobalThreadStore(thread_store));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalThreadStore>().0.clone()
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let this = Self {
             threads: Vec::new(),

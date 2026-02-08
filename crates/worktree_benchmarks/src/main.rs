@@ -5,6 +5,7 @@ use std::{
 
 use fs::RealFs;
 use gpui::Application;
+use settings::WorktreeId;
 use worktree::Worktree;
 
 fn main() {
@@ -27,6 +28,7 @@ fn main() {
                 fs,
                 Arc::new(AtomicUsize::new(0)),
                 true,
+                WorktreeId::from_proto(0),
                 cx,
             )
             .await

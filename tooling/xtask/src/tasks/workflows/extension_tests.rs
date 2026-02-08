@@ -2,13 +2,13 @@ use gh_workflow::*;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    run_tests::{orchestrate, tests_pass},
+    run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
 
 // This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
@@ -18,7 +18,8 @@ pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
 
-    let orchestrate = orchestrate(&[&should_check_rust, &should_check_extension]);
+    let orchestrate =
+        orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
 
     let jobs = [
         orchestrate,

@@ -575,8 +575,11 @@ pub fn execute_run(
 
         handle_crash_files_requests(&project, &session);
 
-        cx.background_spawn(async move { cleanup_old_binaries() })
-            .detach();
+        cx.background_spawn(async move {
+            cleanup_old_binaries_wsl();
+            cleanup_old_binaries()
+        })
+        .detach();
 
         mem::forget(project);
     };
@@ -1172,6 +1175,15 @@ fn cleanup_old_binaries() -> Result<()> {
     }
 
     Ok(())
+}
+
+// Remove this once 223 goes stable, we only have this to clean up old binaries on WSL
+// we no longer download them into this folder, we use the same folder as other remote servers
+fn cleanup_old_binaries_wsl() {
+    let server_dir = paths::remote_wsl_server_dir_relative();
+    if let Ok(()) = std::fs::remove_dir_all(server_dir.as_std_path()) {
+        log::info!("removing old wsl remote server folder: {:?}", server_dir);
+    }
 }
 
 fn is_new_version(version: &str) -> bool {

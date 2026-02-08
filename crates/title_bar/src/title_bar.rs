@@ -965,6 +965,7 @@ impl TitleBar {
                         None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
                         Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
                         Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                        Some(Plan::ZedStudent) => ("Student", Color::Accent, pro_chip_bg),
                     };
 
                     menu.when(is_signed_in, |this| {

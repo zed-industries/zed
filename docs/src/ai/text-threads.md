@@ -2,12 +2,9 @@
 
 ## Overview {#overview}
 
-Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor.
-You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+Text threads in the [Agent Panel](./agent-panel.md) work like a regular editor. You can use custom keybindings, multiple cursors, and all standard editing features.
 
-However, the text threads differ in the inclusion of message blocks.
-These blocks serve as containers for text that correspond to different roles within the context.
-These roles include:
+Text threads organize content into message blocks with roles:
 
 - `You`
 - `Assistant`
@@ -24,8 +21,7 @@ Inserting text from an editor is as simple as highlighting the text and running 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
 To submit a message, use {#kb assistant::Assist}(`assistant: assist`).
-Unlike normal threads, where pressing <kbd>enter</kbd> would submit the message, in text threads, our goal is to make it feel as close to a regular editor as possible.
-So, pressing {#kb editor::Newline} simply inserts a new line.
+In text threads, {#kb editor::Newline} inserts a new line rather than submitting. This preserves standard editor behavior.
 
 After submitting a message, the response will be streamed below, in an `Assistant` message block.
 
@@ -36,13 +32,11 @@ This is useful if you realize early on that the response is not what you were lo
 
 If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Chat` menu option in the hamburger menu at the top left of the panel.
 
-Simple back-and-forth conversations work well with the text threads.
-However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
+Text threads support straightforward conversations, but you can also go back and modify earlier messages to change direction.
 
 ## Editing a Text Thread {#edit-text-thread}
 
-Text threads give you the flexibility to have control over the context.
-You can freely edit any previous text, including the responses from the LLM.
+You can edit any text in a thread, including previous LLM responses.
 If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key.
 A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information.
 Here's an example:
@@ -66,8 +60,7 @@ Some additional points to keep in mind:
 
 ## Commands Overview {#commands}
 
-Slash commands enhance the assistant's capabilities.
-Begin by typing a `/` at the beginning of the line to see a list of available commands:
+Type `/` at the beginning of a line to see available slash commands:
 
 - `/default`: Inserts the default rule
 - `/diagnostics`: Injects errors reported by the project's language server
@@ -90,8 +83,7 @@ Usage: `/default`
 
 ### `/diagnostics`
 
-The `/diagnostics` command injects errors reported by the project's language server into the context.
-This is useful for getting an overview of current issues in your project.
+Injects errors reported by the project's language server into the context.
 
 Usage: `/diagnostics [--include-warnings] [path]`
 
@@ -100,12 +92,9 @@ Usage: `/diagnostics [--include-warnings] [path]`
 
 ### `/file`
 
-The `/file` command inserts the content of a single file or a directory of files into the context.
-This allows you to reference specific parts of your project in your conversation with the assistant.
+Inserts the content of a file or directory into the context. Supports glob patterns.
 
 Usage: `/file <path>`
-
-You can use glob patterns to match multiple files or directories.
 
 Examples:
 
@@ -115,15 +104,13 @@ Examples:
 
 ### `/now`
 
-The `/now` command inserts the current date and time into the context.
-This can be useful for letting the language model know the current time (and by extension, how old their current knowledge base is).
+Inserts the current date and time. Useful for informing the model about its knowledge cutoff relative to now.
 
 Usage: `/now`
 
 ### `/prompt`
 
-The `/prompt` command inserts a prompt from the prompt library into the context.
-It can also be used to nest prompts within prompts.
+Inserts a rule from the Rules Library into the context. Rules can nest other rules.
 
 Usage: `/prompt <prompt_name>`
 
@@ -131,15 +118,13 @@ Related: `/default`
 
 ### `/symbols`
 
-The `/symbols` command inserts the active symbols (functions, classes, etc.) from the current tab into the context.
-This is useful for getting an overview of the structure of the current file.
+Inserts the active symbols (functions, classes, etc.) from the current tab, providing a structural overview of the file.
 
 Usage: `/symbols`
 
 ### `/tab`
 
-The `/tab` command inserts the content of the active tab or all open tabs into the context.
-This allows you to reference the content you're currently working on.
+Inserts the content of the active tab or all open tabs.
 
 Usage: `/tab [tab_name|all]`
 
@@ -154,8 +139,7 @@ Examples:
 
 ### `/terminal`
 
-The `/terminal` command inserts a select number of lines of output from the terminal into the context.
-This is useful for referencing recent command outputs or logs.
+Inserts recent terminal output (default: 50 lines).
 
 Usage: `/terminal [<number>]`
 
@@ -163,10 +147,7 @@ Usage: `/terminal [<number>]`
 
 ### `/selection`
 
-The `/selection` command inserts the selected text in the editor into the context.
-This is useful for referencing specific parts of your code.
-
-This is equivalent to the `agent: add selection to thread` command ({#kb agent::AddSelectionToThread}).
+Inserts the currently selected text. Equivalent to `agent: add selection to thread` ({#kb agent::AddSelectionToThread}).
 
 Usage: `/selection`
 
@@ -235,15 +216,11 @@ See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to
 
 ## Text Threads vs. Threads
 
-For some time, text threads were the only way to interact with AI in Zed.
-In May 2025, we introduced a new version of the agent panel, which, as opposed to being editor-based, is optimized for readability.
-Visit [the Agent Panel page](./agent-panel.md) to learn more about it.
+Text threads were Zed's original AI interface. In May 2025, Zed introduced the current [Agent Panel](./agent-panel.md), optimized for readability and agentic workflows.
 
-More importantly, aside from the many UI differences, the major aspect that sets one apart from the other is that tool calls don't work in Text Threads.
-Due to that, it's accurate to say that Text Threads aren't conceptually agentic, as they can't perform any action on your behalf (or any action at all).
+The key difference: text threads don't support tool calls. They can't read files, write code, or run commands on your behalf. Text threads are for conversational interaction where you only receive text responses.
 
-Think of it more like a regular/"traditional" AI chat, where the only thing you can get from the model is simply just text.
-Consequently, [MCP servers](./mcp.md) and [external agents](./external-agents.md) are also not available in Text Threads.
+[MCP servers](./mcp.md) and [external agents](./external-agents.md) are not available in text threads.
 
 ## Advanced Concepts
 

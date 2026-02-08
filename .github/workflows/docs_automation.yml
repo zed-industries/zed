@@ -9,11 +9,11 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to analyze (gets full PR diff)'
+        description: "PR number to analyze (gets full PR diff)"
         required: false
         type: string
       trigger_sha:
-        description: 'Commit SHA to analyze (ignored if pr_number is set)'
+        description: "Commit SHA to analyze (ignored if pr_number is set)"
         required: false
         type: string
 
@@ -27,7 +27,7 @@ env:
 
 jobs:
   docs-automation:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-8x32-ubuntu-2404
     timeout-minutes: 30
 
     steps:
@@ -48,7 +48,7 @@ jobs:
       - name: Setup Node.js (for Prettier)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Prettier
         run: npm install -g prettier

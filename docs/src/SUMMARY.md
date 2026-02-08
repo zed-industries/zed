@@ -78,6 +78,7 @@
 - [All Languages](./languages.md)
 - [Configuring Languages](./configuring-languages.md)
   - [Toolchains](./toolchains.md)
+  - [Semantic Tokens](./semantic-tokens.md)
 - [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)

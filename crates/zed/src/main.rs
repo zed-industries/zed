@@ -659,6 +659,15 @@ fn main() {
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
+        cx.set_global(workspace::PaneSearchBarCallbacks {
+            setup_search_bar: |languages, toolbar, window, cx| {
+                let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar, window, cx);
+                });
+            },
+            wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+        });
         vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
@@ -765,6 +774,12 @@ fn main() {
             .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
+        // Check if any diff paths are directories to determine diff_all mode
+        let diff_all_mode = args
+            .diff
+            .chunks(2)
+            .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
         let diff_paths: Vec<[String; 2]> = args
             .diff
             .chunks(2)
@@ -781,6 +796,7 @@ fn main() {
                 urls,
                 diff_paths,
                 wsl,
+                diff_all: diff_all_mode,
             })
         }
 
@@ -846,13 +862,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
-            OpenRequestKind::AgentPanel => {
+            OpenRequestKind::AgentPanel { initial_prompt } => {
                 cx.spawn(async move |cx| {
                     let workspace =
                         workspace::get_any_active_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |workspace, window, cx| {
-                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window, cx);
+                        if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.new_external_thread_with_text(initial_prompt, window, cx);
+                            });
                         }
                     })
                 })
@@ -1050,6 +1068,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
+                        false,
                         app_state,
                         workspace::OpenOptions::default(),
                         cx,
@@ -1111,6 +1130,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
                 &request.diff_paths,
+                request.diff_all,
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -1474,6 +1494,7 @@ struct Args {
     paths_or_urls: Vec<String>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
+    /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
 

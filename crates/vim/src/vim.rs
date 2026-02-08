@@ -42,6 +42,7 @@ use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -1427,6 +1428,23 @@ impl Vim {
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // If editor gains focus while search bar is still open (not dismissed),
+        // the user has explicitly navigated away - clear prior_selections so we
+        // don't restore to the old position if they later dismiss the search.
+        if !self.search.prior_selections.is_empty() {
+            if let Some(pane) = self.pane(window, cx) {
+                let search_still_open = pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .is_some_and(|bar| !bar.read(cx).is_dismissed());
+                if search_still_open {
+                    self.search.prior_selections.clear();
+                }
+            }
+        }
+
         let Some(editor) = self.editor() else {
             return;
         };

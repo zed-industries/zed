@@ -309,7 +309,7 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
 
 GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, LinearColorStop colors[2]) {
     GradientColor output;
-    if (tag == 0 || tag == 2) {
+    if (tag == 0 || tag == 2 || tag == 3) {
         output.solid = hsla_to_rgba(solid);
     } else if (tag == 1) {
         output.color0 = hsla_to_rgba(colors[0].color);
@@ -400,6 +400,19 @@ float4 gradient_color(Background background,
             float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             color = solid_color;
             color.a *= saturate(0.5 - distance);
+            break;
+        }
+        case 3: {
+            // checkerboard
+            float size = background.gradient_angle_or_pattern_height;
+            float2 relative_position = position - bounds.origin;
+            
+            float x_index = floor(relative_position.x / size);
+            float y_index = floor(relative_position.y / size);
+            float should_be_colored = (x_index + y_index) % 2.0;
+            
+            color = solid_color;
+            color.a *= saturate(should_be_colored);
             break;
         }
     }

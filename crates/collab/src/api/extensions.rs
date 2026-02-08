@@ -4,16 +4,15 @@ use anyhow::Context as _;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     Extension, Json, Router,
-    extract::{Path, Query},
+    extract::{Path, Query, RawQuery},
     http::StatusCode,
     response::Redirect,
     routing::get,
 };
-use collections::{BTreeSet, HashMap};
-use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
+use cloud_api_types::{ExtensionApiManifest, GetExtensionsResponse};
+use collections::HashMap;
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
-use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
 use util::{ResultExt, maybe};
@@ -33,74 +32,50 @@ pub fn router() -> Router {
         )
 }
 
-#[derive(Debug, Deserialize)]
-struct GetExtensionsParams {
-    filter: Option<String>,
-    /// A comma-delimited list of features that the extension must provide.
-    ///
-    /// For example:
-    /// - `themes`
-    /// - `themes,icon-themes`
-    /// - `languages,language-servers`
-    #[serde(default)]
-    provides: Option<String>,
-    #[serde(default)]
-    max_schema_version: i32,
-}
+const UPSTREAM_EXTENSIONS_URL: &str = "https://cloud.zed.dev/extensions";
 
-async fn get_extensions(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetExtensionsParams>,
-) -> Result<Json<GetExtensionsResponse>> {
-    let provides_filter = params.provides.map(|provides| {
-        provides
-            .split(',')
-            .map(|value| value.trim())
-            .filter_map(|value| ExtensionProvides::from_str(value).ok())
-            .collect::<BTreeSet<_>>()
-    });
-
-    let mut extensions = app
-        .db
-        .get_extensions(
-            params.filter.as_deref(),
-            provides_filter.as_ref(),
-            params.max_schema_version,
-            1_000,
-        )
-        .await?;
-
-    if let Some(filter) = params.filter.as_deref() {
-        let extension_id = filter.to_lowercase();
-        let mut exact_match = None;
-        extensions.retain(|extension| {
-            if extension.id.as_ref() == extension_id {
-                exact_match = Some(extension.clone());
-                false
-            } else {
-                true
-            }
-        });
-        if exact_match.is_none() {
-            exact_match = app
-                .db
-                .get_extensions_by_ids(&[&extension_id], None)
-                .await?
-                .first()
-                .cloned();
-        }
-
-        if let Some(exact_match) = exact_match {
-            extensions.insert(0, exact_match);
-        }
+async fn get_extensions(RawQuery(query): RawQuery) -> Result<Json<GetExtensionsResponse>> {
+    let upstream_url = match query {
+        Some(query) => format!("{UPSTREAM_EXTENSIONS_URL}?{query}"),
+        None => UPSTREAM_EXTENSIONS_URL.to_string(),
     };
 
-    if let Some(query) = params.filter.as_deref() {
-        let count = extensions.len();
-        tracing::info!(query, count, "extension_search")
+    let response = reqwest::get(&upstream_url).await.map_err(|error| {
+        tracing::error!(
+            ?error,
+            "failed to proxy request to upstream extensions service"
+        );
+        Error::http(
+            StatusCode::BAD_GATEWAY,
+            "upstream extensions service unavailable".into(),
+        )
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let upstream_status =
+            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let body = response.text().await.unwrap_or_default();
+        tracing::error!(
+            status = status.as_u16(),
+            body,
+            "upstream extensions service returned an error"
+        );
+        return Err(Error::http(upstream_status, body));
     }
 
-    Ok(Json(GetExtensionsResponse { data: extensions }))
+    let body: GetExtensionsResponse = response.json().await.map_err(|error| {
+        tracing::error!(
+            ?error,
+            "failed to parse response from upstream extensions service"
+        );
+        Error::http(
+            StatusCode::BAD_GATEWAY,
+            "failed to parse upstream response".into(),
+        )
+    })?;
+
+    Ok(Json(body))
 }
 
 #[derive(Debug, Deserialize)]

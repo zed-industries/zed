@@ -18,9 +18,7 @@ impl AgentTool for EchoTool {
     type Input = EchoToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "echo"
-    }
+    const NAME: &'static str = "echo";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -57,9 +55,7 @@ impl AgentTool for DelayTool {
     type Input = DelayToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "delay"
-    }
+    const NAME: &'static str = "delay";
 
     fn initial_title(
         &self,
@@ -103,9 +99,7 @@ impl AgentTool for ToolRequiringPermission {
     type Input = ToolRequiringPermissionInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "tool_requiring_permission"
-    }
+    const NAME: &'static str = "tool_requiring_permission";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -126,7 +120,7 @@ impl AgentTool for ToolRequiringPermission {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), "", settings);
+        let decision = decide_permission_from_settings(Self::NAME, "", settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -160,9 +154,7 @@ impl AgentTool for InfiniteTool {
     type Input = InfiniteToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "infinite"
-    }
+    const NAME: &'static str = "infinite";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -214,9 +206,7 @@ impl AgentTool for CancellationAwareTool {
     type Input = CancellationAwareToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "cancellation_aware"
-    }
+    const NAME: &'static str = "cancellation_aware";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -271,9 +261,7 @@ impl AgentTool for WordListTool {
     type Input = WordListInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "word_list"
-    }
+    const NAME: &'static str = "word_list";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other

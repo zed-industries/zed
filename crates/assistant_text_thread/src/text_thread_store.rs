@@ -1,6 +1,6 @@
 use crate::{
     SavedTextThread, SavedTextThreadMetadata, TextThread, TextThreadEvent, TextThreadId,
-    TextThreadOperation, TextThreadVersion,
+    TextThreadOperation, TextThreadVersion, context_server_command,
 };
 use anyhow::{Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
@@ -938,11 +938,11 @@ impl TextThreadStore {
                 let slash_command_ids = response
                     .prompts
                     .into_iter()
-                    .filter(assistant_slash_commands::acceptable_prompt)
+                    .filter(context_server_command::acceptable_prompt)
                     .map(|prompt| {
                         log::info!("registering context server command: {:?}", prompt.name);
                         slash_command_working_set.insert(Arc::new(
-                            assistant_slash_commands::ContextServerSlashCommand::new(
+                            context_server_command::ContextServerSlashCommand::new(
                                 context_server_store.clone(),
                                 server.id(),
                                 prompt,
