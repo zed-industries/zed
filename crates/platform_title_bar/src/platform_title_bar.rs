@@ -30,6 +30,7 @@ pub struct PlatformTitleBar {
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
     workspace_sidebar_open: bool,
+    sidebar_has_notifications: bool,
 }
 
 impl PlatformTitleBar {
@@ -44,6 +45,7 @@ impl PlatformTitleBar {
             should_move: false,
             system_window_tabs,
             workspace_sidebar_open: false,
+            sidebar_has_notifications: false,
         }
     }
 
@@ -74,8 +76,22 @@ impl PlatformTitleBar {
         self.workspace_sidebar_open
     }
 
-    pub fn set_workspace_sidebar_open(&mut self, open: bool) {
+    pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.workspace_sidebar_open = open;
+        cx.notify();
+    }
+
+    pub fn sidebar_has_notifications(&self) -> bool {
+        self.sidebar_has_notifications
+    }
+
+    pub fn set_sidebar_has_notifications(
+        &mut self,
+        has_notifications: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_has_notifications = has_notifications;
+        cx.notify();
     }
 
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {

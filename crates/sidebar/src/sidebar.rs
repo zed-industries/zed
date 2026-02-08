@@ -11,7 +11,7 @@ use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use workspace::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum AgentThreadStatus {
+pub enum AgentThreadStatus {
     Running,
     Completed,
 }
@@ -155,6 +155,7 @@ struct WorkspacePickerDelegate {
     matches: Vec<SidebarMatch>,
     selected_index: usize,
     query: String,
+    notified_workspaces: HashSet<usize>,
 }
 
 impl WorkspacePickerDelegate {
@@ -169,6 +170,7 @@ impl WorkspacePickerDelegate {
             matches: Vec::new(),
             selected_index: 0,
             query: String::new(),
+            notified_workspaces: HashSet::new(),
         }
     }
 
@@ -178,6 +180,33 @@ impl WorkspacePickerDelegate {
         active_workspace_index: usize,
         cx: &App,
     ) {
+        let old_statuses: HashMap<usize, AgentThreadStatus> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                SidebarEntry::WorkspaceThread(thread) => thread
+                    .thread_info
+                    .as_ref()
+                    .map(|info| (thread.index, info.status.clone())),
+                _ => None,
+            })
+            .collect();
+
+        for thread in &workspace_threads {
+            if let Some(info) = &thread.thread_info {
+                if info.status == AgentThreadStatus::Completed
+                    && thread.index != active_workspace_index
+                {
+                    if old_statuses.get(&thread.index) == Some(&AgentThreadStatus::Running) {
+                        self.notified_workspaces.insert(thread.index);
+                    }
+                }
+            }
+        }
+
+        if self.active_workspace_index != active_workspace_index {
+            self.notified_workspaces.remove(&active_workspace_index);
+        }
         self.active_workspace_index = active_workspace_index;
         self.workspace_thread_count = workspace_threads.len();
         self.rebuild_entries(workspace_threads, cx);
@@ -532,20 +561,28 @@ impl PickerDelegate for WorkspacePickerDelegate {
         fn render_thread_status_icon(
             workspace_index: usize,
             status: &AgentThreadStatus,
+            has_notification: bool,
         ) -> AnyElement {
             match status {
                 AgentThreadStatus::Running => Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
-                    .color(Color::Accent)
+                    .color(Color::Muted)
                     .with_keyed_rotate_animation(
                         SharedString::from(format!("workspace-{}-spinner", workspace_index)),
                         3,
                     )
                     .into_any_element(),
-                AgentThreadStatus::Completed => Icon::new(IconName::Check)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .into_any_element(),
+                AgentThreadStatus::Completed => {
+                    let color = if has_notification {
+                        Color::Accent
+                    } else {
+                        Color::Muted
+                    };
+                    Icon::new(IconName::Check)
+                        .size(IconSize::XSmall)
+                        .color(color)
+                        .into_any_element()
+                }
             }
         }
 
@@ -632,10 +669,15 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     None
                 };
 
+                let has_notification = self.notified_workspaces.contains(&workspace_index);
                 let (thread_subtitle, status_icon) = match thread_info {
                     Some(info) => (
                         Some(info.title),
-                        Some(render_thread_status_icon(workspace_index, &info.status)),
+                        Some(render_thread_status_icon(
+                            workspace_index,
+                            &info.status,
+                            has_notification,
+                        )),
                     ),
                     None => (None, None),
                 };
@@ -852,11 +894,12 @@ impl Sidebar {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_test_thread_info(&mut self, index: usize, title: SharedString, status: &str) {
-        let status = match status {
-            "running" => AgentThreadStatus::Running,
-            _ => AgentThreadStatus::Completed,
-        };
+    pub fn set_test_thread_info(
+        &mut self,
+        index: usize,
+        title: SharedString,
+        status: AgentThreadStatus,
+    ) {
         self.test_thread_infos
             .insert(index, AgentThreadInfo { title, status });
     }
@@ -984,11 +1027,16 @@ impl Sidebar {
 
             this.persist_thread_titles(&entries, &multi_workspace, cx);
 
+            let had_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
             this.picker.update(cx, |picker, cx| {
                 picker.delegate.set_entries(entries, active_index, cx);
                 let query = picker.query(cx);
                 picker.update_matches(query, window, cx);
             });
+            let has_notifications = !this.picker.read(cx).delegate.notified_workspaces.is_empty();
+            if had_notifications != has_notifications {
+                multi_workspace.update(cx, |_, cx| cx.notify());
+            }
         });
     }
 }
@@ -1001,6 +1049,10 @@ impl WorkspaceSidebar for Sidebar {
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
         self.width = width.unwrap_or(DEFAULT_WIDTH).clamp(MIN_WIDTH, MAX_WIDTH);
         cx.notify();
+    }
+
+    fn has_notifications(&self, cx: &App) -> bool {
+        !self.picker.read(cx).delegate.notified_workspaces.is_empty()
     }
 }
 
@@ -1079,5 +1131,217 @@ impl Render for Sidebar {
                     ),
             )
             .child(self.picker.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use feature_flags::FeatureFlagAppExt as _;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            cx.update_flags(false, vec!["agent-v2".into()]);
+        });
+    }
+
+    fn set_thread_info_and_refresh(
+        sidebar: &Entity<Sidebar>,
+        multi_workspace: &Entity<MultiWorkspace>,
+        index: usize,
+        title: &str,
+        status: AgentThreadStatus,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        sidebar.update_in(cx, |s, _window, _cx| {
+            s.set_test_thread_info(index, SharedString::from(title.to_string()), status.clone());
+        });
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+    }
+
+    fn has_notifications(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) -> bool {
+        sidebar.read_with(cx, |s, cx| s.has_notifications(cx))
+    }
+
+    #[gpui::test]
+    async fn test_notification_on_running_to_completed_transition(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let project = project::Project::test(fs, [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+            let mw_handle = cx.entity();
+            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.register_sidebar(sidebar.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // Create a second workspace and switch to it so workspace 0 is background.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+        cx.run_until_parked();
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(1, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !has_notifications(&sidebar, cx),
+            "should have no notifications initially"
+        );
+
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Running,
+            cx,
+        );
+
+        assert!(
+            !has_notifications(&sidebar, cx),
+            "Running status alone should not create a notification"
+        );
+
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Completed,
+            cx,
+        );
+
+        assert!(
+            has_notifications(&sidebar, cx),
+            "Running → Completed transition should create a notification"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_for_active_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let project = project::Project::test(fs, [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+            let mw_handle = cx.entity();
+            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.register_sidebar(sidebar.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // Workspace 0 is the active workspace — thread completes while
+        // the user is already looking at it.
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Running,
+            cx,
+        );
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Completed,
+            cx,
+        );
+
+        assert!(
+            !has_notifications(&sidebar, cx),
+            "should not notify for the workspace the user is already looking at"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_cleared_on_workspace_activation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        let project = project::Project::test(fs, [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let sidebar = multi_workspace.update_in(cx, |_mw, window, cx| {
+            let mw_handle = cx.entity();
+            cx.new(|cx| Sidebar::new(mw_handle, window, cx))
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.register_sidebar(sidebar.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // Create a second workspace so we can switch away and back.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Switch to workspace 1 so workspace 0 becomes a background workspace.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(1, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Thread on workspace 0 transitions Running → Completed while
+        // the user is looking at workspace 1.
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Running,
+            cx,
+        );
+        set_thread_info_and_refresh(
+            &sidebar,
+            &multi_workspace,
+            0,
+            "Test Thread",
+            AgentThreadStatus::Completed,
+            cx,
+        );
+
+        assert!(
+            has_notifications(&sidebar, cx),
+            "background workspace completion should create a notification"
+        );
+
+        // Switching back to workspace 0 should clear the notification.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !has_notifications(&sidebar, cx),
+            "notification should be cleared when workspace becomes active"
+        );
     }
 }

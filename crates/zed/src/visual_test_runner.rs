@@ -2998,12 +2998,12 @@ fn run_multi_workspace_sidebar_visual_tests(
             sidebar.set_test_thread_info(
                 0,
                 "Refine thread view scrolling behavior".into(),
-                "completed",
+                sidebar::AgentThreadStatus::Completed,
             );
             sidebar.set_test_thread_info(
                 1,
                 "Add line numbers option to FileEditBlock".into(),
-                "running",
+                sidebar::AgentThreadStatus::Running,
             );
         });
     });

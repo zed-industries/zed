@@ -34,12 +34,14 @@ pub enum SidebarEvent {
 pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
+    fn has_notifications(&self, cx: &App) -> bool;
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
     fn focus(&self, window: &mut Window, cx: &mut App);
+    fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
 }
@@ -65,6 +67,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = self.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
+    }
+
+    fn has_notifications(&self, cx: &App) -> bool {
+        self.read(cx).has_notifications(cx)
     }
 
     fn to_any(&self) -> AnyView {
@@ -118,6 +124,12 @@ impl MultiWorkspace {
 
     pub fn sidebar_open(&self) -> bool {
         self.sidebar_open && self.sidebar.is_some()
+    }
+
+    pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
+        self.sidebar
+            .as_ref()
+            .map_or(false, |s| s.has_notifications(cx))
     }
 
     fn multi_workspace_enabled(&self, cx: &App) -> bool {
