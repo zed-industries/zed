@@ -70,8 +70,10 @@ http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 util = { workspace = true, features = ["test-support"] }
