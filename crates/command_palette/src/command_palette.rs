@@ -926,7 +926,7 @@ mod tests {
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
             init(cx);
             cx.bind_keys(KeymapFile::load_panic_on_failure(
                 r#"[

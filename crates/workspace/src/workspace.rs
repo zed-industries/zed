@@ -584,79 +584,14 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
-    let paths = cx.prompt_for_paths(options);
-    cx.spawn(
-        async move |cx| match paths.await.anyhow().and_then(|res| res) {
-            Ok(Some(paths)) => {
-                cx.update(|cx| {
-                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
-                });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                util::log_err(&err);
-                cx.update(|cx| {
-                    if let Some(workspace_window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
-                    {
-                        workspace_window
-                            .update(cx, |workspace, _, cx| {
-                                workspace.show_portal_error(err.to_string(), cx);
-                            })
-                            .ok();
-                    }
-                });
-            }
-        },
-    )
-    .detach();
-}
-
-pub fn init(app_state: Arc<AppState>, cx: &mut App) {
+pub fn init(cx: &mut App) {
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
-        .on_action(|_: &Reload, cx| reload(cx))
-        .on_action({
-            let app_state = Arc::downgrade(&app_state);
-            move |_: &Open, cx: &mut App| {
-                if let Some(app_state) = app_state.upgrade() {
-                    prompt_and_open_paths(
-                        app_state,
-                        PathPromptOptions {
-                            files: true,
-                            directories: true,
-                            multiple: true,
-                            prompt: None,
-                        },
-                        cx,
-                    );
-                }
-            }
-        })
-        .on_action({
-            let app_state = Arc::downgrade(&app_state);
-            move |_: &OpenFiles, cx: &mut App| {
-                let directories = cx.can_select_mixed_files_and_dirs();
-                if let Some(app_state) = app_state.upgrade() {
-                    prompt_and_open_paths(
-                        app_state,
-                        PathPromptOptions {
-                            files: true,
-                            directories,
-                            multiple: true,
-                            prompt: None,
-                        },
-                        cx,
-                    );
-                }
-            }
-        });
+        .on_action(|_: &Reload, cx| reload(cx));
 }
 
 type BuildProjectItemFn =

@@ -891,6 +891,39 @@ fn register_actions(
             })
             .detach()
         })
+        .register_action(|workspace, _: &workspace::OpenFiles, window, cx| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories,
+                    multiple: true,
+                    prompt: None,
+                },
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                if let Some(task) = this
+                    .update_in(cx, |this, window, cx| {
+                        this.open_workspace_for_paths(false, paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            })
+            .detach()
+        })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
                 cx.propagate();
@@ -4529,7 +4562,7 @@ mod tests {
 
             theme::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
             onboarding::init(cx);
             app_state
         })
@@ -5025,7 +5058,7 @@ mod tests {
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-            workspace::init(app_state.clone(), cx);
+            workspace::init(cx);
             release_channel::init(Version::new(0, 0, 0), cx);
             command_palette::init(cx);
             editor::init(cx);
