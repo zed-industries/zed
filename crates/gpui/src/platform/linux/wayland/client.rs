@@ -171,8 +171,10 @@ impl Globals {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct InProgressOutput {
+    global_name: u32,
+    wl_output: wl_output::WlOutput,
     name: Option<String>,
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
@@ -180,10 +182,23 @@ pub struct InProgressOutput {
 }
 
 impl InProgressOutput {
+    fn new(global_name: u32, wl_output: wl_output::WlOutput) -> Self {
+        Self {
+            global_name,
+            wl_output,
+            name: None,
+            scale: None,
+            position: None,
+            size: None,
+        }
+    }
+
     fn complete(&self) -> Option<Output> {
         if let Some((position, size)) = self.position.zip(self.size) {
             let scale = self.scale.unwrap_or(1);
             Some(Output {
+                global_name: self.global_name,
+                wl_output: self.wl_output.clone(),
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
@@ -194,8 +209,10 @@ impl InProgressOutput {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Output {
+    pub global_name: u32,
+    pub wl_output: wl_output::WlOutput,
     pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
@@ -481,7 +498,10 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
-                        in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        in_progress_outputs.insert(
+                            output.id(),
+                            InProgressOutput::new(global.name, output),
+                        );
                     }
                     _ => {}
                 }
@@ -718,6 +738,23 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         let parent = state.keyboard_focused_window.clone();
+        let target_output = params.display_id.and_then(|display_id| {
+            state
+                .outputs
+                .iter()
+                .find_map(|(object_id, output)| {
+                    (object_id.protocol_id() == display_id.0)
+                        .then(|| output.wl_output.clone())
+                })
+                .or_else(|| {
+                    state.in_progress_outputs.iter().find_map(
+                        |(object_id, in_progress)| {
+                            (object_id.protocol_id() == display_id.0)
+                                .then(|| in_progress.wl_output.clone())
+                        },
+                    )
+                })
+        });
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
@@ -727,6 +764,7 @@ impl LinuxClient for WaylandClient {
             params,
             state.common.appearance,
             parent,
+            target_output,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
@@ -948,12 +986,30 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 
                     state
                         .in_progress_outputs
-                        .insert(output.id(), InProgressOutput::default());
+                        .insert(output.id(), InProgressOutput::new(name, output));
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
-                // TODO: handle global removal
+            wl_registry::Event::GlobalRemove { name } => {
+                let to_remove = state
+                    .outputs
+                    .iter()
+                    .find_map(|(object_id, output)| {
+                        (output.global_name == name).then(|| object_id.clone())
+                    })
+                    .or_else(|| {
+                        state.in_progress_outputs.iter().find_map(
+                            |(object_id, in_progress)| {
+                                (in_progress.global_name == name)
+                                    .then(|| object_id.clone())
+                            },
+                        )
+                    });
+
+                if let Some(object_id) = to_remove {
+                    state.in_progress_outputs.remove(&object_id);
+                    state.outputs.remove(&object_id);
+                }
             }
             _ => {}
         }
