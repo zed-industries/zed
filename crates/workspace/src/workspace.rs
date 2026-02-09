@@ -12019,10 +12019,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        let project_item = cx.update(|_window, cx| TestProjectItem::new(1, "test.txt", cx));
-
         // Add item to pane A with project path
-        let item_a = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx)
         });
@@ -12033,7 +12033,9 @@ mod tests {
         });
 
         // Add item with SAME project path to pane B, and pin it
-        let item_b = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
         pane_b.update_in(cx, |pane, window, cx| {
             pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
             pane.set_pinned_count(1);
@@ -12071,7 +12073,9 @@ mod tests {
         // close_item_in_all_panes can determine what to close across all panes
         // (it reads the active item from the active pane, and split_pane
         // creates an empty pane).
-        let item_c = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
+        let item_c = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
         pane_c.update_in(cx, |pane, window, cx| {
             pane.add_item(Box::new(item_c.clone()), true, true, None, window, cx);
         });
