@@ -58,8 +58,8 @@ impl Settings for AudioSettings {
             auto_speaker_volume: audio.auto_speaker_volume.unwrap(),
             denoise: audio.denoise.unwrap(),
             legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
-            output_audio_device: audio.output_audio_device.as_ref().map(|d| d.0.clone()),
-            input_audio_device: audio.input_audio_device.as_ref().map(|d| d.0.clone()),
+            output_audio_device: audio.output_audio_device.clone().and_then(|x| x.0),
+            input_audio_device: audio.input_audio_device.clone().and_then(|x| x.0),
         }
     }
 }

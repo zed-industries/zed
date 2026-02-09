@@ -25,15 +25,13 @@ use ui::{Button, ButtonStyle, Label, prelude::*};
 use util::ResultExt;
 use workspace::client_side_decorations;
 
-use super::audio_input_output_setup::{
-    AudioDeviceKind, SYSTEM_DEFAULT, render_audio_device_dropdown,
-};
+use super::audio_input_output_setup::{AudioDeviceKind, render_audio_device_dropdown};
 use crate::{SettingsUiFile, update_settings_file};
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    input_device_id: String,
-    output_device_id: String,
+    input_device_id: Option<String>,
+    output_device_id: Option<String>,
     focus_handle: FocusHandle,
     _stop_playback: Option<Box<dyn Any + Send>>,
 }
@@ -47,14 +45,8 @@ impl AudioTestWindow {
         };
 
         let audio_settings = AudioSettings::get_global(cx);
-        let input_device_id = audio_settings
-            .input_audio_device
-            .clone()
-            .unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
-        let output_device_id = audio_settings
-            .output_audio_device
-            .clone()
-            .unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
+        let input_device_id = audio_settings.input_audio_device.clone();
+        let output_device_id = audio_settings.output_audio_device.clone();
 
         Self {
             title_bar,
@@ -79,22 +71,11 @@ impl AudioTestWindow {
 
         cx.notify();
     }
-
-    fn set_input_device(&mut self, device_id: Option<String>, cx: &mut Context<Self>) {
-        dbg!(("Setting input device=", device_id.as_ref()));
-        self.input_device_id = device_id.unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
-        cx.notify();
-    }
-
-    fn set_output_device(&mut self, device_id: Option<String>, cx: &mut Context<Self>) {
-        self.output_device_id = device_id.unwrap_or_else(|| SYSTEM_DEFAULT.to_string());
-        cx.notify();
-    }
 }
 
 fn start_test_playback(
-    input_device_id: String,
-    output_device_id: String,
+    input_device_id: Option<String>,
+    output_device_id: Option<String>,
 ) -> anyhow::Result<Box<dyn Any + Send>> {
     let stop_signal = Arc::new(AtomicBool::new(false));
     let stop_signal_for_mic = stop_signal.clone();
@@ -103,7 +84,7 @@ fn start_test_playback(
     thread::Builder::new()
         .name("AudioTestPlayback".to_string())
         .spawn(move || {
-            let output_device_id = DeviceId::from_str(&output_device_id).ok();
+            let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
             let output = if let Some(ref id) = output_device_id {
                 if let Some(device) = default_host().device_by_id(id) {
                     DeviceSinkBuilder::from_device(device).and_then(|builder| builder.open_stream())
@@ -119,7 +100,7 @@ fn start_test_playback(
             };
             log::info!("Audio test: output device opened successfully");
 
-            let input_device_id = DeviceId::from_str(&input_device_id).ok();
+            let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
             let microphone = match open_test_microphone(input_device_id, stop_signal_for_mic) {
                 Ok(mic) => mic,
                 Err(e) => {
@@ -213,18 +194,20 @@ impl Render for AudioTestWindow {
                 self.input_device_id.clone(),
                 move |device_id, window, cx| {
                     weak_entity
-                        .update(cx, |this, cx| this.set_input_device(device_id.clone(), cx))
+                        .update(cx, |this, cx| {
+                            this.input_device_id = device_id.clone();
+                            cx.notify();
+                        })
                         .log_err();
-                    let value: Option<Option<AudioInputDeviceName>> =
-                        device_id.map(|id| Some(AudioInputDeviceName(id)));
+                    let value: Option<AudioInputDeviceName> =
+                        device_id.map(|id| AudioInputDeviceName(Some(id)));
                     update_settings_file(
                         SettingsUiFile::User,
                         Some("audio.experimental.input_audio_device"),
                         window,
                         cx,
                         move |settings, _cx| {
-                            settings.audio.get_or_insert_default().input_audio_device =
-                                value.clone().flatten();
+                            settings.audio.get_or_insert_default().input_audio_device = value;
                         },
                     )
                     .log_err();
@@ -240,18 +223,20 @@ impl Render for AudioTestWindow {
             self.output_device_id.clone(),
             move |device_id, window, cx| {
                 weak_entity
-                    .update(cx, |this, cx| this.set_output_device(device_id.clone(), cx))
+                    .update(cx, |this, cx| {
+                        this.output_device_id = device_id.clone();
+                        cx.notify();
+                    })
                     .log_err();
-                let value: Option<Option<AudioOutputDeviceName>> =
-                    device_id.map(|id| Some(AudioOutputDeviceName(id)));
+                let value: Option<AudioOutputDeviceName> =
+                    device_id.map(|id| AudioOutputDeviceName(Some(id)));
                 update_settings_file(
                     SettingsUiFile::User,
                     Some("audio.experimental.output_audio_device"),
                     window,
                     cx,
                     move |settings, _cx| {
-                        settings.audio.get_or_insert_default().output_audio_device =
-                            value.clone().flatten();
+                        settings.audio.get_or_insert_default().output_audio_device = value;
                     },
                 )
                 .log_err();
