@@ -4320,14 +4320,7 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
     model.end_last_completion_stream();
 
     let result = summary_task.await;
-    assert_eq!(
-        result.unwrap(),
-        indoc! {"
-            ## Assistant
-
-            Some summary...
-        "}
-    );
+    assert_eq!(result.unwrap(), "Some summary...\n");
 }
 
 #[gpui::test]
@@ -4336,7 +4329,7 @@ async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-async fn test_subagent_tool_includes_interrupt_notice_when_timeout_is_exceeded(
+async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded(
     cx: &mut TestAppContext,
 ) {
     assert!(false, "todo");

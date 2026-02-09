@@ -170,7 +170,7 @@ pub enum UserMessageContent {
 
 impl UserMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## User\n\n");
+        let mut markdown = String::new();
 
         for content in &self.content {
             match content {
@@ -422,7 +422,7 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> 
 
 impl AgentMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## Assistant\n\n");
+        let mut markdown = String::new();
 
         for content in &self.content {
             match content {
@@ -2567,6 +2567,11 @@ impl Thread {
         for (ix, message) in self.messages.iter().enumerate() {
             if ix > 0 {
                 markdown.push('\n');
+            }
+            match message {
+                Message::User(_) => markdown.push_str("## User\n\n"),
+                Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                Message::Resume => {}
             }
             markdown.push_str(&message.to_markdown());
         }
