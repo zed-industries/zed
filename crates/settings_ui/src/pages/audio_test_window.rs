@@ -78,47 +78,51 @@ fn start_test_playback(
     output_device_id: Option<String>,
 ) -> anyhow::Result<Box<dyn Any + Send>> {
     let stop_signal = Arc::new(AtomicBool::new(false));
-    let stop_signal_for_mic = stop_signal.clone();
-    let stop_signal_for_defer = stop_signal.clone();
 
     thread::Builder::new()
         .name("AudioTestPlayback".to_string())
-        .spawn(move || {
-            let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
-            let output = if let Some(ref id) = output_device_id {
-                if let Some(device) = default_host().device_by_id(id) {
-                    DeviceSinkBuilder::from_device(device).and_then(|builder| builder.open_stream())
+        .spawn({
+            let stop_signal = stop_signal.clone();
+            move || {
+                let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
+                let output = if let Some(ref id) = output_device_id {
+                    if let Some(device) = default_host().device_by_id(id) {
+                        DeviceSinkBuilder::from_device(device)
+                            .and_then(|builder| builder.open_stream())
+                    } else {
+                        DeviceSinkBuilder::open_default_sink()
+                    }
                 } else {
                     DeviceSinkBuilder::open_default_sink()
-                }
-            } else {
-                DeviceSinkBuilder::open_default_sink()
-            };
-            let Ok(output) = output else {
-                log::error!("Could not open output device for audio test");
-                return;
-            };
-            log::info!("Audio test: output device opened successfully");
-
-            let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
-            let microphone = match open_test_microphone(input_device_id, stop_signal_for_mic) {
-                Ok(mic) => mic,
-                Err(e) => {
-                    log::error!("Could not open microphone for audio test: {e}");
+                };
+                let Ok(mut output) = output else {
+                    log::error!("Could not open output device for audio test");
                     return;
+                };
+                output.log_on_drop(true);
+
+                log::info!("Audio test: output device opened successfully");
+
+                let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
+                let microphone = match open_test_microphone(input_device_id, stop_signal.clone()) {
+                    Ok(mic) => mic,
+                    Err(e) => {
+                        log::error!("Could not open microphone for audio test: {e}");
+                        return;
+                    }
+                };
+
+                output.mixer().add(microphone);
+
+                // Keep thread (and output device) alive until stop signal
+                while !stop_signal.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(100));
                 }
-            };
-
-            output.mixer().add(microphone);
-
-            // Keep thread (and output device) alive until stop signal
-            while !stop_signal.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(100));
             }
         })?;
 
     Ok(Box::new(util::defer(move || {
-        stop_signal_for_defer.store(true, Ordering::Relaxed);
+        stop_signal.store(true, Ordering::Relaxed);
     })))
 }
 

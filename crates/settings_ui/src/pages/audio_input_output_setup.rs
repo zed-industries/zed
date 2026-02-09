@@ -145,7 +145,6 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
     let (_, current_value): (_, Option<&T>) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let current_device_id = current_value.map(|x| x.as_ref().clone()).flatten();
-    dbg!(&current_device_id);
 
     let dropdown_id: SharedString = match kind {
         AudioDeviceKind::Input => "input-audio-device-dropdown".into(),
