@@ -999,7 +999,7 @@ impl Render for Sidebar {
                     .w_full()
                     .mt_px()
                     .pb_px()
-                    .pr_2()
+                    .pr_1()
                     .when(cfg!(target_os = "macos"), |this| {
                         this.pl(px(TRAFFIC_LIGHT_PADDING))
                     })
