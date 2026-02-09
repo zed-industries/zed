@@ -5353,6 +5353,7 @@ dependencies = [
  "zed_actions",
  "zeta_prompt",
  "zlog",
+ "zstd",
 ]
 
 [[package]]
