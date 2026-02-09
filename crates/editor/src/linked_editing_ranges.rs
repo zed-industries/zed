@@ -9,73 +9,6 @@ use util::ResultExt;
 
 use crate::Editor;
 
-/// Accumulates edits destined for linked editing ranges (e.g. matching HTML/JSX tags)
-/// across one or more buffers. Edits are stored as anchor ranges so they track buffer
-/// changes and are only resolved to concrete points at apply time.
-pub(crate) struct LinkedEdits(HashMap<Entity<Buffer>, Vec<(Range<Anchor>, Arc<str>)>>);
-
-impl LinkedEdits {
-    pub(crate) fn new() -> Self {
-        Self(HashMap::default())
-    }
-
-    /// Queries the editor's linked editing ranges for the given anchor range and, if any
-    /// are found, records them paired with `text` for later application.
-    pub(crate) fn push(
-        &mut self,
-        editor: &Editor,
-        anchor_range: Range<Anchor>,
-        text: Arc<str>,
-        cx: &gpui::App,
-    ) {
-        if let Some(editing_ranges) = editor.linked_editing_ranges_for(anchor_range, cx) {
-            for (buffer, ranges) in editing_ranges {
-                self.0
-                    .entry(buffer)
-                    .or_default()
-                    .extend(ranges.into_iter().map(|range| (range, text.clone())));
-            }
-        }
-    }
-
-    /// Resolves all stored anchor ranges to points using the current buffer snapshot,
-    /// sorts them, and applies the edits.
-    pub(crate) fn apply(self, cx: &mut Context<Editor>) {
-        self.apply_inner(false, cx);
-    }
-
-    /// Like [`apply`](Self::apply), but empty ranges (where start == end) are expanded
-    /// one character to the left before applying. This is used by `backspace` to delete
-    /// a character in each linked range even when the selection was a cursor.
-    pub(crate) fn apply_with_left_expansion(self, cx: &mut Context<Editor>) {
-        self.apply_inner(true, cx);
-    }
-
-    fn apply_inner(self, expand_empty_ranges_left: bool, cx: &mut Context<Editor>) {
-        for (buffer, ranges_edits) in self.0 {
-            buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.snapshot();
-                let edits = ranges_edits
-                    .into_iter()
-                    .map(|(range, text)| {
-                        let mut start = range.start.to_point(&snapshot);
-                        let end = range.end.to_point(&snapshot);
-
-                        if expand_empty_ranges_left && start == end {
-                            let offset = range.start.to_offset(&snapshot).saturating_sub(1);
-                            start = snapshot.clip_point(offset.to_point(&snapshot), Bias::Left);
-                        }
-
-                        (start..end, text)
-                    })
-                    .sorted_by_key(|(range, _)| range.start);
-
-                buffer.edit(edits, None, cx);
-            });
-        }
-    }
-}
-
 #[derive(Clone, Default)]
 pub(super) struct LinkedEditingRanges(
     /// Ranges are non-overlapping and sorted by .0 (thus, [x + 1].start > [x].end must hold)
@@ -357,7 +290,9 @@ mod tests {
                 .unwrap();
         });
 
-        cx.simulate_keystroke("backspace");
+        cx.update_editor(|editor, window, cx| {
+            editor.backspace(&Default::default(), window, cx);
+        });
         cx.assert_editor_state("<diˇ></di>");
     }
 
