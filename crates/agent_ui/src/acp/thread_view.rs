@@ -1004,7 +1004,7 @@ impl AcpServerView {
                     list_state.splice(range.clone(), 0);
                 }
             }
-            AcpThreadEvent::SpawnedSubagent(session_id) => self.load_subagent_session(
+            AcpThreadEvent::SubagentSpawned(session_id) => self.load_subagent_session(
                 session_id.clone(),
                 thread.read(cx).session_id().clone(),
                 window,

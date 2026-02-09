@@ -147,13 +147,13 @@ impl AgentTool for SubagentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<SubagentToolOutput>> {
-        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
-            return Task::ready(Err(e));
-        }
-
         let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
             return Task::ready(Err(anyhow!("Parent thread no longer exists")));
         };
+
+        if let Err(e) = self.validate_allowed_tools(&input.allowed_tools, cx) {
+            return Task::ready(Err(e));
+        }
 
         let subagent = match self.environment.create_subagent(
             parent_thread_entity,
@@ -168,12 +168,12 @@ impl AgentTool for SubagentTool {
         };
 
         let subagent_session_id = subagent.id();
-        let mut meta = acp::Meta::new();
-        meta.insert(
+
+        event_stream.subagent_spawned(subagent_session_id.clone());
+        let meta = acp::Meta::from_iter([(
             SUBAGENT_SESSION_ID_META_KEY.into(),
             subagent_session_id.to_string().into(),
-        );
-
+        )]);
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
         cx.spawn(async move |cx| {

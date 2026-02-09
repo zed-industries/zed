@@ -969,7 +969,7 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Retry(RetryStatus),
-    SpawnedSubagent(acp::SessionId),
+    SubagentSpawned(acp::SessionId),
     Stopped,
     Error,
     LoadError(LoadError),
@@ -1468,6 +1468,10 @@ impl AcpThread {
         Task::ready(Ok(()))
     }
 
+    pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
         self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
@@ -1520,7 +1524,6 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                let has_subagent_session = call.subagent_session_id.is_some();
                 call.update_fields(
                     update.fields,
                     update.meta,
@@ -1529,10 +1532,6 @@ impl AcpThread {
                     &self.terminals,
                     cx,
                 )?;
-                if !has_subagent_session && let Some(session_id) = call.subagent_session_id.clone()
-                {
-                    cx.emit(AcpThreadEvent::SpawnedSubagent(session_id))
-                }
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }

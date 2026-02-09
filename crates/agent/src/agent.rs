@@ -1069,6 +1069,11 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
+                            ThreadEvent::SubagentSpawned(session_id) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.subagent_spawned(session_id, cx);
+                                })?;
+                            }
                             ThreadEvent::Retry(status) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
@@ -1692,16 +1697,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
         let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
 
-        // let initial_prompt_rx = subagent_thread.update(cx, |thread, cx| {
-        //     thread.send(UserMessageId::new(), [initial_prompt], cx)
-        // })?;
-
-        // let task = NativeAgentConnection::handle_thread_events(
-        //     initial_prompt_rx,
-        //     acp_thread.downgrade(),
-        //     cx,
-        // );
-
         let wait_for_prompt_to_complete = cx.background_spawn(async move {
                 if let Some(timeout) = timeout_ms {
                     futures::select! {
@@ -1717,28 +1712,15 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         let mut user_stop_rx: watch::Receiver<bool> =
             acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
 
-        //todo: Handle user cancellation from event stream and investigate if we need this
-        let wait_for_user_stop = async move {
-            loop {
-                if *user_stop_rx.borrow() {
-                    return;
-                }
-                if user_stop_rx.changed().await.is_err() {
-                    std::future::pending::<()>().await;
-                }
-            }
-        };
-
         let user_cancelled = cx
             .background_spawn(async move {
-                futures::select! {
-                    // _ = event_stream.cancelled_by_user().fuse() => {
-                    //     let _ = subagent_thread.update(cx, |thread, cx| {
-                    //         thread.cancel(cx).detach();
-                    //     });
-                    //     Err(anyhow!("Subagent cancelled by user"))
-                    // }
-                    _ = wait_for_user_stop.fuse() => {}
+                loop {
+                    if *user_stop_rx.borrow() {
+                        return;
+                    }
+                    if user_stop_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
                 }
             })
             .shared();

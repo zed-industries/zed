@@ -616,6 +616,7 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -3080,6 +3081,13 @@ impl ToolCallEventStream {
                 }
                 .into(),
             )))
+            .ok();
+    }
+
+    pub fn subagent_spawned(&self, id: acp::SessionId) {
+        self.stream
+            .0
+            .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
 
