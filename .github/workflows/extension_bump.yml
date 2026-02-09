@@ -115,7 +115,7 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
         assignees: ${{ github.actor }}
-    timeout-minutes: 1
+    timeout-minutes: 3
   create_version_label:
     needs:
     - check_version_changed
