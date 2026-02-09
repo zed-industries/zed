@@ -4113,6 +4113,35 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
+            let ime_is_composing = event
+                .downcast_ref::<KeyDownEvent>()
+                .and_then(|e| {
+                    let ks = &e.keystroke;
+                    ks.key_char.as_ref().filter(|ch| {
+                        *ch != &ks.key
+                            && !ks.modifiers.control
+                            && !ks.modifiers.platform
+                            && !ks.modifiers.function
+                    })
+                })
+                .and_then(|_| self.platform_window.take_input_handler())
+                .map_or(false, |mut handler| {
+                    let accepts = handler.accepts_text_input(self, cx);
+                    self.platform_window.set_input_handler(handler);
+                    accepts
+                });
+
+            if ime_is_composing {
+                self.finish_dispatch_key_event(
+                    event,
+                    dispatch_path,
+                    match_result.context_stack,
+                    cx,
+                );
+                self.pending_input_changed(cx);
+                return;
+            }
+
             currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
