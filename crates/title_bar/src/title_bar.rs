@@ -84,8 +84,10 @@ pub fn init(cx: &mut App) {
                 .titlebar_item()
                 .and_then(|item| item.downcast::<TitleBar>().ok())
             {
-                titlebar.update(cx, |titlebar, cx| {
-                    titlebar.show_project_dropdown(window, cx);
+                window.defer(cx, move |window, cx| {
+                    titlebar.update(cx, |titlebar, cx| {
+                        titlebar.show_project_dropdown(window, cx);
+                    })
                 });
             }
         });
