@@ -1,7 +1,7 @@
 use gpui::{Corner, List};
 use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
-use ui::SplitButton;
+use ui::{ButtonLike, SplitButton, SplitButtonStyle};
 
 use super::*;
 
@@ -224,6 +224,7 @@ pub struct AcpThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
@@ -390,6 +391,7 @@ impl AcpThreadView {
             in_flight_prompt: None,
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
+            thinking_effort_menu_handle: PopoverMenuHandle::default(),
             project,
             recent_history_entries,
             hovered_recent_history_item: None,
@@ -2747,18 +2749,21 @@ impl AcpThreadView {
             return Some(thinking_toggle.into_any_element());
         }
 
+        if !model.supported_effort_levels().is_empty() && !thinking {
+            return Some(thinking_toggle.into_any_element());
+        }
+
+        let left_btn = thinking_toggle;
+        let right_btn = self.render_effort_selector(
+            model.supported_effort_levels(),
+            thread.thinking_effort().cloned(),
+            cx,
+        );
+
         Some(
-            SplitButton::new(
-                thinking_toggle,
-                self.render_effort_selector(
-                    model.supported_effort_levels(),
-                    thread.thinking_effort().cloned(),
-                    cx,
-                )
+            SplitButton::new(left_btn, right_btn.into_any_element())
+                .style(SplitButtonStyle::Transparent)
                 .into_any_element(),
-            )
-            .style(ui::SplitButtonStyle::Outlined)
-            .into_any_element(),
         )
     }
 
@@ -2782,28 +2787,29 @@ impl AcpThreadView {
                 .cloned()
         });
 
+        let label = selected
+            .clone()
+            .or(default_effort_level)
+            .map_or("Select Effort".into(), |effort| effort.name);
+
+        let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
+            (Color::Accent, IconName::ChevronUp)
+        } else {
+            (Color::Muted, IconName::ChevronDown)
+        };
+
         PopoverMenu::new("effort-selector")
-            .trigger(
-                ui::ButtonLike::new_rounded_right("effort-selector-trigger")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
-                    .child(
-                        Label::new(
-                            selected
-                                .clone()
-                                .or(default_effort_level)
-                                .map_or("Select Effort".into(), |effort| effort.name),
-                        )
-                        .size(LabelSize::Small),
-                    )
-                    .child(
-                        div()
-                            .px_1()
-                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
-                    ),
+            .trigger_with_tooltip(
+                ButtonLike::new_rounded_right("effort-selector-trigger")
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                    .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+                Tooltip::text("Set Thinking Effort"),
             )
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                    menu = menu.header("Set Thinking Effort");
+
                     for effort_level in supported_effort_levels.clone() {
                         let is_selected = selected
                             .as_ref()
@@ -2846,7 +2852,12 @@ impl AcpThreadView {
                     menu
                 }))
             })
-            .anchor(Corner::BottomRight)
+            .with_handle(self.thinking_effort_menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
+            .anchor(Corner::BottomLeft)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -2945,7 +2956,7 @@ impl AcpThreadView {
                     }
                 },
             )
-            .anchor(gpui::Corner::BottomLeft)
+            .anchor(Corner::BottomLeft)
             .with_handle(self.add_context_menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),
