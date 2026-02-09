@@ -570,7 +570,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 Some(
                     ThreadItem::new(
                         ("workspace-item", thread_entry.index),
-                        thread_subtitle.clone().unwrap_or("New Thread".into()),
+                        thread_subtitle.unwrap_or("New Thread".into()),
                     )
                     .running(running)
                     .generation_done(has_notification)
