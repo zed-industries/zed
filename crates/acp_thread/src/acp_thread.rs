@@ -1203,6 +1203,7 @@ impl AcpThread {
         self.user_stopped
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.user_stop_tx.send(true).ok();
+        self.send_task.take();
     }
 
     pub fn was_stopped_by_user(&self) -> bool {
