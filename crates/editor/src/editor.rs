@@ -16130,8 +16130,7 @@ impl Editor {
                                 );
                                 let line_end = Point::new(
                                     start_point.row,
-                                    snapshot
-                                        .line_len(MultiBufferRow(start_point.row)),
+                                    snapshot.line_len(MultiBufferRow(start_point.row)),
                                 );
                                 let bytes_after: Vec<u8> = snapshot
                                     .bytes_in_range(search_from..line_end)
@@ -16141,15 +16140,12 @@ impl Editor {
                                 bytes_after
                                     .windows(suffix_needle.len())
                                     .position(|w| w == suffix_needle)
-                                    .map(|pos| {
-                                        (start_point.row, search_from.column + pos as u32)
-                                    })
+                                    .map(|pos| (start_point.row, search_from.column + pos as u32))
                             } else {
                                 let end_line_start = Point::new(end_point.row, 0);
                                 let end_line_end = Point::new(
                                     end_point.row,
-                                    snapshot
-                                        .line_len(MultiBufferRow(end_point.row)),
+                                    snapshot.line_len(MultiBufferRow(end_point.row)),
                                 );
                                 let end_line_bytes: Vec<u8> = snapshot
                                     .bytes_in_range(end_line_start..end_line_end)
@@ -16164,19 +16160,15 @@ impl Editor {
 
                             if let Some((suffix_row, suffix_col)) = suffix_found {
                                 is_commented = true;
-                                prefix_range = Point::new(
-                                    start_point.row,
-                                    prefix_col as u32,
-                                )..Point::new(
-                                    start_point.row,
-                                    prefix_col as u32
-                                        + prefix_needle.len() as u32,
-                                );
+                                prefix_range = Point::new(start_point.row, prefix_col as u32)
+                                    ..Point::new(
+                                        start_point.row,
+                                        prefix_col as u32 + prefix_needle.len() as u32,
+                                    );
                                 suffix_range = Point::new(suffix_row, suffix_col)
                                     ..Point::new(
                                         suffix_row,
-                                        suffix_col
-                                            + suffix_needle.len() as u32,
+                                        suffix_col + suffix_needle.len() as u32,
                                     );
                             }
                         }
