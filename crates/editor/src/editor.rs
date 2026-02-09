@@ -47,6 +47,8 @@ mod code_completion_tests;
 #[cfg(test)]
 mod edit_prediction_tests;
 #[cfg(test)]
+mod editor_block_comment_tests;
+#[cfg(test)]
 mod editor_tests;
 mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
@@ -16001,6 +16003,270 @@ impl Editor {
             )?,
         }
         Ok(())
+    }
+
+    pub fn toggle_block_comments(
+        &mut self,
+        _: &ToggleBlockComments,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+        self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+        self.transact(window, cx, |this, _window, cx| {
+            let mut selections = this
+                .selections
+                .all::<MultiBufferPoint>(&this.display_snapshot(cx));
+            let mut edits = Vec::new();
+            let snapshot = this.buffer.read(cx).read(cx);
+            let empty_str: Arc<str> = Arc::default();
+            let mut markers_inserted = Vec::new();
+
+            for selection in &mut selections {
+                let start_point = selection.start;
+                let end_point = selection.end;
+
+                let language = if let Some(language) =
+                    snapshot.language_scope_at(Point::new(start_point.row, start_point.column))
+                {
+                    language
+                } else {
+                    continue;
+                };
+
+                if let Some(BlockCommentConfig {
+                    start: full_comment_prefix,
+                    end: full_comment_suffix,
+                    ..
+                }) = language.block_comment()
+                {
+                    // Check if the selection is wrapped in a block comment
+                    let mut is_commented = false;
+                    let mut prefix_range = start_point..start_point;
+                    let mut suffix_range = end_point..end_point;
+
+                    // Helper to match bytes at a specific point
+                    let match_at = |point: Point, needle: &str| -> bool {
+                        snapshot
+                            .bytes_in_range(point..snapshot.max_point())
+                            .flatten()
+                            .copied()
+                            .take(needle.len())
+                            .eq(needle.bytes())
+                    };
+
+                    // Helper to match bytes ending at a specific point
+                    let match_ending_at = |point: Point, needle: &str| -> bool {
+                        if point.column < needle.len() as u32 {
+                            return false;
+                        }
+                        let start_search =
+                            Point::new(point.row, point.column - needle.len() as u32);
+                        snapshot
+                            .bytes_in_range(start_search..point)
+                            .flatten()
+                            .copied()
+                            .eq(needle.bytes())
+                    };
+
+                    // Check exact match around selection
+                    if match_at(start_point, full_comment_prefix)
+                        && match_ending_at(end_point, full_comment_suffix)
+                    {
+                        is_commented = true;
+                        prefix_range = start_point
+                            ..Point::new(
+                                start_point.row,
+                                start_point.column + full_comment_prefix.len() as u32,
+                            );
+                        suffix_range = Point::new(
+                            end_point.row,
+                            end_point.column - full_comment_suffix.len() as u32,
+                        )..end_point;
+                    }
+
+                    if !is_commented {
+                        // Check if we are selecting the content of a comment, e.g. /* |content| */
+                        if match_ending_at(start_point, full_comment_prefix)
+                            && match_at(end_point, full_comment_suffix)
+                        {
+                            is_commented = true;
+                            prefix_range = Point::new(
+                                start_point.row,
+                                start_point.column - full_comment_prefix.len() as u32,
+                            )..start_point;
+                            suffix_range = end_point
+                                ..Point::new(
+                                    end_point.row,
+                                    end_point.column + full_comment_suffix.len() as u32,
+                                );
+                        }
+                    }
+
+                    // Fallback: search for comment markers around the selection
+                    if !is_commented {
+                        let prefix_trimmed = full_comment_prefix.trim_end();
+                        let suffix_trimmed = full_comment_suffix.trim_start();
+                        let prefix_needle = prefix_trimmed.as_bytes();
+                        let suffix_needle = suffix_trimmed.as_bytes();
+
+                        let line_start = Point::new(start_point.row, 0);
+                        let bytes_before: Vec<u8> = snapshot
+                            .bytes_in_range(line_start..start_point)
+                            .flatten()
+                            .copied()
+                            .collect();
+
+                        if let Some(prefix_col) = bytes_before
+                            .windows(prefix_needle.len())
+                            .rposition(|w| w == prefix_needle)
+                        {
+                            let suffix_found = if start_point.row == end_point.row {
+                                let search_from = Point::new(
+                                    start_point.row,
+                                    prefix_col as u32 + prefix_needle.len() as u32,
+                                );
+                                let line_end = Point::new(
+                                    start_point.row,
+                                    snapshot
+                                        .line_len(MultiBufferRow(start_point.row)),
+                                );
+                                let bytes_after: Vec<u8> = snapshot
+                                    .bytes_in_range(search_from..line_end)
+                                    .flatten()
+                                    .copied()
+                                    .collect();
+                                bytes_after
+                                    .windows(suffix_needle.len())
+                                    .position(|w| w == suffix_needle)
+                                    .map(|pos| {
+                                        (start_point.row, search_from.column + pos as u32)
+                                    })
+                            } else {
+                                let end_line_start = Point::new(end_point.row, 0);
+                                let end_line_end = Point::new(
+                                    end_point.row,
+                                    snapshot
+                                        .line_len(MultiBufferRow(end_point.row)),
+                                );
+                                let end_line_bytes: Vec<u8> = snapshot
+                                    .bytes_in_range(end_line_start..end_line_end)
+                                    .flatten()
+                                    .copied()
+                                    .collect();
+                                end_line_bytes
+                                    .windows(suffix_needle.len())
+                                    .rposition(|w| w == suffix_needle)
+                                    .map(|pos| (end_point.row, pos as u32))
+                            };
+
+                            if let Some((suffix_row, suffix_col)) = suffix_found {
+                                is_commented = true;
+                                prefix_range = Point::new(
+                                    start_point.row,
+                                    prefix_col as u32,
+                                )..Point::new(
+                                    start_point.row,
+                                    prefix_col as u32
+                                        + prefix_needle.len() as u32,
+                                );
+                                suffix_range = Point::new(suffix_row, suffix_col)
+                                    ..Point::new(
+                                        suffix_row,
+                                        suffix_col
+                                            + suffix_needle.len() as u32,
+                                    );
+                            }
+                        }
+                    }
+
+                    if is_commented {
+                        // Check for space after prefix
+                        if snapshot
+                            .bytes_in_range(prefix_range.end..snapshot.max_point())
+                            .flatten()
+                            .next()
+                            == Some(&b' ')
+                        {
+                            prefix_range.end.column += 1;
+                        }
+
+                        // Check for space before suffix
+                        if suffix_range.start.column > 0 {
+                            let space_check =
+                                Point::new(suffix_range.start.row, suffix_range.start.column - 1);
+                            if snapshot
+                                .bytes_in_range(space_check..suffix_range.start)
+                                .flatten()
+                                .next()
+                                == Some(&b' ')
+                            {
+                                suffix_range.start.column -= 1;
+                            }
+                        }
+
+                        edits.push((prefix_range, empty_str.clone()));
+                        edits.push((suffix_range, empty_str.clone()));
+                    } else {
+                        let prefix = if full_comment_prefix.ends_with(' ') {
+                            full_comment_prefix.clone()
+                        } else {
+                            format!("{} ", full_comment_prefix).into()
+                        };
+                        let suffix = if full_comment_suffix.starts_with(' ') {
+                            full_comment_suffix.clone()
+                        } else {
+                            format!(" {}", full_comment_suffix).into()
+                        };
+
+                        edits.push((start_point..start_point, prefix.clone()));
+                        edits.push((end_point..end_point, suffix.clone()));
+                        markers_inserted.push((
+                            selection.id,
+                            prefix.len(),
+                            suffix.len(),
+                            selection.is_empty(),
+                        ));
+                    }
+                }
+            }
+
+            drop(snapshot);
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+
+            // Adjust selections to include markers
+            let mut selections = this
+                .selections
+                .all::<MultiBufferPoint>(&this.display_snapshot(cx));
+            for selection in &mut selections {
+                if let Some((_, prefix_len, suffix_len, was_empty)) = markers_inserted
+                    .iter()
+                    .find(|(id, _, _, _)| *id == selection.id)
+                {
+                    if *was_empty {
+                        // For empty selection, cursor is likely at the end of inserted text.
+                        // We want to select the whole inserted comment.
+                        // Start needs to move back by prefix + suffix.
+                        // End stays at the end.
+                        selection.start.column = selection
+                            .start
+                            .column
+                            .saturating_sub((*prefix_len + *suffix_len) as u32);
+                    } else {
+                        // For non-empty selection, selection wraps the content.
+                        // Start is after prefix. End is before suffix.
+                        selection.start.column =
+                            selection.start.column.saturating_sub(*prefix_len as u32);
+                        selection.end.column += *suffix_len as u32;
+                    }
+                }
+            }
+            this.change_selections(Default::default(), _window, cx, |s| s.select(selections));
+        });
     }
 
     pub fn toggle_comments(

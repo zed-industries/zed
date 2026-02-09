@@ -150,6 +150,12 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
+/// Toggles block comment markers for the selected text.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleBlockComments;
+
 /// Moves the cursor up by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
