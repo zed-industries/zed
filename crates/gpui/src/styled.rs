@@ -384,6 +384,20 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the aspect ratio of the element.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_ratio(mut self, ratio: f32) -> Self {
+        self.style().aspect_ratio = Some(ratio);
+        self
+    }
+
+    /// Sets the aspect ratio of the element to 1/1 – equal width and height.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_square(mut self) -> Self {
+        self.style().aspect_ratio = Some(1.0);
+        self
+    }
+
     /// Sets the background color of the element.
     fn bg<F>(mut self, fill: F) -> Self
     where
