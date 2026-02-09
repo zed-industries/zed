@@ -34,7 +34,7 @@
 //! interpreting and displaying various types of Jupyter output.
 
 use editor::{Editor, MultiBuffer};
-use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
+use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, Subscription, WeakEntity};
 use language::Buffer;
 use menu;
 use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
@@ -59,6 +59,10 @@ use plain::TerminalOutput;
 
 pub(crate) mod user_error;
 use user_error::ErrorView;
+
+mod widget;
+use widget::WidgetStore;
+
 use workspace::Workspace;
 
 use crate::repl_settings::ReplSettings;
@@ -136,6 +140,11 @@ pub enum Output {
         content: Entity<JsonView>,
         display_id: Option<String>,
     },
+    Widget {
+        store: Entity<WidgetStore>,
+        model_id: String,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
@@ -173,7 +182,8 @@ impl Output {
             Output::Image { .. }
             | Output::Markdown { .. }
             | Output::Table { .. }
-            | Output::Json { .. } => None,
+            | Output::Json { .. }
+            | Output::Widget { .. } => None,
             Output::Message(_) => None,
             Output::ClearOutputWaitMarker => None,
         }
@@ -262,6 +272,10 @@ impl Output {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
+            Self::Widget { store, model_id, .. } => {
+                let store_ref = store.read(cx);
+                Some(store_ref.render_widget(model_id, window, cx))
+            }
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         }
@@ -370,6 +384,7 @@ impl Output {
                         .into_any_element(),
                 ),
                 Self::Message(_) => None,
+                Self::Widget { .. } => None,
                 Self::Table { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
@@ -387,6 +402,7 @@ impl Output {
             Output::Table { display_id, .. } => display_id.clone(),
             Output::Markdown { display_id, .. } => display_id.clone(),
             Output::Json { display_id, .. } => display_id.clone(),
+            Output::Widget { display_id, .. } => display_id.clone(),
             Output::ClearOutputWaitMarker => None,
         }
     }
@@ -484,6 +500,8 @@ pub struct ExecutionView {
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
     pending_input: Option<PendingInput>,
+    widget_store: Entity<WidgetStore>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
@@ -494,13 +512,20 @@ impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
         workspace: WeakEntity<Workspace>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let widget_store = cx.new(|_| WidgetStore::new());
+        let observation = cx.observe(&widget_store, |_this, _store, cx| {
+            cx.notify();
+        });
+
         Self {
             workspace,
             outputs: Default::default(),
             status,
             pending_input: None,
+            widget_store,
+            _subscriptions: vec![observation],
         }
     }
 
@@ -561,18 +586,67 @@ impl ExecutionView {
         cx: &mut Context<Self>,
     ) {
         let output: Output = match message {
-            JupyterMessageContent::ExecuteResult(result) => Output::new(
-                &result.data,
-                result.transient.as_ref().and_then(|t| t.display_id.clone()),
-                window,
-                cx,
-            ),
-            JupyterMessageContent::DisplayData(result) => Output::new(
-                &result.data,
-                result.transient.as_ref().and_then(|t| t.display_id.clone()),
-                window,
-                cx,
-            ),
+            JupyterMessageContent::CommOpen(comm_open) => {
+                self.widget_store.update(cx, |store, _cx| {
+                    store.create_model(&comm_open.comm_id.0, &comm_open.data);
+                });
+                cx.notify();
+                return;
+            }
+            JupyterMessageContent::CommMsg(comm_msg) => {
+                self.widget_store.update(cx, |store, _cx| {
+                    store.update_model(&comm_msg.comm_id.0, &comm_msg.data);
+                });
+                cx.notify();
+                return;
+            }
+            JupyterMessageContent::CommClose(_) => {
+                return;
+            }
+            JupyterMessageContent::ExecuteResult(result) => {
+                if let Some(model_id) = widget::extract_widget_model_id(&result.data) {
+                    Output::Widget {
+                        store: self.widget_store.clone(),
+                        model_id,
+                        display_id: result
+                            .transient
+                            .as_ref()
+                            .and_then(|t| t.display_id.clone()),
+                    }
+                } else {
+                    Output::new(
+                        &result.data,
+                        result
+                            .transient
+                            .as_ref()
+                            .and_then(|t| t.display_id.clone()),
+                        window,
+                        cx,
+                    )
+                }
+            }
+            JupyterMessageContent::DisplayData(result) => {
+                if let Some(model_id) = widget::extract_widget_model_id(&result.data) {
+                    Output::Widget {
+                        store: self.widget_store.clone(),
+                        model_id,
+                        display_id: result
+                            .transient
+                            .as_ref()
+                            .and_then(|t| t.display_id.clone()),
+                    }
+                } else {
+                    Output::new(
+                        &result.data,
+                        result
+                            .transient
+                            .as_ref()
+                            .and_then(|t| t.display_id.clone()),
+                        window,
+                        cx,
+                    )
+                }
+            }
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
                 if let Some(new_terminal) = self.apply_terminal_text(&result.text, window, cx) {
