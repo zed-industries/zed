@@ -17,7 +17,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use text::{Point, ToPoint};
 use util::{path, rel_path::rel_path, test::sample_text};
-use workspace::{CollaboratorId, MultiWorkspace, SplitDirection, Workspace, item::ItemHandle as _};
+use workspace::{CollaboratorId, SplitDirection, Workspace, item::ItemHandle as _};
 
 use super::TestClient;
 
@@ -1555,9 +1555,9 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let mut cx_b2 = VisualTestContext::from_window(window_b_project_a, cx_b);
 
     let workspace_b_project_a = window_b_project_a
-        .downcast::<MultiWorkspace>()
+        .downcast::<Workspace>()
         .unwrap()
-        .read_with(cx_b, |mw, _| mw.workspace().clone())
+        .root(cx_b)
         .unwrap();
 
     // assert that b is following a in project a in w.rs
@@ -1657,9 +1657,9 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
         .unwrap();
     let cx_a2 = &mut VisualTestContext::from_window(window_a_project_b, cx_a);
     let workspace_a_project_b = window_a_project_b
-        .downcast::<MultiWorkspace>()
+        .downcast::<Workspace>()
         .unwrap()
-        .read_with(cx_a, |mw, _| mw.workspace().clone())
+        .root(cx_a)
         .unwrap();
 
     executor.run_until_parked();
@@ -2144,7 +2144,7 @@ pub(crate) async fn join_channel(
     client: &TestClient,
     cx: &mut TestAppContext,
 ) -> anyhow::Result<()> {
-    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, None, cx))
+    cx.update(|cx| workspace::join_channel(channel_id, client.app_state.clone(), None, cx))
         .await
 }
 

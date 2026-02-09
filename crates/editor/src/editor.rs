@@ -3105,24 +3105,6 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
-    /// Detaches a task and shows an error notification in the workspace if available,
-    /// otherwise just logs the error.
-    pub fn detach_and_notify_err<R, E>(
-        &self,
-        task: Task<Result<R, E>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) where
-        E: std::fmt::Debug + std::fmt::Display + 'static,
-        R: 'static,
-    {
-        if let Some(workspace) = self.workspace() {
-            task.detach_and_notify_err(workspace.downgrade(), window, cx);
-        } else {
-            task.detach_and_log_err(cx);
-        }
-    }
-
     /// Returns the workspace serialization ID if this editor should be serialized.
     fn workspace_serialization_id(&self, _cx: &App) -> Option<WorkspaceId> {
         self.workspace
@@ -11479,8 +11461,8 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        let task = self.reload(project, window, cx);
-        self.detach_and_notify_err(task, window, cx);
+        self.reload(project, window, cx)
+            .detach_and_notify_err(window, cx);
     }
 
     pub fn restore_file(
