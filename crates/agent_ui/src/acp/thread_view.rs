@@ -968,6 +968,7 @@ impl AcpServerView {
         cx: &mut Context<Self>,
     ) {
         let thread_id = thread.read(cx).session_id().clone();
+        let is_subagent = thread.read(cx).parent_session_id().is_some();
         match event {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
@@ -1026,6 +1027,10 @@ impl AcpServerView {
                         active.thread_retry_status.take();
                     });
                 }
+                if is_subagent {
+                    return;
+                }
+
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
                     if used_tools {
@@ -1075,10 +1080,12 @@ impl AcpServerView {
                         active.thread_retry_status.take();
                     });
                 }
-                let model_or_agent_name = self.current_model_name(cx);
-                let notification_message =
-                    format!("{} refused to respond to this request", model_or_agent_name);
-                self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
+                if !is_subagent {
+                    let model_or_agent_name = self.current_model_name(cx);
+                    let notification_message =
+                        format!("{} refused to respond to this request", model_or_agent_name);
+                    self.notify_with_sound(&notification_message, IconName::Warning, window, cx);
+                }
             }
             AcpThreadEvent::Error => {
                 if let Some(active) = self.thread_view(&thread_id) {
@@ -1086,12 +1093,14 @@ impl AcpServerView {
                         active.thread_retry_status.take();
                     });
                 }
-                self.notify_with_sound(
-                    "Agent stopped due to an error",
-                    IconName::Warning,
-                    window,
-                    cx,
-                );
+                if !is_subagent {
+                    self.notify_with_sound(
+                        "Agent stopped due to an error",
+                        IconName::Warning,
+                        window,
+                        cx,
+                    );
+                }
             }
             AcpThreadEvent::LoadError(error) => {
                 match &self.server_state {
