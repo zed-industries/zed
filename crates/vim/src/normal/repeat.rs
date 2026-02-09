@@ -112,7 +112,7 @@ impl Replayer {
         let this = self.clone();
         window.defer(cx, move |window, cx| {
             this.next(window, cx);
-            let Some(workspace) = Workspace::for_window(window, cx) else {
+            let Some(Some(workspace)) = window.root::<Workspace>() else {
                 return;
             };
             let Some(editor) = workspace
@@ -165,7 +165,7 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                let Some(workspace) = Workspace::for_window(window, cx) else {
+                let Some(Some(workspace)) = window.root::<Workspace>() else {
                     return;
                 };
                 let Some(editor) = workspace

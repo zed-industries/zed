@@ -6731,11 +6731,8 @@ impl Workspace {
         )
     }
 
-    pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
-        window
-            .root::<MultiWorkspace>()
-            .flatten()
-            .map(|multi_workspace| multi_workspace.read(cx).workspace().clone())
+    pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
+        window.root().flatten()
     }
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
