@@ -7046,7 +7046,9 @@ impl Render for AcpThreadView {
             .key_context("AcpThread")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                this.cancel_generation(cx);
+                if this.parent_id.is_none() {
+                    this.cancel_generation(cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
                 if let Some(parent_session_id) = this.parent_id.clone() {
