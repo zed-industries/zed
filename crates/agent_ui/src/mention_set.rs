@@ -38,6 +38,7 @@ use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 
+use crate::link_navigation::open_workspace_mention;
 use crate::ui::MentionCrease;
 
 pub type MentionTask = Shared<Task<Result<Mention, String>>>;
@@ -167,7 +168,7 @@ impl MentionSet {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
-    pub fn mention_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+    pub(crate) fn mention_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
         self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
     }
 
@@ -905,6 +906,7 @@ fn render_fold_icon_button(
                 .icon(icon_path.clone())
                 .label(label.clone())
                 .is_toggled(is_in_text_selection)
+                .on_click(open_mention)
                 .into_any_element()
         }
     })
@@ -1090,6 +1092,7 @@ impl Render for MentionCreaseState {
             .is_loading(self.loading.is_some())
             .label(self.label.clone())
             .icon(self.icon.clone())
+            .on_click(open_mention)
             .when_some(self.image.clone(), |this, image_task| {
                 this.image_preview(move |_, cx| {
                     let image = image_task.peek().cloned().transpose().ok().flatten();
@@ -1110,6 +1113,12 @@ impl Render for MentionCreaseState {
                     .into()
                 })
             })
+    }
+}
+
+fn open_mention(mention: &MentionUri, window: &mut Window, cx: &mut App) {
+    if let Some(workspace) = window.root::<Workspace>().flatten() {
+        open_workspace_mention(mention, &workspace.downgrade(), window, cx);
     }
 }
 

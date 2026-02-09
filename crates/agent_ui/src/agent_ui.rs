@@ -12,6 +12,7 @@ mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
+mod link_navigation;
 mod mention_set;
 mod profile_selector;
 mod slash_command;

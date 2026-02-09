@@ -7,9 +7,6 @@ use gpui::{
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
-use workspace::Workspace;
-
-use crate::acp::open_workspace_mention;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
@@ -21,6 +18,7 @@ pub struct MentionCrease {
     is_loading: bool,
     tooltip: Option<SharedString>,
     image_preview: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_click: Option<Box<dyn Fn(&MentionUri, &mut Window, &mut App) + 'static>>,
 }
 
 impl MentionCrease {
@@ -34,6 +32,7 @@ impl MentionCrease {
             is_loading: false,
             tooltip: None,
             image_preview: None,
+            on_click: None,
         }
     }
 
@@ -64,6 +63,14 @@ impl MentionCrease {
         self.image_preview = Some(Box::new(builder));
         self
     }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&MentionUri, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
 }
 
 impl RenderOnce for MentionCrease {
@@ -83,15 +90,19 @@ impl RenderOnce for MentionCrease {
             MentionUri::File { .. } => Some("Open File".into()),
             MentionUri::Directory { .. } => Some("Reveal in Project Panel".into()),
             MentionUri::Symbol { .. } => Some("Show Symbol location".into()),
-            MentionUri::Selection { .. } => Some("Show Selection location".into()),
+            MentionUri::Selection {
+                abs_path: Some(_), ..
+            } => Some("Show Selection location".into()),
+            MentionUri::Selection { abs_path: None, .. } => None,
             MentionUri::Thread { .. } | MentionUri::TextThread { .. } => Some("Open Thread".into()),
             MentionUri::Rule { .. } => Some("Open Rule".into()),
             MentionUri::Fetch { .. } => Some("Open Link".into()),
-            MentionUri::PastedImage => Some("Open Image".into()),
-            MentionUri::TerminalSelection { .. } => Some("Show Terminal Selection".into()),
+            MentionUri::PastedImage => None,
+            MentionUri::TerminalSelection { .. } => None,
             MentionUri::Diagnostics { .. } => None,
         });
         let image_preview = self.image_preview;
+        let on_click = self.on_click;
         let button = ButtonLike::new(self.id.clone())
             .style(ButtonStyle::Outlined)
             .size(ButtonSize::Compact)
@@ -129,13 +140,13 @@ impl RenderOnce for MentionCrease {
                 image_preview.is_some(),
                 |b| b.hoverable_tooltip(image_preview.expect("checked preview presence")),
                 |b| b.when_some(tooltip, |b, t| b.tooltip(Tooltip::text(t))),
-            )
-            .on_click(move |_event, window, cx| {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
-                    open_workspace_mention(&mention, &workspace.downgrade(), window, cx);
-                }
-            });
+            );
 
-        button
+        button.when_some(on_click, move |button, on_click| {
+            let mention = mention.clone();
+            button.on_click(move |_event, window, cx| {
+                on_click(&mention, window, cx);
+            })
+        })
     }
 }

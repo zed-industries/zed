@@ -4,6 +4,7 @@ use settings::update_settings_file;
 use ui::SplitButton;
 
 use super::*;
+use crate::link_navigation::open_workspace_link;
 
 #[derive(Default)]
 struct ThreadFeedbackState {

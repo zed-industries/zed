@@ -1602,15 +1602,16 @@ fn extract_message_creases(
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Vec<MessageCrease> {
-    let creases = mention_set.read(cx).creases();
     let snapshot = editor.snapshot(window, cx);
+    let mention_set = mention_set.read(cx);
+    let mention_crease_ids = mention_set.creases();
     snapshot
         .crease_snapshot
         .creases()
-        .filter(|(id, _)| creases.contains(id))
+        .filter(|(id, _)| mention_crease_ids.contains(id))
         .filter_map(|(id, crease)| {
             let metadata = crease.metadata()?.clone();
-            let mention = mention_set.read(cx).mention_for_crease(&id)?;
+            let mention = mention_set.mention_for_crease(&id)?;
             Some(MessageCrease {
                 range: crease.range().to_offset(snapshot.buffer()),
                 label: metadata.label,

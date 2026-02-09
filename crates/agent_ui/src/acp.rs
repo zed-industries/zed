@@ -11,5 +11,4 @@ pub use mode_selector::ModeSelector;
 pub use model_selector::AcpModelSelector;
 pub use model_selector_popover::AcpModelSelectorPopover;
 pub use thread_history::*;
-pub(crate) use thread_view::open_workspace_mention;
-pub use thread_view::{AcpServerView, AcpThreadView};
+pub use thread_view::AcpServerView;
