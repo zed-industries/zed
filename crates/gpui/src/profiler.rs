@@ -221,12 +221,14 @@ impl ThreadTimings {
     }
 
     /// Set the end time on the last task timing.
+    #[cfg(target_os = "macos")]
     pub fn end_last_task(&mut self) {
         if let Some(last_timing) = self.timings.back_mut() {
             last_timing.end = Some(Instant::now());
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     pub fn copy_timings(&self) -> Vec<TaskTiming> {
         self.timings.iter().cloned().collect()
     }
