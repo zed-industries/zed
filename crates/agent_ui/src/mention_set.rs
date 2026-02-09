@@ -297,9 +297,8 @@ impl MentionSet {
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
 
         // Notify the user if we failed to load the mentioned context
-        let workspace = workspace.downgrade();
-        cx.spawn(async move |this, mut cx| {
-            let result = task.await.notify_workspace_async_err(workspace, &mut cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await.notify_async_err(cx);
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
@@ -645,7 +644,6 @@ pub(crate) async fn insert_images_as_context(
     images: Vec<gpui::Image>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
-    workspace: WeakEntity<Workspace>,
     cx: &mut gpui::AsyncWindowContext,
 ) {
     if images.is_empty() {
@@ -661,17 +659,12 @@ pub(crate) async fn insert_images_as_context(
                 let (excerpt_id, _, buffer_snapshot) =
                     snapshot.buffer_snapshot().as_singleton().unwrap();
 
-                let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
+                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
                     .anchor_in_excerpt(*excerpt_id, text_anchor);
-                editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        format!("{replacement_text} "),
-                    )],
-                    cx,
-                );
+                editor.insert(&format!("{replacement_text} "), window, cx);
                 (*excerpt_id, text_anchor, multibuffer_anchor)
             })
             .ok()
@@ -725,11 +718,7 @@ pub(crate) async fn insert_images_as_context(
             mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
         });
 
-        if task
-            .await
-            .notify_workspace_async_err(workspace.clone(), cx)
-            .is_none()
-        {
+        if task.await.notify_async_err(cx).is_none() {
             editor.update(cx, |editor, cx| {
                 editor.edit([(start_anchor..end_anchor, "")], cx);
             });
@@ -743,12 +732,11 @@ pub(crate) async fn insert_images_as_context(
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
-    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
-    Some(window.spawn(cx, async move |mut cx| {
+    Some(window.spawn(cx, async move |cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
             .into_entries()
@@ -795,7 +783,7 @@ pub(crate) fn paste_images_as_context(
         })
         .ok();
 
-        insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        insert_images_as_context(images, editor, mention_set, cx).await;
     }))
 }
 

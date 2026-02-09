@@ -39,7 +39,7 @@ jobs:
       matrix:
         repo: ${{ fromJson(needs.fetch_extension_repos.outputs.repos) }}
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 10
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -133,11 +133,11 @@ jobs:
       uses: peter-evans/create-pull-request@v7
       with:
         path: extension
-        title: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
           based on the commit zed-industries/zed@${{ github.sha }}
-        commit-message: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        commit-message: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-workflows
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>

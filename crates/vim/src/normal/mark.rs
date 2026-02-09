@@ -81,7 +81,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace(window, cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -133,7 +133,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace(window, cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
@@ -272,7 +272,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = self.workspace(window, cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
         if name == "`" {
@@ -324,7 +324,7 @@ impl Vim {
             return Some(Mark::Local(anchors));
         }
         VimGlobals::update_global(cx, |globals, cx| {
-            let workspace_id = self.workspace(window, cx)?.entity_id();
+            let workspace_id = self.workspace(window)?.entity_id();
             globals
                 .marks
                 .get_mut(&workspace_id)?
@@ -339,7 +339,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = self.workspace(window, cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
         if name == "`" || name == "'" {

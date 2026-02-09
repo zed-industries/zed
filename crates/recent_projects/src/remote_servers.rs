@@ -6,8 +6,7 @@ use crate::{
     ssh_config::parse_ssh_config_hosts,
 };
 use dev_container::{
-    DevContainerConfig, DevContainerContext, find_devcontainer_configs,
-    start_dev_container_with_config,
+    DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
 };
 use editor::Editor;
 
@@ -52,7 +51,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, MultiWorkspace, OpenLog, OpenOptions, Toast, Workspace,
+    ModalView, OpenLog, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -479,11 +478,10 @@ impl ProjectPicker {
                         .log_err()?;
                     let window = cx
                         .open_window(options, |window, cx| {
-                            let workspace = cx.new(|cx| {
+                            cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                            });
-                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                            })
                         })
                         .log_err()?;
 
@@ -810,18 +808,11 @@ impl RemoteServerProjects {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let configs = workspace
-            .read_with(cx, |workspace, cx| find_devcontainer_configs(workspace, cx))
-            .unwrap_or_default();
-
-        let initial_mode = if configs.len() > 1 {
-            DevContainerCreationProgress::SelectingConfig
-        } else {
-            DevContainerCreationProgress::Creating
-        };
-
-        let mut this = Self::new_inner(
-            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(initial_mode, cx)),
+        let this = Self::new_inner(
+            Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
+                DevContainerCreationProgress::Creating,
+                cx,
+            )),
             false,
             fs,
             window,
@@ -829,15 +820,35 @@ impl RemoteServerProjects {
             cx,
         );
 
-        if configs.len() > 1 {
-            let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
-            this.dev_container_picker =
-                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
-        } else {
-            let config = configs.into_iter().next();
-            this.open_dev_container(config, window, cx);
-            this.view_in_progress_dev_container(window, cx);
-        }
+        // Spawn a task to scan for configs and then start the container
+        cx.spawn_in(window, async move |entity, cx| {
+            let configs = find_devcontainer_configs(cx);
+
+            entity
+                .update_in(cx, |this, window, cx| {
+                    if configs.len() > 1 {
+                        // Multiple configs found - show selection UI
+                        let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
+                        this.dev_container_picker = Some(
+                            cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)),
+                        );
+
+                        let state = CreateRemoteDevContainer::new(
+                            DevContainerCreationProgress::SelectingConfig,
+                            cx,
+                        );
+                        this.mode = Mode::CreateRemoteDevContainer(state);
+                        cx.notify();
+                    } else {
+                        // Single or no config - proceed with opening
+                        let config = configs.into_iter().next();
+                        this.open_dev_container(config, window, cx);
+                        this.view_in_progress_dev_container(window, cx);
+                    }
+                })
+                .log_err();
+        })
+        .detach();
 
         this
     }
@@ -1540,9 +1551,7 @@ impl RemoteServerProjects {
 
                 let replace_window = match (create_new_window, secondary_confirm) {
                     (true, false) | (false, true) => None,
-                    (true, true) | (false, false) => {
-                        window.window_handle().downcast::<MultiWorkspace>()
-                    }
+                    (true, true) | (false, false) => window.window_handle().downcast::<Workspace>(),
                 };
 
                 cx.spawn_in(window, async move |_, cx| {
@@ -1794,25 +1803,25 @@ impl RemoteServerProjects {
     }
 
     fn init_dev_container_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let configs = self
-            .workspace
-            .read_with(cx, |workspace, cx| find_devcontainer_configs(workspace, cx))
-            .unwrap_or_default();
+        cx.spawn_in(window, async move |entity, cx| {
+            let configs = find_devcontainer_configs(cx);
 
-        if configs.len() > 1 {
-            let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
-            self.dev_container_picker =
-                Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
+            entity
+                .update_in(cx, |this, window, cx| {
+                    let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
+                    this.dev_container_picker =
+                        Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
 
-            let state =
-                CreateRemoteDevContainer::new(DevContainerCreationProgress::SelectingConfig, cx);
-            self.mode = Mode::CreateRemoteDevContainer(state);
-            cx.notify();
-        } else {
-            let config = configs.into_iter().next();
-            self.open_dev_container(config, window, cx);
-            self.view_in_progress_dev_container(window, cx);
-        }
+                    let state = CreateRemoteDevContainer::new(
+                        DevContainerCreationProgress::SelectingConfig,
+                        cx,
+                    );
+                    this.mode = Mode::CreateRemoteDevContainer(state);
+                    cx.notify();
+                })
+                .log_err();
+        })
+        .detach();
     }
 
     fn open_dev_container(
@@ -1821,25 +1830,21 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((app_state, context)) = self
+        let Some(app_state) = self
             .workspace
-            .read_with(cx, |workspace, cx| {
-                let app_state = workspace.app_state().clone();
-                let context = DevContainerContext::from_workspace(workspace, cx)?;
-                Some((app_state, context))
-            })
+            .read_with(cx, |workspace, _| workspace.app_state().clone())
             .log_err()
-            .flatten()
         else {
-            log::error!("No active project directory for Dev Container");
             return;
         };
 
-        let replace_window = window.window_handle().downcast::<MultiWorkspace>();
+        let replace_window = window.window_handle().downcast::<Workspace>();
 
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
-                match start_dev_container_with_config(context, config).await {
+                match start_dev_container_with_config(cx, app_state.node_runtime.clone(), config)
+                    .await
+                {
                     Ok((c, s)) => (Connection::DevContainer(c), s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);

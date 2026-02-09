@@ -1,6 +1,5 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
-use fs::Fs;
 use gpui::{AppContext, Entity, Global, MenuItem};
 use smallvec::SmallVec;
 use ui::{App, Context};
@@ -10,10 +9,10 @@ use crate::{
     NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId, path_list::PathList,
 };
 
-pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
+pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
-    HistoryManager::init(manager, fs, cx);
+    HistoryManager::init(manager, cx);
 }
 
 pub struct HistoryManager {
@@ -39,10 +38,10 @@ impl HistoryManager {
         }
     }
 
-    fn init(this: Entity<HistoryManager>, fs: Arc<dyn Fs>, cx: &App) {
+    fn init(this: Entity<HistoryManager>, cx: &App) {
         cx.spawn(async move |cx| {
             let recent_folders = WORKSPACE_DB
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_workspaces_on_disk()
                 .await
                 .unwrap_or_default()
                 .into_iter()

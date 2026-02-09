@@ -1,6 +1,5 @@
 use crate::{
-    DecoratedIcon, DiffStat, HighlightedLabel, IconDecoration, IconDecorationKind, SpinnerLabel,
-    prelude::*,
+    Chip, DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
 };
 use gpui::{ClickEvent, SharedString};
 
@@ -9,7 +8,6 @@ pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
     title: SharedString,
-    highlight_positions: Vec<usize>,
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
@@ -26,7 +24,6 @@ impl ThreadItem {
             id: id.into(),
             icon: IconName::ZedAgent,
             title: title.into(),
-            highlight_positions: Vec::new(),
             timestamp: "".into(),
             running: false,
             generation_done: false,
@@ -78,11 +75,6 @@ impl ThreadItem {
         self
     }
 
-    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
-        self.highlight_positions = positions;
-        self
-    }
-
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -120,17 +112,7 @@ impl RenderOnce for ThreadItem {
             agent_icon.into_any_element()
         };
 
-        // let has_no_changes = self.added.is_none() && self.removed.is_none();
-
-        let title = self.title;
-        let highlight_positions = self.highlight_positions;
-        let title_label = if highlight_positions.is_empty() {
-            Label::new(title).truncate().into_any_element()
-        } else {
-            HighlightedLabel::new(title, highlight_positions)
-                .truncate()
-                .into_any_element()
-        };
+        let has_no_changes = self.added.is_none() && self.removed.is_none();
 
         v_flex()
             .id(self.id.clone())
@@ -145,7 +127,7 @@ impl RenderOnce for ThreadItem {
                     .w_full()
                     .gap_1p5()
                     .child(icon)
-                    .child(title_label)
+                    .child(Label::new(self.title).truncate())
                     .when(self.running, |this| {
                         this.child(icon_container().child(SpinnerLabel::new().color(Color::Accent)))
                     }),
@@ -155,32 +137,26 @@ impl RenderOnce for ThreadItem {
                     .gap_1p5()
                     .child(icon_container()) // Icon Spacing
                     .when_some(self.worktree, |this, name| {
-                        this.child(Label::new(name).size(LabelSize::Small).color(Color::Muted))
+                        this.child(Chip::new(name).label_size(LabelSize::XSmall))
                     })
+                    .child(
+                        Label::new(self.timestamp)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
                     .child(
                         Label::new("•")
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .alpha(0.5),
                     )
-                    .child(
-                        Label::new(self.timestamp)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    // .child(
-                    //     Label::new("•")
-                    //         .size(LabelSize::Small)
-                    //         .color(Color::Muted)
-                    //         .alpha(0.5),
-                    // )
-                    // .when(has_no_changes, |this| {
-                    //     this.child(
-                    //         Label::new("No Changes")
-                    //             .size(LabelSize::Small)
-                    //             .color(Color::Muted),
-                    //     )
-                    // })
+                    .when(has_no_changes, |this| {
+                        this.child(
+                            Label::new("No Changes")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    })
                     .when(self.added.is_some() || self.removed.is_some(), |this| {
                         this.child(DiffStat::new(
                             self.id,

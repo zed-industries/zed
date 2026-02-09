@@ -57,9 +57,7 @@ use ui::{
 };
 use util::defer;
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
-};
+use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -75,10 +73,11 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
-    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
-    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
+    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -1987,30 +1986,9 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_is_visible(&self, window: &Window, cx: &App) -> bool {
-        if window.is_window_active() {
-            let workspace_is_foreground = window
-                .root::<MultiWorkspace>()
-                .flatten()
-                .and_then(|mw| {
-                    let mw = mw.read(cx);
-                    self.workspace.upgrade().map(|ws| mw.workspace() == &ws)
-                })
-                .unwrap_or(true);
-
-            if workspace_is_foreground {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    return AgentPanel::is_visible(&workspace, cx);
-                }
-            }
-        }
-
-        false
-    }
-
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done && !self.agent_is_visible(window, cx) {
+        if settings.play_sound_when_agent_done && !window.is_window_active() {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2028,7 +2006,14 @@ impl AcpServerView {
 
         let settings = AgentSettings::get_global(cx);
 
-        let should_notify = !self.agent_is_visible(window, cx);
+        let window_is_inactive = !window.is_window_active();
+        let panel_is_hidden = self
+            .workspace
+            .upgrade()
+            .map(|workspace| AgentPanel::is_hidden(&workspace, cx))
+            .unwrap_or(true);
+
+        let should_notify = window_is_inactive || panel_is_hidden;
 
         if !should_notify {
             return;
@@ -2091,22 +2076,19 @@ impl AcpServerView {
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
-                            let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
-                            else {
-                                log::error!("root view should be a MultiWorkspace");
-                                return;
-                            };
+                            let handle = window.window_handle();
                             cx.activate(true);
 
                             let workspace_handle = this.workspace.clone();
 
+                            // If there are multiple Zed windows, activate the correct one.
                             cx.defer(move |cx| {
                                 handle
-                                    .update(cx, |multi_workspace, window, cx| {
+                                    .update(cx, |_view, window, _cx| {
                                         window.activate_window();
+
                                         if let Some(workspace) = workspace_handle.upgrade() {
-                                            multi_workspace.activate(workspace.clone(), cx);
-                                            workspace.update(cx, |workspace, cx| {
+                                            workspace.update(_cx, |workspace, cx| {
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
                                             });
                                         }
@@ -2131,12 +2113,12 @@ impl AcpServerView {
                 .push({
                     let pop_up_weak = pop_up.downgrade();
 
-                    cx.observe_window_activation(window, move |this, window, cx| {
-                        if this.agent_is_visible(window, cx)
+                    cx.observe_window_activation(window, move |_, window, cx| {
+                        if window.is_window_active()
                             && let Some(pop_up) = pop_up_weak.upgrade()
                         {
-                            pop_up.update(cx, |notification, cx| {
-                                notification.dismiss(cx);
+                            pop_up.update(cx, |_, cx| {
+                                cx.emit(AgentNotificationEvent::Dismissed);
                             });
                         }
                     })
@@ -2387,7 +2369,6 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
-    use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, TestAppContext, VisualTestContext};
@@ -2397,7 +2378,7 @@ pub(crate) mod tests {
     use std::any::Any;
     use std::path::Path;
     use std::rc::Rc;
-    use workspace::{Item, MultiWorkspace};
+    use workspace::Item;
 
     use super::*;
 
@@ -2698,138 +2679,6 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_notification_when_workspace_is_background_in_multi_workspace(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        // Enable multi-workspace feature flag and init globals needed by AgentPanel
-        let fs = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-            <dyn Fs>::set_global(fs.clone(), cx);
-        });
-
-        let project1 = Project::test(fs.clone(), [], cx).await;
-
-        // Create a MultiWorkspace window with one workspace
-        let multi_workspace_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
-
-        // Get workspace 1 (the initial workspace)
-        let workspace1 = multi_workspace_handle
-            .read_with(cx, |mw, _cx| mw.workspace().clone())
-            .unwrap();
-
-        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
-
-        workspace1.update_in(cx, |workspace, window, cx| {
-            let text_thread_store =
-                cx.new(|cx| TextThreadStore::fake(workspace.project().clone(), cx));
-            let panel =
-                cx.new(|cx| crate::AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.add_panel(panel, window, cx);
-
-            // Open the dock and activate the agent panel so it's visible
-            workspace.focus_panel::<crate::AgentPanel>(window, cx);
-        });
-
-        cx.run_until_parked();
-
-        cx.read(|cx| {
-            assert!(
-                crate::AgentPanel::is_visible(&workspace1, cx),
-                "AgentPanel should be visible in workspace1's dock"
-            );
-        });
-
-        // Set up thread view in workspace 1
-        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
-
-        let agent = StubAgentServer::default_response();
-        let thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                AcpServerView::new(
-                    Rc::new(agent),
-                    None,
-                    None,
-                    workspace1.downgrade(),
-                    project1.clone(),
-                    Some(thread_store),
-                    None,
-                    history,
-                    window,
-                    cx,
-                )
-            })
-        });
-        cx.run_until_parked();
-
-        let message_editor = message_editor(&thread_view, cx);
-        message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Hello", window, cx);
-        });
-
-        // Create a second workspace and switch to it.
-        // This makes workspace1 the "background" workspace.
-        let project2 = Project::test(fs, [], cx).await;
-        multi_workspace_handle
-            .update(cx, |mw, window, cx| {
-                let workspace2 = cx.new(|cx| Workspace::test_new(project2, window, cx));
-                mw.activate(workspace2, cx);
-            })
-            .unwrap();
-
-        cx.run_until_parked();
-
-        // Verify workspace1 is no longer the active workspace
-        multi_workspace_handle
-            .read_with(cx, |mw, _cx| {
-                assert_eq!(mw.active_workspace_index(), 1);
-                assert_ne!(mw.workspace(), &workspace1);
-            })
-            .unwrap();
-
-        // Window is active, agent panel is visible in workspace1, but workspace1
-        // is in the background. The notification should show because the user
-        // can't actually see the agent panel.
-        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
-
-        cx.run_until_parked();
-
-        assert!(
-            cx.windows()
-                .iter()
-                .any(|window| window.downcast::<AgentNotification>().is_some()),
-            "Expected notification when workspace is in background within MultiWorkspace"
-        );
-
-        // Also verify: clicking "View Panel" should switch to workspace1.
-        cx.windows()
-            .iter()
-            .find_map(|window| window.downcast::<AgentNotification>())
-            .unwrap()
-            .update(cx, |window, _, cx| window.accept(cx))
-            .unwrap();
-
-        cx.run_until_parked();
-
-        multi_workspace_handle
-            .read_with(cx, |mw, _cx| {
-                assert_eq!(
-                    mw.workspace(),
-                    &workspace1,
-                    "Expected workspace1 to become the active workspace after accepting notification"
-                );
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
     async fn test_notification_respects_never_setting(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -2991,18 +2840,18 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) struct StubAgentServer<C> {
+    struct StubAgentServer<C> {
         connection: C,
     }
 
     impl<C> StubAgentServer<C> {
-        pub(crate) fn new(connection: C) -> Self {
+        fn new(connection: C) -> Self {
             Self { connection }
         }
     }
 
     impl StubAgentServer<StubAgentConnection> {
-        pub(crate) fn default_response() -> Self {
+        fn default_response() -> Self {
             let conn = StubAgentConnection::new();
             conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
                 acp::ContentChunk::new("Default response".into()),

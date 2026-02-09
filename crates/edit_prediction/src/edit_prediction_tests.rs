@@ -1380,7 +1380,8 @@ fn init_test_with_fake_client(
                         "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
-                            let req = serde_json::from_slice(&buf).unwrap();
+                            let decompressed = zstd::decode_all(&buf[..]).unwrap();
+                            let req = serde_json::from_slice(&decompressed).unwrap();
 
                             let (res_tx, res_rx) = oneshot::channel();
                             predict_req_tx.unbounded_send((req, res_tx)).unwrap();

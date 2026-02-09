@@ -250,16 +250,8 @@ fn patch_for_excerpt(
         .skip_while(|edit| edit.old.end < source_excerpt_start_in_buffer)
         .take_while(|edit| edit.old.start <= source_excerpt_end_in_buffer)
         .map(|edit| {
-            let clamped_source_start = edit
-                .old
-                .start
-                .max(source_excerpt_start_in_buffer)
-                .min(source_excerpt_end_in_buffer);
-            let clamped_source_end = edit
-                .old
-                .end
-                .max(source_excerpt_start_in_buffer)
-                .min(source_excerpt_end_in_buffer);
+            let clamped_source_start = edit.old.start.max(source_excerpt_start_in_buffer);
+            let clamped_source_end = edit.old.end.min(source_excerpt_end_in_buffer);
             let source_multibuffer_start = source_excerpt_start_in_multibuffer
                 + (clamped_source_start - source_excerpt_start_in_buffer);
             let source_multibuffer_end = source_excerpt_start_in_multibuffer

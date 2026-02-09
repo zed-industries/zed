@@ -1274,11 +1274,10 @@ impl GitPanel {
                 })
                 .ok()?;
 
-            let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, mut cx| {
                 let item = open_task
                     .await
-                    .notify_workspace_async_err(workspace, &mut cx)
+                    .notify_async_err(&mut cx)
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
                     if let Some(diff_task) =

@@ -265,8 +265,6 @@ pub enum IconName {
     UserRoundPen,
     Warning,
     WholeWord,
-    WorkspaceNavClosed,
-    WorkspaceNavOpen,
     XCircle,
     XCircleFilled,
     ZedAgent,

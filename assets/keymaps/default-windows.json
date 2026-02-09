@@ -324,6 +324,8 @@
       "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {
@@ -589,7 +591,6 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
       "ctrl-shift-y": "workspace::ToggleAllDocks",
       "alt-r": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
@@ -656,13 +657,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
-    },
-  },
-  {
-    "context": "WorkspaceSidebar",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
     },
   },
   {

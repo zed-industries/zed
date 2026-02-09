@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
@@ -43,8 +41,7 @@ use http_client::{AsyncBody, HttpClient};
 
 mod devcontainer_api;
 
-use devcontainer_api::ensure_devcontainer_cli;
-use devcontainer_api::read_devcontainer_configuration;
+use devcontainer_api::read_devcontainer_configuration_for_project;
 
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
@@ -53,32 +50,9 @@ pub use devcontainer_api::{
     DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
 };
 
-pub struct DevContainerContext {
-    pub project_directory: Arc<Path>,
-    pub use_podman: bool,
-    pub node_runtime: node_runtime::NodeRuntime,
-}
-
-impl DevContainerContext {
-    pub fn from_workspace(workspace: &Workspace, cx: &App) -> Option<Self> {
-        let project_directory = workspace.project().read(cx).active_project_directory(cx)?;
-        let use_podman = DevContainerSettings::get_global(cx).use_podman;
-        let node_runtime = workspace.app_state().node_runtime.clone();
-        Some(Self {
-            project_directory,
-            use_podman,
-            node_runtime,
-        })
-    }
-}
-
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
     use_podman: bool,
-}
-
-pub fn use_podman(cx: &App) -> bool {
-    DevContainerSettings::get_global(cx).use_podman
 }
 
 impl Settings for DevContainerSettings {
@@ -1445,41 +1419,22 @@ fn dispatch_apply_templates(
     cx: &mut Context<DevContainerModal>,
 ) {
     cx.spawn_in(window, async move |this, cx| {
-        let Some((tree_id, context)) = workspace.update(cx, |workspace, cx| {
-            let worktree = workspace
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .find_map(|tree| {
-                    tree.read(cx)
-                        .root_entry()?
-                        .is_dir()
-                        .then_some(tree.read(cx))
-                });
-            let tree_id = worktree.map(|w| w.id())?;
-            let context = DevContainerContext::from_workspace(workspace, cx)?;
-            Some((tree_id, context))
-        }) else {
-            return;
-        };
+        if let Some(tree_id) = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let worktree = project.read(cx).visible_worktrees(cx).find_map(|tree| {
+                tree.read(cx)
+                    .root_entry()?
+                    .is_dir()
+                    .then_some(tree.read(cx))
+            });
+            worktree.map(|w| w.id())
+        }) {
+            let node_runtime = workspace.read_with(cx, |workspace, _| {
+                workspace.app_state().node_runtime.clone()
+            });
 
-        let Ok(cli) = ensure_devcontainer_cli(&context.node_runtime).await else {
-            this.update_in(cx, |this, window, cx| {
-                this.accept_message(
-                    DevContainerMessage::FailedToWriteTemplate(
-                        DevContainerError::DevContainerCliNotAvailable,
-                    ),
-                    window,
-                    cx,
-                );
-            })
-            .log_err();
-            return;
-        };
-
-        {
             if check_for_existing
-                && read_devcontainer_configuration(&context, &cli, None)
+                && read_devcontainer_configuration_for_project(cx, &node_runtime)
                     .await
                     .is_ok()
             {
@@ -1498,8 +1453,8 @@ fn dispatch_apply_templates(
                 &template_entry.template,
                 &template_entry.options_selected,
                 &template_entry.features_selected,
-                &context,
-                &cli,
+                cx,
+                &node_runtime,
             )
             .await
             {
@@ -1541,6 +1496,8 @@ fn dispatch_apply_templates(
                 this.dismiss(&menu::Cancel, window, cx);
             })
             .ok();
+        } else {
+            return;
         }
     })
     .detach();

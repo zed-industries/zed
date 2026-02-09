@@ -1944,11 +1944,15 @@ impl EditPredictionStore {
 
         let request = PredictEditsV3Request { input, trigger };
 
+        let json_bytes = serde_json::to_vec(&request)?;
+        let compressed = zstd::encode_all(&json_bytes[..], 3)?;
+
         Self::send_api_request(
             |builder| {
                 let req = builder
                     .uri(url.as_ref())
-                    .body(serde_json::to_string(&request)?.into());
+                    .header("Content-Encoding", "zstd")
+                    .body(compressed.clone().into());
                 Ok(req?)
             },
             client,
