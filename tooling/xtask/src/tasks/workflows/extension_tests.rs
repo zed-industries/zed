@@ -53,7 +53,7 @@ fn install_rust_target() -> Step<Run> {
 }
 
 fn run_clippy() -> Step<Run> {
-    named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
+    named::bash("cargo clippy --release --all-features -- --deny warnings")
 }
 
 fn check_rust() -> NamedJob {

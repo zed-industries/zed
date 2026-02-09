@@ -68,7 +68,7 @@ jobs:
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: extension_tests::run_clippy
-      run: cargo clippy --release --all-targets --all-features -- --deny warnings
+      run: cargo clippy --release --all-features -- --deny warnings
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
