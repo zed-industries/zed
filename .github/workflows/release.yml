@@ -19,7 +19,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -54,7 +54,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -103,7 +103,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -135,7 +135,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -158,7 +158,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -187,7 +187,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -260,7 +260,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -303,7 +303,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -351,7 +351,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -399,7 +399,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -451,7 +451,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -499,7 +499,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@main
+      uses: zed-industries/git-restore-mtime-action@92523fc00dd2d7c6ee7cb42aebaa923ca2f039a1
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
