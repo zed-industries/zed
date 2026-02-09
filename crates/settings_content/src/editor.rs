@@ -199,6 +199,11 @@ pub struct EditorSettingsContent {
     /// Drag and drop related settings
     pub drag_and_drop_selection: Option<DragAndDropSelectionContent>,
 
+    /// Whether to display code lenses from language servers above code elements.
+    ///
+    /// Default: "off"
+    pub code_lens: Option<CodeLens>,
+
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
@@ -433,7 +438,7 @@ pub struct GutterContent {
     pub folds: Option<bool>,
 }
 
-/// How to render LSP `textDocument/documentColor` colors in the editor.
+/// Whether to display code lenses from language servers above code elements.
 #[derive(
     Copy,
     Clone,
@@ -445,6 +450,36 @@ pub struct GutterContent {
     Eq,
     JsonSchema,
     MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeLens {
+    /// Do not display code lenses.
+    #[default]
+    Off,
+    /// Display code lenses from language servers above code elements.
+    On,
+}
+
+impl CodeLens {
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
     strum::VariantArray,
     strum::VariantNames,
 )]

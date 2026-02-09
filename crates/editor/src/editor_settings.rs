@@ -4,7 +4,7 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
+    CodeLens, CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
     DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode,
     MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
     ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
@@ -55,6 +55,7 @@ pub struct EditorSettings {
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
     pub drag_and_drop_selection: DragAndDropSelection,
+    pub code_lens: CodeLens,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
     pub completion_menu_scrollbar: ShowScrollbar,
@@ -292,6 +293,7 @@ impl Settings for EditorSettings {
                 enabled: drag_and_drop_selection.enabled.unwrap(),
                 delay: drag_and_drop_selection.delay.unwrap(),
             },
+            code_lens: editor.code_lens.unwrap(),
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
             completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
