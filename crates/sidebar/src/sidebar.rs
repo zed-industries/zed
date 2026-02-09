@@ -887,21 +887,21 @@ impl Sidebar {
 
         workspaces
             .iter()
-            .filter_map(|workspace| {
+            .map(|workspace| {
                 if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                    Some(cx.subscribe_in(
+                    cx.subscribe_in(
                         &agent_panel,
                         window,
                         |this, _, _event: &AgentPanelEvent, window, cx| {
                             this.queue_refresh(this.multi_workspace.clone(), window, cx);
                         },
-                    ))
+                    )
                 } else {
                     // Panel hasn't loaded yet — observe the workspace so we
                     // re-subscribe once the panel appears on its dock.
-                    Some(cx.observe_in(workspace, window, |this, _, window, cx| {
+                    cx.observe_in(workspace, window, |this, _, window, cx| {
                         this.queue_refresh(this.multi_workspace.clone(), window, cx);
-                    }))
+                    })
                 }
             })
             .collect()

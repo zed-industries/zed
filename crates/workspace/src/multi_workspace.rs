@@ -191,7 +191,7 @@ impl MultiWorkspace {
             return;
         }
 
-        let index = self.add_workspace(workspace.clone(), cx);
+        let index = self.add_workspace(workspace, cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
             cx.notify();

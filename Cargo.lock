@@ -15112,7 +15112,6 @@ dependencies = [
 name = "session"
 version = "0.1.0"
 dependencies = [
- "collections",
  "db",
  "gpui",
  "serde_json",
@@ -17247,7 +17246,6 @@ dependencies = [
  "collections",
  "db",
  "feature_flags",
- "fs",
  "git_ui",
  "gpui",
  "http_client",
