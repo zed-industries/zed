@@ -186,7 +186,6 @@ impl AgentTool for SubagentTool {
                     subagent_session_id,
                 }),
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    //todo: Should this be Ok("Subagent was cancelled by user?") so that we still have access to the subagent session id
                     Err(anyhow!("Subagent was cancelled by user"))
                 }
             }
@@ -200,11 +199,11 @@ impl AgentTool for SubagentTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Result<()> {
-        let mut meta = acp::Meta::new();
-        meta.insert(
+        event_stream.subagent_spawned(output.subagent_session_id.clone());
+        let meta = acp::Meta::from_iter([(
             SUBAGENT_SESSION_ID_META_KEY.into(),
             output.subagent_session_id.to_string().into(),
-        );
+        )]);
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
         Ok(())
     }

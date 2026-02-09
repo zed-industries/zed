@@ -1519,7 +1519,7 @@ impl AcpServerView {
                 connected.threads.insert(subagent_id, view);
             })
         })
-        .detach(); //todo
+        .detach();
     }
 
     fn spawn_external_agent_login(
