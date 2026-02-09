@@ -1629,10 +1629,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("bd", "elete"),
             workspace::CloseItemInAllPanes {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseItemInAllPanes {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("norm", "al"),

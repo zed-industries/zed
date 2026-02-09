@@ -595,6 +595,7 @@ impl TabSwitcherDelegate {
                 workspace.close_items_with_project_path(
                     &project_path,
                     SaveIntent::Close,
+                    true,
                     window,
                     cx,
                 );
