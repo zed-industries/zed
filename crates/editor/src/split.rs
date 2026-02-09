@@ -359,7 +359,6 @@ pub struct SplittableEditor {
     lhs: Option<LhsEditor>,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
-    locked_cursors: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -472,7 +471,6 @@ impl SplittableEditor {
             lhs: None,
             workspace: workspace.downgrade(),
             split_state,
-            locked_cursors: false,
             _subscriptions: subscriptions,
         }
     }
@@ -678,9 +676,7 @@ impl SplittableEditor {
                     let this = this.clone();
                     window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
-                            if this.locked_cursors {
-                                this.sync_cursor_to_other_side(true, cursor_position, window, cx);
-                            }
+                            this.sync_cursor_to_other_side(true, cursor_position, window, cx);
                         })
                         .ok();
                     })
@@ -694,9 +690,7 @@ impl SplittableEditor {
                     let this = this.clone();
                     window.defer(cx, move |window, cx| {
                         this.update(cx, |this, cx| {
-                            if this.locked_cursors {
-                                this.sync_cursor_to_other_side(false, cursor_position, window, cx);
-                            }
+                            this.sync_cursor_to_other_side(false, cursor_position, window, cx);
                         })
                         .ok();
                     })
@@ -754,20 +748,6 @@ impl SplittableEditor {
         } else {
             cx.propagate();
         }
-    }
-
-    fn toggle_locked_cursors(
-        &mut self,
-        _: &ToggleLockedCursors,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.locked_cursors = !self.locked_cursors;
-        cx.notify();
-    }
-
-    pub fn locked_cursors(&self) -> bool {
-        self.locked_cursors
     }
 
     fn sync_cursor_to_other_side(
@@ -1849,7 +1829,6 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::toggle_split))
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
-            .on_action(cx.listener(Self::toggle_locked_cursors))
             .on_action(cx.listener(Self::intercept_toggle_code_actions))
             .on_action(cx.listener(Self::intercept_toggle_breakpoint))
             .on_action(cx.listener(Self::intercept_enable_breakpoint))
