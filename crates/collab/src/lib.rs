@@ -6,9 +6,6 @@ pub mod executor;
 pub mod rpc;
 pub mod seed;
 
-#[cfg(test)]
-mod tests;
-
 use anyhow::Context as _;
 use aws_config::{BehaviorVersion, Region};
 use axum::{
@@ -169,7 +166,7 @@ impl Config {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn test() -> Self {
         Self {
             http_port: 0,

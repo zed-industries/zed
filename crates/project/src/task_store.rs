@@ -84,7 +84,7 @@ impl TaskStore {
                     anyhow::bail!("empty task store cannot handle task context requests")
                 }
             })
-        })??;
+        })?;
         let buffer_store = buffer_store
             .upgrade()
             .context("no buffer store when handling task context request")?;
@@ -115,7 +115,7 @@ impl TaskStore {
                             .with_context(|| format!("no local buffer with id {buffer_id}")),
                     )
                 }
-            })?
+            })
             .await?;
 
         let location = Location {
@@ -143,7 +143,7 @@ impl TaskStore {
                 variables
             };
             store.task_context_for_location(captured_variables, location, cx)
-        })?;
+        });
         let task_context = context_task.await.unwrap_or_default();
         Ok(proto::TaskContext {
             project_env: task_context.project_env.into_iter().collect(),
@@ -319,7 +319,6 @@ fn local_task_context_for_location(
             .update(cx, |environment, cx| {
                 environment.buffer_environment(&location.buffer, &worktree_store, cx)
             })
-            .ok()?
             .await;
 
         let mut task_variables = cx
@@ -335,7 +334,6 @@ fn local_task_context_for_location(
                     cx,
                 )
             })
-            .ok()?
             .await
             .log_err()?;
         // Remove all custom entries starting with _, as they're not intended for use by the end user.
@@ -376,15 +374,12 @@ fn remote_task_context_for_location(
                     cx,
                 )
             })
-            .ok()?
             .await
             .log_err()
             .unwrap_or_default();
         remote_context.extend(captured_variables);
 
-        let buffer_id = cx
-            .update(|cx| location.buffer.read(cx).remote_id().to_proto())
-            .ok()?;
+        let buffer_id = cx.update(|cx| location.buffer.read(cx).remote_id().to_proto());
         let context_task = upstream_client.request(proto::TaskContextForLocation {
             project_id,
             location: Some(proto::Location {
@@ -472,7 +467,7 @@ fn combine_task_variables(
                     toolchain_store.clone(),
                     cx,
                 )
-            })?
+            })
             .await
             .context("building basic default context")?;
         captured_variables.extend(baseline);
@@ -491,7 +486,7 @@ fn combine_task_variables(
                         toolchain_store,
                         cx,
                     )
-                })?
+                })
                 .await
                 .context("building provider context")?,
             );

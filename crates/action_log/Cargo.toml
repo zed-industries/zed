@@ -11,9 +11,13 @@ path = "src/action_log.rs"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 buffer_diff.workspace = true
+log.workspace = true
 clock.workspace = true
 collections.workspace = true
 futures.workspace = true

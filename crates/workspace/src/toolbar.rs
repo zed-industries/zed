@@ -1,11 +1,22 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, App, Context, Entity, EntityId, EventEmitter, KeyContext, ParentElement as _, Render,
-    Styled, Window,
+    AnyView, App, Context, Div, Entity, EntityId, EventEmitter, Global, KeyContext,
+    ParentElement as _, Render, Styled, Window,
 };
+use language::LanguageRegistry;
+use std::sync::Arc;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
+pub struct PaneSearchBarCallbacks {
+    pub setup_search_bar:
+        fn(Option<Arc<LanguageRegistry>>, &Entity<Toolbar>, &mut Window, &mut App),
+    pub wrap_div_with_search_actions: fn(Div, Entity<crate::Pane>) -> Div,
+}
+
+impl Global for PaneSearchBarCallbacks {}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ToolbarItemEvent {
     ChangeLocation(ToolbarItemLocation),
 }
@@ -109,9 +120,10 @@ impl Render for Toolbar {
         v_flex()
             .group("toolbar")
             .relative()
-            .p(DynamicSpacing::Base08.rems(cx))
+            .py(DynamicSpacing::Base06.rems(cx))
+            .px(DynamicSpacing::Base08.rems(cx))
             .when(has_left_items || has_right_items, |this| {
-                this.gap(DynamicSpacing::Base08.rems(cx))
+                this.gap(DynamicSpacing::Base06.rems(cx))
             })
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
@@ -119,12 +131,13 @@ impl Render for Toolbar {
             .when(has_left_items || has_right_items, |this| {
                 this.child(
                     h_flex()
-                        .min_h_6()
+                        .items_start()
                         .justify_between()
                         .gap(DynamicSpacing::Base08.rems(cx))
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
+                                    .min_h_8()
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()
@@ -134,17 +147,9 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
-                                    .h_full()
+                                    .h_8()
                                     .flex_row_reverse()
-                                    .map(|el| {
-                                        if has_left_items {
-                                            // We're using `flex_none` here to prevent some flickering that can occur when the
-                                            // size of the left items container changes.
-                                            el.flex_none()
-                                        } else {
-                                            el.flex_auto()
-                                        }
-                                    })
+                                    .when(has_left_items, |this| this.flex_none())
                                     .justify_end()
                                     .children(self.right_items().map(|item| item.to_any())),
                             )

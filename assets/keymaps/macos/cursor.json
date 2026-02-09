@@ -24,7 +24,7 @@
     },
   },
   {
-    "context": "InlineAssistEditor",
+    "context": "InlineAssistant > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-backspace": "editor::Cancel",

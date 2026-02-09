@@ -55,6 +55,12 @@ pub struct CompileExtensionOptions {
     pub release: bool,
 }
 
+impl CompileExtensionOptions {
+    pub const fn dev() -> Self {
+        Self { release: false }
+    }
+}
+
 #[derive(Deserialize)]
 struct CargoToml {
     package: CargoTomlPackage,
@@ -711,7 +717,7 @@ mod tests {
     use indoc::indoc;
 
     use crate::{
-        ExtensionManifest,
+        ExtensionManifest, ExtensionSnippets,
         extension_builder::{file_newer_than_deps, populate_defaults},
     };
 
@@ -785,7 +791,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("./snippets/snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("./snippets/snippets.json").unwrap()
+            ))
         )
     }
 
@@ -820,7 +828,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("snippets.json").unwrap()
+            ))
         )
     }
 }

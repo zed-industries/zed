@@ -126,17 +126,6 @@ enum IconSource {
     ExternalSvg(SharedString),
 }
 
-impl IconSource {
-    fn from_path(path: impl Into<SharedString>) -> Self {
-        let path = path.into();
-        if path.starts_with("icons/") {
-            Self::Embedded(path)
-        } else {
-            Self::External(Arc::from(PathBuf::from(path.as_ref())))
-        }
-    }
-}
-
 #[derive(IntoElement, RegisterComponent)]
 pub struct Icon {
     source: IconSource,
@@ -155,9 +144,18 @@ impl Icon {
         }
     }
 
+    /// Create an icon from a path. Uses a heuristic to determine if it's embedded or external:
+    /// - Paths starting with "icons/" are treated as embedded SVGs
+    /// - Other paths are treated as external raster images (from icon themes)
     pub fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        let source = if path.starts_with("icons/") {
+            IconSource::Embedded(path)
+        } else {
+            IconSource::External(Arc::from(PathBuf::from(path.as_ref())))
+        };
         Self {
-            source: IconSource::from_path(path),
+            source,
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),

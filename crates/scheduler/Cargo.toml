@@ -19,6 +19,7 @@ test-support = []
 async-task.workspace = true
 backtrace.workspace = true
 chrono.workspace = true
+flume = "0.11"
 futures.workspace = true
 parking_lot.workspace = true
 rand.workspace = true

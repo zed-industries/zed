@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 7cfce605704d41ca247e3f84804bf323f6c6caaf
+  ZED_EXTENSION_CLI_SHA: 03d8e9aee95ea6117d75a48bcac2e19241f6e667
 on:
   workflow_call:
     inputs:
@@ -55,7 +55,6 @@ jobs:
           echo "needs_bump=false" >> "$GITHUB_OUTPUT"
 
         echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
     outputs:
       needs_bump: ${{ steps.compare-versions-check.outputs.needs_bump }}
       current_version: ${{ steps.compare-versions-check.outputs.current_version }}
@@ -66,7 +65,7 @@ jobs:
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
       (inputs.force-bump == 'true' || needs.check_bump_needed.outputs.needs_bump == 'true')
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -79,8 +78,7 @@ jobs:
       with:
         clean: false
     - name: extension_bump::install_bump_2_version
-      run: pip install bump2version
-      shell: bash -euxo pipefail {0}
+      run: pip install bump2version --break-system-packages
     - id: bump-version
       name: extension_bump::bump_version
       run: |
@@ -91,7 +89,11 @@ jobs:
             BUMP_FILES+=("Cargo.toml")
         fi
 
-        bump2version --verbose --current-version "$OLD_VERSION" --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
+        bump2version \
+            --search "version = \"{current_version}"\" \
+            --replace "version = \"{new_version}"\" \
+            --current-version "$OLD_VERSION" \
+            --no-configured-files ${{ inputs.bump-type }} "${BUMP_FILES[@]}"
 
         if [[ -f "Cargo.toml" ]]; then
             cargo update --workspace
@@ -100,7 +102,6 @@ jobs:
         NEW_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
@@ -119,7 +120,7 @@ jobs:
     needs:
     - check_bump_needed
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_bump_needed.outputs.needs_bump == 'false'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -146,3 +147,6 @@ jobs:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

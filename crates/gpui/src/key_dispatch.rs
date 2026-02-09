@@ -199,8 +199,8 @@ impl DispatchTree {
                 if let Some(context) = node.context.clone() {
                     self.context_stack.push(context);
                 }
-                if node.view_id.is_some() {
-                    self.view_stack.push(node.view_id.unwrap());
+                if let Some(view_id) = node.view_id {
+                    self.view_stack.push(view_id);
                 }
                 self.node_stack.push(node_id);
                 current_node_id = node.parent;

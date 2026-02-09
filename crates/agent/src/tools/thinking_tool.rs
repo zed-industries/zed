@@ -21,9 +21,7 @@ impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "thinking"
-    }
+    const NAME: &'static str = "thinking";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Think

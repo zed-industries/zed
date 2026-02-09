@@ -30,7 +30,7 @@ use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::sync::{Arc, LazyLock};
-use task::{DebugScenario, TaskContext};
+use task::{DebugScenario, SharedTaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
@@ -176,7 +176,7 @@ impl DebugPanel {
     pub fn start_session(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -227,9 +227,6 @@ impl DebugPanel {
             inventory.update(cx, |inventory, _| {
                 inventory.scenario_scheduled(
                     scenario.clone(),
-                    // todo(debugger): Task context is cloned three times
-                    // once in Session,inventory, and in resolve scenario
-                    // we should wrap it in an RC instead to save some memory
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
@@ -268,7 +265,7 @@ impl DebugPanel {
                 dap_store
                     .update(cx, |dap_store, cx| {
                         dap_store.boot_session(session.clone(), definition, worktree, cx)
-                    })?
+                    })
                     .await
             }
         });
@@ -286,7 +283,7 @@ impl DebugPanel {
                                 .unbounded_send(format!("error: {:#}", error))
                                 .ok();
                             session.shutdown(cx)
-                        })?
+                        })
                         .await;
                 }
                 anyhow::Ok(())
@@ -404,7 +401,7 @@ impl DebugPanel {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
-            })?;
+            });
             Self::register_session(this.clone(), session.clone(), true, cx).await?;
 
             if let Err(error) = task.await {
@@ -418,7 +415,7 @@ impl DebugPanel {
                             ))
                             .ok();
                         session.shutdown(cx)
-                    })?
+                    })
                     .await;
 
                 return Err(error);
@@ -466,11 +463,10 @@ impl DebugPanel {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
-            })?;
+            });
             // Focus child sessions if the parent has never emitted a stopped event;
             // this improves our JavaScript experience, as it always spawns a "main" session that then spawns subsessions.
-            let parent_ever_stopped =
-                parent_session.update(cx, |this, _| this.has_ever_stopped())?;
+            let parent_ever_stopped = parent_session.update(cx, |this, _| this.has_ever_stopped());
             Self::register_session(this, session, !parent_ever_stopped, cx).await?;
             task.await
         })
@@ -517,7 +513,7 @@ impl DebugPanel {
                     return;
                 }
             }
-            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
                 this.retain_sessions(|other| entity_id != other.entity_id());
                 if let Some(active_session_id) = this
@@ -1443,7 +1439,7 @@ async fn register_session_inner(
     session: Entity<Session>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<DebugSession>> {
-    let adapter_name = session.read_with(cx, |session, _| session.adapter())?;
+    let adapter_name = session.read_with(cx, |session, _| session.adapter());
     this.update_in(cx, |_, window, cx| {
         cx.subscribe_in(
             &session,
@@ -1579,8 +1575,10 @@ impl Panel for DebugPanel {
         Some(proto::PanelId::DebugPanel)
     }
 
-    fn icon(&self, _window: &Window, _cx: &App) -> Option<IconName> {
-        Some(IconName::Debug)
+    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
+        DebuggerSettings::get_global(cx)
+            .button
+            .then_some(IconName::Debug)
     }
 
     fn icon_tooltip(&self, _window: &Window, cx: &App) -> Option<&'static str> {
@@ -1956,7 +1954,7 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        context: TaskContext,
+        context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,

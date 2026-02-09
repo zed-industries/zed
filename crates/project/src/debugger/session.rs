@@ -61,7 +61,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::TaskContext;
+use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
 use util::command::new_smol_command;
@@ -209,9 +209,8 @@ impl RunningMode {
             }
         });
 
-        let client = if let Some(client) = parent_session
-            .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
-            .flatten()
+        let client = if let Some(client) =
+            parent_session.and_then(|session| cx.update(|cx| session.read(cx).adapter_client()))
         {
             client
                 .create_child_connection(session_id, binary.clone(), message_handler, cx)
@@ -466,7 +465,7 @@ impl RunningMode {
                     })?;
                 initialized_rx.await?;
                 let errors_by_path = cx
-                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
+                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))
                     .await;
 
                 dap_store.update(cx, |_, cx| {
@@ -712,7 +711,7 @@ pub struct Session {
     data_breakpoints: BTreeMap<String, DataBreakpointState>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
-    task_context: TaskContext,
+    task_context: SharedTaskContext,
     memory: memory::Memory,
     quirks: SessionQuirks,
     remote_client: Option<Entity<RemoteClient>>,
@@ -834,7 +833,7 @@ impl Session {
         parent_session: Option<Entity<Session>>,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         quirks: SessionQuirks,
         remote_client: Option<Entity<RemoteClient>>,
         node_runtime: Option<NodeRuntime>,
@@ -898,7 +897,7 @@ impl Session {
         })
     }
 
-    pub fn task_context(&self) -> &TaskContext {
+    pub fn task_context(&self) -> &SharedTaskContext {
         &self.task_context
     }
 
@@ -2858,7 +2857,7 @@ impl Session {
         let mut console_output = self.console_output(cx);
         let task = cx.spawn(async move |this, cx| {
             let forward_ports_process = if remote_client
-                .read_with(cx, |client, _| client.shares_network_interface())?
+                .read_with(cx, |client, _| client.shares_network_interface())
             {
                 request.other.insert(
                     "proxyUri".into(),
@@ -2890,7 +2889,7 @@ impl Session {
                         .spawn()
                         .context("spawning port forwarding process")?;
                     anyhow::Ok(child)
-                })??;
+                })?;
                 Some(child)
             };
 

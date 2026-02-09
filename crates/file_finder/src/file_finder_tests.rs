@@ -9,7 +9,9 @@ use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
-use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace, open_paths};
+use workspace::{
+    AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths,
+};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -1210,10 +1212,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        (
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
-        )
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
     });
 
     let b_path = ProjectPath {
@@ -1342,7 +1341,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // When workspace has an active item, sort items which are closer to that item
@@ -1430,7 +1429,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let worktree_id = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // Open and close panels, getting their history items afterwards.
@@ -1650,7 +1649,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1674,14 +1673,12 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             "External file should get opened in a new worktree"
         );
 
-        WorktreeId::from_usize(
-            worktrees
-                .into_iter()
-                .find(|worktree| worktree.entity_id().as_u64() as usize != worktree_id.to_usize())
-                .expect("New worktree should have a different id")
-                .entity_id()
-                .as_u64() as usize,
-        )
+        worktrees
+            .into_iter()
+            .find(|worktree| worktree.read(cx).id() != worktree_id)
+            .expect("New worktree should have a different id")
+            .read(cx)
+            .id()
     });
     cx.dispatch_action(workspace::CloseActiveItem {
         save_intent: None,
@@ -1807,7 +1804,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1,);
 
-        WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize)
+        worktrees[0].read(cx).id()
     });
 
     // generate some history to select from
@@ -2539,8 +2536,14 @@ async fn test_search_results_refreshed_on_standalone_file_creation(cx: &mut gpui
         .await;
 
     let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-    let (workspace, cx) =
-        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let window = cx.add_window({
+        let project = project.clone();
+        |window, cx| MultiWorkspace::test_new(project, window, cx)
+    });
+    let cx = VisualTestContext::from_window(*window, cx).into_mut();
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
 
     cx.update(|_, cx| {
         open_paths(
@@ -2836,8 +2839,10 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
             .create_file(Path::new(&filename), Default::default())
             .await
             .expect("unable to create file");
+        // Wait for each file system event to be fully processed before adding the next
+        cx.executor().advance_clock(FS_WATCH_LATENCY);
+        cx.run_until_parked();
     }
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
 
     // file_13.txt is still selected
     picker.update(cx, |finder, _| {

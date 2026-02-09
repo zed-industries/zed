@@ -29,6 +29,8 @@
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
@@ -98,6 +100,8 @@
   (char_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 (comment) @comment
 
 (number_literal) @number
@@ -132,3 +136,15 @@
   (primitive_type)
   (sized_type_specifier)
 ] @type
+
+; GNU __attribute__
+(attribute_specifier) @attribute
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C23 [[attributes]]
+(attribute
+  prefix: (identifier) @attribute)
+(attribute
+  name: (identifier) @attribute)

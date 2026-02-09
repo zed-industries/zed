@@ -5,7 +5,9 @@ use gpui::{AppContext, Context, Entity, Task};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
-use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{
+    DebugScenario, ResolvedTask, SharedTaskContext, SpawnInTerminal, TaskContext, TaskTemplate,
+};
 use ui::Window;
 
 use crate::{Toast, Workspace, notifications::NotificationId};
@@ -101,7 +103,7 @@ impl Workspace {
     pub fn start_debug_session(
         &mut self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
