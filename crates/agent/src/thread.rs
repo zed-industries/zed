@@ -602,7 +602,7 @@ pub trait ThreadEnvironment {
         parent_thread: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout_ms: Option<u64>,
+        timeout: Option<Duration>,
         allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
@@ -832,15 +832,12 @@ impl Thread {
             .embedded_context(true)
     }
 
-    pub fn new_subagent(
-        parent_thread: &Entity<Thread>,
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+        let project = parent_thread.read(cx).project.clone();
+        let project_context = parent_thread.read(cx).project_context.clone();
+        let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
+        let templates = parent_thread.read(cx).templates.clone();
+        let model = parent_thread.read(cx).model().cloned();
         let mut thread = Self::new(
             project,
             project_context,
@@ -1354,10 +1351,6 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
-    }
-
-    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
-        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -2485,13 +2478,19 @@ impl Thread {
         self.tools.keys().cloned().collect()
     }
 
-    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+    pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
         self.running_subagents.push(subagent);
     }
 
-    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
-        self.running_subagents
-            .retain(|s| s.entity_id() != subagent.entity_id());
+    pub(crate) fn unregister_running_subagent(
+        &mut self,
+        subagent_session_id: &acp::SessionId,
+        cx: &App,
+    ) {
+        self.running_subagents.retain(|s| {
+            s.upgrade()
+                .map_or(false, |s| s.read(cx).id() != subagent_session_id)
+        });
     }
 
     pub fn running_subagent_count(&self) -> usize {
@@ -2515,6 +2514,7 @@ impl Thread {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_subagent_context(&mut self, context: SubagentContext) {
         self.subagent_context = Some(context);
     }

@@ -6,8 +6,8 @@ use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
 use std::sync::Arc;
+use std::{rc::Rc, time::Duration};
 
 use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 
@@ -160,7 +160,7 @@ impl AgentTool for SubagentTool {
             parent_thread_entity,
             input.label,
             input.task_prompt,
-            input.timeout_ms,
+            input.timeout_ms.map(|ms| Duration::from_millis(ms)),
             input.allowed_tools,
             cx,
         ) {

@@ -1580,6 +1580,97 @@ pub struct NativeThreadEnvironment {
     acp_thread: WeakEntity<AcpThread>,
 }
 
+impl NativeThreadEnvironment {
+    pub(crate) fn create_subagent_thread(
+        agent: WeakEntity<NativeAgent>,
+        parent_thread_entity: Entity<Thread>,
+        label: String,
+        initial_prompt: String,
+        timeout: Option<Duration>,
+        allowed_tools: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let parent_thread = parent_thread_entity.read(cx);
+        let current_depth = parent_thread.depth();
+
+        if current_depth >= MAX_SUBAGENT_DEPTH {
+            return Err(anyhow!(
+                "Maximum subagent depth ({}) reached",
+                MAX_SUBAGENT_DEPTH
+            ));
+        }
+
+        let running_count = parent_thread.running_subagent_count();
+        if running_count >= MAX_PARALLEL_SUBAGENTS {
+            return Err(anyhow!(
+                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
+                MAX_PARALLEL_SUBAGENTS
+            ));
+        }
+
+        let subagent_thread: Entity<Thread> = cx.new(|cx| {
+            let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
+            thread.set_title(label.into(), cx);
+            thread
+        });
+
+        let session_id = subagent_thread.read(cx).id().clone();
+
+        let acp_thread = agent.update(cx, |agent, cx| {
+            agent.register_session(
+                subagent_thread.clone(),
+                allowed_tools
+                    .as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect()),
+                cx,
+            )
+        })?;
+
+        parent_thread_entity.update(cx, |parent_thread, _cx| {
+            parent_thread.register_running_subagent(subagent_thread.downgrade())
+        });
+
+        let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
+
+        let wait_for_prompt_to_complete = cx.background_spawn(async move {
+                if let Some(timeout) = timeout {
+                    futures::select! {
+                        _ = future::FutureExt::fuse(smol::Timer::after(timeout)) => SubagentInitialPromptResult::Timeout,
+                        _ = task.fuse() => SubagentInitialPromptResult::Completed,
+                    }
+                } else {
+                    task.await.log_err();
+                    SubagentInitialPromptResult::Completed
+                }
+            }).shared();
+
+        let mut user_stop_rx: watch::Receiver<bool> =
+            acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
+
+        let user_cancelled = cx
+            .background_spawn(async move {
+                loop {
+                    if *user_stop_rx.borrow() {
+                        return;
+                    }
+                    if user_stop_rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                }
+            })
+            .shared();
+
+        Ok(Rc::new(NativeSubagentHandle {
+            session_id,
+            subagent_thread,
+            parent_thread: parent_thread_entity.downgrade(),
+            acp_thread,
+            wait_for_prompt_to_complete,
+            user_cancelled,
+        }) as _)
+    }
+}
+
 impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
@@ -1619,103 +1710,19 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
-        timeout_ms: Option<u64>,
+        timeout: Option<Duration>,
         allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        let parent_thread = parent_thread_entity.read(cx);
-        let current_depth = parent_thread.depth();
-
-        if current_depth >= MAX_SUBAGENT_DEPTH {
-            return Err(anyhow!(
-                "Maximum subagent depth ({}) reached",
-                MAX_SUBAGENT_DEPTH
-            ));
-        }
-
-        let running_count = parent_thread.running_subagent_count();
-        if running_count >= MAX_PARALLEL_SUBAGENTS {
-            return Err(anyhow!(
-                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
-                MAX_PARALLEL_SUBAGENTS
-            ));
-        }
-
-        let parent_model = parent_thread.model().cloned();
-        let Some(model) = parent_model else {
-            return Err(anyhow!("No model configured"));
-        };
-
-        let project = parent_thread.project.clone();
-        let project_context = parent_thread.project_context().clone();
-        let context_server_registry = parent_thread.context_server_registry.clone();
-        let templates = parent_thread.templates.clone();
-
-        let agent = self.agent.clone();
-
-        let subagent_thread: Entity<Thread> = cx.new(|cx| {
-            let mut thread = Thread::new_subagent(
-                &parent_thread_entity,
-                project.clone(),
-                project_context.clone(),
-                context_server_registry.clone(),
-                templates.clone(),
-                Some(model.clone()),
-                cx,
-            );
-            thread.set_title(label.into(), cx);
-            thread
-        });
-
-        let session_id = subagent_thread.read(cx).id().clone();
-
-        let acp_thread = agent.update(cx, |agent, cx| {
-            agent.register_session(
-                subagent_thread.clone(),
-                allowed_tools
-                    .as_ref()
-                    .map(|v| v.iter().map(|s| s.as_str()).collect()),
-                cx,
-            )
-        })?;
-
-        let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
-
-        let wait_for_prompt_to_complete = cx.background_spawn(async move {
-                if let Some(timeout) = timeout_ms {
-                    futures::select! {
-                        _ = future::FutureExt::fuse(smol::Timer::after(Duration::from_millis(timeout))) => SubagentInitialPromptResult::Timeout,
-                        _ = task.fuse() => SubagentInitialPromptResult::Completed,
-                    }
-                } else {
-                    task.await.log_err();
-                    SubagentInitialPromptResult::Completed
-                }
-            }).shared();
-
-        let mut user_stop_rx: watch::Receiver<bool> =
-            acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
-
-        let user_cancelled = cx
-            .background_spawn(async move {
-                loop {
-                    if *user_stop_rx.borrow() {
-                        return;
-                    }
-                    if user_stop_rx.changed().await.is_err() {
-                        std::future::pending::<()>().await;
-                    }
-                }
-            })
-            .shared();
-
-        Ok(Rc::new(NativeSubagentHandle {
-            session_id,
-            thread: subagent_thread,
-            acp_thread,
-            wait_for_prompt_to_complete,
-            user_cancelled,
-        }) as _)
+        Self::create_subagent_thread(
+            self.agent.clone(),
+            parent_thread_entity,
+            label,
+            initial_prompt,
+            timeout,
+            allowed_tools,
+            cx,
+        )
     }
 }
 
@@ -1727,7 +1734,8 @@ enum SubagentInitialPromptResult {
 
 pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
-    thread: Entity<Thread>,
+    parent_thread: WeakEntity<Thread>,
+    subagent_thread: Entity<Thread>,
     acp_thread: Entity<AcpThread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
     user_cancelled: Shared<Task<()>>,
@@ -1748,7 +1756,7 @@ impl SubagentHandle for NativeSubagentHandle {
         /// the "context running out" prompt is sent to encourage the subagent to wrap up.
         const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
 
-        let thread = self.thread.clone();
+        let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
 
@@ -1785,15 +1793,23 @@ impl SubagentHandle for NativeSubagentHandle {
         });
 
         let user_cancelled = self.user_cancelled.clone();
-        let thread = self.thread.clone();
+        let thread = self.subagent_thread.clone();
+        let subagent_session_id = self.session_id.clone();
+        let parent_thread = self.parent_thread.clone();
         cx.spawn(async move |cx| {
-            futures::select! {
+            let result = futures::select! {
                 result = wait_for_summary_task.fuse() => result,
                 _ = user_cancelled.fuse() => {
                     thread.update(cx, |thread, cx| thread.cancel(cx).detach());
                     Err(anyhow!("User cancelled"))
                 },
-            }
+            };
+            parent_thread
+                .update(cx, |parent_thread, cx| {
+                    parent_thread.unregister_running_subagent(&subagent_session_id, cx)
+                })
+                .ok();
+            result
         })
     }
 }

@@ -685,7 +685,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         _parent_thread: Entity<agent::Thread>,
         _label: String,
         _initial_prompt: String,
-        _timeout_ms: Option<u64>,
+        _timeout_ms: Option<Duration>,
         _allowed_tools: Option<Vec<String>>,
         _cx: &mut App,
     ) -> Result<Rc<dyn agent::SubagentHandle>> {
