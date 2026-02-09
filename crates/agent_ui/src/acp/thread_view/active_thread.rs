@@ -5747,43 +5747,21 @@ impl AcpThreadView {
     ) -> Div {
         let tool_call_status = &tool_call.status;
 
-        let content = if let Some(thread_view) = subagent_session_id.and_then(|id| {
+        let subagent_thread_view = subagent_session_id.and_then(|id| {
             self.server_view
                 .upgrade()
                 .and_then(|server_view| server_view.read(cx).as_connected())
                 .and_then(|connected| connected.threads.get(&id))
-        }) {
-            let thread = thread_view.read(cx).thread.clone();
-            self.render_subagent_card(entry_ix, 0, &thread, tool_call_status, window, cx)
-        } else {
-            v_flex()
-                .w_full()
-                .rounded_md()
-                .border_1()
-                .border_color(self.tool_card_border_color(cx))
-                .overflow_hidden()
-                .child(
-                    h_flex()
-                        .p_1()
-                        .pl_1p5()
-                        .w_full()
-                        .gap_1()
-                        .justify_between()
-                        .bg(self.tool_card_header_bg(cx))
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    h_flex()
-                                        .w_4()
-                                        .justify_center()
-                                        .child(SpinnerLabel::new().size(LabelSize::Small)),
-                                )
-                                .child(Label::new("Spawning Subagent…").size(LabelSize::Small)),
-                        ),
-                )
-                .into_any_element()
-        };
+        });
+
+        let content = self.render_subagent_card(
+            entry_ix,
+            0,
+            subagent_thread_view,
+            tool_call_status,
+            window,
+            cx,
+        );
 
         v_flex().mx_5().my_1p5().gap_3().child(content)
     }
@@ -5792,18 +5770,27 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         context_ix: usize,
-        thread_entity: &Entity<AcpThread>,
+        thread_view: Option<&Entity<AcpThreadView>>,
         tool_call_status: &ToolCallStatus,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let thread = thread_entity.read(cx);
-        let session_id = thread.session_id().clone();
-        let title = thread.title();
-        let action_log = thread.action_log();
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let thread = thread_view
+            .as_ref()
+            .map(|view| view.read(cx).thread.clone());
+        let session_id = thread
+            .as_ref()
+            .map(|thread| thread.read(cx).session_id().clone());
+        let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
+        let changed_buffers = action_log
+            .map(|log| log.read(cx).changed_buffers(cx))
+            .unwrap_or_default();
 
-        let is_expanded = self.expanded_subagents.contains(&session_id);
+        let is_expanded = if let Some(session_id) = &session_id {
+            self.expanded_subagents.contains(session_id)
+        } else {
+            false
+        };
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(&changed_buffers, cx);
 
@@ -5815,6 +5802,18 @@ impl AcpThreadView {
             tool_call_status,
             ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
         );
+
+        let title = thread
+            .as_ref()
+            .map(|t| t.read(cx).title())
+            .unwrap_or_else(|| {
+                if is_canceled_or_failed {
+                    "Subagent Canceled"
+                } else {
+                    "Spawning Subagent…"
+                }
+                .into()
+            });
 
         let card_header_id = format!("subagent-header-{}-{}", entry_ix, context_ix);
         let diff_stat_id = format!("subagent-diff-{}-{}", entry_ix, context_ix);
@@ -5835,15 +5834,17 @@ impl AcpThreadView {
                 .into_any_element()
         });
 
-        let has_expandable_content = thread.entries().iter().rev().any(|entry| {
-            if let AgentThreadEntry::AssistantMessage(msg) = entry {
-                msg.chunks.iter().any(|chunk| match chunk {
-                    AssistantMessageChunk::Message { block } => block.markdown().is_some(),
-                    AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
-                })
-            } else {
-                false
-            }
+        let has_expandable_content = thread.as_ref().map_or(false, |thread| {
+            thread.read(cx).entries().iter().rev().any(|entry| {
+                if let AgentThreadEntry::AssistantMessage(msg) = entry {
+                    msg.chunks.iter().any(|chunk| match chunk {
+                        AssistantMessageChunk::Message { block } => block.markdown().is_some(),
+                        AssistantMessageChunk::Thought { block } => block.markdown().is_some(),
+                    })
+                } else {
+                    false
+                }
+            })
         });
 
         v_flex()
@@ -5887,104 +5888,129 @@ impl AcpThreadView {
                                 )
                             }),
                     )
-                    .child(
-                        h_flex()
-                            .when(has_expandable_content, |this| {
-                                this.child(
+                    .when_some(session_id, |this, session_id| {
+                        this.child(
+                            h_flex()
+                                .when(has_expandable_content, |this| {
+                                    this.child(
+                                        IconButton::new(
+                                            format!(
+                                                "subagent-disclosure-{}-{}",
+                                                entry_ix, context_ix
+                                            ),
+                                            if is_expanded {
+                                                IconName::ChevronUp
+                                            } else {
+                                                IconName::ChevronDown
+                                            },
+                                        )
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .disabled(!has_expandable_content)
+                                        .visible_on_hover(card_header_id.clone())
+                                        .on_click(
+                                            cx.listener({
+                                                let session_id = session_id.clone();
+                                                move |this, _, _, cx| {
+                                                    if this.expanded_subagents.contains(&session_id)
+                                                    {
+                                                        this.expanded_subagents.remove(&session_id);
+                                                    } else {
+                                                        this.expanded_subagents
+                                                            .insert(session_id.clone());
+                                                    }
+                                                    cx.notify();
+                                                }
+                                            }),
+                                        ),
+                                    )
+                                })
+                                .child(
                                     IconButton::new(
-                                        format!("subagent-disclosure-{}-{}", entry_ix, context_ix),
-                                        if is_expanded {
-                                            IconName::ChevronUp
-                                        } else {
-                                            IconName::ChevronDown
-                                        },
+                                        format!("expand-subagent-{}-{}", entry_ix, context_ix),
+                                        IconName::Maximize,
                                     )
                                     .icon_color(Color::Muted)
                                     .icon_size(IconSize::Small)
-                                    .disabled(!has_expandable_content)
-                                    .visible_on_hover(card_header_id.clone())
-                                    .on_click(cx.listener({
-                                        let session_id = session_id.clone();
-                                        move |this, _, _, cx| {
-                                            if this.expanded_subagents.contains(&session_id) {
-                                                this.expanded_subagents.remove(&session_id);
-                                            } else {
-                                                this.expanded_subagents.insert(session_id.clone());
-                                            }
-                                            cx.notify();
-                                        }
-                                    })),
-                                )
-                            })
-                            .child(
-                                IconButton::new(
-                                    format!("expand-subagent-{}-{}", entry_ix, context_ix),
-                                    IconName::Maximize,
-                                )
-                                .icon_color(Color::Muted)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Expand Subagent"))
-                                .visible_on_hover(card_header_id)
-                                .on_click({
-                                    let session_id = session_id.clone();
-                                    cx.listener(move |this, _event, _window, cx| {
-                                        this.server_view
-                                            .update(cx, |this, cx| {
-                                                if let Some(connected) = this.as_connected_mut() {
-                                                    connected
-                                                        .navigate_to_session(session_id.clone());
-                                                    cx.notify();
-                                                }
-                                            })
-                                            .ok();
-                                    })
-                                }),
-                            )
-                            .when(is_running, |buttons| {
-                                buttons.child(
-                                    IconButton::new(
-                                        format!("stop-subagent-{}-{}", entry_ix, context_ix),
-                                        IconName::Stop,
-                                    )
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Error)
-                                    .tooltip(Tooltip::text("Stop Subagent"))
+                                    .tooltip(Tooltip::text("Expand Subagent"))
+                                    .visible_on_hover(card_header_id)
                                     .on_click({
-                                        let thread = thread_entity.clone();
-                                        cx.listener(move |_this, _event, _window, cx| {
-                                            thread.update(cx, |thread, _cx| {
-                                                thread.stop_by_user();
-                                            });
+                                        let session_id = session_id.clone();
+                                        cx.listener(move |this, _event, _window, cx| {
+                                            this.server_view
+                                                .update(cx, |this, cx| {
+                                                    if let Some(connected) = this.as_connected_mut()
+                                                    {
+                                                        connected.navigate_to_session(
+                                                            session_id.clone(),
+                                                        );
+                                                        cx.notify();
+                                                    }
+                                                })
+                                                .ok();
                                         })
                                     }),
                                 )
-                            }),
-                    ),
+                                .when(is_running, |buttons| {
+                                    buttons.child(
+                                        IconButton::new(
+                                            format!("stop-subagent-{}-{}", entry_ix, context_ix),
+                                            IconName::Stop,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Error)
+                                        .tooltip(Tooltip::text("Stop Subagent"))
+                                        .when_some(
+                                            thread_view
+                                                .as_ref()
+                                                .map(|view| view.read(cx).thread.clone()),
+                                            |this, thread| {
+                                                this.on_click(cx.listener(
+                                                    move |_this, _event, _window, cx| {
+                                                        thread.update(cx, |thread, _cx| {
+                                                            thread.stop_by_user();
+                                                        });
+                                                    },
+                                                ))
+                                            },
+                                        ),
+                                    )
+                                }),
+                        )
+                    }),
             )
-            .when(is_expanded, |this| {
-                this.child(self.render_subagent_expanded_content(
-                    entry_ix,
-                    context_ix,
-                    thread_entity,
-                    window,
-                    cx,
-                ))
+            .when_some(thread_view, |this, thread_view| {
+                let thread = &thread_view.read(cx).thread;
+                this.when(is_expanded, |this| {
+                    this.child(
+                        self.render_subagent_expanded_content(
+                            entry_ix, context_ix, thread, window, cx,
+                        ),
+                    )
+                })
+                .children(
+                    thread
+                        .read(cx)
+                        .first_tool_awaiting_confirmation()
+                        .and_then(|tc| {
+                            if let ToolCallStatus::WaitingForConfirmation { options, .. } =
+                                &tc.status
+                            {
+                                Some(self.render_subagent_pending_tool_call(
+                                    entry_ix,
+                                    context_ix,
+                                    thread.clone(),
+                                    tc,
+                                    options,
+                                    window,
+                                    cx,
+                                ))
+                            } else {
+                                None
+                            }
+                        }),
+                )
             })
-            .children(thread.first_tool_awaiting_confirmation().and_then(|tc| {
-                if let ToolCallStatus::WaitingForConfirmation { options, .. } = &tc.status {
-                    Some(self.render_subagent_pending_tool_call(
-                        entry_ix,
-                        context_ix,
-                        thread_entity.clone(),
-                        tc,
-                        options,
-                        window,
-                        cx,
-                    ))
-                } else {
-                    None
-                }
-            }))
             .into_any_element()
     }
 
