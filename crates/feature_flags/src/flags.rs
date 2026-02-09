@@ -16,6 +16,10 @@ pub struct AgentV2FeatureFlag;
 
 impl FeatureFlag for AgentV2FeatureFlag {
     const NAME: &'static str = "agent-v2";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
 }
 
 pub struct AcpBetaFeatureFlag;

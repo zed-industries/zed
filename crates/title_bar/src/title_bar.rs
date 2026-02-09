@@ -22,6 +22,7 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
@@ -38,10 +39,13 @@ use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use util::ResultExt;
-use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
+use workspace::{
+    MultiWorkspace, SwitchProject, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace,
+    notifications::NotifyResultExt,
+};
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
@@ -80,8 +84,10 @@ pub fn init(cx: &mut App) {
                 .titlebar_item()
                 .and_then(|item| item.downcast::<TitleBar>().ok())
             {
-                titlebar.update(cx, |titlebar, cx| {
-                    titlebar.show_project_dropdown(window, cx);
+                window.defer(cx, move |window, cx| {
+                    titlebar.update(cx, |titlebar, cx| {
+                        titlebar.show_project_dropdown(window, cx);
+                    })
                 });
             }
         });
@@ -158,7 +164,7 @@ impl Render for TitleBar {
 
         children.push(
             h_flex()
-                .gap_1()
+                .gap_0p5()
                 .map(|title_bar| {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
@@ -171,6 +177,7 @@ impl Render for TitleBar {
                                 title_bar.child(menu)
                             },
                         )
+                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
@@ -232,7 +239,7 @@ impl Render for TitleBar {
                 );
             });
 
-            let height = PlatformTitleBar::height(window);
+            let height = platform_title_bar_height(window);
             let title_bar_color = self.platform_titlebar.update(cx, |platform_titlebar, cx| {
                 platform_titlebar.title_bar_color(window, cx)
             });
@@ -339,6 +346,48 @@ impl TitleBar {
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+
+        // Set up observer to sync sidebar state from MultiWorkspace to PlatformTitleBar.
+        {
+            let platform_titlebar = platform_titlebar.clone();
+            let window_handle = window.window_handle();
+            cx.spawn(async move |this: WeakEntity<TitleBar>, cx| {
+                let Some(multi_workspace_handle) = window_handle.downcast::<MultiWorkspace>()
+                else {
+                    return;
+                };
+
+                let _ = cx.update(|cx| {
+                    let Ok(multi_workspace) = multi_workspace_handle.entity(cx) else {
+                        return;
+                    };
+
+                    let is_open = multi_workspace.read(cx).is_sidebar_open();
+                    let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
+                    platform_titlebar.update(cx, |titlebar, cx| {
+                        titlebar.set_workspace_sidebar_open(is_open, cx);
+                        titlebar.set_sidebar_has_notifications(has_notifications, cx);
+                    });
+
+                    let platform_titlebar = platform_titlebar.clone();
+                    let subscription = cx.observe(&multi_workspace, move |mw, cx| {
+                        let is_open = mw.read(cx).is_sidebar_open();
+                        let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
+                        platform_titlebar.update(cx, |titlebar, cx| {
+                            titlebar.set_workspace_sidebar_open(is_open, cx);
+                            titlebar.set_sidebar_has_notifications(has_notifications, cx);
+                        });
+                    });
+
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, _| {
+                            this._subscriptions.push(subscription);
+                        });
+                    }
+                });
+            })
+            .detach();
+        }
 
         Self {
             platform_titlebar,
@@ -622,6 +671,41 @@ impl TitleBar {
                             })
                             .log_err();
                     })
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_workspace_sidebar_toggle(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return None;
+        }
+
+        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+
+        if is_sidebar_open {
+            return None;
+        }
+
+        let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
+
+        Some(
+            IconButton::new("toggle-workspace-sidebar", IconName::WorkspaceNavClosed)
+                .icon_size(IconSize::Small)
+                .when(has_notifications, |button| {
+                    button
+                        .indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                })
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Open Workspace Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )
@@ -911,16 +995,18 @@ impl TitleBar {
 
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
+        let workspace = self.workspace.clone();
         Button::new("sign_in", "Sign In")
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
+                let workspace = workspace.clone();
                 window
-                    .spawn(cx, async move |cx| {
+                    .spawn(cx, async move |mut cx| {
                         client
                             .sign_in_with_optional_connect(true, cx)
                             .await
-                            .notify_async_err(cx);
+                            .notify_workspace_async_err(workspace, &mut cx);
                     })
                     .detach();
             })

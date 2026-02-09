@@ -1,5 +1,5 @@
 use crate::handle_open_request;
-use crate::restorable_workspace_locations;
+use crate::restore_or_create_workspace;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -30,7 +30,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -337,7 +337,7 @@ pub async fn open_paths_with_positions(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<(
-    WindowHandle<Workspace>,
+    WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
     let mut caret_positions = HashMap::default();
@@ -357,24 +357,29 @@ pub async fn open_paths_with_positions(
         })
         .collect::<Vec<_>>();
 
-    let (workspace, mut items) = cx
+    let (multi_workspace, mut items) = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
     if diff_all && !diff_paths.is_empty() {
-        if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+        if let Ok(diff_view) = multi_workspace.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+            })
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))));
             }
         }
     } else {
+        let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().downgrade()
+        })?;
         for diff_pair in diff_paths {
             let old_path = Path::new(&diff_pair[0]).canonicalize()?;
             let new_path = Path::new(&diff_pair[1]).canonicalize()?;
-            if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-                FileDiffView::open(old_path, new_path, workspace, window, cx)
+            if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
+                FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
             }) {
                 if let Some(diff_view) = diff_view.await.log_err() {
                     items.push(Some(Ok(Box::new(diff_view))))
@@ -395,7 +400,7 @@ pub async fn open_paths_with_positions(
             continue;
         };
         if let Some(active_editor) = item.downcast::<Editor>() {
-            workspace
+            multi_workspace
                 .update(cx, |_, window, cx| {
                     active_editor.update(cx, |editor, cx| {
                         editor.go_to_singleton_buffer_point(point, window, cx);
@@ -405,7 +410,7 @@ pub async fn open_paths_with_positions(
         }
     }
 
-    Ok((workspace, items))
+    Ok((multi_workspace, items))
 }
 
 pub async fn handle_cli_connection(
@@ -488,20 +493,13 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
+        return restore_or_create_workspace(app_state, cx).await;
+    }
+
     let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
         if paths.is_empty() && diff_paths.is_empty() {
-            if open_new_workspace == Some(true) {
-                Vec::new()
-            } else {
-                // The workspace_id from the database is not used;
-                // open_paths will assign a new WorkspaceId when opening the workspace.
-                restorable_workspace_locations(cx, &app_state)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(_workspace_id, location, paths)| (location, paths))
-                    .collect()
-            }
+            Vec::new()
         } else {
             vec![(
                 SerializedWorkspaceLocation::Local,
@@ -755,7 +753,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -891,10 +889,12 @@ mod tests {
         open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_none())
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_none())
+                });
             })
             .unwrap();
 
@@ -902,9 +902,11 @@ mod tests {
         open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                });
             })
             .unwrap();
 
@@ -919,12 +921,14 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 2);
 
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }
@@ -1000,10 +1004,12 @@ mod tests {
         open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some())
+                });
             })
             .unwrap();
 
@@ -1012,10 +1018,12 @@ mod tests {
         open_workspace_file(path!("/root/file6.txt"), Some(false), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 2, "Workspace should have two items");
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 2, "Workspace should have two items");
+                });
             })
             .unwrap();
 
@@ -1024,11 +1032,13 @@ mod tests {
         open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }
