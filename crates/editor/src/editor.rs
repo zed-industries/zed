@@ -17,8 +17,10 @@ mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
+mod document_colors;
 mod editor_settings;
 mod element;
+mod folding_ranges;
 mod git;
 mod highlight_matching_bracket;
 mod hover_links;
@@ -28,7 +30,6 @@ mod inlays;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
-mod lsp_colors;
 mod lsp_ext;
 mod mouse_context_menu;
 pub mod movement;
@@ -58,8 +59,9 @@ pub use display_map::{
 };
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
-    CompletionDetailAlignment, CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings,
-    HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
+    CompletionDetailAlignment, CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode,
+    EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings,
+    ShowMinimap,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -76,7 +78,9 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff};
+pub use split::{
+    SplitDiff, SplitDiffFeatureFlag, SplittableEditor, ToggleLockedCursors, ToggleSplitDiff,
+};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -95,6 +99,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
+use document_colors::LspColorData;
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
@@ -141,7 +146,6 @@ use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
     LanguageServerId,
 };
-use lsp_colors::LspColorData;
 use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
@@ -246,7 +250,7 @@ pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
-pub const FETCH_COLORS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
+pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
@@ -327,6 +331,7 @@ pub enum HideMouseCursorOrigin {
 
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
+    cx.set_global(breadcrumbs::RenderBreadcrumbText(render_breadcrumb_text));
 
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
@@ -1175,6 +1180,7 @@ pub struct Editor {
     disable_expand_excerpt_buttons: bool,
     delegate_expand_excerpts: bool,
     delegate_stage_and_restore: bool,
+    delegate_open_excerpts: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1327,6 +1333,8 @@ pub struct Editor {
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
     refresh_colors_task: Task<()>,
+    use_document_folding_ranges: bool,
+    refresh_folding_ranges_task: Task<()>,
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
@@ -2062,13 +2070,7 @@ impl Editor {
             constrain_width: false,
             render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
-                div()
-                    .id(fold_id)
-                    .bg(cx.theme().colors().ghost_element_background)
-                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                    .rounded_xs()
-                    .size_full()
+                FoldPlaceholder::fold_element(fold_id, cx)
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -2158,13 +2160,13 @@ impl Editor {
                         );
                     }
                     project::Event::LanguageServerRemoved(_server_id) => {
+                        editor.registered_buffers.clear();
+                        editor.register_visible_buffers(cx);
+                        editor.update_lsp_data(None, window, cx);
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                         if editor.tasks_update_task.is_none() {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
-                        editor.registered_buffers.clear();
-                        editor.register_visible_buffers(cx);
-                        editor.refresh_semantic_token_highlights(cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
                     project::Event::LanguageServerAdded(..) => {
                         if editor.tasks_update_task.is_none() {
@@ -2408,6 +2410,7 @@ impl Editor {
             disable_expand_excerpt_buttons: !full_mode,
             delegate_expand_excerpts: false,
             delegate_stage_and_restore: false,
+            delegate_open_excerpts: false,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -2550,6 +2553,8 @@ impl Editor {
             pull_diagnostics_task: Task::ready(()),
             colors: None,
             refresh_colors_task: Task::ready(()),
+            use_document_folding_ranges: false,
+            refresh_folding_ranges_task: Task::ready(()),
             inlay_hints: None,
             next_color_inlay_id: 0,
             post_scroll_update: Task::ready(()),
@@ -2638,6 +2643,7 @@ impl Editor {
                                 .update_in(cx, |editor, window, cx| {
                                     editor.register_visible_buffers(cx);
                                     editor.refresh_colors_for_visible_range(None, window, cx);
+                                    editor.refresh_folding_ranges(None, window, cx);
                                     editor.refresh_inlay_hints(
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
@@ -2730,6 +2736,7 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
+            editor.use_document_folding_ranges = true;
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
 
             if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
@@ -7573,6 +7580,7 @@ impl Editor {
                 constrain_width: false,
                 merge_adjacent: false,
                 type_tag: Some(type_id),
+                collapsed_text: None,
             };
             let creases = new_newlines
                 .into_iter()
@@ -21262,6 +21270,10 @@ impl Editor {
         self.delegate_stage_and_restore = delegate;
     }
 
+    pub fn set_delegate_open_excerpts(&mut self, delegate: bool) {
+        self.delegate_open_excerpts = delegate;
+    }
+
     pub fn set_on_local_selections_changed(
         &mut self,
         callback: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
@@ -23928,8 +23940,9 @@ impl Editor {
                     self.tasks
                         .retain(|(task_buffer_id, _), _| task_buffer_id != buffer_id);
                     self.semantic_token_state.invalidate_buffer(buffer_id);
-                    self.display_map.update(cx, |display_map, _| {
+                    self.display_map.update(cx, |display_map, cx| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
+                        display_map.clear_lsp_folding_ranges(*buffer_id, cx);
                     });
                 }
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
@@ -24176,6 +24189,10 @@ impl Editor {
                 self.colorize_brackets(true, cx);
             }
 
+            if language_settings_changed {
+                self.clear_disabled_lsp_folding_ranges(window, cx);
+            }
+
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
                 colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
             }) {
@@ -24251,11 +24268,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self.workspace() else {
-            cx.propagate();
-            return;
-        };
-
         if self.buffer.read(cx).is_singleton() {
             cx.propagate();
             return;
@@ -24347,6 +24359,25 @@ impl Editor {
             }
         }
 
+        if self.delegate_open_excerpts {
+            let selections_by_buffer: HashMap<_, _> = new_selections_by_buffer
+                .into_iter()
+                .map(|(buffer, value)| (buffer.read(cx).remote_id(), value))
+                .collect();
+            if !selections_by_buffer.is_empty() {
+                cx.emit(EditorEvent::OpenExcerptsRequested {
+                    selections_by_buffer,
+                    split,
+                });
+            }
+            return;
+        }
+
+        let Some(workspace) = self.workspace() else {
+            cx.propagate();
+            return;
+        };
+
         new_selections_by_buffer
             .retain(|buffer, _| buffer.read(cx).file().is_none_or(|file| file.can_open()));
 
@@ -24354,105 +24385,128 @@ impl Editor {
             return;
         }
 
+        Self::open_buffers_in_workspace(
+            workspace.downgrade(),
+            new_selections_by_buffer,
+            split,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_buffers_in_workspace(
+        workspace: WeakEntity<Workspace>,
+        new_selections_by_buffer: HashMap<
+            Entity<language::Buffer>,
+            (Vec<Range<BufferOffset>>, Option<u32>),
+        >,
+        split: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         // We defer the pane interaction because we ourselves are a workspace item
         // and activating a new item causes the pane to call a method on us reentrantly,
         // which panics if we're on the stack.
         window.defer(cx, move |window, cx| {
-            workspace.update(cx, |workspace, cx| {
-                let pane = if split {
-                    workspace.adjacent_pane(window, cx)
-                } else {
-                    workspace.active_pane().clone()
-                };
-
-                for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
-                    let buffer_read = buffer.read(cx);
-                    let (has_file, is_project_file) = if let Some(file) = buffer_read.file() {
-                        (true, project::File::from_dyn(Some(file)).is_some())
+            workspace
+                .update(cx, |workspace, cx| {
+                    let pane = if split {
+                        workspace.adjacent_pane(window, cx)
                     } else {
-                        (false, false)
+                        workspace.active_pane().clone()
                     };
 
-                    // If project file is none workspace.open_project_item will fail to open the excerpt
-                    // in a pre existing workspace item if one exists, because Buffer entity_id will be None
-                    // so we check if there's a tab match in that case first
-                    let editor = (!has_file || !is_project_file)
-                        .then(|| {
-                            // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
-                            // so `workspace.open_project_item` will never find them, always opening a new editor.
-                            // Instead, we try to activate the existing editor in the pane first.
-                            let (editor, pane_item_index, pane_item_id) =
-                                pane.read(cx).items().enumerate().find_map(|(i, item)| {
-                                    let editor = item.downcast::<Editor>()?;
-                                    let singleton_buffer =
-                                        editor.read(cx).buffer().read(cx).as_singleton()?;
-                                    if singleton_buffer == buffer {
-                                        Some((editor, i, item.item_id()))
-                                    } else {
-                                        None
+                    for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
+                        let buffer_read = buffer.read(cx);
+                        let (has_file, is_project_file) = if let Some(file) = buffer_read.file() {
+                            (true, project::File::from_dyn(Some(file)).is_some())
+                        } else {
+                            (false, false)
+                        };
+
+                        // If project file is none workspace.open_project_item will fail to open the excerpt
+                        // in a pre existing workspace item if one exists, because Buffer entity_id will be None
+                        // so we check if there's a tab match in that case first
+                        let editor = (!has_file || !is_project_file)
+                            .then(|| {
+                                // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
+                                // so `workspace.open_project_item` will never find them, always opening a new editor.
+                                // Instead, we try to activate the existing editor in the pane first.
+                                let (editor, pane_item_index, pane_item_id) =
+                                    pane.read(cx).items().enumerate().find_map(|(i, item)| {
+                                        let editor = item.downcast::<Editor>()?;
+                                        let singleton_buffer =
+                                            editor.read(cx).buffer().read(cx).as_singleton()?;
+                                        if singleton_buffer == buffer {
+                                            Some((editor, i, item.item_id()))
+                                        } else {
+                                            None
+                                        }
+                                    })?;
+                                pane.update(cx, |pane, cx| {
+                                    pane.activate_item(pane_item_index, true, true, window, cx);
+                                    if !PreviewTabsSettings::get_global(cx)
+                                        .enable_preview_from_multibuffer
+                                    {
+                                        pane.unpreview_item_if_preview(pane_item_id);
                                     }
-                                })?;
-                            pane.update(cx, |pane, cx| {
-                                pane.activate_item(pane_item_index, true, true, window, cx);
-                                if !PreviewTabsSettings::get_global(cx)
-                                    .enable_preview_from_multibuffer
-                                {
-                                    pane.unpreview_item_if_preview(pane_item_id);
-                                }
+                                });
+                                Some(editor)
+                            })
+                            .flatten()
+                            .unwrap_or_else(|| {
+                                let keep_old_preview = PreviewTabsSettings::get_global(cx)
+                                    .enable_keep_preview_on_code_navigation;
+                                let allow_new_preview = PreviewTabsSettings::get_global(cx)
+                                    .enable_preview_from_multibuffer;
+                                workspace.open_project_item::<Self>(
+                                    pane.clone(),
+                                    buffer,
+                                    true,
+                                    true,
+                                    keep_old_preview,
+                                    allow_new_preview,
+                                    window,
+                                    cx,
+                                )
                             });
-                            Some(editor)
-                        })
-                        .flatten()
-                        .unwrap_or_else(|| {
-                            let keep_old_preview = PreviewTabsSettings::get_global(cx)
-                                .enable_keep_preview_on_code_navigation;
-                            let allow_new_preview =
-                                PreviewTabsSettings::get_global(cx).enable_preview_from_multibuffer;
-                            workspace.open_project_item::<Self>(
-                                pane.clone(),
-                                buffer,
-                                true,
-                                true,
-                                keep_old_preview,
-                                allow_new_preview,
+
+                        editor.update(cx, |editor, cx| {
+                            if has_file && !is_project_file {
+                                editor.set_read_only(true);
+                            }
+                            let autoscroll = match scroll_offset {
+                                Some(scroll_offset) => {
+                                    Autoscroll::top_relative(scroll_offset as usize)
+                                }
+                                None => Autoscroll::newest(),
+                            };
+                            let nav_history = editor.nav_history.take();
+                            let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let Some((&excerpt_id, _, buffer_snapshot)) =
+                                multibuffer_snapshot.as_singleton()
+                            else {
+                                return;
+                            };
+                            editor.change_selections(
+                                SelectionEffects::scroll(autoscroll),
                                 window,
                                 cx,
-                            )
+                                |s| {
+                                    s.select_ranges(ranges.into_iter().map(|range| {
+                                        let range = buffer_snapshot.anchor_before(range.start)
+                                            ..buffer_snapshot.anchor_after(range.end);
+                                        multibuffer_snapshot
+                                            .anchor_range_in_excerpt(excerpt_id, range)
+                                            .unwrap()
+                                    }));
+                                },
+                            );
+                            editor.nav_history = nav_history;
                         });
-
-                    editor.update(cx, |editor, cx| {
-                        if has_file && !is_project_file {
-                            editor.set_read_only(true);
-                        }
-                        let autoscroll = match scroll_offset {
-                            Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
-                            None => Autoscroll::newest(),
-                        };
-                        let nav_history = editor.nav_history.take();
-                        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let Some((&excerpt_id, _, buffer_snapshot)) =
-                            multibuffer_snapshot.as_singleton()
-                        else {
-                            return;
-                        };
-                        editor.change_selections(
-                            SelectionEffects::scroll(autoscroll),
-                            window,
-                            cx,
-                            |s| {
-                                s.select_ranges(ranges.into_iter().map(|range| {
-                                    let range = buffer_snapshot.anchor_before(range.start)
-                                        ..buffer_snapshot.anchor_after(range.end);
-                                    multibuffer_snapshot
-                                        .anchor_range_in_excerpt(excerpt_id, range)
-                                        .unwrap()
-                                }));
-                            },
-                        );
-                        editor.nav_history = nav_history;
-                    });
-                }
-            })
+                    }
+                })
+                .ok();
         });
     }
 
@@ -25166,9 +25220,12 @@ impl Editor {
     ) {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
+            self.update_semantic_tokens(Some(buffer_id), None, cx);
+        } else {
+            self.refresh_semantic_token_highlights(cx);
         }
         self.refresh_colors_for_visible_range(for_buffer, window, cx);
-        self.update_semantic_tokens(for_buffer, None, cx);
+        self.refresh_folding_ranges(for_buffer, window, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -27564,6 +27621,10 @@ pub enum EditorEvent {
     StageOrUnstageRequested {
         stage: bool,
         hunks: Vec<MultiBufferDiffHunk>,
+    },
+    OpenExcerptsRequested {
+        selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
+        split: bool,
     },
     RestoreRequested {
         hunks: Vec<MultiBufferDiffHunk>,

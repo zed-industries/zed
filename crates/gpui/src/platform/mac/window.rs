@@ -2454,11 +2454,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
-    if let Some(event) =
-        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-        && send_new_event(&window_state, event)
+    if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
+        && send_file_drop_event(window_state, event)
     {
-        window_state.lock().external_files_dragged = true;
         return NSDragOperationCopy;
     }
     NSDragOperationNone
@@ -2467,10 +2465,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    if send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Pending { position }),
-    ) {
+    if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -2479,21 +2474,13 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
-    window_state.lock().external_files_dragged = false;
+    send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Submit { position }),
-    )
-    .to_objc()
+    send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
 }
 
 fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
@@ -2515,10 +2502,7 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
+    send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 async fn synthetic_drag(
@@ -2544,11 +2528,26 @@ async fn synthetic_drag(
     }
 }
 
-fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
-    let window_state = window_state_lock.lock().event_callback.take();
-    if let Some(mut callback) = window_state {
-        callback(e);
-        window_state_lock.lock().event_callback = Some(callback);
+/// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
+/// state and updates the window state according to the event passed.
+fn send_file_drop_event(
+    window_state: Arc<Mutex<MacWindowState>>,
+    file_drop_event: FileDropEvent,
+) -> bool {
+    let mut window_state = window_state.lock();
+    let window_event_callback = window_state.event_callback.as_mut();
+    if let Some(mut callback) = window_event_callback {
+        let external_files_dragged = match file_drop_event {
+            FileDropEvent::Entered { .. } => Some(true),
+            FileDropEvent::Exited => Some(false),
+            _ => None,
+        };
+
+        callback(PlatformInput::FileDrop(file_drop_event));
+
+        if let Some(external_files_dragged) = external_files_dragged {
+            window_state.external_files_dragged = external_files_dragged;
+        }
         true
     } else {
         false

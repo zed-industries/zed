@@ -265,6 +265,9 @@ impl ManageProfilesModal {
                                         provider: LanguageModelProviderSetting(provider.clone()),
                                         model: model_id.clone(),
                                         enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     });
                                 }
                             }

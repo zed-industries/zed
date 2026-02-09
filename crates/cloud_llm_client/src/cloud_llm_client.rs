@@ -291,6 +291,8 @@ pub struct LanguageModel {
     pub provider: LanguageModelProvider,
     pub id: LanguageModelId,
     pub display_name: String,
+    #[serde(default)]
+    pub is_latest: bool,
     pub max_token_count: usize,
     pub max_token_count_in_max_mode: Option<usize>,
     pub max_output_tokens: usize,
@@ -309,6 +311,8 @@ pub struct LanguageModel {
 pub struct SupportedEffortLevel {
     pub name: Arc<str>,
     pub value: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

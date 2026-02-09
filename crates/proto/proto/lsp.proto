@@ -850,6 +850,7 @@ message LspQuery {
     GetImplementation get_implementation = 13;
     InlayHints inlay_hints = 14;
     SemanticTokens semantic_tokens = 16;
+    GetFoldingRanges get_folding_ranges = 17;
   }
 }
 
@@ -874,6 +875,7 @@ message LspResponse {
     GetReferencesResponse get_references_response = 12;
     InlayHintsResponse inlay_hints_response = 13;
     SemanticTokensResponse semantic_tokens_response = 14;
+    GetFoldingRangesResponse get_folding_ranges_response = 15;
   }
   uint64 server_id = 7;
 }
@@ -1002,4 +1004,16 @@ message ToggleLspLogs {
     TRACE = 1;
     RPC = 2;
   }
+}
+
+message GetFoldingRanges {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  repeated VectorClockEntry version = 3;
+}
+
+message GetFoldingRangesResponse {
+  repeated AnchorRange ranges = 1;
+  repeated VectorClockEntry version = 2;
+  repeated string collapsed_texts = 3;
 }

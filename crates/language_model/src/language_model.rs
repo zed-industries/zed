@@ -577,6 +577,7 @@ impl Default for LanguageModelTextStream {
 pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
+    pub is_default: bool,
 }
 
 pub trait LanguageModel: Send + Sync {
@@ -589,6 +590,11 @@ pub trait LanguageModel: Send + Sync {
     }
     fn upstream_provider_name(&self) -> LanguageModelProviderName {
         self.provider_name()
+    }
+
+    /// Returns whether this model is the "latest", so we can highlight it in the UI.
+    fn is_latest(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String;
@@ -605,6 +611,13 @@ pub trait LanguageModel: Send + Sync {
     /// Returns the list of supported effort levels that can be used when thinking.
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         Vec::new()
+    }
+
+    /// Returns the default effort level to use when thinking.
+    fn default_effort_level(&self) -> Option<LanguageModelEffortLevel> {
+        self.supported_effort_levels()
+            .into_iter()
+            .find(|effort_level| effort_level.is_default)
     }
 
     /// Whether this model supports images

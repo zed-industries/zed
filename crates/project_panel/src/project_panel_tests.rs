@@ -875,7 +875,6 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         });
         assert!(panel.confirm_edit(true, window, cx).is_none());
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2325,7 +2324,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2381,7 +2379,6 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2441,6 +2438,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         );
         panel.cancel(&menu::Cancel, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2531,7 +2529,6 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2587,7 +2584,6 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2647,6 +2643,7 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
         );
         panel.cancel(&menu::Cancel, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -3817,7 +3814,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
             let project = panel.project.read(cx);
             let worktree = project.visible_worktrees(cx).next().unwrap();
             let root_entry = worktree.read(cx).root_entry().unwrap();
-            panel.state.selection = Some(SelectedEntry {
+            panel.selection = Some(SelectedEntry {
                 worktree_id: worktree.read(cx).id(),
                 entry_id: root_entry.id,
             });
@@ -3977,7 +3974,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
             let drag = DraggedSelection {
-                active_selection: this.state.selection.unwrap(),
+                active_selection: this.selection.unwrap(),
                 marked_selections: this.marked_entries.clone().into(),
             };
             let target_entry = this
@@ -4005,6 +4002,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             this.cancel(&menu::Cancel, window, cx);
         })
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -4115,8 +4113,8 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b/c/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
-            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
+            active_selection: *panel.selection.as_ref().unwrap(),
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -4145,8 +4143,8 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/d", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
-            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
+            active_selection: *panel.selection.as_ref().unwrap(),
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -4165,8 +4163,8 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
-            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
+            active_selection: *panel.selection.as_ref().unwrap(),
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -4191,8 +4189,8 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/target_destination/b", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
-            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
+            active_selection: *panel.selection.as_ref().unwrap(),
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -4211,8 +4209,8 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     select_path(&panel, "root/a", cx);
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
-            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
+            active_selection: *panel.selection.as_ref().unwrap(),
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -4285,7 +4283,7 @@ async fn test_drag_marked_entries_in_folded_directories(cx: &mut gpui::TestAppCo
 
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
-            active_selection: *panel.state.selection.as_ref().unwrap(),
+            active_selection: *panel.selection.as_ref().unwrap(),
             marked_selections: panel.marked_entries.clone().into(),
         };
         let target_entry = panel
@@ -5326,8 +5324,34 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
 
     panel.update_in(cx, |panel, window, cx| {
         panel.cancel(&menu::Cancel, window, cx);
-        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src  <== selected",
+            "    > test"
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx)
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            //
+            "v src",
+            "    > [EDITOR: '']  <== selected",
+            "    > test"
+        ]
+    );
+    workspace.update(cx, |_, window, _| window.blur()).unwrap();
     cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -7323,7 +7347,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     panel.update(cx, |panel, _| {
         assert!(
-            panel.state.selection.is_none(),
+            panel.selection.is_none(),
             "Should have no selection initially"
         );
     });
@@ -7375,7 +7399,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     // Test 2: Create new directory when no entry is selected
     panel.update(cx, |panel, _| {
-        panel.state.selection = None;
+        panel.selection = None;
     });
 
     panel.update_in(cx, |panel, window, cx| {
@@ -8484,7 +8508,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
                 if !panel.marked_entries.contains(&entry) {
                     panel.marked_entries.push(entry);
                 }
-                panel.state.selection = Some(entry);
+                panel.selection = Some(entry);
                 return;
             }
         }
@@ -8503,7 +8527,7 @@ fn select_folded_path_with_mark(
     select_path_with_mark(panel, leaf_path, cx);
     let active_ancestor_path = rel_path(active_ancestor_path);
     panel.update(cx, |panel, cx| {
-        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        let leaf_entry_id = panel.selection.unwrap().entry_id;
         if let Some(folded_ancestors) = panel.state.ancestors.get_mut(&leaf_entry_id) {
             for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                 let worktree = worktree.read(cx);
@@ -8537,7 +8561,6 @@ fn drag_selection_to(
 
     panel.update_in(cx, |panel, window, cx| {
         let selection = panel
-            .state
             .selection
             .expect("a selection is required before dragging");
         let drag = DraggedSelection {

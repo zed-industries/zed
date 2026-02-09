@@ -16,7 +16,8 @@ use std::rc::Rc;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{
-    ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*,
+    ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
+    Tooltip, prelude::*,
 };
 use workspace::{ModalView, Workspace};
 
@@ -53,6 +54,7 @@ pub struct RatePredictionsModal {
     focus_handle: FocusHandle,
     _subscription: gpui::Subscription,
     current_view: RatePredictionView,
+    failure_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct ActivePrediction {
@@ -112,6 +114,7 @@ impl RatePredictionsModal {
                 editor
             }),
             current_view: RatePredictionView::SuggestedEdits,
+            failure_mode_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -651,11 +654,12 @@ impl RatePredictionsModal {
                         ContextMenu::build(window, cx, move |menu, _window, _cx| {
                             FeedbackCompletionProvider::FAILURE_MODES
                                 .iter()
-                                .fold(menu, |menu, (_key, description)| {
+                                .fold(menu, |menu, (key, description)| {
+                                    let key: SharedString = (*key).into();
                                     let description: SharedString = (*description).into();
                                     let modal = modal.clone();
                                     menu.entry(
-                                        description.clone(),
+                                        format!("{} {}", key, description),
                                         None,
                                         move |window, cx| {
                                             if let Some(modal) = modal.upgrade() {
@@ -665,18 +669,13 @@ impl RatePredictionsModal {
                                                             cx,
                                                             |editor, cx| {
                                                                 editor.set_text(
-                                                                    description.clone(),
+                                                                    format!("{} {}", key, description),
                                                                     window,
                                                                     cx,
                                                                 );
                                                             },
                                                         );
                                                     }
-                                                    this.thumbs_down_active(
-                                                        &ThumbsDownActivePrediction,
-                                                        window,
-                                                        cx,
-                                                    );
                                                 });
                                             }
                                         },
@@ -692,12 +691,13 @@ impl RatePredictionsModal {
                             .border_color(border_color)
                             .child(
                                 DropdownMenu::new(
-                                    "failure-mode-dropdown",
-                                    "Issue",
-                                    failure_mode_menu,
-                                )
-                                .style(ui::DropdownStyle::Outlined)
-                                .trigger_size(ButtonSize::Compact),
+                                        "failure-mode-dropdown",
+                                        "Issue",
+                                        failure_mode_menu,
+                                    )
+                                    .handle(self.failure_mode_menu_handle.clone())
+                                    .style(ui::DropdownStyle::Outlined)
+                                    .trigger_size(ButtonSize::Compact),
                             )
                             .child(
                                 h_flex()
@@ -964,7 +964,11 @@ impl Render for RatePredictionsModal {
                     ),
             )
             .children(self.render_active_completion(window, cx))
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.failure_mode_menu_handle.is_deployed() {
+                    cx.emit(DismissEvent);
+                }
+            }))
     }
 }
 
@@ -999,46 +1003,22 @@ struct FeedbackCompletionProvider;
 
 impl FeedbackCompletionProvider {
     const FAILURE_MODES: &'static [(&'static str, &'static str)] = &[
+        ("@location", "Unexpected location"),
+        ("@malformed", "Incomplete, cut off, or syntax error"),
         (
-            "bad_location",
-            "Made a prediction somewhere other than expected",
+            "@deleted",
+            "Deleted code that should be kept (use `@reverted` if it undid a recent edit)",
         ),
-        ("incomplete", "Prediction was incomplete or cut off"),
-        (
-            "deleted",
-            "Prediction deleted code that should have been kept. Prefer `reverted` if it reverted an edit",
-        ),
-        (
-            "bad_style",
-            "Prediction used wrong coding style or conventions",
-        ),
-        (
-            "repetitive",
-            "Prediction repeated existing code unnecessarily",
-        ),
-        (
-            "hallucinated",
-            "Prediction referenced non-existent variables/functions",
-        ),
-        ("wrong_indent", "Prediction had incorrect indentation"),
-        ("syntax_error", "Introduced a syntax error"),
-        (
-            "too_aggressive",
-            "Prediction made more changes than expected",
-        ),
-        (
-            "too_conservative",
-            "Prediction was overly cautious/conservative",
-        ),
-        (
-            "no_context",
-            "Misunderstood or did not use contextual information",
-        ),
-        ("reverted", "Reverted recent edits"),
-        (
-            "bad_cursor_position",
-            "The prediction moved the cursor to an unhelpful position",
-        ),
+        ("@style", "Wrong coding style or conventions"),
+        ("@repetitive", "Repeated existing code"),
+        ("@hallucinated", "Referenced non-existent symbols"),
+        ("@formatting", "Wrong indentation or structure"),
+        ("@aggressive", "Changed more than expected"),
+        ("@conservative", "Too cautious, changed too little"),
+        ("@context", "Ignored or misunderstood context"),
+        ("@reverted", "Undid recent edits"),
+        ("@cursor_position", "Cursor placed in unhelpful position"),
+        ("@whitespace", "Unwanted whitespace or newline changes"),
     ];
 }
 
@@ -1056,7 +1036,7 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
         let mut count_back = 0;
 
         for char in buffer.reversed_chars_at(buffer_position) {
-            if char.is_ascii_alphanumeric() || char == '_' {
+            if char.is_ascii_alphanumeric() || char == '_' || char == '@' {
                 count_back += 1;
             } else {
                 break;
@@ -1073,7 +1053,7 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
         let snapshot = buffer.text_snapshot();
         let query: String = snapshot.text_for_range(replace_range.clone()).collect();
 
-        if query.len() < 3 {
+        if !query.starts_with('@') {
             return gpui::Task::ready(Ok(vec![CompletionResponse {
                 completions: vec![],
                 display_options: CompletionDisplayOptions {
@@ -1090,7 +1070,7 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
             .filter(|(key, _description)| key.starts_with(&query_lower))
             .map(|(key, description)| Completion {
                 replace_range: replace_range.clone(),
-                new_text: description.to_string(),
+                new_text: format!("{} {}", key, description),
                 label: CodeLabel::plain(format!("{}: {}", key, description), None),
                 documentation: None,
                 source: CompletionSource::Custom,
@@ -1121,6 +1101,6 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
     ) -> bool {
         text.chars()
             .last()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '@')
     }
 }

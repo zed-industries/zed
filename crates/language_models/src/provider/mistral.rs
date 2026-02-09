@@ -861,6 +861,7 @@ mod tests {
             intent: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         let mistral_request = into_mistral(request, mistral::Model::MistralSmallLatest, None);
@@ -894,6 +895,7 @@ mod tests {
             intent: None,
             stop: vec![],
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         let mistral_request = into_mistral(request, mistral::Model::Pixtral12BLatest, None);
