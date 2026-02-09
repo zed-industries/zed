@@ -288,11 +288,9 @@ impl BranchDiff {
         let Some(repo) = self.repo.clone() else {
             return output;
         };
-        let diff_base = self.diff_base.clone();
 
         self.project.update(cx, |_project, cx| {
             let mut seen = HashSet::default();
-
             for item in repo.read(cx).cached_status() {
                 seen.insert(item.repo_path.clone());
                 let branch_diff = self
@@ -308,7 +306,7 @@ impl BranchDiff {
                     continue;
                 }
 
-                match &diff_base {
+                match &self.diff_base {
                     DiffBase::Staged => {
                         if !item.status.staging().has_staged() {
                             continue;
@@ -327,13 +325,8 @@ impl BranchDiff {
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(
-                    &diff_base,
-                    branch_diff,
-                    project_path,
-                    repo.clone(),
-                    cx,
-                );
+                let task =
+                    Self::load_buffer(&self.diff_base, branch_diff, project_path, repo.clone(), cx);
 
                 output.push(DiffBuffer {
                     repo_path: item.repo_path.clone(),
@@ -354,7 +347,7 @@ impl BranchDiff {
                     continue;
                 };
                 let task = Self::load_buffer(
-                    &diff_base,
+                    &self.diff_base,
                     Some(branch_diff.clone()),
                     project_path,
                     repo.clone(),
