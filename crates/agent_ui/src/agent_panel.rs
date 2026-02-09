@@ -485,7 +485,7 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
-    fn serialize(&mut self, cx: &mut Context<Self>) {
+    fn serialize(&mut self, cx: &mut App) {
         let workspace_id = self
             .workspace
             .read_with(cx, |workspace, _| workspace.database_id())
@@ -1894,7 +1894,14 @@ impl Panel for AgentPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
-        self.serialize(cx);
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| {
+                    this.serialize(cx);
+                });
+            }
+        });
         cx.notify();
     }
 
