@@ -364,6 +364,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Rescans the selected entry's path so externally-added files appear.
+        RefreshSelectedEntry,
     ]
 );
 
@@ -1132,6 +1134,10 @@ impl ProjectPanel {
                         menu.when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
+                        .when(is_local, |menu| {
+                            menu.separator()
+                                .action("Refresh", Box::new(RefreshSelectedEntry))
+                        })
                     } else {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
@@ -1152,6 +1158,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_local, |menu| {
+                                menu.action("Refresh", Box::new(RefreshSelectedEntry))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -3342,6 +3351,31 @@ impl ProjectPanel {
             let path = worktree.read(cx).absolutize(&entry.path);
             self.project
                 .update(cx, |project, cx| project.reveal_path(&path, cx));
+        }
+    }
+
+    fn refresh_selected_entry(
+        &mut self,
+        _: &RefreshSelectedEntry,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
+            let is_dir = entry.is_dir();
+            let path = entry.path.clone();
+            let worktree = worktree.read(cx);
+            if let Some(local_worktree) = worktree.as_local() {
+                if is_dir {
+                    local_worktree.add_path_prefix_to_scan(path);
+                } else {
+                    let parent = entry
+                        .path
+                        .parent()
+                        .map(Arc::from)
+                        .unwrap_or_else(|| Arc::from(RelPath::empty()));
+                    local_worktree.refresh_entries_for_paths(vec![parent]);
+                }
+            }
         }
     }
 
@@ -6338,6 +6372,7 @@ impl Render for ProjectPanel {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::refresh_selected_entry))
                 })
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
