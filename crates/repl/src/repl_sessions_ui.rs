@@ -79,8 +79,7 @@ pub fn init(cx: &mut App) {
             }
 
             cx.defer_in(window, |editor, window, cx| {
-                let workspace = Workspace::for_window(window, cx);
-                let project = workspace.map(|workspace| workspace.read(cx).project().clone());
+                let project = editor.project.cloned();
 
                 let is_local_project = project
                     .as_ref()
