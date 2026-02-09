@@ -8187,15 +8187,42 @@ pub fn workspace_windows_for_location(
         .into_iter()
         .filter_map(|window| window.downcast::<Workspace>())
         .filter(|workspace| {
-            workspace.read(cx).is_ok_and(|workspace| {
-                if let WorkspaceLocation::Location(location, _) = workspace.workspace_location(cx)
-                    && &location == serialized_location
-                {
-                    true
-                } else {
-                    false
+            let same_host = |left: &RemoteConnectionOptions, right: &RemoteConnectionOptions| match (left, right) {
+                (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
+                    (&a.host, &a.username, &a.port) == (&b.host, &b.username, &b.port)
                 }
-            })
+                (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => {
+                    // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+                    a.distro_name == b.distro_name
+                }
+                (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
+                    a.container_id == b.container_id
+                }
+                #[cfg(any(test, feature = "test-support"))]
+                (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => {
+                    a.id == b.id
+                }
+                _ => false,
+            };
+
+            workspace
+                .read(cx)
+                .is_ok_and(|workspace| match workspace.workspace_location(cx) {
+                    WorkspaceLocation::Location(location, _) => {
+                        match (&location, serialized_location) {
+                            (
+                                SerializedWorkspaceLocation::Local,
+                                SerializedWorkspaceLocation::Local,
+                            ) => true,
+                            (
+                                SerializedWorkspaceLocation::Remote(a),
+                                SerializedWorkspaceLocation::Remote(b),
+                            ) => same_host(a, b),
+                            _ => false,
+                        }
+                    }
+                    _ => false,
+                })
         })
         .collect()
 }
