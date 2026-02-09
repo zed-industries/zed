@@ -1281,7 +1281,7 @@ pub struct Workspace {
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
-    terminal_provider: Option<Box<dyn TerminalProvider>>,
+    terminal_provider: Option<Arc<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     _items_serializer: Task<Result<()>>,
@@ -2388,7 +2388,7 @@ impl Workspace {
     }
 
     pub fn set_terminal_provider(&mut self, provider: impl TerminalProvider + 'static) {
-        self.terminal_provider = Some(Box::new(provider));
+        self.terminal_provider = Some(Arc::new(provider));
     }
 
     pub fn set_debugger_provider(&mut self, provider: impl DebuggerProvider + 'static) {

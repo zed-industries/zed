@@ -3,6 +3,7 @@ use std::num::NonZeroUsize;
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
+use settings::SaveBeforeTaskRun;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
@@ -19,6 +20,7 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub save_before_task_run: SaveBeforeTaskRun,
     pub restore_on_startup: settings::RestoreOnStartupBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
@@ -91,6 +93,7 @@ impl Settings for WorkspaceSettings {
             confirm_quit: workspace.confirm_quit.unwrap(),
             show_call_status_icon: workspace.show_call_status_icon.unwrap(),
             autosave: workspace.autosave.unwrap(),
+            save_before_task_run: workspace.save_before_task_run.unwrap(),
             restore_on_startup: workspace.restore_on_startup.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
