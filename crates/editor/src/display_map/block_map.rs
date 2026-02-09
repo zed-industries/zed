@@ -1335,7 +1335,7 @@ impl BlockMap {
                     &mut our_wrapper,
                     &mut companion_wrapper,
                     current_boundary,
-                    current_range.end,
+                    current_range.end.min(excerpt.target_excerpt_range.end),
                     delta,
                 );
 
@@ -1368,7 +1368,7 @@ impl BlockMap {
                     &mut our_wrapper,
                     &mut companion_wrapper,
                     current_boundary,
-                    current_range.start,
+                    current_range.start.min(excerpt.target_excerpt_range.end),
                     delta,
                 );
                 delta = delta_at_start;
@@ -1408,7 +1408,7 @@ impl BlockMap {
                         &mut our_wrapper,
                         &mut companion_wrapper,
                         current_boundary,
-                        current_range.end,
+                        current_range.end.min(excerpt.target_excerpt_range.end),
                         delta,
                     );
                     delta = delta_at_end;
