@@ -1,9 +1,9 @@
-use editor::{Editor, SelectionEffects, movement};
-use gpui::{Context, Window, actions};
 use crate::{
     Mode, Vim,
     motion::{Motion, MotionKind},
 };
+use editor::{Editor, SelectionEffects, movement};
+use gpui::{Context, Window, actions};
 
 actions!(
     vim,
