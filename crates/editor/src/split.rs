@@ -33,7 +33,7 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, DisplayMap, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleCodeActions,
+    Autoscroll, DisplayMap, Editor, EditorEvent, RenderDiffHunkControlsFn,
     ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
@@ -772,19 +772,6 @@ impl SplittableEditor {
             self.unsplit(window, cx);
         } else {
             self.split(window, cx);
-        }
-    }
-
-    fn intercept_toggle_code_actions(
-        &mut self,
-        _: &ToggleCodeActions,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.lhs.is_some() {
-            cx.stop_propagation();
-        } else {
-            cx.propagate();
         }
     }
 
@@ -1795,7 +1782,6 @@ impl Render for SplittableEditor {
             .on_action(cx.listener(Self::toggle_split))
             .on_action(cx.listener(Self::activate_pane_left))
             .on_action(cx.listener(Self::activate_pane_right))
-            .on_action(cx.listener(Self::intercept_toggle_code_actions))
             .on_action(cx.listener(Self::intercept_toggle_breakpoint))
             .on_action(cx.listener(Self::intercept_enable_breakpoint))
             .on_action(cx.listener(Self::intercept_disable_breakpoint))
