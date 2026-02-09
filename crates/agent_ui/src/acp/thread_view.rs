@@ -75,10 +75,11 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
-    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
-    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
+    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);

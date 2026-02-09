@@ -2798,17 +2798,56 @@ impl AcpThreadView {
             (Color::Muted, IconName::ChevronDown)
         };
 
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let show_cycle_row = supported_effort_levels.len() > 1;
+
+        let tooltip = Tooltip::element({
+            let focus_handle = focus_handle.clone();
+            move |_, cx| {
+                let mut content = v_flex().gap_1().child(
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(Label::new("Change Thinking Effort"))
+                        .child(KeyBinding::for_action_in(
+                            &ToggleThinkingEffortMenu,
+                            &focus_handle,
+                            cx,
+                        )),
+                );
+
+                if show_cycle_row {
+                    content = content.child(
+                        h_flex()
+                            .pt_1()
+                            .gap_2()
+                            .justify_between()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Label::new("Cycle Thinking Effort"))
+                            .child(KeyBinding::for_action_in(
+                                &CycleThinkingEffort,
+                                &focus_handle,
+                                cx,
+                            )),
+                    );
+                }
+
+                content.into_any_element()
+            }
+        });
+
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
                 ButtonLike::new_rounded_right("effort-selector-trigger")
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
-                Tooltip::text("Set Thinking Effort"),
+                tooltip,
             )
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-                    menu = menu.header("Set Thinking Effort");
+                    menu = menu.header("Change Thinking Effort");
 
                     for effort_level in supported_effort_levels.clone() {
                         let is_selected = selected
@@ -6906,6 +6945,68 @@ impl AcpThreadView {
             menu_handle.toggle(window, cx);
         });
     }
+
+    fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
+        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
+            return;
+        }
+
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let (effort_levels, current_effort) = {
+            let thread_ref = thread.read(cx);
+            let Some(model) = thread_ref.model() else {
+                return;
+            };
+            if !model.supports_thinking() || !thread_ref.thinking_enabled() {
+                return;
+            }
+            let effort_levels = model.supported_effort_levels();
+            if effort_levels.is_empty() {
+                return;
+            }
+            let current_effort = thread_ref.thinking_effort().cloned();
+            (effort_levels, current_effort)
+        };
+
+        let current_index = current_effort.and_then(|current| {
+            effort_levels
+                .iter()
+                .position(|level| level.value == current)
+        });
+        let next_index = match current_index {
+            Some(index) => (index + 1) % effort_levels.len(),
+            None => 0,
+        };
+        let next_effort = effort_levels[next_index].value.to_string();
+
+        thread.update(cx, |thread, cx| {
+            thread.set_thinking_effort(Some(next_effort.clone()), cx);
+
+            let fs = thread.project().read(cx).fs().clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                if let Some(agent) = settings.agent.as_mut()
+                    && let Some(default_model) = agent.default_model.as_mut()
+                {
+                    default_model.effort = Some(next_effort.clone());
+                }
+            });
+        });
+    }
+
+    fn toggle_thinking_effort_menu(
+        &mut self,
+        _action: &ToggleThinkingEffortMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.thinking_effort_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
+    }
 }
 
 impl Render for AcpThreadView {
@@ -6947,6 +7048,10 @@ impl Render for AcpThreadView {
                     });
                 }
             }))
+            .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+                this.cycle_thinking_effort(cx);
+            }))
+            .on_action(cx.listener(Self::toggle_thinking_effort_menu))
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
                 this.send_queued_message_at_index(0, true, window, cx);
             }))
