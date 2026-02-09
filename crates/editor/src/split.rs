@@ -2012,7 +2012,7 @@ mod tests {
     use rand::rngs::StdRng;
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
-    use workspace::{MultiWorkspace, Workspace};
+    use workspace::MultiWorkspace;
 
     use crate::SplittableEditor;
     use crate::display_map::{BlockPlacement, BlockProperties, BlockStyle};

@@ -418,9 +418,7 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{
-        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, VisualTestContext,
-    };
+    use gpui::{AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
@@ -430,7 +428,7 @@ mod tests {
     use rope::Point;
     use serde_json::json;
     use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
-    use workspace::{MultiWorkspace, Workspace, WorkspaceHandle as _};
+    use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
         Capability,
@@ -850,7 +848,7 @@ mod tests {
             )
             .await;
 
-        let (multi_workspace, mut cx) =
+        let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project

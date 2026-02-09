@@ -5437,7 +5437,9 @@ mod tests {
             .unwrap();
 
         let workspace1 = window
-            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.workspaces()[0].clone()
+            })
             .unwrap();
 
         window

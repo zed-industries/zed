@@ -594,7 +594,7 @@ mod tests {
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use workspace::{MultiWorkspace, Workspace};
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
