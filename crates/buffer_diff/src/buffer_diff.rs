@@ -30,7 +30,7 @@ pub struct BufferDiff {
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner<language::BufferSnapshot>,
-    secondary_diff: Option<Box<BufferDiffSnapshot>>,
+    secondary_diff: Option<Arc<BufferDiffSnapshot>>,
 }
 
 impl std::fmt::Debug for BufferDiffSnapshot {
@@ -222,11 +222,11 @@ impl std::fmt::Debug for BufferDiffInner<language::BufferSnapshot> {
 impl BufferDiffSnapshot {
     #[cfg(test)]
     fn new_sync(
-        buffer: text::BufferSnapshot,
+        buffer: &text::BufferSnapshot,
         diff_base: String,
         cx: &mut gpui::TestAppContext,
     ) -> BufferDiffSnapshot {
-        let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
+        let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, buffer, cx));
         buffer_diff.update(cx, |buffer_diff, cx| buffer_diff.snapshot(cx))
     }
 
@@ -950,10 +950,10 @@ fn build_diff_options(
 
 fn compute_hunks(
     diff_base: Option<(Arc<str>, Rope)>,
-    buffer: text::BufferSnapshot,
+    buffer: &text::BufferSnapshot,
     diff_options: Option<DiffOptions>,
 ) -> SumTree<InternalDiffHunk> {
-    let mut tree = SumTree::new(&buffer);
+    let mut tree = SumTree::new(buffer);
 
     if let Some((diff_base, diff_base_rope)) = diff_base {
         let buffer_text = buffer.as_rope().to_string();
@@ -980,7 +980,7 @@ fn compute_hunks(
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
                 },
-                &buffer,
+                buffer,
             );
             return tree;
         }
@@ -992,11 +992,11 @@ fn compute_hunks(
                     &patch,
                     hunk_index,
                     &diff_base_rope,
-                    &buffer,
+                    buffer,
                     &mut divergence,
                     diff_options.as_ref(),
                 );
-                tree.push(hunk, &buffer);
+                tree.push(hunk, buffer);
             }
         }
     } else {
@@ -1007,7 +1007,7 @@ fn compute_hunks(
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
             },
-            &buffer,
+            buffer,
         );
     }
 
@@ -1544,7 +1544,7 @@ impl BufferDiff {
                     base_text
                         .clone()
                         .map(|base_text| (base_text, base_text_rope.clone())),
-                    buffer.clone(),
+                    &buffer,
                     diff_options,
                 );
                 let base_text = base_text.unwrap_or_default();
@@ -1785,10 +1785,10 @@ impl BufferDiff {
                 base_text_exists: self.inner.base_text_exists,
                 buffer_snapshot: self.inner.buffer_snapshot.clone(),
             },
-            secondary_diff: self
-                .secondary_diff
-                .as_ref()
-                .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
+            secondary_diff: self.secondary_diff.as_ref().map(|diff| {
+                debug_assert!(diff.read(cx).secondary_diff.is_none());
+                Arc::new(diff.read(cx).snapshot(cx))
+            }),
         }
     }
 
@@ -2018,7 +2018,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
+        let mut diff = BufferDiffSnapshot::new_sync(&buffer, diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(buffer.remote_id()),
@@ -2030,7 +2030,7 @@ mod tests {
         );
 
         buffer.edit([(0..0, "point five\n")]);
-        diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
+        diff = BufferDiffSnapshot::new_sync(&buffer, diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(buffer.remote_id()),
@@ -2101,10 +2101,9 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
-        let mut uncommitted_diff =
-            BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
-        uncommitted_diff.secondary_diff = Some(Box::new(unstaged_diff));
+        let unstaged_diff = BufferDiffSnapshot::new_sync(&buffer, index_text, cx);
+        let mut uncommitted_diff = BufferDiffSnapshot::new_sync(&buffer, head_text.clone(), cx);
+        uncommitted_diff.secondary_diff = Some(Arc::new(unstaged_diff));
 
         let expected_hunks = vec![
             (2..3, "two\n", "TWO\n", DiffHunkStatus::modified_none()),
@@ -2631,7 +2630,7 @@ mod tests {
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, cx).snapshot(cx));
-        let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let diff_1 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -2666,7 +2665,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_2 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let diff_2 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -2704,7 +2703,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_3 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let diff_3 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -2738,7 +2737,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_4 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let diff_4 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
             base_text_changed_range,
@@ -3172,11 +3171,11 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
-        let old_buffer = buffer.snapshot();
-        let diff_a = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);
+        let old_buffer = buffer.snapshot().clone();
+        let diff_a = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
 
         buffer.edit([(Point::new(1, 3)..Point::new(1, 3), "\n")]);
-        let diff_b = BufferDiffSnapshot::new_sync(buffer.clone(), base_text, cx);
+        let diff_b = BufferDiffSnapshot::new_sync(&buffer, base_text, cx);
 
         let DiffChanged {
             changed_range,
@@ -3235,11 +3234,11 @@ mod tests {
         .unindent();
 
         let mut buffer_2 = Buffer::new(ReplicaId::LOCAL, BufferId::new(2).unwrap(), buffer_text_2);
-        let old_buffer_2 = buffer_2.snapshot();
-        let diff_2a = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2.clone(), cx);
+        let old_buffer_2 = buffer_2.snapshot().clone();
+        let diff_2a = BufferDiffSnapshot::new_sync(&buffer_2, base_text_2.clone(), cx);
 
         buffer_2.edit([(Point::new(4, 0)..Point::new(4, 4), "FIVE_CHANGED")]);
-        let diff_2b = BufferDiffSnapshot::new_sync(buffer_2.clone(), base_text_2, cx);
+        let diff_2b = BufferDiffSnapshot::new_sync(&buffer_2, base_text_2, cx);
 
         let DiffChanged {
             changed_range,
@@ -3293,7 +3292,7 @@ mod tests {
             buffer_text_1.to_string(),
         );
 
-        let old_base_snapshot_1 = base_text_buffer.snapshot();
+        let old_base_snapshot_1 = base_text_buffer.snapshot().clone();
         let old_hunks_1 = compute_hunks(
             Some((Arc::from(initial_base), Rope::from(initial_base))),
             buffer.snapshot(),
@@ -3352,7 +3351,7 @@ mod tests {
             buffer_text_2.to_string(),
         );
 
-        let old_base_snapshot_2 = base_buf_2.snapshot();
+        let old_base_snapshot_2 = base_buf_2.snapshot().clone();
         let old_hunks_2 = compute_hunks(
             Some((Arc::from(simple_base), Rope::from(simple_base))),
             buffer_2.snapshot(),
@@ -3419,7 +3418,7 @@ mod tests {
             buffer_text_3.to_string(),
         );
 
-        let old_base_snapshot_3 = base_buf_3.snapshot();
+        let old_base_snapshot_3 = base_buf_3.snapshot().clone();
         let old_hunks_3 = compute_hunks(
             Some((Arc::from(base_3), Rope::from(base_3))),
             buffer_3.snapshot(),
@@ -3485,8 +3484,8 @@ mod tests {
             buffer_text_4.to_string(),
         );
 
-        let old_base_snapshot_4 = base_buf_4.snapshot();
-        let old_buffer_snapshot_4 = buffer_4.snapshot();
+        let old_base_snapshot_4 = base_buf_4.snapshot().clone();
+        let old_buffer_snapshot_4 = buffer_4.snapshot().clone();
         let old_hunks_4 = compute_hunks(
             Some((Arc::from(base_4), Rope::from(base_4))),
             buffer_4.snapshot(),

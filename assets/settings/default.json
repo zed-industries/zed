@@ -291,6 +291,10 @@
   "completion_menu_scrollbar": "never",
   // Whether to align detail text in code completions context menus left or right.
   "completion_detail_alignment": "left",
+  // How to display diffs in the editor.
+  //
+  // Default: stacked
+  "diff_view_style": "stacked",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -929,6 +933,8 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-sonnet-4",
+      // Whether thinking is enabled.
+      "enable_thinking": false,
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -1099,6 +1105,14 @@
   //
   // May require language server restart to properly apply.
   "semantic_tokens": "off",
+
+  // Controls whether folding ranges from language servers are used instead of
+  // tree-sitter and indent-based folding.
+  //
+  // Options:
+  // - "off": Use tree-sitter and indent-based folding (default).
+  // - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+  "document_folding_ranges": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.
@@ -2220,6 +2234,11 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    // The maximum amount of time to wait for responses from language servers, in seconds.
+    //
+    // A value of `0` will result in no timeout being applied (causing all LSP responses to wait
+    // indefinitely until completed).
+    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.

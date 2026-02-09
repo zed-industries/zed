@@ -440,6 +440,7 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
+    last_configuration_error_telemetry: Option<String>,
 }
 
 impl AgentPanel {
@@ -660,6 +661,7 @@ impl AgentPanel {
             thread_store,
             selected_agent: AgentType::default(),
             show_trust_workspace_message: false,
+            last_configuration_error_telemetry: None,
         };
 
         // Initial sync of agent servers from extensions
@@ -1398,6 +1400,8 @@ impl AgentPanel {
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
+                                enable_thinking: false,
+                                effort: None,
                             })
                     });
                 }
@@ -2694,6 +2698,33 @@ impl AgentPanel {
         )
     }
 
+    fn emit_configuration_error_telemetry_if_needed(
+        &mut self,
+        configuration_error: Option<&ConfigurationError>,
+    ) {
+        let error_kind = configuration_error.map(|err| match err {
+            ConfigurationError::NoProvider => "no_provider",
+            ConfigurationError::ModelNotFound => "model_not_found",
+            ConfigurationError::ProviderNotAuthenticated(_) => "provider_not_authenticated",
+        });
+
+        let error_kind_string = error_kind.map(String::from);
+
+        if self.last_configuration_error_telemetry == error_kind_string {
+            return;
+        }
+
+        self.last_configuration_error_telemetry = error_kind_string;
+
+        if let Some(kind) = error_kind {
+            let message = configuration_error
+                .map(|err| err.to_string())
+                .unwrap_or_default();
+
+            telemetry::event!("Agent Panel Error Shown", kind = kind, message = message,);
+        }
+    }
+
     fn render_configuration_error(
         &self,
         border_bottom: bool,
@@ -2978,46 +3009,57 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
-            .map(|parent| match &self.active_view {
-                ActiveView::Uninitialized => parent,
-                ActiveView::AgentThread { thread_view, .. } => parent
-                    .child(thread_view.clone())
-                    .child(self.render_drag_target(cx)),
-                ActiveView::History { kind } => match kind {
-                    HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
-                    HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
-                },
-                ActiveView::TextThread {
-                    text_thread_editor,
-                    buffer_search_bar,
-                    ..
-                } => {
+            .map(|parent| {
+                // Emit configuration error telemetry before entering the match to avoid borrow conflicts
+                if matches!(&self.active_view, ActiveView::TextThread { .. }) {
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     let configuration_error =
                         model_registry.configuration_error(model_registry.default_model(), cx);
-                    parent
-                        .map(|this| {
-                            if !self.should_render_onboarding(cx)
-                                && let Some(err) = configuration_error.as_ref()
-                            {
-                                this.child(self.render_configuration_error(
-                                    true,
-                                    err,
-                                    &self.focus_handle(cx),
-                                    cx,
-                                ))
-                            } else {
-                                this
-                            }
-                        })
-                        .child(self.render_text_thread(
-                            text_thread_editor,
-                            buffer_search_bar,
-                            window,
-                            cx,
-                        ))
+                    self.emit_configuration_error_telemetry_if_needed(configuration_error.as_ref());
                 }
-                ActiveView::Configuration => parent.children(self.configuration.clone()),
+
+                match &self.active_view {
+                    ActiveView::Uninitialized => parent,
+                    ActiveView::AgentThread { thread_view, .. } => parent
+                        .child(thread_view.clone())
+                        .child(self.render_drag_target(cx)),
+                    ActiveView::History { kind } => match kind {
+                        HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
+                        HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
+                    },
+                    ActiveView::TextThread {
+                        text_thread_editor,
+                        buffer_search_bar,
+                        ..
+                    } => {
+                        let model_registry = LanguageModelRegistry::read_global(cx);
+                        let configuration_error =
+                            model_registry.configuration_error(model_registry.default_model(), cx);
+
+                        parent
+                            .map(|this| {
+                                if !self.should_render_onboarding(cx)
+                                    && let Some(err) = configuration_error.as_ref()
+                                {
+                                    this.child(self.render_configuration_error(
+                                        true,
+                                        err,
+                                        &self.focus_handle(cx),
+                                        cx,
+                                    ))
+                                } else {
+                                    this
+                                }
+                            })
+                            .child(self.render_text_thread(
+                                text_thread_editor,
+                                buffer_search_bar,
+                                window,
+                                cx,
+                            ))
+                    }
+                    ActiveView::Configuration => parent.children(self.configuration.clone()),
+                }
             })
             .children(self.render_trial_end_upsell(window, cx));
 

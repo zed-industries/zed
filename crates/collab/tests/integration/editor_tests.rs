@@ -3,7 +3,7 @@ use call::ActiveCall;
 use collab::rpc::RECONNECT_TIMEOUT;
 use collections::{HashMap, HashSet};
 use editor::{
-    DocumentColorsRenderMode, Editor, FETCH_COLORS_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
+    DocumentColorsRenderMode, Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultiBufferOffset, RowInfo,
     SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, CopyFileLocation,
@@ -23,8 +23,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
-use lsp::LSP_REQUEST_TIMEOUT;
-use multi_buffer::DiffbaselessAnchorRangeExt as _;
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
+use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
 use project::{
     ProgressToken, ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
@@ -34,7 +34,10 @@ use project::{
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::{InlayHintSettingsContent, InlineBlameSettings, SemanticTokens, SettingsStore};
+use settings::{
+    DocumentFoldingRanges, InlayHintSettingsContent, InlineBlameSettings, SemanticTokens,
+    SettingsStore,
+};
 use std::{
     collections::BTreeSet,
     num::NonZeroU32,
@@ -1252,7 +1255,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 
-    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let long_request_time = DEFAULT_LSP_REQUEST_TIMEOUT / 2;
     let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
     let requests_started = Arc::new(AtomicUsize::new(0));
     let requests_completed = Arc::new(AtomicUsize::new(0));
@@ -1359,8 +1362,8 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         requests_completed.load(atomic::Ordering::Acquire),
-        3,
-        "After enough time, all 3 LSP requests should have been served by the language server"
+        1,
+        "After enough time, a single, deduplicated, LSP request should have been served by the language server"
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
@@ -1379,7 +1382,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     assert_eq!(
         resulting_lens_actions.first().unwrap().lsp_action.title(),
-        "LSP Command 3",
+        "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
 }
@@ -2161,7 +2164,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2372,7 +2375,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::InlayHintRefreshRequest>(())
+        .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("inlay refresh request failed");
@@ -2557,7 +2560,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     color_request_handle.next().await.unwrap();
-    executor.advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
 
     assert_eq!(
@@ -3411,7 +3414,7 @@ async fn test_lsp_pull_diagnostics(
     }
 
     fake_language_server
-        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("workspace diagnostics refresh request failed");
@@ -5182,12 +5185,12 @@ async fn test_semantic_token_refresh_is_forwarded(
 
     other_tokens.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
-        .request::<lsp::request::SemanticTokensRefresh>(())
+        .request::<lsp::request::SemanticTokensRefresh>((), DEFAULT_LSP_REQUEST_TIMEOUT)
         .await
         .into_response()
         .expect("semantic tokens refresh request failed");
     // wait out the debounce timeout
-    executor.advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, cx| {
         assert!(
@@ -5202,6 +5205,187 @@ async fn test_semantic_token_refresh_is_forwarded(
             vec![MultiBufferOffset(0)..MultiBufferOffset(2)],
             extract_semantic_token_ranges(editor, cx),
             "Guest should get a /refresh LSP request propagated by host despite host tokens are off"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_document_folding_ranges(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let capabilities = lsp::ServerCapabilities {
+        folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {\n    if true {\n        println!(\"hello\");\n    }\n}\n",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    let folding_request_count = Arc::new(AtomicUsize::new(0));
+    let closure_count = Arc::clone(&folding_request_count);
+    let mut folding_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(move |_, _| {
+            let count = Arc::clone(&closure_count);
+            async move {
+                count.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(vec![lsp::FoldingRange {
+                    start_line: 0,
+                    start_character: Some(10),
+                    end_line: 4,
+                    end_character: Some(1),
+                    kind: None,
+                    collapsed_text: None,
+                }]))
+            }
+        });
+
+    executor.run_until_parked();
+
+    assert_eq!(
+        0,
+        folding_request_count.load(atomic::Ordering::Acquire),
+        "LSP folding ranges are off by default, no request should have been made"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Host should not have LSP folding ranges enabled"
+        );
+    });
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Client should not have LSP folding ranges enabled by default"
+        );
+    });
+
+    cx_b.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .document_folding_ranges = Some(DocumentFoldingRanges::On);
+            });
+        });
+    });
+    executor.advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
+    folding_request_handle.next().await.unwrap();
+    executor.run_until_parked();
+
+    assert!(
+        folding_request_count.load(atomic::Ordering::Acquire) > 0,
+        "After the client enables LSP folding ranges, a request should be made"
+    );
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(
+            editor.document_folding_ranges_enabled(cx),
+            "Client should have LSP folding ranges enabled after toggling the setting on"
+        );
+    });
+    editor_a.update(cx_a, |editor, cx| {
+        assert!(
+            !editor.document_folding_ranges_enabled(cx),
+            "Host should remain unaffected by the client's setting change"
+        );
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            !snapshot.is_line_folded(MultiBufferRow(0)),
+            "Line 0 should not be folded before fold_at"
+        );
+        editor.fold_at(MultiBufferRow(0), window, cx);
+    });
+    executor.run_until_parked();
+
+    editor_b.update(cx_b, |editor, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            snapshot.is_line_folded(MultiBufferRow(0)),
+            "Line 0 should be folded after fold_at using LSP folding range"
         );
     });
 }

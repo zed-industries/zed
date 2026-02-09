@@ -1,14 +1,16 @@
-//! Repair predictions that received poor QA scores.
+//! Repair predictions that received poor quality signals.
 //!
-//! This module takes examples with predictions and QA feedback, identifies
-//! predictions that need improvement (based on reverts_edits or low confidence),
-//! and uses an LLM to generate improved predictions.
+//! This module takes examples with predictions, identifies predictions that need
+//! improvement, and uses an LLM to generate improved predictions. It supports
+//! two sources of quality signals:
+//! - QA feedback (reverts_edits or low confidence)
+//! - Computed scores when QA is unavailable (high reversal_ratio or wrong_editable_region)
 
 use crate::{
     BatchProvider, PredictionProvider,
     anthropic_client::AnthropicClient,
-    example::{Example, ExamplePrediction},
-    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example},
+    example::{ActualCursor, Example, ExamplePrediction},
+    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example, extract_last_codeblock},
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
@@ -17,6 +19,46 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use std::sync::OnceLock;
+
+const KEEP_PREVIOUS: &str = "KEEP_PREVIOUS";
+
+/// Print a summary report of repair results across all examples.
+pub fn print_report(examples: &[Example], confidence_threshold: u8) {
+    let total = examples.len();
+    let mut no_repair_needed = 0;
+    let mut repaired = 0;
+    let mut repair_failed = 0;
+
+    for example in examples {
+        if !needs_repair(example, confidence_threshold) {
+            no_repair_needed += 1;
+            continue;
+        }
+
+        if has_successful_repair(example) {
+            repaired += 1;
+        } else {
+            repair_failed += 1;
+        }
+    }
+
+    let needed_repair = total - no_repair_needed;
+
+    eprintln!();
+    eprintln!("Repair summary ({total} examples):");
+    eprintln!(
+        "  {no_repair_needed}/{total} didn't need repair (confidence > {confidence_threshold})"
+    );
+    if needed_repair > 0 {
+        eprintln!("  {needed_repair}/{total} needed repair:");
+        if repaired > 0 {
+            eprintln!("    {repaired} repaired successfully");
+        }
+        if repair_failed > 0 {
+            eprintln!("    {repair_failed} failed to repair");
+        }
+    }
+}
 
 /// Arguments for the repair command.
 #[derive(Debug, Clone, clap::Args)]
@@ -41,18 +83,77 @@ fn model_for_backend(backend: BatchProvider) -> &'static str {
     }
 }
 
+/// Build the quality feedback string from QA results.
+fn build_qa_feedback(example: &Example) -> Option<String> {
+    let qa = example.qa.first()?.as_ref()?;
+
+    let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
+    let reverts_edits = qa
+        .reverts_edits
+        .map_or("unknown", |v| if v { "yes" } else { "no" });
+    let confidence = qa
+        .confidence
+        .map_or("unknown".to_string(), |v| v.to_string());
+
+    Some(format!(
+        "- **Reverts user edits**: {reverts_edits}\n\
+         - **Confidence score**: {confidence}/5\n\
+         - **Reasoning**: {qa_reasoning}"
+    ))
+}
+
+/// Build the quality feedback string from computed scores when QA is unavailable.
+fn build_score_feedback(example: &Example) -> Option<String> {
+    let score = example.score.first()?;
+
+    let mut issues = Vec::new();
+
+    if score.reversal_ratio > 0.9 {
+        issues.push(format!(
+            "Automated analysis detected a high reversal ratio ({:.2}), which suggests this \
+             prediction may be reverting changes the user intentionally made. Double-check that \
+             the prediction doesn't undo the user's recent edits. If the prediction is actually \
+             fine and the edits are intentional completions rather than reversals, keep it as-is. \
+             If it truly reverts the user's changes, generate an improved prediction that \
+             continues the user's intent instead.",
+            score.reversal_ratio
+        ));
+    }
+
+    if score.wrong_editable_region == Some(true) {
+        issues.push(
+            "Automated analysis detected that the prediction may be modifying code outside \
+             the expected editable region, or producing changes misaligned with the editable \
+             region boundaries. Make sure the prediction only modifies code within the editable \
+             region and is properly aligned."
+                .to_string(),
+        );
+    }
+
+    if issues.is_empty() {
+        return None;
+    }
+
+    let mut feedback = String::from(
+        "No human quality assessment is available, but automated scoring flagged potential issues:\n\n",
+    );
+    for issue in &issues {
+        feedback.push_str(&format!("- {issue}\n"));
+    }
+    feedback.push_str(
+        "\nRemember: if the previous prediction was actually correct, output `KEEP_PREVIOUS`. \
+         If no edits should be made at all and you are unsure how to improve it, output `NO_EDITS`.",
+    );
+
+    Some(feedback)
+}
+
 /// Build the repair prompt for an example that needs improvement.
 pub fn build_repair_prompt(example: &Example) -> Result<String> {
     let prediction = example
         .predictions
         .first()
         .context("no predictions available")?;
-    let qa = example
-        .qa
-        .first()
-        .context("no QA results available")?
-        .as_ref()
-        .context("QA result is None")?;
     let prompt_inputs = example
         .prompt_inputs
         .as_ref()
@@ -61,6 +162,10 @@ pub fn build_repair_prompt(example: &Example) -> Result<String> {
         .actual_patch
         .as_ref()
         .context("no actual_patch available (run predict first)")?;
+
+    let quality_feedback = build_qa_feedback(example)
+        .or_else(|| build_score_feedback(example))
+        .context("no quality feedback available (need either QA results or computed scores)")?;
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
@@ -88,42 +193,63 @@ pub fn build_repair_prompt(example: &Example) -> Result<String> {
     let cursor_excerpt =
         extract_cursor_excerpt_from_example(example).context("failed to extract cursor excerpt")?;
 
-    let qa_reasoning = qa.reasoning.as_deref().unwrap_or("No reasoning provided");
-    let reverts_edits = qa
-        .reverts_edits
-        .map_or("unknown", |v| if v { "yes" } else { "no" });
-    let confidence = qa
-        .confidence
-        .map_or("unknown".to_string(), |v| v.to_string());
-
     let prompt_template = crate::prompt_assets::get_prompt("repair.md");
     Ok(prompt_template
         .replace("{edit_history}", &edit_history)
         .replace("{context}", &context)
         .replace("{cursor_excerpt}", &cursor_excerpt)
         .replace("{actual_patch_word_diff}", &actual_patch_word_diff)
-        .replace("{reverts_edits}", reverts_edits)
-        .replace("{confidence}", &confidence)
-        .replace("{qa_reasoning}", qa_reasoning))
+        .replace("{quality_feedback}", &quality_feedback))
 }
 
-/// Check if an example needs repair based on QA feedback.
+/// Check if an example needs repair based on QA feedback or computed scores.
 pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
-    let Some(qa) = example.qa.first().and_then(|q| q.as_ref()) else {
-        return false;
-    };
+    // Check QA-based signals first.
+    if let Some(qa) = example.qa.first().and_then(|q| q.as_ref()) {
+        if qa.reverts_edits == Some(true) {
+            return true;
+        }
 
-    if qa.reverts_edits == Some(true) {
-        return true;
+        if let Some(confidence) = qa.confidence {
+            if confidence <= confidence_threshold {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    if let Some(confidence) = qa.confidence {
-        if confidence <= confidence_threshold {
+    // When QA is unavailable, fall back to computed score signals.
+    if let Some(score) = example.score.first() {
+        if score.reversal_ratio > 0.9 {
+            return true;
+        }
+
+        if score.wrong_editable_region == Some(true) {
             return true;
         }
     }
 
     false
+}
+
+/// Parse repair model output into a patch and optional cursor.
+///
+/// Handles the `KEEP_PREVIOUS` sentinel by copying the teacher's prediction,
+/// and delegates normal output to `TeacherPrompt::parse`.
+pub fn parse(example: &Example, actual_output: &str) -> Result<(String, Option<ActualCursor>)> {
+    let last_codeblock = extract_last_codeblock(actual_output);
+    if last_codeblock.trim() == KEEP_PREVIOUS {
+        let original = example
+            .predictions
+            .first()
+            .context("no original prediction to keep")?;
+        let patch = original.actual_patch.clone().unwrap_or_default();
+        let cursor = original.actual_cursor.clone();
+        return Ok((patch, cursor));
+    }
+
+    TeacherPrompt::parse(example, actual_output)
 }
 
 /// Check if an example already has a successful repair prediction.
@@ -161,10 +287,6 @@ pub async fn run_repair(
 
     if example.predictions.is_empty() {
         anyhow::bail!("no predictions available (run predict first)");
-    }
-
-    if example.qa.is_empty() {
-        anyhow::bail!("no QA results available (run qa first)");
     }
 
     let step_progress = example_progress.start(Step::Repair);
@@ -251,18 +373,19 @@ pub async fn run_repair(
         }
     };
 
-    let parse_result = TeacherPrompt::parse(example, &response);
+    let parse_result = parse(example, &response);
     let err = parse_result
         .as_ref()
         .err()
         .map(|e| format!("Failed to parse repair response: {}", e));
 
-    let (actual_patch, actual_cursor_offset) = parse_result.ok().unzip();
+    let (actual_patch, actual_cursor) = parse_result.ok().unzip();
+    let actual_cursor = actual_cursor.flatten();
 
     example.predictions.push(ExamplePrediction {
         actual_patch,
         actual_output: response,
-        actual_cursor_offset: actual_cursor_offset.flatten(),
+        actual_cursor,
         error: err,
         provider: PredictionProvider::Repair,
     });

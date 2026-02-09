@@ -319,11 +319,15 @@ impl TextThreadEditor {
                         move |model, cx| {
                             update_settings_file(fs.clone(), cx, move |settings, _| {
                                 let provider = model.provider_id().0.to_string();
-                                let model = model.id().0.to_string();
+                                let model_id = model.id().0.to_string();
                                 settings.agent.get_or_insert_default().set_model(
                                     LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider),
-                                        model,
+                                        model: model_id,
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     },
                                 )
                             });
@@ -2995,6 +2999,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {

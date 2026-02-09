@@ -39,7 +39,7 @@ pub struct ZetaPromptInput {
     Deserialize,
 )]
 #[allow(non_camel_case_types)]
-pub enum ZetaVersion {
+pub enum ZetaFormat {
     V0112MiddleAtEnd,
     V0113Ordered,
     #[default]
@@ -48,28 +48,28 @@ pub enum ZetaVersion {
     V0131GitMergeMarkersPrefix,
 }
 
-impl std::fmt::Display for ZetaVersion {
+impl std::fmt::Display for ZetaFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", <&'static str>::from(self))
     }
 }
 
-impl ZetaVersion {
-    pub fn parse(version_string: &str) -> Result<Self> {
-        let mut results = ZetaVersion::iter().filter(|version| {
+impl ZetaFormat {
+    pub fn parse(format_name: &str) -> Result<Self> {
+        let mut results = ZetaFormat::iter().filter(|version| {
             <&'static str>::from(version)
                 .to_lowercase()
-                .contains(&version_string.to_lowercase())
+                .contains(&format_name.to_lowercase())
         });
         let Some(result) = results.next() else {
             anyhow::bail!(
-                "`{version_string}` did not match any of:\n{}",
+                "`{format_name}` did not match any of:\n{}",
                 Self::options_as_string()
             );
         };
         if results.next().is_some() {
             anyhow::bail!(
-                "`{version_string}` matched more than one of:\n{}",
+                "`{format_name}` matched more than one of:\n{}",
                 Self::options_as_string()
             );
         }
@@ -77,8 +77,8 @@ impl ZetaVersion {
     }
 
     pub fn options_as_string() -> String {
-        ZetaVersion::iter()
-            .map(|version| format!("- {}\n", <&'static str>::from(version)))
+        ZetaFormat::iter()
+            .map(|format| format!("- {}\n", <&'static str>::from(format)))
             .collect::<Vec<_>>()
             .concat()
     }
@@ -137,27 +137,40 @@ pub struct RelatedExcerpt {
     pub text: Arc<str>,
 }
 
-pub fn format_zeta_prompt(input: &ZetaPromptInput, version: ZetaVersion) -> String {
-    format_zeta_prompt_with_budget(input, version, MAX_PROMPT_TOKENS)
+pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> String {
+    format_zeta_prompt_with_budget(input, format, MAX_PROMPT_TOKENS)
+}
+
+/// Post-processes model output for the given zeta format by stripping format-specific suffixes.
+pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
+    match format {
+        ZetaFormat::V0120GitMergeMarkers => output
+            .strip_suffix(v0120_git_merge_markers::END_MARKER)
+            .unwrap_or(output),
+        ZetaFormat::V0131GitMergeMarkersPrefix => output
+            .strip_suffix(v0131_git_merge_markers_prefix::END_MARKER)
+            .unwrap_or(output),
+        _ => output,
+    }
 }
 
 fn format_zeta_prompt_with_budget(
     input: &ZetaPromptInput,
-    version: ZetaVersion,
+    format: ZetaFormat,
     max_tokens: usize,
 ) -> String {
     let mut cursor_section = String::new();
-    match version {
-        ZetaVersion::V0112MiddleAtEnd => {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd => {
             v0112_middle_at_end::write_cursor_excerpt_section(&mut cursor_section, input);
         }
-        ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
+        ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
             v0113_ordered::write_cursor_excerpt_section(&mut cursor_section, input)
         }
-        ZetaVersion::V0120GitMergeMarkers => {
+        ZetaFormat::V0120GitMergeMarkers => {
             v0120_git_merge_markers::write_cursor_excerpt_section(&mut cursor_section, input)
         }
-        ZetaVersion::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0131GitMergeMarkersPrefix => {
             v0131_git_merge_markers_prefix::write_cursor_excerpt_section(&mut cursor_section, input)
         }
     }
@@ -563,7 +576,7 @@ mod tests {
     }
 
     fn format_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
-        format_zeta_prompt_with_budget(input, ZetaVersion::V0114180EditableRegion, max_tokens)
+        format_zeta_prompt_with_budget(input, ZetaFormat::V0114180EditableRegion, max_tokens)
     }
 
     #[test]

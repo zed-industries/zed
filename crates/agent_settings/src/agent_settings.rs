@@ -76,27 +76,6 @@ impl AgentSettings {
         return None;
     }
 
-    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
-        self.inline_assistant_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
-        self.commit_message_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
-        self.thread_summary_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
     pub fn set_message_editor_max_lines(&self) -> usize {
         self.message_editor_min_lines * 2
     }

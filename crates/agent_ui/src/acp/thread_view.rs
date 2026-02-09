@@ -21,7 +21,7 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingToggleFeatureFlag,
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingEffortFeatureFlag,
     FeatureFlagAppExt as _,
 };
 use file_icons::FileIcons;
@@ -73,10 +73,11 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
-    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
-    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
+    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -797,12 +798,13 @@ impl AcpServerView {
             }
             _ => {}
         }
-        if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            self.server_state = ServerState::LoadError(load_err.clone());
+        let load_error = if let Some(load_err) = err.downcast_ref::<LoadError>() {
+            load_err.clone()
         } else {
-            self.server_state =
-                ServerState::LoadError(LoadError::Other(format!("{:#}", err).into()))
-        }
+            LoadError::Other(format!("{:#}", err).into())
+        };
+        self.emit_load_error_telemetry(&load_error);
+        self.server_state = ServerState::LoadError(load_error);
         cx.notify();
     }
 
@@ -1069,6 +1071,7 @@ impl AcpServerView {
             }
             AcpThreadEvent::TokenUsageUpdated => {
                 self.update_turn_tokens(cx);
+                self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 let mut available_commands = available_commands.clone();
@@ -1626,6 +1629,77 @@ impl AcpServerView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn emit_token_limit_telemetry_if_needed(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_thread) = self.as_active_thread() else {
+            return;
+        };
+
+        let (ratio, agent_telemetry_id, session_id) = {
+            let thread_data = thread.read(cx);
+            let Some(token_usage) = thread_data.token_usage() else {
+                return;
+            };
+            (
+                token_usage.ratio(),
+                thread_data.connection().telemetry_id(),
+                thread_data.session_id().clone(),
+            )
+        };
+
+        let kind = match ratio {
+            acp_thread::TokenUsageRatio::Normal => {
+                active_thread.update(cx, |active, _cx| {
+                    active.last_token_limit_telemetry = None;
+                });
+                return;
+            }
+            acp_thread::TokenUsageRatio::Warning => "warning",
+            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
+        };
+
+        let should_skip = active_thread
+            .read(cx)
+            .last_token_limit_telemetry
+            .as_ref()
+            .is_some_and(|last| *last >= ratio);
+        if should_skip {
+            return;
+        }
+
+        active_thread.update(cx, |active, _cx| {
+            active.last_token_limit_telemetry = Some(ratio);
+        });
+
+        telemetry::event!(
+            "Agent Token Limit Warning",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = kind,
+        );
+    }
+
+    fn emit_load_error_telemetry(&self, error: &LoadError) {
+        let error_kind = match error {
+            LoadError::Unsupported { .. } => "unsupported",
+            LoadError::FailedToInstall(_) => "failed_to_install",
+            LoadError::Exited { .. } => "exited",
+            LoadError::Other(_) => "other",
+        };
+
+        let agent_name = self.agent.name();
+
+        telemetry::event!(
+            "Agent Panel Error Shown",
+            agent = agent_name,
+            kind = error_kind,
+            message = error.to_string(),
+        );
     }
 
     fn render_load_error(
@@ -2293,7 +2367,7 @@ pub(crate) mod tests {
         AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
     };
     use action_log::ActionLog;
-    use agent::ToolPermissionContext;
+    use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
@@ -4056,8 +4130,9 @@ pub(crate) mod tests {
         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build --release`")
             .kind(acp::ToolKind::Edit);
 
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4163,8 +4238,8 @@ pub(crate) mod tests {
         let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Edit `src/main.rs`")
             .kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("edit_file", "src/main.rs").build_permission_options();
+        let permission_options = ToolPermissionContext::new(EditFileTool::NAME, "src/main.rs")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4251,7 +4326,8 @@ pub(crate) mod tests {
             .kind(acp::ToolKind::Fetch);
 
         let permission_options =
-            ToolPermissionContext::new("fetch", "https://docs.rs/gpui").build_permission_options();
+            ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4338,8 +4414,9 @@ pub(crate) mod tests {
             .kind(acp::ToolKind::Edit);
 
         // No pattern button since ./deploy.sh doesn't match the alphanumeric pattern
-        let permission_options = ToolPermissionContext::new("terminal", "./deploy.sh --production")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
+                .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4437,7 +4514,7 @@ pub(crate) mod tests {
             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo test`").kind(acp::ToolKind::Edit);
 
         let permission_options =
-            ToolPermissionContext::new("terminal", "cargo test").build_permission_options();
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo test").build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4520,8 +4597,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "npm install")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4609,8 +4686,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `cargo build`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "cargo build").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "cargo build")
+            .build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4688,8 +4765,8 @@ pub(crate) mod tests {
         let tool_call =
             acp::ToolCall::new(tool_call_id.clone(), "Run `npm install`").kind(acp::ToolKind::Edit);
 
-        let permission_options =
-            ToolPermissionContext::new("terminal", "npm install").build_permission_options();
+        let permission_options = ToolPermissionContext::new(TerminalTool::NAME, "npm install")
+            .build_permission_options();
 
         // Verify we have the expected options
         let PermissionOptions::Dropdown(choices) = &permission_options else {
@@ -4791,7 +4868,7 @@ pub(crate) mod tests {
             acp::ToolCall::new(tool_call_id.clone(), "Run `git push`").kind(acp::ToolKind::Edit);
 
         let permission_options =
-            ToolPermissionContext::new("terminal", "git push").build_permission_options();
+            ToolPermissionContext::new(TerminalTool::NAME, "git push").build_permission_options();
 
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -4850,8 +4927,9 @@ pub(crate) mod tests {
 
     #[gpui::test]
     async fn test_option_id_transformation_for_allow() {
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let PermissionOptions::Dropdown(choices) = permission_options else {
             panic!("Expected dropdown permission options");
@@ -4867,15 +4945,16 @@ pub(crate) mod tests {
         assert!(
             allow_ids
                 .iter()
-                .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+                .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
             "Missing allow pattern option"
         );
     }
 
     #[gpui::test]
     async fn test_option_id_transformation_for_deny() {
-        let permission_options = ToolPermissionContext::new("terminal", "cargo build --release")
-            .build_permission_options();
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
+                .build_permission_options();
 
         let PermissionOptions::Dropdown(choices) = permission_options else {
             panic!("Expected dropdown permission options");
@@ -4891,7 +4970,7 @@ pub(crate) mod tests {
         assert!(
             deny_ids
                 .iter()
-                .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+                .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
             "Missing deny pattern option"
         );
     }

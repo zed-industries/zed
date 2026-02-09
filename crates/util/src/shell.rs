@@ -274,6 +274,11 @@ impl ShellKind {
     ///   on values, not command chaining (e.g., `and $true $false`).
     /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
     ///   have `&&`/`||` operators for conditional chaining.
+    /// All current shell variants are listed here because brush-parser can handle
+    /// their syntax. If a new `ShellKind` variant is added, evaluate whether
+    /// brush-parser can safely parse its command chaining syntax before including
+    /// it. Omitting a variant will cause `tool_permissions::from_input` to deny
+    /// terminal commands that have `always_allow` patterns configured.
     pub fn supports_posix_chaining(&self) -> bool {
         matches!(
             self,

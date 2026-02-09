@@ -22,15 +22,14 @@ use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div,
+    WeakEntity, Window, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use settings::Settings;
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
@@ -46,53 +45,12 @@ use workspace::{
     },
 };
 
-pub use registrar::DivRegistrar;
+pub use registrar::{DivRegistrar, register_pane_search_actions};
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-/// Opens the buffer search interface with the specified configuration.
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
-#[action(namespace = buffer_search)]
-#[serde(deny_unknown_fields)]
-pub struct Deploy {
-    #[serde(default = "util::serde::default_true")]
-    pub focus: bool,
-    #[serde(default)]
-    pub replace_enabled: bool,
-    #[serde(default)]
-    pub selection_search_enabled: bool,
-}
-
-actions!(
-    buffer_search,
-    [
-        /// Deploys the search and replace interface.
-        DeployReplace,
-        /// Dismisses the search bar.
-        Dismiss,
-        /// Focuses back on the editor.
-        FocusEditor
-    ]
-);
-
-impl Deploy {
-    pub fn find() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: false,
-            selection_search_enabled: false,
-        }
-    }
-
-    pub fn replace() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: true,
-            selection_search_enabled: false,
-        }
-    }
-}
+pub use zed_actions::buffer_search::{Deploy, DeployReplace, Dismiss, FocusEditor};
 
 pub enum Event {
     UpdateLocation,
@@ -154,7 +112,7 @@ impl Render for BufferSearchBar {
                     let is_split = splittable_editor.read(cx).is_split();
                     let focus_handle = splittable_editor.focus_handle(cx);
                     h_flex()
-                        .gap_0p5()
+                        .gap_1()
                         .child(
                             IconButton::new("diff-stacked", IconName::DiffStacked)
                                 .shape(IconButtonShape::Square)
@@ -196,42 +154,15 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, label, tooltip_label) = if self.is_collapsed {
-                (IconName::ChevronUpDown, "Expand All", "Expand All Files")
+            let (icon, tooltip_label) = if self.is_collapsed {
+                (IconName::ChevronUpDown, "Expand All Files")
             } else {
-                (
-                    IconName::ChevronDownUp,
-                    "Collapse All",
-                    "Collapse All Files",
-                )
+                (IconName::ChevronDownUp, "Collapse All Files")
             };
 
-            if self.dismissed {
-                if has_splittable_editor {
-                    return h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new("multibuffer-collapse-expand-empty", icon)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |_, cx| {
-                                    Tooltip::for_action_in(
-                                        tooltip_label,
-                                        &ToggleFoldAll,
-                                        &query_editor_focus,
-                                        cx,
-                                    )
-                                })
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                                }),
-                        )
-                        .children(split_buttons)
-                        .into_any_element();
-                }
-
-                return Button::new("multibuffer-collapse-expand-empty", label)
-                    .icon_position(IconPosition::Start)
-                    .icon(icon)
+            let collapse_expand_icon_button = |id| {
+                IconButton::new(id, icon)
+                    .shape(IconButtonShape::Square)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -243,27 +174,23 @@ impl Render for BufferSearchBar {
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
                     })
+            };
+
+            if self.dismissed {
+                return h_flex()
+                    .pl_0p5()
+                    .gap_1()
+                    .child(collapse_expand_icon_button(
+                        "multibuffer-collapse-expand-empty",
+                    ))
+                    .when(has_splittable_editor, |this| this.children(split_buttons))
                     .into_any_element();
             }
 
             Some(
                 h_flex()
                     .gap_1()
-                    .child(
-                        IconButton::new("multibuffer-collapse-expand", icon)
-                            .shape(IconButtonShape::Square)
-                            .tooltip(move |_, cx| {
-                                Tooltip::for_action_in(
-                                    tooltip_label,
-                                    &ToggleFoldAll,
-                                    &query_editor_focus,
-                                    cx,
-                                )
-                            })
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                            }),
-                    )
+                    .child(collapse_expand_icon_button("multibuffer-collapse-expand"))
                     .children(split_buttons)
                     .into_any_element(),
             )

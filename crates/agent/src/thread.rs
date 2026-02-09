@@ -664,28 +664,35 @@ impl ToolPermissionContext {
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
-        let shell_supports_always_allow = if tool_name == TerminalTool::name() {
+        let shell_supports_always_allow = if tool_name == TerminalTool::NAME {
             ShellKind::system().supports_posix_chaining()
         } else {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::name() {
+        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
             (
                 extract_terminal_pattern(input_value),
                 extract_terminal_pattern_display(input_value),
             )
-        } else if tool_name == EditFileTool::name()
-            || tool_name == DeletePathTool::name()
-            || tool_name == MovePathTool::name()
-            || tool_name == CreateDirectoryTool::name()
-            || tool_name == SaveFileTool::name()
+        } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
+            // input_value is "source\ndestination"; extract a pattern from the
+            // common parent directory of both paths so that "always allow" covers
+            // future checks against both the source and the destination.
+            (
+                extract_copy_move_pattern(input_value),
+                extract_copy_move_pattern_display(input_value),
+            )
+        } else if tool_name == EditFileTool::NAME
+            || tool_name == DeletePathTool::NAME
+            || tool_name == CreateDirectoryTool::NAME
+            || tool_name == SaveFileTool::NAME
         {
             (
                 extract_path_pattern(input_value),
                 extract_path_pattern_display(input_value),
             )
-        } else if tool_name == FetchTool::name() {
+        } else if tool_name == FetchTool::NAME {
             (
                 extract_url_pattern(input_value),
                 extract_url_pattern_display(input_value),
@@ -721,15 +728,15 @@ impl ToolPermissionContext {
             );
 
             if let (Some(pattern), Some(display)) = (pattern, pattern_display) {
-                let button_text = if tool_name == TerminalTool::name() {
+                let button_text = if tool_name == TerminalTool::NAME {
                     format!("Always for `{}` commands", display)
                 } else {
                     format!("Always for `{}`", display)
                 };
                 push_choice(
                     button_text,
-                    format!("always_allow_pattern:{}:{}", tool_name, pattern),
-                    format!("always_deny_pattern:{}:{}", tool_name, pattern),
+                    format!("always_allow_pattern:{}\n{}", tool_name, pattern),
+                    format!("always_deny_pattern:{}\n{}", tool_name, pattern),
                     acp::PermissionOptionKind::AllowAlways,
                     acp::PermissionOptionKind::RejectAlways,
                 );
@@ -797,6 +804,7 @@ pub struct Thread {
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
+    thinking_effort: Option<String>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
@@ -827,7 +835,16 @@ impl Thread {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
@@ -859,7 +876,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -881,7 +899,16 @@ impl Thread {
         parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = settings.default_profile.clone();
+        let enable_thinking = settings
+            .default_model
+            .as_ref()
+            .is_some_and(|model| model.enable_thinking);
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
@@ -921,7 +948,8 @@ impl Thread {
             templates,
             model: Some(model),
             summarization_model: None,
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1061,9 +1089,14 @@ impl Thread {
         templates: Arc<Templates>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = AgentSettings::get_global(cx);
         let profile_id = db_thread
             .profile
-            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
+            .unwrap_or_else(|| settings.default_profile.clone());
+        let thinking_effort = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.effort.clone());
 
         let mut model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             db_thread
@@ -1092,6 +1125,12 @@ impl Thread {
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        // TODO: We should serialize the user's configured thinking parameter on `DbThread`
+        // rather than deriving it from the model's capability. A user may have explicitly
+        // toggled thinking off for a model that supports it, and we'd lose that preference here.
+        let enable_thinking = model
+            .as_deref()
+            .is_some_and(|model| model.supports_thinking());
 
         Self {
             id,
@@ -1119,8 +1158,8 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
-            // TODO: Persist this on the `DbThread`.
-            thinking_enabled: true,
+            thinking_enabled: enable_thinking,
+            thinking_effort,
             project,
             action_log,
             updated_at: db_thread.updated_at,
@@ -1145,7 +1184,7 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
                 provider: model.provider_id().to_string(),
-                model: model.name().0.to_string(),
+                model: model.id().0.to_string(),
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
@@ -1228,6 +1267,15 @@ impl Thread {
         cx.notify();
     }
 
+    pub fn thinking_effort(&self) -> Option<&String> {
+        self.thinking_effort.as_ref()
+    }
+
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+        self.thinking_effort = effort;
+        cx.notify();
+    }
+
     pub fn last_message(&self) -> Option<Message> {
         if let Some(message) = self.pending_message.clone() {
             Some(Message::Agent(message))
@@ -1285,7 +1333,12 @@ impl Thread {
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
-        self.tools.insert(T::name().into(), tool.erase());
+        debug_assert!(
+            !self.tools.contains_key(T::NAME),
+            "Duplicate tool name: {}",
+            T::NAME,
+        );
+        self.tools.insert(T::NAME.into(), tool.erase());
     }
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
@@ -2309,6 +2362,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
+            thinking_effort: self.thinking_effort.clone(),
         };
 
         log::debug!("Completion request built successfully");
@@ -2338,8 +2392,8 @@ impl Thread {
             .iter()
             .filter_map(|(tool_name, tool)| {
                 // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == "streaming_edit_file" {
-                    "edit_file"
+                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
+                    EditFileTool::NAME
                 } else {
                     tool_name.as_ref()
                 };
@@ -2348,10 +2402,10 @@ impl Thread {
                     && profile.is_tool_enabled(profile_tool_name)
                 {
                     match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        ("streaming_edit_file", false) | ("edit_file", true) => None,
-                        ("streaming_edit_file", true) => {
+                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
+                        (StreamingEditFileTool::NAME, true) => {
                             // Expose streaming tool as "edit_file"
-                            Some((SharedString::from("edit_file"), tool.clone()))
+                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
                         }
                         _ => Some((truncate(tool_name), tool.clone())),
                     }
@@ -2687,7 +2741,7 @@ where
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
     type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
-    fn name() -> &'static str;
+    const NAME: &'static str;
 
     fn description() -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
@@ -2796,7 +2850,7 @@ where
     T: AgentTool,
 {
     fn name(&self) -> SharedString {
-        T::name().into()
+        T::NAME.into()
     }
 
     fn description(&self) -> SharedString {
@@ -3082,7 +3136,8 @@ impl ToolCallEventStream {
         }
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3126,7 +3181,12 @@ impl ToolCallEventStream {
                     context: None,
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
@@ -3178,7 +3238,8 @@ impl ToolCallEventStream {
         let options = context.build_permission_options();
 
         let (response_tx, response_rx) = oneshot::channel();
-        self.stream
+        if let Err(error) = self
+            .stream
             .0
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
@@ -3191,7 +3252,12 @@ impl ToolCallEventStream {
                     context: Some(context),
                 },
             )))
-            .ok();
+        {
+            log::error!("Failed to send tool call authorization: {error}");
+            return Task::ready(Err(anyhow!(
+                "Failed to send tool call authorization: {error}"
+            )));
+        }
 
         let fs = self.fs.clone();
         cx.spawn(async move |cx| {
@@ -3229,12 +3295,11 @@ impl ToolCallEventStream {
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
 
-            // Handle "always allow pattern" - e.g., "always_allow_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_allow_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always allow pattern" - e.g., "always_allow_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_allow_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {
@@ -3245,16 +3310,17 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always allow pattern: missing newline separator in '{rest}'");
                 }
                 return Ok(());
             }
 
-            // Handle "always deny pattern" - e.g., "always_deny_pattern:terminal:^cargo\s"
-            if response_str.starts_with("always_deny_pattern:") {
-                let parts: Vec<&str> = response_str.splitn(3, ':').collect();
-                if parts.len() == 3 {
-                    let pattern_tool_name = parts[1].to_string();
-                    let pattern = parts[2].to_string();
+            // Handle "always deny pattern" - e.g., "always_deny_pattern:mcp:server:tool\n^cargo\s"
+            if let Some(rest) = response_str.strip_prefix("always_deny_pattern:") {
+                if let Some((pattern_tool_name, pattern)) = rest.split_once('\n') {
+                    let pattern_tool_name = pattern_tool_name.to_string();
+                    let pattern = pattern.to_string();
                     if let Some(fs) = fs.clone() {
                         cx.update(|cx| {
                             update_settings_file(fs, cx, move |settings, _| {
@@ -3265,6 +3331,8 @@ impl ToolCallEventStream {
                             });
                         });
                     }
+                } else {
+                    log::error!("Failed to parse always deny pattern: missing newline separator in '{rest}'");
                 }
                 return Err(anyhow!("Permission to run tool denied by user"));
             }
