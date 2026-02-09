@@ -191,7 +191,7 @@ thread_local! {
 pub(crate) struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
-    timings: TaskTimings,
+    pub timings: TaskTimings,
 }
 
 impl ThreadTimings {
