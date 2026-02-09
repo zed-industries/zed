@@ -11,8 +11,7 @@ use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
 use crate::kernels::{
-    Kernel, list_remote_kernelspecs, local_kernel_specifications,
-    python_env_kernel_specifications,
+    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -286,7 +285,10 @@ impl ReplStore {
         self.sessions.remove(&entity_id);
     }
 
-    fn shutdown_all_sessions(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+    fn shutdown_all_sessions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
         for session in self.sessions.values() {
             session.update(cx, |session, _cx| {
                 if let Kernel::RunningKernel(mut kernel) =
