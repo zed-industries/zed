@@ -154,7 +154,14 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, tooltip_label) = if self.is_collapsed {
+            let is_collapsed = self
+                .active_searchable_item
+                .as_ref()
+                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+                .and_then(|item| item.downcast::<Editor>().ok())
+                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
+                .unwrap_or(self.is_collapsed);
+            let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
                 (IconName::ChevronDownUp, "Collapse All Files")
@@ -3347,6 +3354,67 @@ mod tests {
         let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
 
         assert!(!is_collapsed);
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_collapse_state_syncs_after_manual_buffer_fold(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        // Fold all buffers via fold_all
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_all(&FoldAll, window, cx);
+        });
+        cx.run_until_parked();
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "All buffers should be folded after fold_all"
+        );
+
+        // Manually unfold one buffer (simulating a chevron click)
+        let first_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should still report folds when only one buffer is unfolded"
+        );
+
+        // Manually unfold the second buffer too
+        let second_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(second_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            !has_any_folded,
+            "No folds should remain after unfolding all buffers individually"
+        );
+
+        // Manually fold one buffer back
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.fold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should report folds after manually folding one buffer"
+        );
     }
 
     #[perf]

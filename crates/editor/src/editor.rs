@@ -20321,6 +20321,17 @@ impl Editor {
         self.display_map.read(cx).is_buffer_folded(buffer)
     }
 
+    pub fn has_any_buffer_folded(&self, cx: &App) -> bool {
+        if self.buffer().read(cx).is_singleton() {
+            return false;
+        }
+        self.buffer()
+            .read(cx)
+            .excerpt_buffer_ids()
+            .iter()
+            .any(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
+    }
+
     pub fn folded_buffers<'a>(&self, cx: &'a App) -> &'a HashSet<BufferId> {
         self.display_map.read(cx).folded_buffers()
     }
