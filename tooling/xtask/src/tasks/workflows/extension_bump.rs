@@ -23,12 +23,12 @@ pub(crate) fn extension_bump() -> Workflow {
     let force_bump = WorkflowInput::bool("force-bump", None);
 
     let (app_id, app_secret) = extension_workflow_secrets();
-    let (check_bump_needed, version_changed, current_version) = check_version_changed();
+    let (check_version_changed, version_changed, current_version) = check_version_changed();
 
-    let version_changed = version_changed.as_job_output(&check_bump_needed);
-    let current_version = current_version.as_job_output(&check_bump_needed);
+    let version_changed = version_changed.as_job_output(&check_version_changed);
+    let current_version = current_version.as_job_output(&check_version_changed);
 
-    let dependencies = [&check_bump_needed];
+    let dependencies = [&check_version_changed];
     let bump_version = bump_extension_version(
         &dependencies,
         &current_version,
@@ -45,7 +45,12 @@ pub(crate) fn extension_bump() -> Workflow {
         &app_id,
         &app_secret,
     );
-    let trigger_release = trigger_release(&create_label, current_version, &app_id, &app_secret);
+    let trigger_release = trigger_release(
+        &[&check_version_changed, &create_label],
+        current_version,
+        &app_id,
+        &app_secret,
+    );
 
     named::workflow()
         .add_event(
@@ -70,7 +75,7 @@ pub(crate) fn extension_bump() -> Workflow {
             "ZED_EXTENSION_CLI_SHA",
             extension_tests::ZED_EXTENSION_CLI_SHA,
         ))
-        .add_job(check_bump_needed.name, check_bump_needed.job)
+        .add_job(check_version_changed.name, check_version_changed.job)
         .add_job(bump_version.name, bump_version.job)
         .add_job(create_label.name, create_label.job)
         .add_job(trigger_release.name, trigger_release.job)
@@ -308,7 +313,7 @@ fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> 
 }
 
 fn trigger_release(
-    bump_job: &NamedJob,
+    dependencies: &[&NamedJob],
     version: JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
@@ -321,7 +326,7 @@ fn trigger_release(
     );
     let (get_extension_id, extension_id) = get_extension_id();
 
-    let job = dependant_job(&[bump_job])
+    let job = dependant_job(dependencies)
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .add_step(generate_token)

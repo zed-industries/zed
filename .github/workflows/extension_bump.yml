@@ -146,6 +146,7 @@ jobs:
     timeout-minutes: 1
   trigger_release:
     needs:
+    - check_version_changed
     - create_version_label
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404

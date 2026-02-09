@@ -90,7 +90,7 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(download_zed_extension_cli(cache_hit))
         .add_step(check())
         .add_step(check_version_job)
-        .add_step(verify_versin_did_not_change(version_changed));
+        .add_step(verify_version_did_not_change(version_changed));
 
     named::job(job)
 }
@@ -132,12 +132,12 @@ pub fn check() -> Step<Run> {
     })
 }
 
-fn verify_versin_did_not_change(version_changed: StepOutput) -> Step<Run> {
+fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
     named::bash(formatdoc! {r#"
         if [[ {version_changed} == "true" && "${{{{ github.event_name }}}}" == "pull_request" && "${{{{ github.event.pull_request.user.login }}}}" != "zed-zippy[bot]" ]] ; then
             echo "Version change detected in your change!"
             echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
-            exit -1
+            exit 42
         fi
         "#
     })
