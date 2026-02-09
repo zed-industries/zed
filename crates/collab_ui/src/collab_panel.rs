@@ -2573,6 +2573,9 @@ impl CollabPanel {
                         .child(
                             IconButton::new("filter-active-channels", IconName::ListFilter)
                                 .toggle_state(self.filter_active_channels)
+                                .when(!self.filter_active_channels, |button| {
+                                    button.visible_on_hover("section-header")
+                                })
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.filter_active_channels = !this.filter_active_channels;
                                     this.update_entries(true, cx);
