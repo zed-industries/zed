@@ -2571,7 +2571,7 @@ impl CollabPanel {
                     h_flex()
                         .gap_1()
                         .child(
-                            IconButton::new("filter-active-channels", IconName::Person)
+                            IconButton::new("filter-active-channels", IconName::ListFilter)
                                 .toggle_state(self.filter_active_channels)
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.filter_active_channels = !this.filter_active_channels;
