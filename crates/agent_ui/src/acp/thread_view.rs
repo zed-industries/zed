@@ -2704,13 +2704,15 @@ pub(crate) mod tests {
         init_test(cx);
 
         // Enable multi-workspace feature flag and init globals needed by AgentPanel
+        let fs = FakeFs::new(cx.executor());
+
         cx.update(|cx| {
             cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
         });
 
-        let fs = FakeFs::new(cx.executor());
         let project1 = Project::test(fs.clone(), [], cx).await;
 
         // Create a MultiWorkspace window with one workspace
