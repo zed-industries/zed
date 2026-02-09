@@ -4347,7 +4347,7 @@ mod tests {
                     let scroll_position = editor_ref.scroll_position(cx);
 
                     (
-                        item.project_path(cx).unwrap(),
+                        editor_ref.project_path(cx).unwrap(),
                         selections[0].start,
                         scroll_position.y,
                     )
