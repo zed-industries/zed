@@ -61,7 +61,8 @@ pub(crate) mod user_error;
 use user_error::ErrorView;
 
 mod widget;
-use widget::WidgetStore;
+pub(crate) use widget::WidgetCommMessage;
+pub(crate) use widget::WidgetStore;
 
 use workspace::Workspace;
 
@@ -273,8 +274,7 @@ impl Output {
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::Widget { store, model_id, .. } => {
-                let store_ref = store.read(cx);
-                Some(store_ref.render_widget(model_id, window, cx))
+                Some(WidgetStore::render_widget(store, model_id, window, cx))
             }
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
@@ -512,9 +512,9 @@ impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
         workspace: WeakEntity<Workspace>,
+        widget_store: Entity<WidgetStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let widget_store = cx.new(|_| WidgetStore::new());
         let observation = cx.observe(&widget_store, |_this, _store, cx| {
             cx.notify();
         });
@@ -586,23 +586,6 @@ impl ExecutionView {
         cx: &mut Context<Self>,
     ) {
         let output: Output = match message {
-            JupyterMessageContent::CommOpen(comm_open) => {
-                self.widget_store.update(cx, |store, _cx| {
-                    store.create_model(&comm_open.comm_id.0, &comm_open.data);
-                });
-                cx.notify();
-                return;
-            }
-            JupyterMessageContent::CommMsg(comm_msg) => {
-                self.widget_store.update(cx, |store, _cx| {
-                    store.update_model(&comm_msg.comm_id.0, &comm_msg.data);
-                });
-                cx.notify();
-                return;
-            }
-            JupyterMessageContent::CommClose(_) => {
-                return;
-            }
             JupyterMessageContent::ExecuteResult(result) => {
                 if let Some(model_id) = widget::extract_widget_model_id(&result.data) {
                     Output::Widget {
@@ -988,7 +971,10 @@ mod tests {
         weak_workspace: WeakEntity<workspace::Workspace>,
     ) -> Entity<ExecutionView> {
         cx.update(|_window, cx| {
-            cx.new(|cx| ExecutionView::new(ExecutionStatus::Queued, weak_workspace, cx))
+            let widget_store = cx.new(|_| widget::WidgetStore::new());
+            cx.new(|cx| {
+                ExecutionView::new(ExecutionStatus::Queued, weak_workspace, widget_store, cx)
+            })
         })
     }
 

@@ -8,7 +8,7 @@ use crate::{
     },
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
-        InputReplyEvent,
+        InputReplyEvent, WidgetCommMessage, WidgetStore,
     },
     repl_settings::ReplSettings,
 };
@@ -53,6 +53,7 @@ pub struct Session {
     blocks: HashMap<String, EditorBlock>,
     result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
     next_inlay_id: usize,
+    widget_store: Entity<WidgetStore>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -72,13 +73,16 @@ impl EditorBlock {
         editor: WeakEntity<Editor>,
         code_range: Range<Anchor>,
         status: ExecutionStatus,
+        widget_store: Entity<WidgetStore>,
         on_close: CloseBlockFn,
         cx: &mut Context<Session>,
     ) -> anyhow::Result<Self> {
         let editor = editor.upgrade().context("editor is not open")?;
         let workspace = editor.read(cx).workspace().context("workspace dropped")?;
 
-        let execution_view = cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
+        let execution_view = cx.new(|cx| {
+            ExecutionView::new(status, workspace.downgrade(), widget_store, cx)
+        });
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -250,6 +254,12 @@ impl Session {
             })
             .ok();
 
+        let widget_store = cx.new(|_| WidgetStore::new());
+        let widget_subscription =
+            cx.subscribe(&widget_store, |session, _store, event: &WidgetCommMessage, cx| {
+                session.send(event.0.clone(), cx).log_err();
+            });
+
         let mut session = Self {
             fs,
             editor,
@@ -258,7 +268,8 @@ impl Session {
             result_inlays: HashMap::default(),
             next_inlay_id: 0,
             kernel_specification,
-            _subscriptions: vec![subscription],
+            widget_store,
+            _subscriptions: vec![subscription, widget_subscription],
         };
 
         session.start_kernel(window, cx);
@@ -721,6 +732,7 @@ impl Session {
             self.editor.clone(),
             anchor_range.clone(),
             status,
+            self.widget_store.clone(),
             on_close,
             cx,
         ) else {
@@ -983,6 +995,27 @@ impl KernelSession for Session {
         };
 
         match &message.content {
+            JupyterMessageContent::CommOpen(comm_open) => {
+                self.widget_store.update(cx, |store, cx| {
+                    store.create_model(&comm_open.comm_id.0, &comm_open.data);
+                    cx.notify();
+                });
+                return;
+            }
+            JupyterMessageContent::CommMsg(comm_msg) => {
+                self.widget_store.update(cx, |store, cx| {
+                    store.update_model(&comm_msg.comm_id.0, &comm_msg.data);
+                    cx.notify();
+                });
+                return;
+            }
+            JupyterMessageContent::CommClose(comm_close) => {
+                self.widget_store.update(cx, |store, cx| {
+                    store.close_model(&comm_close.comm_id.0);
+                    cx.notify();
+                });
+                return;
+            }
             JupyterMessageContent::Status(status) => {
                 self.kernel.set_execution_state(&status.execution_state);
 
