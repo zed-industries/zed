@@ -8518,7 +8518,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
 }
 
 /// `leaf_path` is the full path to the leaf entry (e.g., "root/a/b/c")
-/// `active_ancestor_path` is the path to the ancestor that should be "active" (e.g., "root/a/b")
+/// `active_ancestor_path` is the path to the folded component that should be active.
 fn select_folded_path_with_mark(
     panel: &Entity<ProjectPanel>,
     leaf_path: &str,
@@ -8528,26 +8528,49 @@ fn select_folded_path_with_mark(
     select_path_with_mark(panel, leaf_path, cx);
     let active_ancestor_path = rel_path(active_ancestor_path);
     panel.update(cx, |panel, cx| {
-        let leaf_entry_id = panel.selection.unwrap().entry_id;
-        if let Some(folded_ancestors) = panel.state.ancestors.get_mut(&leaf_entry_id) {
-            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                let worktree = worktree.read(cx);
-                if let Ok(active_relative_path) =
-                    active_ancestor_path.strip_prefix(worktree.root_name())
-                {
-                    let active_entry_id = worktree.entry_for_path(active_relative_path).unwrap().id;
-                    if let Some(index) = folded_ancestors
-                        .ancestors
-                        .iter()
-                        .position(|&id| id == active_entry_id)
-                    {
-                        folded_ancestors.current_ancestor_depth =
-                            folded_ancestors.ancestors.len() - 1 - index;
-                    }
-                    return;
+        let leaf_entry_id = panel
+            .selection
+            .expect("leaf path should be selected before setting folded active component")
+            .entry_id;
+        let mut target_entry_id = None;
+
+        for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
+            let worktree = worktree.read(cx);
+            if let Ok(relative_path) = active_ancestor_path.strip_prefix(worktree.root_name()) {
+                target_entry_id = worktree.entry_for_path(relative_path).map(|entry| entry.id);
+                if target_entry_id.is_some() {
+                    break;
                 }
             }
         }
+
+        let target_entry_id = target_entry_id
+            .unwrap_or_else(|| panic!("no entry for active path {active_ancestor_path:?}"));
+        let folded_ancestors = panel
+            .state
+            .ancestors
+            .get_mut(&leaf_entry_id)
+            .unwrap_or_else(|| panic!("leaf path {leaf_path:?} should be folded"));
+        let ancestor_ids = folded_ancestors.ancestors.clone();
+
+        let mut depth_for_target = None;
+        for depth in 0..ancestor_ids.len() {
+            let resolved_entry_id = if depth == 0 {
+                leaf_entry_id
+            } else {
+                ancestor_ids.get(depth).copied().unwrap_or(leaf_entry_id)
+            };
+            if resolved_entry_id == target_entry_id {
+                depth_for_target = Some(depth);
+                break;
+            }
+        }
+
+        folded_ancestors.current_ancestor_depth = depth_for_target.unwrap_or_else(|| {
+            panic!(
+                "active path {active_ancestor_path:?} is not part of folded ancestors {ancestor_ids:?}"
+            )
+        });
     });
 }
 
@@ -8861,151 +8884,144 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_ensure_folding_when_creating(cx: &mut gpui::TestAppContext) {
+async fn test_ensure_temporary_folding_when_creating_in_different_nested_dirs(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root1",
-        json!({
-            "dir": {
-                "subdir": {
-                    "nested_dir": {},
-                }
-            }
-        }),
+    // parent: accept
+    run_create_file_in_folded_path_case(
+        "parent",
+        "root1/parent",
+        "file_in_parent.txt",
+        &[
+            "v root1",
+            "    v parent",
+            "        > subdir/child",
+            "          [EDITOR: '']  <== selected",
+        ],
+        &[
+            "v root1",
+            "    v parent",
+            "        > subdir/child",
+            "          file_in_parent.txt  <== selected  <== marked",
+        ],
+        true,
+        cx,
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let panel = workspace
-        .update(cx, |workspace, window, cx| {
-            let panel = ProjectPanel::new(workspace, window, cx);
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        })
-        .unwrap();
-
-    cx.update(|_, cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                auto_fold_dirs: true,
-                ..settings
-            },
-            cx,
-        );
-    });
-
-    cx.run_until_parked();
-
-    select_path(&panel, "root1/dir/subdir/nested_dir", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_file(&NewFile, window, cx);
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    panel
-        .update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("file_nested.txt", window, cx);
-            });
-            panel.confirm_edit(true, window, cx).unwrap()
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
+    // parent: cancel
+    run_create_file_in_folded_path_case(
+        "parent",
+        "root1/parent",
+        "file_in_parent.txt",
         &[
             "v root1",
-            "    v dir/subdir/nested_dir",
-            "          file_nested.txt  <== selected  <== marked",
-        ]
-    );
+            "    v parent",
+            "        > subdir/child",
+            "          [EDITOR: '']  <== selected",
+        ],
+        &["v root1", "    > parent/subdir/child  <== selected"],
+        false,
+        cx,
+    )
+    .await;
 
-    select_path(&panel, "root1/dir/subdir", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_file(&NewFile, window, cx);
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    panel
-        .update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("file_subdir.txt", window, cx);
-            });
-            panel.confirm_edit(true, window, cx).unwrap()
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
+    // subdir: accept
+    run_create_file_in_folded_path_case(
+        "subdir",
+        "root1/parent/subdir",
+        "file_in_subdir.txt",
         &[
             "v root1",
-            "    v dir/subdir",
-            "        v nested_dir",
-            "              file_nested.txt",
-            "          file_subdir.txt  <== selected  <== marked"
-        ]
-    );
-
-    select_path(&panel, "root1/dir", cx);
-    panel.update_in(cx, |panel, window, cx| {
-        panel.new_file(&NewFile, window, cx);
-    });
-    cx.run_until_parked();
-    panel.update_in(cx, |panel, window, cx| {
-        assert!(panel.filename_editor.read(cx).is_focused(window));
-    });
-    cx.run_until_parked();
-    panel
-        .update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("file_dir.txt", window, cx);
-            });
-            panel.confirm_edit(true, window, cx).unwrap()
-        })
-        .await
-        .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
+            "    v parent/subdir",
+            "        > child",
+            "          [EDITOR: '']  <== selected",
+        ],
         &[
             "v root1",
-            "    v dir",
-            "        v subdir",
-            "            v nested_dir",
-            "                  file_nested.txt",
-            "              file_subdir.txt",
-            "          file_dir.txt  <== selected  <== marked",
-        ]
-    );
+            "    v parent/subdir",
+            "        > child",
+            "          file_in_subdir.txt  <== selected  <== marked",
+        ],
+        true,
+        cx,
+    )
+    .await;
+
+    // subdir: cancel
+    run_create_file_in_folded_path_case(
+        "subdir",
+        "root1/parent/subdir",
+        "file_in_subdir.txt",
+        &[
+            "v root1",
+            "    v parent/subdir",
+            "        > child",
+            "          [EDITOR: '']  <== selected",
+        ],
+        &["v root1", "    > parent/subdir/child  <== selected"],
+        false,
+        cx,
+    )
+    .await;
+
+    // child: accept
+    run_create_file_in_folded_path_case(
+        "child",
+        "root1/parent/subdir/child",
+        "file_in_child.txt",
+        &[
+            "v root1",
+            "    v parent/subdir/child",
+            "          [EDITOR: '']  <== selected",
+        ],
+        &[
+            "v root1",
+            "    v parent/subdir/child",
+            "          file_in_child.txt  <== selected  <== marked",
+        ],
+        true,
+        cx,
+    )
+    .await;
+
+    // child: cancel
+    run_create_file_in_folded_path_case(
+        "child",
+        "root1/parent/subdir/child",
+        "file_in_child.txt",
+        &[
+            "v root1",
+            "    v parent/subdir/child",
+            "          [EDITOR: '']  <== selected",
+        ],
+        &["v root1", "    v parent/subdir/child  <== selected"],
+        false,
+        cx,
+    )
+    .await;
 }
 
-#[gpui::test]
-async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn run_create_file_in_folded_path_case(
+    case_name: &str,
+    active_ancestor_path: &str,
+    created_file_name: &str,
+    expected_temporary_state: &[&str],
+    expected_final_state: &[&str],
+    accept_creation: bool,
+    cx: &mut gpui::TestAppContext,
+) {
+    let expected_collapsed_state = &["v root1", "    > parent/subdir/child  <== selected"];
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
-            "dir": {
+            "parent": {
                 "subdir": {
-                    "nested_dir": {
-                        "file.txt": ""
-                    },
+                    "child": {},
                 }
             }
         }),
@@ -9042,25 +9058,19 @@ async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppConte
 
     select_folded_path_with_mark(
         &panel,
-        "root1/dir/subdir/nested_dir",
-        "root1/dir/subdir",
+        "root1/parent/subdir/child",
+        active_ancestor_path,
         cx,
     );
     panel.update(cx, |panel, _| {
         panel.marked_entries.clear();
     });
-    panel.update(cx, |panel, _| {
-        let leaf_entry_id = panel.selection.unwrap().entry_id;
-        let resolved_entry_id = panel.resolve_entry(leaf_entry_id);
-        assert_ne!(
-            resolved_entry_id, leaf_entry_id,
-            "expected a folded ancestor to be active before creating a new entry"
-        );
-    });
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
+        expected_collapsed_state,
+        "case '{}' should start from a folded state",
+        case_name
     );
 
     panel.update_in(cx, |panel, window, cx| {
@@ -9073,22 +9083,61 @@ async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppConte
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &[
-            "v root1",
-            "    v dir/subdir",
-            "        > nested_dir",
-            "          [EDITOR: '']  <== selected",
-        ]
+        expected_temporary_state,
+        "case '{}' ({}) should temporarily unfold the active ancestor while editing",
+        case_name,
+        if accept_creation { "accept" } else { "cancel" }
     );
 
-    panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&Cancel, window, cx);
-    });
-    cx.run_until_parked();
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..10, cx),
-        &["v root1", "    > dir/subdir/nested_dir  <== selected",]
-    );
+    let relative_directory = active_ancestor_path
+        .strip_prefix("root1/")
+        .expect("active_ancestor_path should start with root1/");
+    let created_file_path = PathBuf::from("/root1")
+        .join(relative_directory)
+        .join(created_file_name);
+
+    if accept_creation {
+        panel
+            .update_in(cx, |panel, window, cx| {
+                panel.filename_editor.update(cx, |editor, cx| {
+                    editor.set_text(created_file_name, window, cx);
+                });
+                panel.confirm_edit(true, window, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            expected_final_state,
+            "case '{}' should keep the newly created file selected and marked after accept",
+            case_name
+        );
+        assert!(
+            fs.is_file(created_file_path.as_path()).await,
+            "case '{}' should create file '{}'",
+            case_name,
+            created_file_path.display()
+        );
+    } else {
+        panel.update_in(cx, |panel, window, cx| {
+            panel.cancel(&Cancel, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            expected_final_state,
+            "case '{}' should keep the expected panel state after cancel",
+            case_name
+        );
+        assert!(
+            !fs.is_file(created_file_path.as_path()).await,
+            "case '{}' should not create a file after cancel",
+            case_name
+        );
+    }
 }
 
 fn init_test(cx: &mut TestAppContext) {
