@@ -271,7 +271,7 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
             --no-configured-files {bump_type} "${{BUMP_FILES[@]}}"
 
         if [[ -f "Cargo.toml" ]]; then
-            cargo update --workspace --offline
+            cargo update --workspace
         fi
 
         NEW_VERSION="$({VERSION_CHECK})"
