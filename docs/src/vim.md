@@ -197,6 +197,7 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
+
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects
@@ -539,8 +540,8 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
     "ctrl-y": "editor::Undo",               // vim default: line up
     "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-o": "workspace::Open",            // vim default: go back
-    "ctrl-b": "workspace::ToggleLeftDock",   // vim default: down
-    "ctrl-s": "workspace::Save"            // vim default: show signature
+    "ctrl-s": "workspace::Save",            // vim default: show signature
+    "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },
 ```
