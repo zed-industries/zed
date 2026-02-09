@@ -2470,8 +2470,9 @@ pub(crate) mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         // Create history without an initial session list - it will be set after connection
@@ -2542,8 +2543,9 @@ pub(crate) mod tests {
         let session = AgentSessionInfo::new(SessionId::new("resume-session"));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -2780,8 +2782,7 @@ pub(crate) mod tests {
         let project2 = Project::test(fs, [], cx).await;
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace2 = cx.new(|cx| Workspace::test_new(project2, window, cx));
-                mw.activate(workspace2, cx);
+                mw.test_add_workspace(project2, window, cx);
             })
             .unwrap();
 
@@ -2922,8 +2923,9 @@ pub(crate) mod tests {
     ) -> (Entity<AcpServerView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -3322,8 +3324,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
