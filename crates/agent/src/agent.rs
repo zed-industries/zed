@@ -47,7 +47,6 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -335,12 +334,13 @@ impl NativeAgent {
             )
         });
 
-        self.register_session(thread, cx)
+        self.register_session(thread, None, cx)
     }
 
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
+        allowed_tool_names: Option<Vec<&str>>,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
@@ -370,17 +370,15 @@ impl NativeAgent {
 
         let weak = cx.weak_entity();
         thread_handle.update(cx, |thread, cx| {
-            //todo: Remove this workaround and pass tools from the outside subagents
-            if thread.parent_thread_id().is_none() {
-                thread.set_summarization_model(summarization_model, cx);
-                thread.add_default_tools(
-                    Rc::new(NativeThreadEnvironment {
-                        acp_thread: acp_thread.downgrade(),
-                        agent: weak,
-                    }) as _,
-                    cx,
-                )
-            }
+            thread.set_summarization_model(summarization_model, cx);
+            thread.add_default_tools(
+                allowed_tool_names,
+                Rc::new(NativeThreadEnvironment {
+                    acp_thread: acp_thread.downgrade(),
+                    agent: weak,
+                }) as _,
+                cx,
+            )
         });
 
         let subscriptions = vec![
@@ -807,8 +805,9 @@ impl NativeAgent {
         let task = self.load_thread(id, cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
-            let acp_thread =
-                this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
+            let acp_thread = this.update(cx, |this, cx| {
+                this.register_session(thread.clone(), None, cx)
+            })?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
@@ -1617,14 +1616,14 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
     fn create_subagent(
         &self,
-        parent_thread: Entity<Thread>,
+        parent_thread_entity: Entity<Thread>,
         label: String,
         initial_prompt: String,
         timeout_ms: Option<u64>,
         allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        let parent_thread = parent_thread.read(cx);
+        let parent_thread = parent_thread_entity.read(cx);
         let current_depth = parent_thread.depth();
 
         if current_depth >= MAX_SUBAGENT_DEPTH {
@@ -1647,42 +1646,21 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             return Err(anyhow!("No model configured"));
         };
 
-        let parent_thread_id = parent_thread.id().clone();
         let project = parent_thread.project.clone();
         let project_context = parent_thread.project_context().clone();
         let context_server_registry = parent_thread.context_server_registry.clone();
         let templates = parent_thread.templates.clone();
-        let parent_tools = parent_thread.tools.clone();
 
         let agent = self.agent.clone();
 
-        let subagent_context = SubagentContext {
-            parent_thread_id: parent_thread_id.clone(),
-            depth: current_depth + 1,
-        };
-
-        // Determine which tools this subagent gets
-        let subagent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> =
-            if let Some(ref allowed) = allowed_tools {
-                let allowed_set: HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
-                parent_tools
-                    .iter()
-                    .filter(|(name, _)| allowed_set.contains(name.as_ref()))
-                    .map(|(name, tool)| (name.clone(), tool.clone()))
-                    .collect()
-            } else {
-                parent_tools.clone()
-            };
-
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(
+                &parent_thread_entity,
                 project.clone(),
                 project_context.clone(),
                 context_server_registry.clone(),
                 templates.clone(),
-                model.clone(),
-                subagent_context,
-                subagent_tools,
+                Some(model.clone()),
                 cx,
             );
             thread.set_title(label.into(), cx);
@@ -1692,7 +1670,13 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         let session_id = subagent_thread.read(cx).id().clone();
 
         let acp_thread = agent.update(cx, |agent, cx| {
-            agent.register_session(subagent_thread.clone(), cx)
+            agent.register_session(
+                subagent_thread.clone(),
+                allowed_tools
+                    .as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect()),
+                cx,
+            )
         })?;
 
         let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));

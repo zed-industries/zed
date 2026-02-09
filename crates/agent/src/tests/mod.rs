@@ -3904,7 +3904,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
             Some(model),
             cx,
         );
-        thread.add_default_tools(environment, cx);
+        thread.add_default_tools(None, environment, cx);
         thread
     });
 
@@ -3994,7 +3994,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             std::collections::BTreeMap::new(),
             cx,
         );
-        thread.add_default_tools(environment, cx);
+        thread.add_default_tools(None, environment, cx);
         thread
     });
 

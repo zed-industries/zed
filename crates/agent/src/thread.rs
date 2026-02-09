@@ -832,6 +832,30 @@ impl Thread {
             .embedded_context(true)
     }
 
+    pub fn new_subagent(
+        parent_thread: &Entity<Thread>,
+        project: Entity<Project>,
+        project_context: Entity<ProjectContext>,
+        context_server_registry: Entity<ContextServerRegistry>,
+        templates: Arc<Templates>,
+        model: Option<Arc<dyn LanguageModel>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut thread = Self::new(
+            project,
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx,
+        );
+        thread.subagent_context = Some(SubagentContext {
+            parent_thread_id: parent_thread.read(cx).id().clone(),
+            depth: parent_thread.read(cx).depth() + 1,
+        });
+        thread
+    }
+
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
@@ -890,78 +914,6 @@ impl Thread {
             file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
-            running_subagents: Vec::new(),
-        }
-    }
-
-    pub fn new_subagent(
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        model: Arc<dyn LanguageModel>,
-        subagent_context: SubagentContext,
-        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
-        let enable_thinking = settings
-            .default_model
-            .as_ref()
-            .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-        let (prompt_capabilities_tx, prompt_capabilities_rx) =
-            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
-
-        // Rebind tools that hold thread references to use this subagent's thread
-        // instead of the parent's thread. This is critical for tools like EditFileTool
-        // that make model requests using the thread's ID.
-        let weak_self = cx.weak_entity();
-        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
-            .into_iter()
-            .map(|(name, tool)| {
-                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
-                (name, rebound)
-            })
-            .collect();
-
-        Self {
-            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
-            prompt_id: PromptId::new(),
-            updated_at: Utc::now(),
-            title: None,
-            pending_title_generation: None,
-            pending_summary_generation: None,
-            summary: None,
-            messages: Vec::new(),
-            user_store: project.read(cx).user_store(),
-            running_turn: None,
-            has_queued_message: false,
-            pending_message: None,
-            tools,
-            request_token_usage: HashMap::default(),
-            cumulative_token_usage: TokenUsage::default(),
-            initial_project_snapshot: Task::ready(None).shared(),
-            context_server_registry,
-            profile_id,
-            project_context,
-            templates,
-            model: Some(model),
-            summarization_model: None,
-            thinking_enabled: enable_thinking,
-            thinking_effort,
-            prompt_capabilities_tx,
-            prompt_capabilities_rx,
-            project,
-            action_log,
-            file_read_times: HashMap::default(),
-            imported: false,
-            subagent_context: Some(subagent_context),
             running_subagents: Vec::new(),
         }
     }
@@ -1292,53 +1244,106 @@ impl Thread {
 
     pub fn add_default_tools(
         &mut self,
+        allowed_tool_names: Option<Vec<&str>>,
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        self.add_tool(CopyPathTool::new(self.project.clone()));
-        self.add_tool(CreateDirectoryTool::new(self.project.clone()));
-        self.add_tool(DeletePathTool::new(
-            self.project.clone(),
-            self.action_log.clone(),
-        ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        self.add_tool(EditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry.clone(),
-            Templates::new(),
-        ));
-        self.add_tool(StreamingEditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry,
-            Templates::new(),
-        ));
-        self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
-        self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
-        self.add_tool(MovePathTool::new(self.project.clone()));
-        self.add_tool(NowTool);
-        self.add_tool(OpenTool::new(self.project.clone()));
-        self.add_tool(ReadFileTool::new(
-            cx.weak_entity(),
-            self.project.clone(),
-            self.action_log.clone(),
-        ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
-        self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool);
+        self.add_tool(
+            CopyPathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            CreateDirectoryTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            DeletePathTool::new(self.project.clone(), self.action_log.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            DiagnosticsTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            EditFileTool::new(
+                self.project.clone(),
+                cx.weak_entity(),
+                language_registry.clone(),
+                Templates::new(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            StreamingEditFileTool::new(
+                self.project.clone(),
+                cx.weak_entity(),
+                language_registry,
+                Templates::new(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            FetchTool::new(self.project.read(cx).client().http_client()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            FindPathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            GrepTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            ListDirectoryTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            MovePathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(NowTool, allowed_tool_names.as_ref());
+        self.add_tool(
+            OpenTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            ReadFileTool::new(
+                cx.weak_entity(),
+                self.project.clone(),
+                self.action_log.clone(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            SaveFileTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            RestoreFileFromDiskTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            TerminalTool::new(self.project.clone(), environment.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(ThinkingTool, allowed_tool_names.as_ref());
+        self.add_tool(WebSearchTool, allowed_tool_names.as_ref());
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity(), environment));
+            self.add_tool(
+                SubagentTool::new(cx.weak_entity(), environment),
+                allowed_tool_names.as_ref(),
+            );
         }
     }
 
-    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T, allowed_tool_names: Option<&Vec<&str>>) {
+        if allowed_tool_names.is_some_and(|tool_names| tool_names.contains(&T::NAME)) {
+            return;
+        }
+
         debug_assert!(
             !self.tools.contains_key(T::NAME),
             "Duplicate tool name: {}",
@@ -2510,6 +2515,10 @@ impl Thread {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
+    pub fn set_subagent_context(&mut self, context: SubagentContext) {
+        self.subagent_context = Some(context);
+    }
+
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
     }
@@ -2770,15 +2779,6 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
-
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 pub struct Erased<T>(T);
@@ -2810,14 +2810,6 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2880,10 +2872,6 @@ where
         let input = serde_json::from_value(input)?;
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
-    }
-
-    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        self.0.rebind_thread(new_thread)
     }
 }
 
