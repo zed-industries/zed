@@ -2,7 +2,7 @@ use gh_workflow::*;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    run_tests::{orchestrate, tests_pass},
+    run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
@@ -18,7 +18,8 @@ pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
 
-    let orchestrate = orchestrate(&[&should_check_rust, &should_check_extension]);
+    let orchestrate =
+        orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
 
     let jobs = [
         orchestrate,

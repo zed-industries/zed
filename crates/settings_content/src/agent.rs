@@ -71,8 +71,9 @@ pub struct AgentSettingsContent {
     /// that you allow it, always choose to allow it.
     ///
     /// **Security note**: Even with this enabled, Zed's built-in security rules
-    /// still block some tool actions, such as the terminal tool running `rm -rf /` or `rm -rf ~`,
-    /// to prevent certain classes of failures from happening.
+    /// still block some tool actions, such as the terminal tool running `rm -rf /`, `rm -rf ~`,
+    /// `rm -rf $HOME`, `rm -rf .`, or `rm -rf ..`, to prevent certain classes of failures
+    /// from happening.
     ///
     /// This setting has no effect on external agents that support permission modes, such as Claude Code.
     ///
@@ -143,12 +144,6 @@ impl AgentSettingsContent {
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
-        // let model = language_model.id().0.to_string();
-        // let provider = language_model.provider_id().0.to_string();
-        // self.default_model = Some(LanguageModelSelection {
-        //     provider: provider.into(),
-        //     model,
-        // });
         self.default_model = Some(language_model)
     }
 
@@ -156,40 +151,9 @@ impl AgentSettingsContent {
         self.inline_assistant_model = Some(LanguageModelSelection {
             provider: provider.into(),
             model,
+            enable_thinking: false,
+            effort: None,
         });
-    }
-    pub fn set_inline_assistant_use_streaming_tools(&mut self, use_tools: bool) {
-        self.inline_assistant_use_streaming_tools = Some(use_tools);
-    }
-
-    pub fn set_commit_message_model(&mut self, provider: String, model: String) {
-        self.commit_message_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
-        self.thread_summary_model = Some(LanguageModelSelection {
-            provider: provider.into(),
-            model,
-        });
-    }
-
-    pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
-        self.always_allow_tool_actions = Some(allow);
-    }
-
-    pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
-        self.play_sound_when_agent_done = Some(allow);
-    }
-
-    pub fn set_single_file_review(&mut self, allow: bool) {
-        self.single_file_review = Some(allow);
-    }
-
-    pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
-        self.use_modifier_to_send = Some(always_use);
     }
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
@@ -300,6 +264,9 @@ pub enum NotifyWhenAgentWaiting {
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
     pub model: String,
+    #[serde(default)]
+    pub enable_thinking: bool,
+    pub effort: Option<String>,
 }
 
 #[with_fallible_options]

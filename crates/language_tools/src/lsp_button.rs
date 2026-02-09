@@ -8,6 +8,8 @@ use std::{
 
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
+use language::language_settings::{EditPredictionProvider, all_language_settings};
+
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
@@ -89,8 +91,8 @@ impl ProcessMemoryCache {
             .unwrap_or(true);
 
         if cache_expired {
-            let refresh_kind =
-                RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_memory());
+            let refresh_kind = RefreshKind::nothing()
+                .with_processes(ProcessRefreshKind::nothing().without_tasks().with_memory());
             self.system.refresh_specifics(refresh_kind);
             self.memory_usage.clear();
             self.last_refresh = Some(Instant::now());
@@ -254,52 +256,7 @@ impl LanguageServerState {
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 if restart {
-                                    let Some(workspace) = state.read(cx).workspace.upgrade() else {
-                                        return;
-                                    };
-                                    let project = workspace.read(cx).project().clone();
-                                    let path_style = project.read(cx).path_style(cx);
-                                    let buffer_store = project.read(cx).buffer_store().clone();
-                                    let buffers = state
-                                        .read(cx)
-                                        .language_servers
-                                        .servers_per_buffer_abs_path
-                                        .iter()
-                                        .filter_map(|(abs_path, servers)| {
-                                            let worktree =
-                                                servers.worktree.as_ref()?.upgrade()?.read(cx);
-                                            let relative_path =
-                                                abs_path.strip_prefix(&worktree.abs_path()).ok()?;
-                                            let relative_path =
-                                                RelPath::new(relative_path, path_style)
-                                                    .log_err()?;
-                                            let entry = worktree.entry_for_path(&relative_path)?;
-                                            let project_path =
-                                                project.read(cx).path_for_entry(entry.id, cx)?;
-                                            buffer_store.read(cx).get_by_path(&project_path)
-                                        })
-                                        .collect();
-                                    let selectors = state
-                                        .read(cx)
-                                        .items
-                                        .iter()
-                                        // Do not try to use IDs as we have stopped all servers already, when allowing to restart them all
-                                        .flat_map(|item| match item {
-                                            LspMenuItem::Header { .. } => None,
-                                            LspMenuItem::ToggleServersButton { .. } => None,
-                                            LspMenuItem::WithHealthCheck { health, .. } => Some(
-                                                LanguageServerSelector::Name(health.name.clone()),
-                                            ),
-                                            LspMenuItem::WithBinaryStatus {
-                                                server_name, ..
-                                            } => Some(LanguageServerSelector::Name(
-                                                server_name.clone(),
-                                            )),
-                                        })
-                                        .collect();
-                                    lsp_store.restart_language_servers_for_buffers(
-                                        buffers, selectors, cx,
-                                    );
+                                    lsp_store.restart_all_language_servers(cx);
                                 } else {
                                     lsp_store.stop_all_language_servers(cx);
                                 }
@@ -1296,10 +1253,16 @@ impl Render for LspButton {
             return div().hidden();
         }
 
+        let state = self.server_state.read(cx);
+        let is_via_ssh = state
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .unwrap_or(false);
+
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
-        let state = self.server_state.read(cx);
         for binary_status in state.language_servers.binary_statuses.values() {
             has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
             has_other_notifications |= binary_status.message.is_some();
@@ -1339,6 +1302,16 @@ impl Render for LspButton {
 
         div().child(
             PopoverMenu::new("lsp-tool")
+                .on_open(Rc::new(move |_window, cx| {
+                    let copilot_enabled = all_language_settings(None, cx).edit_predictions.provider
+                        == EditPredictionProvider::Copilot;
+                    telemetry::event!(
+                        "Toolbar Menu Opened",
+                        name = "Language Servers",
+                        copilot_enabled,
+                        is_via_ssh,
+                    );
+                }))
                 .menu(move |_, cx| {
                     lsp_button
                         .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())

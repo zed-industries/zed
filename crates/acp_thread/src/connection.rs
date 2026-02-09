@@ -382,6 +382,7 @@ pub struct AgentModelInfo {
     pub name: SharedString,
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
+    pub is_latest: bool,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -391,6 +392,7 @@ impl From<acp::ModelInfo> for AgentModelInfo {
             name: info.name.into(),
             description: info.description.map(|desc| desc.into()),
             icon: None,
+            is_latest: false,
         }
     }
 }
@@ -744,6 +746,7 @@ mod test_support {
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    is_latest: false,
                 })),
             }
         }

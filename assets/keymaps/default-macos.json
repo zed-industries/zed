@@ -366,6 +366,8 @@
       "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "cmd-alt-k": "agent::ToggleThinkingMode",
+      "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {
@@ -1481,6 +1483,20 @@
     "context": "MultiProjectDropdown",
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+    },
+  },
+  {
+    "context": "NotebookEditor",
+    "bindings": {
+      "shift-enter": "notebook::Run",
+      "cmd-enter": "notebook::Run",
+      "cmd-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "cmd-m": "notebook::AddCodeBlock",
+      "cmd-shift-m": "notebook::AddMarkdownBlock",
+      "cmd-shift-r": "notebook::RestartKernel",
+      "cmd-c": "notebook::InterruptKernel",
     },
   },
   {

@@ -297,6 +297,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
+        session.add_entity_request_handler(Self::handle_download_file_by_path);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -685,6 +686,98 @@ impl HeadlessProject {
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_download_file_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::DownloadFileByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::DownloadFileResponse> {
+        log::debug!(
+            "handle_download_file_by_path: received request: {:?}",
+            message.payload
+        );
+
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+        let file_id = message.payload.file_id;
+        log::debug!(
+            "handle_download_file_by_path: worktree_id={:?}, path={:?}, file_id={}",
+            worktree_id,
+            path,
+            file_id
+        );
+        use proto::create_file_for_peer::Variant;
+
+        let (worktree_store, session): (Entity<WorktreeStore>, AnyProtoClient) = this
+            .read_with(&cx, |this, _| {
+                (this.worktree_store.clone(), this.session.clone())
+            });
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))
+            .context("worktree not found")?;
+
+        let download_task = worktree.update(&mut cx, |worktree: &mut Worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
+
+        let downloaded_file = download_task.await?;
+        let content = downloaded_file.content;
+        let file = downloaded_file.file;
+        log::debug!(
+            "handle_download_file_by_path: file loaded, content_size={}",
+            content.len()
+        );
+
+        let proto_file = worktree.read_with(&cx, |_worktree: &Worktree, cx| file.to_proto(cx));
+        log::debug!(
+            "handle_download_file_by_path: using client-provided file_id={}",
+            file_id
+        );
+
+        let state = proto::FileState {
+            id: file_id,
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+        };
+
+        log::debug!("handle_download_file_by_path: sending State message");
+        session.send(proto::CreateFileForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(Variant::State(state)),
+        })?;
+
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+        let num_chunks = content.len().div_ceil(CHUNK_SIZE);
+        log::debug!(
+            "handle_download_file_by_path: sending {} chunks",
+            num_chunks
+        );
+        for (i, chunk) in content.chunks(CHUNK_SIZE).enumerate() {
+            log::trace!(
+                "handle_download_file_by_path: sending chunk {}/{}, size={}",
+                i + 1,
+                num_chunks,
+                chunk.len()
+            );
+            session.send(proto::CreateFileForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(Variant::Chunk(proto::FileChunk {
+                    file_id,
+                    data: chunk.to_vec(),
+                })),
+            })?;
+        }
+
+        log::debug!(
+            "handle_download_file_by_path: returning file_id={}",
+            file_id
+        );
+        Ok(proto::DownloadFileResponse { file_id })
     }
 
     pub async fn handle_open_new_buffer(

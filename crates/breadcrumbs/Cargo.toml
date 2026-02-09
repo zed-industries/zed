@@ -13,13 +13,10 @@ path = "src/breadcrumbs.rs"
 doctest = false
 
 [dependencies]
-editor.workspace = true
 gpui.workspace = true
-theme.workspace = true
 ui.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

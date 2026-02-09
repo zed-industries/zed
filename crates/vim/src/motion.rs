@@ -1807,8 +1807,8 @@ pub(crate) fn next_subword_end(
         |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
-            let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
-            let found_subword_end = is_subword_end(left, right, "_-");
+            let is_stopping_punct = |c: char| ".$=\"'{}[]()<>".contains(c);
+            let found_subword_end = is_subword_end(left, right, "$_-");
             let is_word_end = (left_kind != right_kind)
                 && (!left.is_ascii_punctuation() || is_stopping_punct(left));
 
@@ -1922,8 +1922,8 @@ fn next_subword_start(
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
             let at_newline = right == '\n';
-            let is_stopping_punct = |c: char| "\"'{}[]()<>".contains(c);
-            let found_subword_start = is_subword_start(left, right, "._-");
+            let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
+            let found_subword_start = is_subword_start(left, right, ".$_-");
             let is_word_start = (left_kind != right_kind)
                 && (!right.is_ascii_punctuation() || is_stopping_punct(right));
             let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
@@ -1964,10 +1964,10 @@ fn previous_subword_start(
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
 
-                let is_stopping_punct = |c: char| ".\"'{}[]()<>".contains(c);
+                let is_stopping_punct = |c: char| ".$=\"'{}[]()<>".contains(c);
                 let is_word_start = (left_kind != right_kind)
                     && (is_stopping_punct(right) || !right.is_ascii_punctuation());
-                let found_subword_start = is_subword_start(left, right, "._-");
+                let found_subword_start = is_subword_start(left, right, ".$_-");
 
                 let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                     || at_newline && crossed_newline
@@ -2012,8 +2012,8 @@ fn previous_subword_end(
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
-                let is_stopping_punct = |c: char| ".;\"'{}[]()<>".contains(c);
-                let found_subword_end = is_subword_end(left, right, "_-");
+                let is_stopping_punct = |c: char| ".$;=\"'{}[]()<>".contains(c);
+                let found_subword_end = is_subword_end(left, right, "$_-");
 
                 if found_subword_end {
                     return true;
@@ -4855,6 +4855,22 @@ mod test {
         cx.set_state("ˇfoo;bar", Mode::Normal);
         cx.simulate_keystrokes("w");
         cx.assert_state("foo;ˇbar", Mode::Normal);
+
+        cx.set_state("ˇ<?php\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?ˇphp\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\nˇ\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\nˇ$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$ˇsomeVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someˇVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someVariable ˇ= 2;", Mode::Normal);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("<?php\n\n$someVariable = ˇ2;", Mode::Normal);
     }
 
     #[gpui::test]
@@ -4969,6 +4985,24 @@ mod test {
         cx.assert_state("foo;ˇbar", Mode::Normal);
         cx.simulate_keystrokes("b");
         cx.assert_state("ˇfoo;bar", Mode::Normal);
+
+        cx.set_state("<?php\n\n$someVariable = 2ˇ;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someVariable = ˇ2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someVariable ˇ= 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$someˇVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\n$ˇsomeVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\n\nˇ$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?php\nˇ\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("<?ˇphp\n\n$someVariable = 2;", Mode::Normal);
+        cx.simulate_keystrokes("b");
+        cx.assert_state("ˇ<?php\n\n$someVariable = 2;", Mode::Normal);
     }
 
     #[gpui::test]

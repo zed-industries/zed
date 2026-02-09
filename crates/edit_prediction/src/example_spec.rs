@@ -561,8 +561,8 @@ impl ExampleSpec {
     ) {
         self.expected_patches = patches
             .into_iter()
-            .map(|(patch, cursor_offset)| {
-                let Some(cursor_offset) = cursor_offset else {
+            .map(|(patch, cursor_editable_region_offset)| {
+                let Some(cursor_offset) = cursor_editable_region_offset else {
                     return patch;
                 };
 

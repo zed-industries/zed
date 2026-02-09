@@ -4,7 +4,6 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
-mod shell_parser;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -165,6 +164,7 @@ impl LanguageModels {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),
                 IconOrSvg::Icon(name) => acp_thread::AgentModelIcon::Named(name),
             }),
+            is_latest: model.is_latest(),
         }
     }
 
@@ -666,7 +666,7 @@ impl NativeAgent {
     fn handle_context_server_store_updated(
         &mut self,
         _store: Entity<project::context_server_store::ContextServerStore>,
-        _event: &project::context_server_store::Event,
+        _event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
         self.update_available_commands(cx);
@@ -1151,22 +1151,33 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
+        // We want to reset the effort level when switching models, as the currently-selected effort level may
+        // not be compatible.
+        let effort = model
+            .default_effort_level()
+            .map(|effort_level| effort_level.value.to_string());
+
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
+            thread.set_thinking_effort(effort.clone(), cx);
+            thread.set_thinking_enabled(model.supports_thinking(), cx);
         });
 
         update_settings_file(
             self.connection.0.read(cx).fs.clone(),
             cx,
-            move |settings, _cx| {
+            move |settings, cx| {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
+                let enable_thinking = thread.read(cx).thinking_enabled();
                 settings
                     .agent
                     .get_or_insert_default()
                     .set_model(LanguageModelSelection {
                         provider: provider.into(),
                         model,
+                        enable_thinking,
+                        effort,
                     });
             },
         );
@@ -1624,7 +1635,8 @@ mod internal_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::{LanguageModelProviderId, LanguageModelProviderName};
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
@@ -1749,6 +1761,7 @@ mod internal_tests {
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
+                    is_latest: false,
                 }]
             )])
         );
@@ -1832,6 +1845,353 @@ mod internal_tests {
             settings_json["agent"]["default_model"]["provider"],
             json!("fake")
         );
+
+        // Register a thinking model and select it.
+        cx.update(|cx| {
+            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "fake-corp",
+                "fake-thinking",
+                "Fake Thinking",
+                true,
+            ));
+            let thinking_provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    LanguageModelProviderName::from("Fake Corp".to_string()),
+                )
+                .with_models(vec![thinking_model]),
+            );
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify enable_thinking was written to settings as true.
+        let settings_content = fs.load(paths::settings_file()).await.unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_content).unwrap();
+        assert_eq!(
+            settings_json["agent"]["default_model"]["enable_thinking"],
+            json!(true),
+            "selecting a thinking model should persist enable_thinking: true to settings"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_select_model_updates_thinking_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store,
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = NativeAgentConnection(agent.clone());
+
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        // Register a second provider with a thinking model.
+        cx.update(|cx| {
+            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+                "fake-corp",
+                "fake-thinking",
+                "Fake Thinking",
+                true,
+            ));
+            let thinking_provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    LanguageModelProviderName::from("Fake Corp".to_string()),
+                )
+                .with_models(vec![thinking_model]),
+            );
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        // Refresh the agent's model list so it picks up the new provider.
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // Thread starts with thinking_enabled = false (the default).
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(!thread.thinking_enabled(), "thinking defaults to false");
+            });
+        });
+
+        // Select the thinking model via select_model.
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
+
+        // select_model should have enabled thinking based on the model's supports_thinking().
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.thinking_enabled(),
+                    "select_model should enable thinking when model supports it"
+                );
+            });
+        });
+
+        // Switch back to the non-thinking model.
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake/fake"), cx))
+            .await
+            .unwrap();
+
+        // select_model should have disabled thinking.
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert!(
+                    !thread.thinking_enabled(),
+                    "select_model should disable thinking when model does not support it"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_preserves_thinking_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        // Register a thinking model.
+        let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "fake-thinking",
+            "Fake Thinking",
+            true,
+        ));
+        let thinking_provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![thinking_model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(thinking_provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // Create a thread and select the thinking model.
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+            .await
+            .unwrap();
+
+        // Verify thinking is enabled after selecting the thinking model.
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.thinking_enabled(),
+                "thinking should be enabled after selecting thinking model"
+            );
+        });
+
+        // Send a message so the thread gets persisted.
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        thinking_model.send_last_completion_stream_text_chunk("Response.");
+        thinking_model.end_last_completion_stream();
+
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        // Drop the thread so it can be reloaded from disk.
+        cx.update(|_| {
+            drop(thread);
+            drop(acp_thread);
+        });
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.sessions.is_empty());
+        });
+
+        // Reload the thread and verify thinking_enabled is still true.
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| agent.open_thread(session_id.clone(), cx))
+            .await
+            .unwrap();
+        let reloaded_thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        reloaded_thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.thinking_enabled(),
+                "thinking_enabled should be preserved when reloading a thread with a thinking model"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_preserves_model(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = NativeAgent::new(
+            project.clone(),
+            thread_store.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        // Register a model where id() != name(), like real Anthropic models
+        // (e.g. id="claude-sonnet-4-5-thinking-latest", name="Claude Sonnet 4.5 Thinking").
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        // Create a thread and select the model.
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.model().unwrap().id().0.as_ref(),
+                "custom-model-id",
+                "model should be set before persisting"
+            );
+        });
+
+        // Send a message so the thread gets persisted.
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("Response.");
+        model.end_last_completion_stream();
+
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        // Drop the thread so it can be reloaded from disk.
+        cx.update(|_| {
+            drop(thread);
+            drop(acp_thread);
+        });
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.sessions.is_empty());
+        });
+
+        // Reload the thread and verify the model was preserved.
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| agent.open_thread(session_id.clone(), cx))
+            .await
+            .unwrap();
+        let reloaded_thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        reloaded_thread.read_with(cx, |thread, _| {
+            let reloaded_model = thread
+                .model()
+                .expect("model should be present after reload");
+            assert_eq!(
+                reloaded_model.id().0.as_ref(),
+                "custom-model-id",
+                "reloaded thread should have the same model, not fall back to the default"
+            );
+        });
+
+        drop(reloaded_acp_thread);
     }
 
     #[gpui::test]

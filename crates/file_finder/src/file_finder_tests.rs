@@ -2831,8 +2831,10 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
             .create_file(Path::new(&filename), Default::default())
             .await
             .expect("unable to create file");
+        // Wait for each file system event to be fully processed before adding the next
+        cx.executor().advance_clock(FS_WATCH_LATENCY);
+        cx.run_until_parked();
     }
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
 
     // file_13.txt is still selected
     picker.update(cx, |finder, _| {
