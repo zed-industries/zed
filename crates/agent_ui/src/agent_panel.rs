@@ -1420,11 +1420,17 @@ impl AgentPanel {
         let thread_store = self.thread_store.clone();
         let title = db_thread.title.clone();
         let workspace = self.workspace.clone();
+        let worktree_paths: Vec<String> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .collect();
 
         cx.spawn_in(window, async move |this, cx| {
             thread_store
                 .update(&mut cx.clone(), |store, cx| {
-                    store.save_thread(session_id.clone(), db_thread, cx)
+                    store.save_thread(session_id.clone(), db_thread, worktree_paths, cx)
                 })
                 .await?;
 
@@ -1584,42 +1590,119 @@ impl AgentPanel {
     ) -> ContextMenu {
         match kind {
             HistoryKind::AgentThreads => {
-                let entries = panel
+                let project = panel.read(cx).project.clone();
+                let thread_store = panel.read(cx).thread_store.clone();
+
+                let worktree_paths: Vec<String> = project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                    .collect();
+
+                let project_entries: Vec<AgentSessionInfo> = if worktree_paths.is_empty() {
+                    Vec::new()
+                } else {
+                    thread_store
+                        .read(cx)
+                        .entries_for_project(&worktree_paths)
+                        .take(RECENTLY_UPDATED_MENU_LIMIT)
+                        .map(|entry| AgentSessionInfo {
+                            session_id: entry.id,
+                            cwd: None,
+                            title: Some(entry.title),
+                            updated_at: Some(entry.updated_at),
+                            meta: None,
+                        })
+                        .collect()
+                };
+
+                let project_session_ids: Vec<_> = project_entries
+                    .iter()
+                    .map(|entry| entry.session_id.clone())
+                    .collect();
+
+                let recent_entries: Vec<_> = panel
                     .read(cx)
                     .acp_history
                     .read(cx)
                     .sessions()
                     .iter()
+                    .filter(|entry| !project_session_ids.contains(&entry.session_id))
                     .take(RECENTLY_UPDATED_MENU_LIMIT)
                     .cloned()
-                    .collect::<Vec<_>>();
+                    .collect();
 
-                if entries.is_empty() {
+                if project_entries.is_empty() && recent_entries.is_empty() {
                     return menu;
                 }
 
-                menu = menu.header("Recently Updated");
+                // Only split into two sections when there are entries
+                // in both categories. When all chats happen to be in
+                // this project there is nothing to distinguish from, so
+                // just show them as "Recently Updated".
+                let show_project_section =
+                    !project_entries.is_empty() && !recent_entries.is_empty();
 
-                for entry in entries {
-                    let title = entry
-                        .title
-                        .as_ref()
-                        .filter(|title| !title.is_empty())
-                        .cloned()
-                        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
+                if show_project_section {
+                    menu = menu.header("Recent in This Project");
 
-                    menu = menu.entry(title, None, {
-                        let panel = panel.downgrade();
-                        let entry = entry.clone();
-                        move |window, cx| {
+                    for entry in &project_entries {
+                        let title = entry
+                            .title
+                            .as_ref()
+                            .filter(|title| !title.is_empty())
+                            .cloned()
+                            .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
+
+                        menu = menu.entry(title, None, {
+                            let panel = panel.downgrade();
                             let entry = entry.clone();
-                            panel
-                                .update(cx, move |this, cx| {
-                                    this.load_agent_thread(entry.clone(), window, cx);
-                                })
-                                .ok();
-                        }
-                    });
+                            move |window, cx| {
+                                let entry = entry.clone();
+                                panel
+                                    .update(cx, move |this, cx| {
+                                        this.load_agent_thread(entry.clone(), window, cx);
+                                    })
+                                    .ok();
+                            }
+                        });
+                    }
+
+                    menu = menu.separator();
+                }
+
+                let recently_updated_entries = if show_project_section {
+                    recent_entries
+                } else {
+                    let mut merged = project_entries;
+                    merged.extend(recent_entries);
+                    merged
+                };
+
+                if !recently_updated_entries.is_empty() {
+                    menu = menu.header("Recently Updated");
+
+                    for entry in recently_updated_entries {
+                        let title = entry
+                            .title
+                            .as_ref()
+                            .filter(|title| !title.is_empty())
+                            .cloned()
+                            .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
+
+                        menu = menu.entry(title, None, {
+                            let panel = panel.downgrade();
+                            let entry = entry.clone();
+                            move |window, cx| {
+                                let entry = entry.clone();
+                                panel
+                                    .update(cx, move |this, cx| {
+                                        this.load_agent_thread(entry.clone(), window, cx);
+                                    })
+                                    .ok();
+                            }
+                        });
+                    }
                 }
             }
             HistoryKind::TextThreads => {

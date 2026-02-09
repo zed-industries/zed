@@ -225,6 +225,8 @@ pub struct AcpThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
+    pub thread_store: Option<Entity<ThreadStore>>,
+    pub project_history_count: usize,
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
     pub show_codex_windows_warning: bool,
@@ -287,7 +289,7 @@ impl AcpThreadView {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
                 project.clone(),
-                thread_store,
+                thread_store.clone(),
                 history.downgrade(),
                 prompt_store,
                 prompt_capabilities.clone(),
@@ -334,7 +336,8 @@ impl AcpThreadView {
             Self::handle_message_editor_event,
         ));
 
-        let recent_history_entries = history.read(cx).get_recent_sessions(3);
+        let (project_history_count, recent_history_entries) =
+            Self::compute_recent_history(thread_store.as_ref(), &project, &history, cx);
 
         Self {
             id,
@@ -391,6 +394,8 @@ impl AcpThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             project,
+            thread_store,
+            project_history_count,
             recent_history_entries,
             hovered_recent_history_item: None,
             history,
@@ -1453,6 +1458,11 @@ impl AcpThreadView {
         let thread_store = session_list.thread_store().clone();
 
         let client = project.read(cx).client();
+        let worktree_paths: Vec<String> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .collect();
         let session_id = self.thread.read(cx).session_id().clone();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -1468,7 +1478,7 @@ impl AcpThreadView {
 
             thread_store
                 .update(&mut cx.clone(), |store, cx| {
-                    store.save_thread(session_id.clone(), db_thread, cx)
+                    store.save_thread(session_id.clone(), db_thread, worktree_paths, cx)
                 })
                 .await?;
 
@@ -6664,9 +6674,74 @@ impl AcpThreadView {
         history: &Entity<AcpThreadHistory>,
         cx: &mut Context<Self>,
     ) {
-        self.recent_history_entries = history.read(cx).get_recent_sessions(3);
+        let (project_history_count, recent_history_entries) =
+            Self::compute_recent_history(self.thread_store.as_ref(), &self.project, history, cx);
+        self.project_history_count = project_history_count;
+        self.recent_history_entries = recent_history_entries;
         self.hovered_recent_history_item = None;
         cx.notify();
+    }
+
+    fn compute_recent_history(
+        thread_store: Option<&Entity<ThreadStore>>,
+        project: &WeakEntity<Project>,
+        history: &Entity<AcpThreadHistory>,
+        cx: &App,
+    ) -> (usize, Vec<AgentSessionInfo>) {
+        let worktree_paths: Vec<String> = project
+            .upgrade()
+            .map(|project| {
+                project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let project_entries: Vec<AgentSessionInfo> = match thread_store {
+            Some(store) if !worktree_paths.is_empty() => store
+                .read(cx)
+                .entries_for_project(&worktree_paths)
+                .take(3)
+                .map(|entry| AgentSessionInfo {
+                    session_id: entry.id,
+                    cwd: None,
+                    title: Some(entry.title),
+                    updated_at: Some(entry.updated_at),
+                    meta: None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        let project_count = project_entries.len();
+        let project_ids: Vec<_> = project_entries
+            .iter()
+            .map(|entry| entry.session_id.clone())
+            .collect();
+
+        let recent_entries: Vec<AgentSessionInfo> = history
+            .read(cx)
+            .get_recent_sessions(3 + project_count)
+            .into_iter()
+            .filter(|entry| !project_ids.contains(&entry.session_id))
+            .take(3)
+            .collect();
+
+        // Only split into two sections when both have entries.
+        // When all chats happen to be in this project there is
+        // nothing to distinguish from, so show them all as "Recent".
+        let effective_project_count = if recent_entries.is_empty() {
+            0
+        } else {
+            project_count
+        };
+
+        let mut entries = project_entries;
+        entries.extend(recent_entries);
+
+        (effective_project_count, entries)
     }
 
     fn render_empty_state_section_header(
@@ -6694,66 +6769,102 @@ impl AcpThreadView {
     }
 
     fn render_recent_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let render_history = !self.recent_history_entries.is_empty();
+        if self.recent_history_entries.is_empty() {
+            return v_flex().size_full().into_any();
+        }
 
-        v_flex()
-            .size_full()
-            .when(render_history, |this| {
-                let recent_history = self.recent_history_entries.clone();
-                this.justify_end().child(
-                    v_flex()
-                        .child(
-                            self.render_empty_state_section_header(
-                                "Recent",
-                                Some(
-                                    Button::new("view-history", "View All")
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &OpenHistory,
-                                                &self.focus_handle(cx),
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        )
-                                        .on_click(move |_event, window, cx| {
-                                            window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                        })
-                                        .into_any_element(),
-                                ),
-                                cx,
-                            ),
-                        )
-                        .child(v_flex().p_1().pr_1p5().gap_1().children({
-                            let supports_delete = self.history.read(cx).supports_delete();
-                            recent_history
-                                .into_iter()
-                                .enumerate()
-                                .map(move |(index, entry)| {
-                                    // TODO: Add keyboard navigation.
-                                    let is_hovered =
-                                        self.hovered_recent_history_item == Some(index);
-                                    crate::acp::thread_history::AcpHistoryEntryElement::new(
-                                        entry,
-                                        self.server_view.clone(),
-                                    )
-                                    .hovered(is_hovered)
-                                    .supports_delete(supports_delete)
-                                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                                        if *is_hovered {
-                                            this.hovered_recent_history_item = Some(index);
-                                        } else if this.hovered_recent_history_item == Some(index) {
-                                            this.hovered_recent_history_item = None;
-                                        }
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                                })
-                        })),
-                )
+        let supports_delete = self.history.read(cx).supports_delete();
+        let project_count = self.project_history_count;
+        let total_count = self.recent_history_entries.len();
+
+        let mut content = v_flex();
+
+        if project_count > 0 {
+            content = content
+                .child(self.render_empty_state_section_header(
+                    "Recent in This Project",
+                    Some(self.render_view_all_button(cx)),
+                    cx,
+                ))
+                .child(
+                    v_flex().p_1().pr_1p5().gap_1().children(
+                        self.recent_history_entries[..project_count]
+                            .iter()
+                            .cloned()
+                            .enumerate()
+                            .map(|(index, entry)| {
+                                self.render_recent_history_entry(entry, index, supports_delete, cx)
+                            }),
+                    ),
+                );
+        }
+
+        if total_count > project_count {
+            content = content
+                .child(self.render_empty_state_section_header(
+                    "Recent",
+                    if project_count == 0 {
+                        Some(self.render_view_all_button(cx))
+                    } else {
+                        None
+                    },
+                    cx,
+                ))
+                .child(
+                    v_flex().p_1().pr_1p5().gap_1().children(
+                        self.recent_history_entries[project_count..]
+                            .iter()
+                            .cloned()
+                            .enumerate()
+                            .map(|(i, entry)| {
+                                self.render_recent_history_entry(
+                                    entry,
+                                    project_count + i,
+                                    supports_delete,
+                                    cx,
+                                )
+                            }),
+                    ),
+                );
+        }
+
+        v_flex().size_full().justify_end().child(content).into_any()
+    }
+
+    fn render_view_all_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        Button::new("view-history", "View All")
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .key_binding(
+                KeyBinding::for_action_in(&OpenHistory, &self.focus_handle(cx), cx)
+                    .map(|kb| kb.size(rems_from_px(12.))),
+            )
+            .on_click(move |_event, window, cx| {
+                window.dispatch_action(OpenHistory.boxed_clone(), cx);
             })
-            .into_any()
+            .into_any_element()
+    }
+
+    fn render_recent_history_entry(
+        &self,
+        entry: AgentSessionInfo,
+        index: usize,
+        supports_delete: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_hovered = self.hovered_recent_history_item == Some(index);
+        crate::acp::thread_history::AcpHistoryEntryElement::new(entry, self.server_view.clone())
+            .hovered(is_hovered)
+            .supports_delete(supports_delete)
+            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                if *is_hovered {
+                    this.hovered_recent_history_item = Some(index);
+                } else if this.hovered_recent_history_item == Some(index) {
+                    this.hovered_recent_history_item = None;
+                }
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {

@@ -886,14 +886,25 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
-                    let (client, thread_store) =
+                    let (client, thread_store, worktree_paths) =
                         multi_workspace.update(cx, |_, _window, cx| {
                             workspace.update(cx, |workspace, cx| {
-                                let client = workspace.project().read(cx).client();
+                                let project = workspace.project().read(cx);
+                                let client = project.client();
+                                let worktree_paths: Vec<String> = project
+                                    .visible_worktrees(cx)
+                                    .map(|worktree| {
+                                        worktree
+                                            .read(cx)
+                                            .abs_path()
+                                            .to_string_lossy()
+                                            .to_string()
+                                    })
+                                    .collect();
                                 let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
                                     .panel::<AgentPanel>(cx)
                                     .map(|panel| panel.read(cx).thread_store().clone());
-                                anyhow::Ok((client, thread_store))
+                                anyhow::Ok((client, thread_store, worktree_paths))
                             })
                         })??;
 
@@ -916,7 +927,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(save_session_id.clone(), db_thread, cx)
+                            store.save_thread(save_session_id.clone(), db_thread, worktree_paths, cx)
                         })
                         .await?;
 

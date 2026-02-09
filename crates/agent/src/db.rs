@@ -29,6 +29,8 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub worktree_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -357,6 +359,17 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
+        // For existing databases created before worktree_paths was added to the
+        // schema above. Silently ignored when the column already exists.
+        if let Ok(mut migrate) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN worktree_paths TEXT
+        "})
+        {
+            // Expected to fail with "duplicate column" on databases that already
+            // have the column — that error is harmless and intentionally discarded.
+            migrate().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -369,6 +382,7 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
+        worktree_paths: Vec<String>,
     ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
 
@@ -392,11 +406,20 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        let worktree_paths_json = serde_json::to_string(&worktree_paths)?;
+
+        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, String)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data, worktree_paths) VALUES (?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            title,
+            updated_at,
+            data_type,
+            data,
+            worktree_paths_json,
+        ))?;
 
         Ok(())
     }
@@ -407,19 +430,23 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let connection = connection.lock();
 
-            let mut select =
-                connection.select_bound::<(), (Arc<str>, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+            let mut select = connection
+                .select_bound::<(), (Arc<str>, String, String, Option<String>)>(indoc! {"
+                SELECT id, summary, updated_at, worktree_paths FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, summary, updated_at) in rows {
+            for (id, summary, updated_at, worktree_paths_json) in rows {
+                let worktree_paths = worktree_paths_json
+                    .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                    .unwrap_or_default();
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    worktree_paths,
                 });
             }
 
@@ -453,11 +480,16 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        thread: DbThread,
+        worktree_paths: Vec<String>,
+    ) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread, worktree_paths) })
     }
 
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
@@ -572,11 +604,11 @@ mod tests {
         );
 
         database
-            .save_thread(older_id.clone(), older_thread)
+            .save_thread(older_id.clone(), older_thread, vec![])
             .await
             .unwrap();
         database
-            .save_thread(newer_id.clone(), newer_thread)
+            .save_thread(newer_id.clone(), newer_thread, vec![])
             .await
             .unwrap();
 
@@ -601,11 +633,11 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), original_thread)
+            .save_thread(thread_id.clone(), original_thread, vec![])
             .await
             .unwrap();
         database
-            .save_thread(thread_id.clone(), updated_thread)
+            .save_thread(thread_id.clone(), updated_thread, vec![])
             .await
             .unwrap();
 
