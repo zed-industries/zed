@@ -2,7 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
-use crate::project_diff::{self, Diff, ProjectDiff};
+use crate::project_diff::{self, Diff, ProjectDiff, StagedDiff, UnstagedDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
@@ -4852,6 +4852,8 @@ impl GitPanel {
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
+                .action("Open Staged Diff", StagedDiff.boxed_clone())
+                .action("Open Unstaged Diff", UnstagedDiff.boxed_clone())
                 .action("Open File", menu::SecondaryConfirm.boxed_clone())
                 .separator()
                 .action_disabled_when(is_created, "View File History", Box::new(git::FileHistory))

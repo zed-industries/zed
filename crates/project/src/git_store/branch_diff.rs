@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::StreamExt;
@@ -24,6 +24,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffBase {
     Head,
+    Staged,
+    Unstaged,
     Merge { base_ref: SharedString },
 }
 
@@ -286,6 +288,7 @@ impl BranchDiff {
         let Some(repo) = self.repo.clone() else {
             return output;
         };
+        let diff_base = self.diff_base.clone();
 
         self.project.update(cx, |_project, cx| {
             let mut seen = HashSet::default();
@@ -305,12 +308,32 @@ impl BranchDiff {
                     continue;
                 }
 
+                match &diff_base {
+                    DiffBase::Staged => {
+                        if !item.status.staging().has_staged() {
+                            continue;
+                        }
+                    }
+                    DiffBase::Unstaged => {
+                        if !item.status.staging().has_unstaged() {
+                            continue;
+                        }
+                    }
+                    DiffBase::Head | DiffBase::Merge { .. } => {}
+                }
+
                 let Some(project_path) =
                     repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(branch_diff, project_path, repo.clone(), cx);
+                let task = Self::load_buffer(
+                    &diff_base,
+                    branch_diff,
+                    project_path,
+                    repo.clone(),
+                    cx,
+                );
 
                 output.push(DiffBuffer {
                     repo_path: item.repo_path.clone(),
@@ -330,8 +353,13 @@ impl BranchDiff {
                 let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
                     continue;
                 };
-                let task =
-                    Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
+                let task = Self::load_buffer(
+                    &diff_base,
+                    Some(branch_diff.clone()),
+                    project_path,
+                    repo.clone(),
+                    cx,
+                );
 
                 let file_status = diff_status_to_file_status(branch_diff);
 
@@ -347,37 +375,68 @@ impl BranchDiff {
 
     #[instrument(skip_all)]
     fn load_buffer(
+        diff_base: &DiffBase,
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
         cx: &Context<'_, Project>,
     ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        let diff_base = diff_base.clone();
         let task = cx.spawn(async move |project, cx| {
             let buffer = project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let changes = if let Some(entry) = branch_diff {
-                let oid = match entry {
-                    git::status::TreeDiffStatus::Added { .. } => None,
-                    git::status::TreeDiffStatus::Modified { old, .. }
-                    | git::status::TreeDiffStatus::Deleted { old } => Some(old),
-                };
-                project
-                    .update(cx, |project, cx| {
-                        project.git_store().update(cx, |git_store, cx| {
-                            git_store.open_diff_since(oid, buffer.clone(), repo, cx)
-                        })
-                    })?
-                    .await?
-            } else {
-                project
-                    .update(cx, |project, cx| {
-                        project.open_uncommitted_diff(buffer.clone(), cx)
-                    })?
-                    .await?
-            };
-            Ok((buffer, changes))
+            match diff_base {
+                DiffBase::Staged => {
+                    let buffer_id = buffer.read_with(cx, |buf, _| buf.remote_id());
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_staged_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    let staged_buffer = project.update(cx, |project, cx| {
+                        project
+                            .git_store()
+                            .read(cx)
+                            .get_staged_buffer(buffer_id, cx)
+                            .ok_or_else(|| anyhow!("staged buffer not found"))
+                    })??;
+                    Ok((staged_buffer, diff))
+                }
+                DiffBase::Unstaged => {
+                    let diff = project
+                        .update(cx, |project, cx| {
+                            project.open_unstaged_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    Ok((buffer, diff))
+                }
+                DiffBase::Head | DiffBase::Merge { .. } => {
+                    if let Some(entry) = branch_diff {
+                        let oid = match entry {
+                            git::status::TreeDiffStatus::Added { .. } => None,
+                            git::status::TreeDiffStatus::Modified { old, .. }
+                            | git::status::TreeDiffStatus::Deleted { old } => Some(old),
+                        };
+                        let diff = project
+                            .update(cx, |project, cx| {
+                                project.git_store().update(cx, |git_store, cx| {
+                                    git_store.open_diff_since(oid, buffer.clone(), repo, cx)
+                                })
+                            })?
+                            .await?;
+                        Ok((buffer, diff))
+                    } else {
+                        let diff = project
+                            .update(cx, |project, cx| {
+                                project.open_uncommitted_diff(buffer.clone(), cx)
+                            })?
+                            .await?;
+                        Ok((buffer, diff))
+                    }
+                }
+            }
         });
         task
     }

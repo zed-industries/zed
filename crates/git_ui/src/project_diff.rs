@@ -38,7 +38,9 @@ use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{
+    ContextMenu, DropdownMenu, DropdownStyle, KeyBinding, Tooltip, prelude::*, vertical_divider,
+};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -56,6 +58,10 @@ actions!(
         Diff,
         /// Adds files to the git staging area.
         Add,
+        /// Shows the diff between the staged (index) content and HEAD.
+        StagedDiff,
+        /// Shows the diff between the working directory and the staged (index) content.
+        UnstagedDiff,
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
@@ -91,6 +97,8 @@ const NEW_SORT_PREFIX: u64 = 3;
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(Self::deploy_staged_diff);
+        workspace.register_action(Self::deploy_unstaged_diff);
         workspace.register_action(Self::deploy_branch_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
@@ -140,6 +148,89 @@ impl ProjectDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn deploy_staged_diff(
+        workspace: &mut Workspace,
+        _: &StagedDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Staged Diff Opened");
+        Self::deploy_with_base(workspace, DiffBase::Staged, None, window, cx);
+    }
+
+    fn deploy_unstaged_diff(
+        workspace: &mut Workspace,
+        _: &UnstagedDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Unstaged Diff Opened");
+        Self::deploy_with_base(workspace, DiffBase::Unstaged, None, window, cx);
+    }
+
+    pub fn deploy_with_base(
+        workspace: &mut Workspace,
+        diff_base: DiffBase,
+        entry: Option<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let intended_repo = resolve_active_repository(workspace, cx);
+
+        let existing = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| item.read(cx).diff_base(cx) == &diff_base);
+        let project_diff = if let Some(existing) = existing {
+            existing.update(cx, |project_diff, cx| {
+                project_diff.move_to_beginning(window, cx);
+            });
+
+            workspace.activate_item(&existing, true, true, window, cx);
+            existing
+        } else {
+            let workspace_handle = cx.entity();
+            let project_diff = cx.new(|cx| {
+                Self::new_with_base(
+                    diff_base,
+                    workspace.project().clone(),
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            });
+            workspace.add_item_to_active_pane(
+                Box::new(project_diff.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            project_diff
+        };
+
+        if let Some(intended) = &intended_repo {
+            let needs_switch = project_diff
+                .read(cx)
+                .branch_diff
+                .read(cx)
+                .repo()
+                .map_or(true, |current| current.read(cx).id != intended.read(cx).id);
+            if needs_switch {
+                project_diff.update(cx, |project_diff, cx| {
+                    project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                        branch_diff.set_repo(Some(intended.clone()), cx);
+                    });
+                });
+            }
+        }
+
+        if let Some(entry) = entry {
+            project_diff.update(cx, |project_diff, cx| {
+                project_diff.move_to_entry(entry, window, cx);
+            })
+        }
     }
 
     pub fn deploy_at(
@@ -286,6 +377,18 @@ impl ProjectDiff {
         Self::new_impl(branch_diff, project, workspace, window, cx)
     }
 
+    fn new_with_base(
+        diff_base: DiffBase,
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let branch_diff =
+            cx.new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
+        Self::new_impl(branch_diff, project, workspace, window, cx)
+    }
+
     fn new_impl(
         branch_diff: Entity<branch_diff::BranchDiff>,
         project: Entity<Project>,
@@ -294,8 +397,12 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let capability = match branch_diff.read(cx).diff_base() {
+            DiffBase::Staged => Capability::ReadOnly,
+            _ => Capability::ReadWrite,
+        };
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(capability);
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
@@ -310,21 +417,25 @@ impl ProjectDiff {
                 cx,
             );
             match branch_diff.read(cx).diff_base() {
-                DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                ),
+                DiffBase::Head | DiffBase::Unstaged => {}
+                DiffBase::Staged | DiffBase::Merge { .. } => diff_display_editor
+                    .set_render_diff_hunk_controls(
+                        Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                        cx,
+                    ),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.disable_diagnostics(cx);
                 editor.set_show_diff_review_button(true, cx);
 
                 match branch_diff.read(cx).diff_base() {
-                    DiffBase::Head => {
+                    DiffBase::Head | DiffBase::Unstaged => {
                         editor.register_addon(GitPanelAddon {
                             workspace: workspace.downgrade(),
                         });
+                    }
+                    DiffBase::Staged => {
+                        editor.start_temporary_diff_override();
                     }
                     DiffBase::Merge { .. } => {
                         editor.register_addon(BranchDiffAddon {
@@ -888,6 +999,8 @@ impl Item for ProjectDiff {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         match self.branch_diff.read(cx).diff_base() {
             DiffBase::Head => "Uncommitted Changes".into(),
+            DiffBase::Staged => "Staged Changes".into(),
+            DiffBase::Unstaged => "Unstaged Changes".into(),
             DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
         }
     }
@@ -1288,7 +1401,12 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head)
+            .filter(|item| {
+                matches!(
+                    item.read(cx).diff_base(cx),
+                    DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged
+                )
+            })
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1306,6 +1424,7 @@ impl ToolbarItemView for ProjectDiffToolbar {
     }
 }
 
+#[derive(Debug)]
 struct ButtonStates {
     stage: bool,
     unstage: bool,
@@ -1316,13 +1435,55 @@ struct ButtonStates {
 }
 
 impl Render for ProjectDiffToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(project_diff) = self.project_diff(cx) else {
             return div();
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
+        let current_base = project_diff.read(cx).diff_base(cx).clone();
+        let is_staging_view = matches!(current_base, DiffBase::Head | DiffBase::Unstaged);
+
+        let diff_base_menu = ContextMenu::build(window, cx, {
+            let current_base = current_base.clone();
+            move |menu, _window, _cx| {
+                menu.toggleable_entry(
+                    "Uncommitted Changes",
+                    matches!(current_base, DiffBase::Head),
+                    IconPosition::Start,
+                    Some(Diff.boxed_clone()),
+                    |window, cx| {
+                        window.dispatch_action(Diff.boxed_clone(), cx);
+                    },
+                )
+                .toggleable_entry(
+                    "Staged Changes",
+                    matches!(current_base, DiffBase::Staged),
+                    IconPosition::Start,
+                    Some(StagedDiff.boxed_clone()),
+                    |window, cx| {
+                        window.dispatch_action(StagedDiff.boxed_clone(), cx);
+                    },
+                )
+                .toggleable_entry(
+                    "Unstaged Changes",
+                    matches!(current_base, DiffBase::Unstaged),
+                    IconPosition::Start,
+                    Some(UnstagedDiff.boxed_clone()),
+                    |window, cx| {
+                        window.dispatch_action(UnstagedDiff.boxed_clone(), cx);
+                    },
+                )
+            }
+        });
+
+        let diff_base_label = match &current_base {
+            DiffBase::Head => "Uncommitted Changes",
+            DiffBase::Staged => "Staged Changes",
+            DiffBase::Unstaged => "Unstaged Changes",
+            DiffBase::Merge { .. } => "Branch Diff",
+        };
 
         h_group_xl()
             .my_neg_1()
@@ -1332,7 +1493,13 @@ impl Render for ProjectDiffToolbar {
             .justify_between()
             .child(
                 h_group_sm()
-                    .when(button_states.selection, |el| {
+                    .child(
+                        DropdownMenu::new("diff-base-selector", diff_base_label, diff_base_menu)
+                            .style(DropdownStyle::Ghost)
+                            .attach(gpui::Corner::BottomLeft),
+                    )
+                    .child(vertical_divider())
+                    .when(button_states.selection && is_staging_view, |el| {
                         el.child(
                             Button::new("stage", "Toggle Staged")
                                 .tooltip(Tooltip::for_action_title_in(
@@ -1347,37 +1514,44 @@ impl Render for ProjectDiffToolbar {
                         )
                     })
                     .when(!button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Stage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
-                                    &StageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
+                        el.when(is_staging_view, |el| {
+                            el.child(
+                                Button::new("stage", "Stage")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Stage and go to next hunk",
+                                        &StageAndNext,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(
+                                        !button_states.prev_next
+                                            && !button_states.stage_all
+                                            && !button_states.unstage_all,
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&StageAndNext, window, cx)
+                                    })),
+                            )
+                        })
+                        .when(
+                            matches!(&current_base, DiffBase::Staged | DiffBase::Head),
+                            |el| {
+                                el.child(
+                                    Button::new("unstage", "Unstage")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Unstage and go to next hunk",
+                                            &UnstageAndNext,
+                                            &focus_handle,
+                                        ))
+                                        .disabled(
+                                            !button_states.prev_next
+                                                && !button_states.stage_all
+                                                && !button_states.unstage_all,
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&UnstageAndNext, window, cx)
+                                        })),
                                 )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("unstage", "Unstage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
-                                    &UnstageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
-                                })),
+                            },
                         )
                     }),
             )
@@ -1435,8 +1609,6 @@ impl Render for ProjectDiffToolbar {
                         !button_states.unstage_all || button_states.stage_all,
                         |el| {
                             el.child(
-                                // todo make it so that changing to say "Unstaged"
-                                // doesn't change the position.
                                 div().child(
                                     Button::new("stage-all", "Stage All")
                                         .disabled(!button_states.stage_all)
@@ -2728,5 +2900,391 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+    }
+
+    #[gpui::test]
+    async fn test_staged_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "staged content\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // HEAD has "original", index has "staged content" (same as worktree).
+        // This means the file has staged modifications (index != HEAD) but no
+        // unstaged modifications (worktree == index).
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "original\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "staged content\n".into())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // Open staged diff via dispatch
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(StagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+
+        // Verify the diff base is Staged
+        assert_eq!(
+            item.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged
+        );
+
+        // Verify tab text
+        assert_eq!(
+            item.read_with(cx, |diff, cx| diff.tab_content_text(0, cx)),
+            "Staged Changes"
+        );
+
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        // The staged diff shows index content diffed against HEAD:
+        // HEAD = "original", index = "staged content"
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - ˇoriginal
+                + staged content
+            "
+            .unindent(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_unstaged_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "working content\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // HEAD has "original", index has "staged content", worktree has "working content".
+        // This means the file has both staged and unstaged modifications.
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "original\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "staged content\n".into())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // Open unstaged diff via dispatch
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(UnstagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+
+        // Verify the diff base is Unstaged
+        assert_eq!(
+            item.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Unstaged
+        );
+
+        // Verify tab text
+        assert_eq!(
+            item.read_with(cx, |diff, cx| diff.tab_content_text(0, cx)),
+            "Unstaged Changes"
+        );
+
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        // The unstaged diff shows working content diffed against index:
+        // index = "staged content", worktree = "working content"
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - ˇstaged content
+                + working content
+            "
+            .unindent(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_diff_after_revert(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "original\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Scenario from issue #36703: User staged changes, then reverted
+        // working directory. Now worktree matches HEAD but index differs.
+        // HEAD = "original", index = "staged content", worktree = "original"
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "original\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "staged content\n".into())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // The staged diff should show the staged changes (index vs HEAD)
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(StagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let staged_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let staged_editor =
+            staged_item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        // Staged diff: index ("staged content") vs HEAD ("original")
+        assert_state_with_diff(
+            &staged_editor,
+            cx,
+            &"
+                - ˇoriginal
+                + staged content
+            "
+            .unindent(),
+        );
+
+        // The uncommitted diff (Head) should show nothing since worktree == HEAD
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let head_item = workspace.update(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<ProjectDiff>(cx)
+                .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head))
+                .unwrap()
+        });
+        let head_paths = head_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert_eq!(
+            head_paths.len(),
+            0,
+            "Uncommitted diff should be empty when worktree matches HEAD"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_tabs_for_diff_bases(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "working content\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "original\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt", "staged content\n".into())],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // Open all three diff types
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.dispatch_action(StagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.dispatch_action(UnstagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        // Should have three separate ProjectDiff items
+        let items: Vec<_> = workspace.update(cx, |workspace, cx| {
+            workspace.items_of_type::<ProjectDiff>(cx).collect()
+        });
+        assert_eq!(items.len(), 3, "Should have three separate diff tabs");
+
+        let bases: Vec<DiffBase> = items
+            .iter()
+            .map(|item| item.read_with(cx, |diff, cx| diff.diff_base(cx).clone()))
+            .collect();
+        assert!(bases.contains(&DiffBase::Head));
+        assert!(bases.contains(&DiffBase::Staged));
+        assert!(bases.contains(&DiffBase::Unstaged));
+
+        // Dispatching the same action again should reuse existing tabs
+        cx.update(|window, cx| {
+            window.dispatch_action(StagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let items_after: Vec<_> = workspace.update(cx, |workspace, cx| {
+            workspace.items_of_type::<ProjectDiff>(cx).collect()
+        });
+        assert_eq!(
+            items_after.len(),
+            3,
+            "Should still have three tabs, not create a new one"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_diff_filtering(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "staged_only.txt": "staged content\n",
+                "unstaged_only.txt": "unstaged content\n",
+                "both.txt": "working content\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // staged_only.txt: index differs from HEAD, worktree matches index
+        // unstaged_only.txt: index matches HEAD, worktree differs from index
+        // both.txt: all three differ
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("staged_only.txt", "original\n".into()),
+                ("unstaged_only.txt", "original\n".into()),
+                ("both.txt", "original\n".into()),
+            ],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("staged_only.txt", "staged content\n".into()),
+                ("unstaged_only.txt", "original\n".into()),
+                ("both.txt", "staged content\n".into()),
+            ],
+        );
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        // Open Staged diff
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(StagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let staged_item = workspace.update(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<ProjectDiff>(cx)
+                .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Staged))
+                .unwrap()
+        });
+        let staged_paths = staged_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert!(
+            staged_paths.iter().any(|p| **p == *"staged_only.txt"),
+            "Staged diff should include staged_only.txt"
+        );
+        assert!(
+            staged_paths.iter().any(|p| **p == *"both.txt"),
+            "Staged diff should include both.txt"
+        );
+        assert!(
+            !staged_paths.iter().any(|p| **p == *"unstaged_only.txt"),
+            "Staged diff should NOT include unstaged_only.txt"
+        );
+
+        // Open Unstaged diff
+        cx.update(|window, cx| {
+            window.dispatch_action(UnstagedDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let unstaged_item = workspace.update(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<ProjectDiff>(cx)
+                .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Unstaged))
+                .unwrap()
+        });
+        let unstaged_paths = unstaged_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert!(
+            unstaged_paths.iter().any(|p| **p == *"unstaged_only.txt"),
+            "Unstaged diff should include unstaged_only.txt"
+        );
+        assert!(
+            unstaged_paths.iter().any(|p| **p == *"both.txt"),
+            "Unstaged diff should include both.txt"
+        );
+        assert!(
+            !unstaged_paths.iter().any(|p| **p == *"staged_only.txt"),
+            "Unstaged diff should NOT include staged_only.txt"
+        );
     }
 }
