@@ -3990,7 +3990,7 @@ mod tests {
 
         cx.background_executor
             .advance_clock(SERIALIZATION_THROTTLE_TIME);
-        cx.update(|_| {});
+        cx.update(|_, _| {});
         editor_1.assert_released();
         editor_2.assert_released();
         buffer.assert_released();
@@ -4334,21 +4334,24 @@ mod tests {
 
         fn active_location(
             workspace: &Entity<Workspace>,
-            cx: &VisualTestContext,
+            cx: &mut VisualTestContext,
         ) -> (ProjectPath, DisplayPoint, f64) {
-            workspace.read_with(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 let item = workspace.active_item(cx).unwrap();
                 let editor = item.downcast::<Editor>().unwrap();
-                let editor_ref = editor.read(cx);
-                let selections = editor_ref
-                    .selections
-                    .display_ranges(&editor_ref.display_snapshot(cx));
-                let scroll_position = editor_ref.scroll_position(cx);
-                (
-                    item.project_path(cx).unwrap(),
-                    selections[0].start,
-                    scroll_position.y,
-                )
+
+                editor.update(cx, |editor_ref, cx| {
+                    let selections = editor_ref
+                        .selections
+                        .display_ranges(&editor_ref.display_snapshot(cx));
+                    let scroll_position = editor_ref.scroll_position(cx);
+
+                    (
+                        editor_ref.project_path(cx).unwrap(),
+                        selections[0].start,
+                        scroll_position.y,
+                    )
+                })
             })
         }
     }
@@ -5434,7 +5437,9 @@ mod tests {
             .unwrap();
 
         let workspace1 = window
-            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.workspaces()[0].clone()
+            })
             .unwrap();
 
         window

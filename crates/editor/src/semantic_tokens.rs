@@ -418,9 +418,7 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{
-        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, VisualTestContext,
-    };
+    use gpui::{AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
@@ -430,7 +428,7 @@ mod tests {
     use rope::Point;
     use serde_json::json;
     use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
-    use workspace::{MultiWorkspace, Workspace, WorkspaceHandle as _};
+    use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
         Capability,
@@ -850,11 +848,11 @@ mod tests {
             )
             .await;
 
-        let (multi_workspace, mut cx) =
+        let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
             })
             .await
@@ -864,7 +862,7 @@ mod tests {
 
         let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let toml_item = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_path(toml_file, None, true, window, cx)
             })
             .await
@@ -876,7 +874,7 @@ mod tests {
                 .expect("Opened test file wasn't an editor")
         });
 
-        editor.update_in(&mut cx, |editor, window, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
                 .active_pane()
@@ -890,11 +888,11 @@ mod tests {
         let _toml_server_2 = toml_server_2.next().await.unwrap();
 
         // Trigger semantic tokens.
-        editor.update_in(&mut cx, |editor, _, cx| {
+        editor.update_in(cx, |editor, _, cx| {
             editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
         });
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(&mut cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
 
@@ -1069,11 +1067,11 @@ mod tests {
             )
             .await;
 
-        let (multi_workspace, mut cx) =
+        let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
             })
             .await
@@ -1083,7 +1081,7 @@ mod tests {
 
         let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[1].clone());
         let rust_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
-        let (toml_item, rust_item) = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let (toml_item, rust_item) = workspace.update_in(cx, |workspace, window, cx| {
             (
                 workspace.open_path(toml_file, None, true, window, cx),
                 workspace.open_path(rust_file, None, true, window, cx),
@@ -1133,12 +1131,12 @@ mod tests {
             multibuffer
         });
 
-        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let editor = workspace.update_in(cx, |workspace, window, cx| {
             let editor = cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx));
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor
         });
-        editor.update_in(&mut cx, |editor, window, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
                 .active_pane()
@@ -1153,7 +1151,7 @@ mod tests {
 
         // Initial request.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(&mut cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
@@ -1168,8 +1166,8 @@ mod tests {
 
         // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
         let toml_excerpt_id =
-            editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
-        editor.update_in(&mut cx, |editor, _, cx| {
+            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
+        editor.update_in(cx, |editor, _, cx| {
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
             });
@@ -1177,7 +1175,7 @@ mod tests {
 
         // Wait for semantic tokens to be re-fetched after expansion.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(&mut cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
 
@@ -1300,11 +1298,11 @@ mod tests {
             )
             .await;
 
-        let (multi_workspace, mut cx) =
+        let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         project
-            .update(&mut cx, |project, cx| {
+            .update(cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
             })
             .await
@@ -1314,7 +1312,7 @@ mod tests {
 
         let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let toml_item = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_path(toml_file, None, true, window, cx)
             })
             .await
@@ -1348,10 +1346,10 @@ mod tests {
             multibuffer
         });
 
-        let editor = workspace.update_in(&mut cx, |_, window, cx| {
+        let editor = workspace.update_in(cx, |_, window, cx| {
             cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx))
         });
-        editor.update_in(&mut cx, |editor, window, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
                 .active_pane()
@@ -1365,7 +1363,7 @@ mod tests {
 
         // Initial request.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(&mut cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
         assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
@@ -1374,12 +1372,12 @@ mod tests {
         //
         // Without debouncing, this grabs semantic tokens 4 times (twice for the
         // toml editor, and twice for the multibuffer).
-        editor.update_in(&mut cx, |editor, _, cx| {
+        editor.update_in(cx, |editor, _, cx| {
             editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
             editor.edit([(MultiBufferOffset(12)..MultiBufferOffset(13), "c")], cx);
         });
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(&mut cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
         assert_eq!(

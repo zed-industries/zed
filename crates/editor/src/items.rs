@@ -42,8 +42,7 @@ use text::{BufferId, BufferSnapshot, Selection};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, MultiWorkspace, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -2007,6 +2006,7 @@ fn restore_serialized_buffer_contents(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
+    use workspace::MultiWorkspace;
 
     use super::*;
     use fs::MTime;

@@ -68,7 +68,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId, Workspace,
+    ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -12296,9 +12296,6 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -12498,9 +12495,6 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -23518,9 +23512,6 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -23594,9 +23585,6 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -23765,9 +23753,6 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -23903,9 +23888,6 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let worktree = project.update(cx, |project, cx| {
         let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
@@ -24432,9 +24414,6 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -24721,9 +24700,6 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -25245,7 +25221,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
     drop(buffer_snapshot);
     let actions = cx
-        .update_window(*workspace, |_, window, cx| {
+        .update_window(*window, |_, window, cx| {
             project.code_actions(&buffer, anchor..anchor, window, cx)
         })
         .unwrap();
@@ -25370,12 +25346,9 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
 
     let actions_after_edits = cx
-        .update_window(*workspace, |_, window, cx| {
-            project.code_actions(&buffer, anchor..anchor, window, cx)
-        })
+        .update(|window, cx| project.code_actions(&buffer, anchor..anchor, window, cx))
         .unwrap()
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         actions, actions_after_edits,
         "For the same selection, same code lens actions should be returned"
@@ -25390,12 +25363,9 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
     cx.executor().run_until_parked();
     let new_actions = cx
-        .update_window(*workspace, |_, window, cx| {
-            project.code_actions(&buffer, anchor..anchor, window, cx)
-        })
+        .update(|window, cx| project.code_actions(&buffer, anchor..anchor, window, cx))
         .unwrap()
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         actions, new_actions,
         "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
@@ -28778,9 +28748,6 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
 
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
     let language = rust_lang();
