@@ -59,6 +59,7 @@ use {
     },
     image::RgbaImage,
     project_panel::ProjectPanel,
+    recent_projects::RecentProjectEntry,
     settings::{NotifyWhenAgentWaiting, Settings as _},
     settings_ui::SettingsWindow,
     std::{
@@ -70,7 +71,7 @@ use {
     },
     util::ResultExt as _,
     watch,
-    workspace::{AppState, Workspace},
+    workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
     zed_actions::OpenSettingsAt,
 };
 
@@ -435,7 +436,24 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 3: Agent Thread View tests
+    // Run Test 3: Multi-workspace sidebar visual tests
+    println!("\n--- Test 3: multi_workspace_sidebar ---");
+    match run_multi_workspace_sidebar_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ multi_workspace_sidebar: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ multi_workspace_sidebar: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ multi_workspace_sidebar: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 4: Agent Thread View tests
     #[cfg(feature = "visual-tests")]
     {
         println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
@@ -2780,4 +2798,301 @@ fn run_tool_permissions_visual_tests(
 
     // Return success - we're just capturing screenshots, not comparing baselines
     Ok(TestResult::Passed)
+}
+
+#[cfg(target_os = "macos")]
+fn run_multi_workspace_sidebar_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    // Create temporary directories to act as worktrees for active workspaces
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
+
+    let workspace1_dir = canonical_temp.join("private-test-remote");
+    let workspace2_dir = canonical_temp.join("zed");
+    std::fs::create_dir_all(&workspace1_dir)?;
+    std::fs::create_dir_all(&workspace2_dir)?;
+
+    // Create directories for recent projects (they must exist on disk for display)
+    let recent1_dir = canonical_temp.join("tiny-project");
+    let recent2_dir = canonical_temp.join("font-kit");
+    let recent3_dir = canonical_temp.join("ideas");
+    let recent4_dir = canonical_temp.join("tmp");
+    std::fs::create_dir_all(&recent1_dir)?;
+    std::fs::create_dir_all(&recent2_dir)?;
+    std::fs::create_dir_all(&recent3_dir)?;
+    std::fs::create_dir_all(&recent4_dir)?;
+
+    // Enable the agent-v2 feature flag so multi-workspace is active
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["agent-v2".to_string()]);
+    });
+
+    // Create both projects upfront so we can build both workspaces during
+    // window creation, before the MultiWorkspace entity exists.
+    // This avoids a re-entrant read panic that occurs when Workspace::new
+    // tries to access the window root (MultiWorkspace) while it's being updated.
+    let project1 = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let project2 = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    let window_size = size(px(1280.0), px(800.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    // Open a MultiWorkspace window with both workspaces created at construction time
+    let multi_workspace_window: WindowHandle<MultiWorkspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    let workspace1 = cx.new(|cx| {
+                        Workspace::new(None, project1.clone(), app_state.clone(), window, cx)
+                    });
+                    let workspace2 = cx.new(|cx| {
+                        Workspace::new(None, project2.clone(), app_state.clone(), window, cx)
+                    });
+                    cx.new(|cx| {
+                        let mut multi_workspace = MultiWorkspace::new(workspace1, cx);
+                        multi_workspace.activate(workspace2, cx);
+                        multi_workspace
+                    })
+                },
+            )
+        })
+        .context("Failed to open MultiWorkspace window")?;
+
+    cx.run_until_parked();
+
+    // Add worktree to workspace 1 (index 0) so it shows as "private-test-remote"
+    let add_worktree1_task = multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            let workspace1 = &multi_workspace.workspaces()[0];
+            let project = workspace1.read(cx).project().clone();
+            project.update(cx, |project, cx| {
+                project.find_or_create_worktree(&workspace1_dir, true, cx)
+            })
+        })
+        .context("Failed to start adding worktree 1")?;
+
+    cx.background_executor.allow_parking();
+    cx.foreground_executor
+        .block_test(add_worktree1_task)
+        .context("Failed to add worktree 1")?;
+    cx.background_executor.forbid_parking();
+
+    cx.run_until_parked();
+
+    // Add worktree to workspace 2 (index 1) so it shows as "zed"
+    let add_worktree2_task = multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            let workspace2 = &multi_workspace.workspaces()[1];
+            let project = workspace2.read(cx).project().clone();
+            project.update(cx, |project, cx| {
+                project.find_or_create_worktree(&workspace2_dir, true, cx)
+            })
+        })
+        .context("Failed to start adding worktree 2")?;
+
+    cx.background_executor.allow_parking();
+    cx.foreground_executor
+        .block_test(add_worktree2_task)
+        .context("Failed to add worktree 2")?;
+    cx.background_executor.forbid_parking();
+
+    cx.run_until_parked();
+
+    // Switch to workspace 1 so it's highlighted as active (index 0)
+    multi_workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate_index(0, window, cx);
+        })
+        .context("Failed to activate workspace 1")?;
+
+    cx.run_until_parked();
+
+    // Create the sidebar and register it on the MultiWorkspace
+    let sidebar = multi_workspace_window
+        .update(cx, |_multi_workspace, window, cx| {
+            let multi_workspace_handle = cx.entity();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    multi_workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), window, cx);
+        })
+        .context("Failed to register sidebar")?;
+
+    cx.run_until_parked();
+
+    // Inject recent project entries into the sidebar.
+    // We update the sidebar entity directly (not through the MultiWorkspace window update)
+    // to avoid a re-entrant read panic: rebuild_entries reads MultiWorkspace, so we can't
+    // be inside a MultiWorkspace update when that happens.
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            let recent_projects = vec![
+                RecentProjectEntry {
+                    name: "tiny-project".into(),
+                    full_path: recent1_dir.to_string_lossy().to_string().into(),
+                    paths: vec![recent1_dir.clone()],
+                    workspace_id: WorkspaceId::default(),
+                },
+                RecentProjectEntry {
+                    name: "font-kit".into(),
+                    full_path: recent2_dir.to_string_lossy().to_string().into(),
+                    paths: vec![recent2_dir.clone()],
+                    workspace_id: WorkspaceId::default(),
+                },
+                RecentProjectEntry {
+                    name: "ideas".into(),
+                    full_path: recent3_dir.to_string_lossy().to_string().into(),
+                    paths: vec![recent3_dir.clone()],
+                    workspace_id: WorkspaceId::default(),
+                },
+                RecentProjectEntry {
+                    name: "tmp".into(),
+                    full_path: recent4_dir.to_string_lossy().to_string().into(),
+                    paths: vec![recent4_dir.clone()],
+                    workspace_id: WorkspaceId::default(),
+                },
+            ];
+            sidebar.set_test_recent_projects(recent_projects, cx);
+        });
+    });
+
+    // Set thread info directly on the sidebar for visual testing
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, _cx| {
+            sidebar.set_test_thread_info(
+                0,
+                "Refine thread view scrolling behavior".into(),
+                sidebar::AgentThreadStatus::Completed,
+            );
+            sidebar.set_test_thread_info(
+                1,
+                "Add line numbers option to FileEditBlock".into(),
+                sidebar::AgentThreadStatus::Running,
+            );
+        });
+    });
+
+    // Set last-worked-on thread titles on some recent projects for visual testing
+    cx.update(|cx| {
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_test_recent_project_thread_title(
+                recent1_dir.to_string_lossy().to_string().into(),
+                "Fix flaky test in CI pipeline".into(),
+                cx,
+            );
+            sidebar.set_test_recent_project_thread_title(
+                recent2_dir.to_string_lossy().to_string().into(),
+                "Upgrade font rendering engine".into(),
+                cx,
+            );
+        });
+    });
+
+    cx.run_until_parked();
+
+    // Open the sidebar
+    multi_workspace_window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
+        })
+        .context("Failed to toggle sidebar")?;
+
+    // Let rendering settle
+    for _ in 0..10 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Refresh the window
+    cx.update_window(multi_workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    // Capture: sidebar open with active workspaces and recent projects
+    let test_result = run_visual_test(
+        "multi_workspace_sidebar_open",
+        multi_workspace_window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    // Clean up worktrees
+    multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            for workspace in multi_workspace.workspaces() {
+                let project = workspace.read(cx).project().clone();
+                project.update(cx, |project, cx| {
+                    let worktree_ids: Vec<_> =
+                        project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                    for id in worktree_ids {
+                        project.remove_worktree(id, cx);
+                    }
+                });
+            }
+        })
+        .log_err();
+
+    cx.run_until_parked();
+
+    // Close the window
+    cx.update_window(multi_workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
 }

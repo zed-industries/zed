@@ -634,11 +634,8 @@ impl SplittableEditor {
                 .collect()
         };
 
-        let rhs_folded_buffers = rhs_display_map.read(cx).folded_buffers().clone();
-
         let mut companion = Companion::new(
             rhs_display_map_id,
-            rhs_folded_buffers,
             convert_rhs_rows_to_lhs,
             convert_lhs_rows_to_rhs,
         );
@@ -659,13 +656,7 @@ impl SplittableEditor {
         let companion = cx.new(|_| companion);
 
         rhs_display_map.update(cx, |dm, cx| {
-            dm.set_companion(Some((lhs_display_map.downgrade(), companion.clone())), cx);
-        });
-        lhs_display_map.update(cx, |dm, cx| {
-            dm.set_companion(Some((rhs_display_map.downgrade(), companion)), cx);
-        });
-        rhs_display_map.update(cx, |dm, cx| {
-            dm.sync_custom_blocks_into_companion(cx);
+            dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
         });
 
         let shared_scroll_anchor = self
@@ -2017,7 +2008,7 @@ mod tests {
     use std::sync::Arc;
 
     use buffer_diff::BufferDiff;
-    use collections::HashSet;
+    use collections::{HashMap, HashSet};
     use fs::FakeFs;
     use gpui::Element as _;
     use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
@@ -2039,6 +2030,7 @@ mod tests {
     async fn init_test(
         cx: &mut gpui::TestAppContext,
         soft_wrap: SoftWrap,
+        style: DiffViewStyle,
     ) -> (Entity<SplittableEditor>, &mut VisualTestContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -2055,26 +2047,22 @@ mod tests {
             multibuffer
         });
         let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = SplittableEditor::new(
-                DiffViewStyle::Stacked,
+            let editor = SplittableEditor::new(
+                style,
                 rhs_multibuffer.clone(),
                 project.clone(),
                 workspace,
                 window,
                 cx,
             );
-            editor.split(&Default::default(), window, cx);
             editor.rhs_editor.update(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(soft_wrap, cx);
             });
-            editor
-                .lhs
-                .as_ref()
-                .unwrap()
-                .editor
-                .update(cx, |editor, cx| {
+            if let Some(lhs) = &editor.lhs {
+                lhs.editor.update(cx, |editor, cx| {
                     editor.set_soft_wrap_mode(soft_wrap, cx);
                 });
+            }
             editor
         });
         (editor, cx)
@@ -2144,7 +2132,7 @@ mod tests {
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
 
-        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -2228,7 +2216,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -2357,7 +2346,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text1 = "
             aaa
@@ -2515,7 +2505,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -2634,7 +2625,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -2763,7 +2755,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -2888,7 +2881,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -3001,7 +2995,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let text = "aaaa bbbb cccc dddd eeee ffff";
 
@@ -3069,7 +3064,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3131,7 +3127,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3200,7 +3197,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3312,7 +3310,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let (buffer1, diff1) = buffer_with_diff("xxx\nyyy", "xxx\nyyy", &mut cx);
 
@@ -3416,7 +3415,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -3498,7 +3498,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "aaaa bbbb cccc dddd eeee ffff\n";
 
@@ -3577,7 +3578,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -3699,7 +3701,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "";
         let current_text = "
@@ -3775,7 +3778,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             aaa
@@ -3870,7 +3874,7 @@ mod tests {
         use gpui::size;
         use rope::Point;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
 
         let long_line = "x".repeat(200);
         let mut lines: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
@@ -3953,7 +3957,8 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth).await;
+        let (editor, mut cx) =
+            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             first line
@@ -4083,7 +4088,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             bbb
@@ -4163,10 +4168,9 @@ mod tests {
         let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
-            *mapping.get(&block_ids[0]).unwrap()
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[0]).unwrap()
         });
 
         cx.update(|_, cx| {
@@ -4231,7 +4235,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             bbb
@@ -4324,12 +4328,11 @@ mod tests {
         let (lhs_block_id_1, lhs_block_id_2) = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             (
-                *mapping.get(&block_ids[0]).unwrap(),
-                *mapping.get(&block_ids[1]).unwrap(),
+                *mapping.borrow().get(&block_ids[0]).unwrap(),
+                *mapping.borrow().get(&block_ids[1]).unwrap(),
             )
         });
 
@@ -4414,10 +4417,9 @@ mod tests {
         let lhs_block_id_2 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
-            *mapping.get(&block_ids[1]).unwrap()
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[1]).unwrap()
         });
 
         cx.update(|_, cx| {
@@ -4455,7 +4457,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
 
         let base_text = "
             bbb
@@ -4559,12 +4561,11 @@ mod tests {
         let (lhs_block_id_1, lhs_block_id_2) = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
             (
-                *mapping.get(&block_ids[0]).unwrap(),
-                *mapping.get(&block_ids[1]).unwrap(),
+                *mapping.borrow().get(&block_ids[0]).unwrap(),
+                *mapping.borrow().get(&block_ids[1]).unwrap(),
             )
         });
 
@@ -4649,10 +4650,9 @@ mod tests {
         let lhs_block_id_2 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
-            *mapping.get(&block_ids[1]).unwrap()
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[1]).unwrap()
         });
 
         cx.update(|_, cx| {
@@ -4711,10 +4711,9 @@ mod tests {
         let lhs_block_id_3 = lhs_editor.read_with(cx, |lhs_editor, cx| {
             let display_map = lhs_editor.display_map.read(cx);
             let companion = display_map.companion().unwrap().read(cx);
-            let mapping = companion.companion_custom_block_to_custom_block(
-                rhs_editor.read(cx).display_map.entity_id(),
-            );
-            *mapping.get(&new_block_ids[0]).unwrap()
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&new_block_ids[0]).unwrap()
         });
 
         cx.update(|_, cx| {
@@ -4775,6 +4774,631 @@ mod tests {
             § custom block 2"
                 .unindent(),
             &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_buffer_folding_sync(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Stacked).await;
+
+        let base_text1 = "
+            aaa
+            bbb
+            ccc"
+        .unindent();
+        let current_text1 = "
+            aaa
+            bbb
+            ccc"
+        .unindent();
+
+        let base_text2 = "
+            ddd
+            eee
+            fff"
+        .unindent();
+        let current_text2 = "
+            ddd
+            eee
+            fff"
+        .unindent();
+
+        let (buffer1, diff1) = buffer_with_diff(&base_text1, &current_text1, &mut cx);
+        let (buffer2, diff2) = buffer_with_diff(&base_text2, &current_text2, &mut cx);
+
+        let buffer1_id = buffer1.read_with(cx, |buffer, _| buffer.remote_id());
+        let buffer2_id = buffer2.read_with(cx, |buffer, _| buffer.remote_id());
+
+        editor.update(cx, |editor, cx| {
+            let path1 = PathKey::for_buffer(&buffer1, cx);
+            editor.set_excerpts_for_path(
+                path1,
+                buffer1.clone(),
+                vec![Point::new(0, 0)..buffer1.read(cx).max_point()],
+                0,
+                diff1.clone(),
+                cx,
+            );
+            let path2 = PathKey::for_buffer(&buffer2, cx);
+            editor.set_excerpts_for_path(
+                path2,
+                buffer2.clone(),
+                vec![Point::new(0, 0)..buffer2.read(cx).max_point()],
+                1,
+                diff2.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                rhs_editor.fold_buffer(buffer1_id, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        let rhs_buffer1_folded = editor.read_with(cx, |editor, cx| {
+            editor.rhs_editor.read(cx).is_buffer_folded(buffer1_id, cx)
+        });
+        assert!(
+            rhs_buffer1_folded,
+            "buffer1 should be folded in rhs before split"
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split(&Default::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.read_with(cx, |editor, _cx| {
+            (
+                editor.rhs_editor.clone(),
+                editor.lhs.as_ref().unwrap().editor.clone(),
+            )
+        });
+
+        let rhs_buffer1_folded =
+            rhs_editor.read_with(cx, |editor, cx| editor.is_buffer_folded(buffer1_id, cx));
+        assert!(
+            rhs_buffer1_folded,
+            "buffer1 should be folded in rhs after split"
+        );
+
+        let base_buffer1_id = diff1.read_with(cx, |diff, cx| diff.base_text(cx).remote_id());
+        let lhs_buffer1_folded = lhs_editor.read_with(cx, |editor, cx| {
+            editor.is_buffer_folded(base_buffer1_id, cx)
+        });
+        assert!(
+            lhs_buffer1_folded,
+            "buffer1 should be folded in lhs after split"
+        );
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            § <no file>
+            § -----
+            ddd
+            eee
+            fff"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § <no file>
+            § -----
+            ddd
+            eee
+            fff"
+            .unindent(),
+            &mut cx,
+        );
+
+        editor.update(cx, |editor, cx| {
+            editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                rhs_editor.fold_buffer(buffer2_id, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        let rhs_buffer2_folded =
+            rhs_editor.read_with(cx, |editor, cx| editor.is_buffer_folded(buffer2_id, cx));
+        assert!(rhs_buffer2_folded, "buffer2 should be folded in rhs");
+
+        let base_buffer2_id = diff2.read_with(cx, |diff, cx| diff.base_text(cx).remote_id());
+        let lhs_buffer2_folded = lhs_editor.read_with(cx, |editor, cx| {
+            editor.is_buffer_folded(base_buffer2_id, cx)
+        });
+        assert!(lhs_buffer2_folded, "buffer2 should be folded in lhs");
+
+        let rhs_buffer1_still_folded =
+            rhs_editor.read_with(cx, |editor, cx| editor.is_buffer_folded(buffer1_id, cx));
+        assert!(
+            rhs_buffer1_still_folded,
+            "buffer1 should still be folded in rhs"
+        );
+
+        let lhs_buffer1_still_folded = lhs_editor.read_with(cx, |editor, cx| {
+            editor.is_buffer_folded(base_buffer1_id, cx)
+        });
+        assert!(
+            lhs_buffer1_still_folded,
+            "buffer1 should still be folded in lhs"
+        );
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            § <no file>
+            § -----"
+                .unindent(),
+            "
+            § <no file>
+            § -----
+            § <no file>
+            § -----"
+                .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_custom_block_in_middle_of_added_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+
+        let base_text = "
+            ddd
+            eee
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        let block_ids = editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let snapshot = rhs_editor.buffer().read(cx).snapshot(cx);
+                let anchor = snapshot.anchor_before(Point::new(2, 0));
+                rhs_editor.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Above(anchor),
+                        height: Some(1),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let lhs_editor =
+            editor.read_with(cx, |editor, _| editor.lhs.as_ref().unwrap().editor.clone());
+
+        cx.update(|_, cx| {
+            set_block_content_for_tests(&rhs_editor, block_ids[0], cx, |_| {
+                "custom block".to_string()
+            });
+        });
+
+        let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let display_map = lhs_editor.display_map.read(cx);
+            let companion = display_map.companion().unwrap().read(cx);
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[0]).unwrap()
+        });
+
+        cx.update(|_, cx| {
+            set_block_content_for_tests(&lhs_editor, lhs_block_id, cx, |_| {
+                "custom block".to_string()
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § custom block
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            § custom block
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                rhs_editor.remove_blocks(HashSet::from_iter(block_ids), None, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_custom_block_below_in_middle_of_added_hunk(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+
+        let base_text = "
+            ddd
+            eee
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        let block_ids = editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let snapshot = rhs_editor.buffer().read(cx).snapshot(cx);
+                let anchor = snapshot.anchor_after(Point::new(1, 3));
+                rhs_editor.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Below(anchor),
+                        height: Some(1),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let lhs_editor =
+            editor.read_with(cx, |editor, _| editor.lhs.as_ref().unwrap().editor.clone());
+
+        cx.update(|_, cx| {
+            set_block_content_for_tests(&rhs_editor, block_ids[0], cx, |_| {
+                "custom block".to_string()
+            });
+        });
+
+        let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let display_map = lhs_editor.display_map.read(cx);
+            let companion = display_map.companion().unwrap().read(cx);
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[0]).unwrap()
+        });
+
+        cx.update(|_, cx| {
+            set_block_content_for_tests(&lhs_editor, lhs_block_id, cx, |_| {
+                "custom block".to_string()
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            § custom block
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            § custom block
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+
+        editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                rhs_editor.remove_blocks(HashSet::from_iter(block_ids), None, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_split_content(
+            &editor,
+            "
+            § <no file>
+            § -----
+            aaa
+            bbb
+            ccc
+            ddd
+            eee"
+            .unindent(),
+            "
+            § <no file>
+            § -----
+            § spacer
+            § spacer
+            § spacer
+            ddd
+            eee"
+            .unindent(),
+            &mut cx,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_custom_block_resize_syncs_balancing_block(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+
+        let base_text = "
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let block_ids = editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let snapshot = rhs_editor.buffer().read(cx).snapshot(cx);
+                let anchor = snapshot.anchor_before(Point::new(2, 0));
+                rhs_editor.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Above(anchor),
+                        height: Some(1),
+                        style: BlockStyle::Fixed,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    }],
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        let rhs_editor = editor.read_with(cx, |editor, _| editor.rhs_editor.clone());
+        let lhs_editor =
+            editor.read_with(cx, |editor, _| editor.lhs.as_ref().unwrap().editor.clone());
+
+        let lhs_block_id = lhs_editor.read_with(cx, |lhs_editor, cx| {
+            let display_map = lhs_editor.display_map.read(cx);
+            let companion = display_map.companion().unwrap().read(cx);
+            let mapping = companion
+                .custom_block_to_balancing_block(rhs_editor.read(cx).display_map.entity_id());
+            *mapping.borrow().get(&block_ids[0]).unwrap()
+        });
+
+        cx.run_until_parked();
+
+        let get_block_height = |editor: &Entity<crate::Editor>,
+                                block_id: crate::CustomBlockId,
+                                cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                snapshot
+                    .block_for_id(crate::BlockId::Custom(block_id))
+                    .map(|block| block.height())
+            })
+        };
+
+        assert_eq!(
+            get_block_height(&rhs_editor, block_ids[0], &mut cx),
+            Some(1)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, lhs_block_id, &mut cx),
+            Some(1)
+        );
+
+        editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let mut heights = HashMap::default();
+                heights.insert(block_ids[0], 3);
+                rhs_editor.resize_blocks(heights, None, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            get_block_height(&rhs_editor, block_ids[0], &mut cx),
+            Some(3)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, lhs_block_id, &mut cx),
+            Some(3)
+        );
+
+        editor.update(cx, |splittable_editor, cx| {
+            splittable_editor.rhs_editor.update(cx, |rhs_editor, cx| {
+                let mut heights = HashMap::default();
+                heights.insert(block_ids[0], 5);
+                rhs_editor.resize_blocks(heights, None, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            get_block_height(&rhs_editor, block_ids[0], &mut cx),
+            Some(5)
+        );
+        assert_eq!(
+            get_block_height(&lhs_editor, lhs_block_id, &mut cx),
+            Some(5)
         );
     }
 }

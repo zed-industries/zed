@@ -1566,9 +1566,12 @@ impl PickerDelegate for FileFinderDelegate {
                 .unwrap_or(0)
                 .saturating_sub(1);
             let finder = self.file_finder.clone();
+            let workspace = self.workspace.clone();
 
-            cx.spawn_in(window, async move |_, cx| {
-                let item = open_task.await.notify_async_err(cx)?;
+            cx.spawn_in(window, async move |_, mut cx| {
+                let item = open_task
+                    .await
+                    .notify_workspace_async_err(workspace, &mut cx)?;
                 if let Some(row) = row
                     && let Some(active_editor) = item.downcast::<Editor>()
                 {

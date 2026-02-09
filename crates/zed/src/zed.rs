@@ -68,6 +68,7 @@ use settings::{
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
+use sidebar::Sidebar;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -88,9 +89,9 @@ use workspace::notifications::{
 };
 use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
-    AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
+    WorkspaceSettings, create_and_open_local_file,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
     CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
@@ -367,6 +368,16 @@ pub fn initialize_workspace(
         // A 1.92 regression causes unused-assignment to trigger on this variable.
         _ = _on_close_subscription.is_some();
         _on_close_subscription = bind_on_window_closed(cx);
+    })
+    .detach();
+
+    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+        let multi_workspace_handle = cx.entity();
+        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle, window, cx));
+        multi_workspace.register_sidebar(sidebar, window, cx);
     })
     .detach();
 
@@ -1152,7 +1163,7 @@ fn register_actions(
         .register_action({
             let app_state = Arc::downgrade(&app_state);
             move |_, _: &CloseProject, window, cx| {
-                let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+                let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
                 if let Some(app_state) = app_state.upgrade() {
@@ -1248,6 +1259,7 @@ fn initialize_pane(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let workspace_handle = cx.weak_entity();
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new(|_| MultibufferHint::new());
@@ -1280,11 +1292,12 @@ fn initialize_pane(
             toolbar.add_item(telemetry_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
+            let migration_banner =
+                cx.new(|inner_cx| MigrationBanner::new(workspace_handle.clone(), inner_cx));
+            toolbar.add_item(migration_banner, window, cx);
             let highlights_tree_item =
                 cx.new(|_| language_tools::HighlightsTreeToolbarItemView::new());
             toolbar.add_item(highlights_tree_item, window, cx);
-            let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
-            toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
             let branch_diff_toolbar = cx.new(BranchDiffToolbar::new);
@@ -1359,10 +1372,10 @@ fn quit(_: &Quit, cx: &mut App) {
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     cx.spawn(async move |cx| {
-        let mut workspace_windows: Vec<WindowHandle<Workspace>> = cx.update(|cx| {
+        let mut workspace_windows: Vec<WindowHandle<MultiWorkspace>> = cx.update(|cx| {
             cx.windows()
                 .into_iter()
-                .filter_map(|window| window.downcast::<Workspace>())
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
                 .collect::<Vec<_>>()
         });
 
@@ -1372,8 +1385,8 @@ fn quit(_: &Quit, cx: &mut App) {
             workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
         });
 
-        if should_confirm && let Some(workspace) = workspace_windows.first() {
-            let answer = workspace
+        if should_confirm && let Some(multi_workspace) = workspace_windows.first() {
+            let answer = multi_workspace
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Info,
@@ -1397,14 +1410,30 @@ fn quit(_: &Quit, cx: &mut App) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Some(should_close) = window
-                .update(cx, |workspace, window, cx| {
-                    workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+            let workspaces = window
+                .update(cx, |multi_workspace, _, _| {
+                    multi_workspace.workspaces().to_vec()
                 })
-                .log_err()
-            {
-                if !should_close.await? {
-                    return Ok(());
+                .log_err();
+
+            let Some(workspaces) = workspaces else {
+                continue;
+            };
+
+            for workspace in workspaces {
+                if let Some(should_close) = window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.activate(workspace.clone(), cx);
+                        window.activate_window();
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                        })
+                    })
+                    .log_err()
+                {
+                    if !should_close.await? {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -2356,6 +2385,7 @@ mod tests {
     use settings::{SaturatingBool, SettingsStore, watch_config_file};
     use std::{
         path::{Path, PathBuf},
+        sync::Arc,
         time::Duration,
     };
     use theme::ThemeRegistry;
@@ -2363,6 +2393,7 @@ mod tests {
         path,
         rel_path::{RelPath, rel_path},
     };
+    use workspace::MultiWorkspace;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -2398,10 +2429,12 @@ mod tests {
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some())
+                });
             })
             .unwrap();
     }
@@ -2409,6 +2442,10 @@ mod tests {
     #[gpui::test]
     async fn test_open_paths_action(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+        cx.update(|cx| {
+            use feature_flags::FeatureFlagAppExt as _;
+            cx.update_flags(false, vec!["agent-v2".to_string()]);
+        });
         app_state
             .fs
             .as_fake()
@@ -2462,21 +2499,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
-        let workspace_1 = cx
-            .read(|cx| cx.windows()[0].downcast::<Workspace>())
+        let multi_workspace_1 = cx
+            .read(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
         cx.run_until_parked();
-        workspace_1
-            .update(cx, |workspace, window, cx| {
-                assert_eq!(workspace.worktrees(cx).count(), 2);
-                assert!(workspace.left_dock().read(cx).is_open());
-                assert!(
-                    workspace
-                        .active_pane()
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window)
-                );
+        multi_workspace_1
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert_eq!(workspace.worktrees(cx).count(), 2);
+                    assert!(workspace.left_dock().read(cx).is_open());
+                    assert!(
+                        workspace
+                            .active_pane()
+                            .read(cx)
+                            .focus_handle(cx)
+                            .is_focused(window)
+                    );
+                });
             })
             .unwrap();
 
@@ -2494,7 +2533,7 @@ mod tests {
 
         // Replace existing windows
         let window = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
         cx.update(|cx| {
             open_paths(
@@ -2511,11 +2550,12 @@ mod tests {
         .unwrap();
         cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-        let workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<Workspace>())
+        let multi_workspace_1 = cx
+            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
             .unwrap();
-        workspace_1
-            .update(cx, |workspace, window, cx| {
+        multi_workspace_1
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
                 assert_eq!(
                     workspace
                         .worktrees(cx)
@@ -2687,17 +2727,21 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.update(|cx| window.read(cx).unwrap().is_edited())
+        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
         let pane = window
-            .read_with(cx, |workspace, _| workspace.active_pane().clone())
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).active_pane().clone()
+            })
             .unwrap();
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2770,22 +2814,26 @@ mod tests {
         executor.run_until_parked();
 
         window
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<Editor>()
-                    .unwrap();
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<Editor>()
+                        .unwrap();
 
-                editor.update(cx, |editor, cx| {
-                    assert_eq!(editor.text(cx), "hey");
+                    editor.update(cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), "hey");
+                    });
                 });
             })
             .unwrap();
 
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2838,15 +2886,17 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        let window_is_edited = |window: WindowHandle<Workspace>, cx: &mut TestAppContext| {
-            cx.update(|cx| window.read(cx).unwrap().is_edited())
+        let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
 
         let editor = window
-            .read_with(cx, |workspace, cx| {
-                workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
                     .active_item(cx)
                     .unwrap()
                     .downcast::<Editor>()
@@ -2893,22 +2943,27 @@ mod tests {
         cx.run_until_parked();
 
         // When opening the workspace, the window is not in a edited state.
-        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+        let window = cx.update(|cx| {
+            cx.active_window()
+                .unwrap()
+                .downcast::<MultiWorkspace>()
+                .unwrap()
+        });
         assert!(window_is_edited(window, cx));
 
         window
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<editor::Editor>()
-                    .unwrap();
-                editor.update(cx, |editor, cx| {
-                    assert_eq!(editor.text(cx), "EDIThey");
-                    assert!(editor.is_dirty(cx));
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<editor::Editor>()
+                        .unwrap();
+                    editor.update(cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), "EDIThey");
+                        assert!(editor.is_dirty(cx));
+                    });
                 });
-
-                editor
             })
             .unwrap();
     }
@@ -2930,36 +2985,40 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
 
-        let workspace = cx
-            .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
             .unwrap();
 
-        let editor = workspace
-            .update(cx, |workspace, _, cx| {
-                let editor = workspace
-                    .active_item(cx)
-                    .unwrap()
-                    .downcast::<editor::Editor>()
-                    .unwrap();
-                editor.update(cx, |editor, cx| {
-                    assert!(editor.text(cx).is_empty());
-                    assert!(!editor.is_dirty(cx));
-                });
+        let editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .unwrap()
+                        .downcast::<editor::Editor>()
+                        .unwrap();
+                    editor.update(cx, |editor, cx| {
+                        assert!(editor.text(cx).is_empty());
+                        assert!(!editor.is_dirty(cx));
+                    });
 
-                editor
+                    editor
+                })
             })
             .unwrap();
 
-        let save_task = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.save_active_item(SaveIntent::Save, window, cx)
+        let save_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.save_active_item(SaveIntent::Save, window, cx)
+                })
             })
             .unwrap();
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
         cx.background_executor.run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
-        workspace
+        multi_workspace
             .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
@@ -3140,8 +3199,10 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
-        let workspace = window.root(cx).unwrap();
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         #[track_caller]
         fn assert_project_panel_selection(
@@ -3176,17 +3237,19 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir1/a.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir1/a.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3215,17 +3278,19 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir2/b.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir2/b.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3265,17 +3330,19 @@ mod tests {
 
         // Ensure opening a directory and one of its children only adds one worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::All),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3315,17 +3382,19 @@ mod tests {
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![path!("/d.txt").into()],
-                    OpenOptions {
-                        visible: Some(OpenVisible::None),
-                        ..Default::default()
-                    },
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![path!("/d.txt").into()],
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
             })
             .unwrap()
             .await;
@@ -3419,8 +3488,13 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| project.languages().add(markdown_lang()));
-        let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-        let workspace = window.root(cx).unwrap();
+        let window = cx.add_window({
+            let project = project.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
@@ -3441,7 +3515,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            opened_workspace.root(cx).unwrap().entity_id(),
+            opened_workspace
+                .read_with(cx, |mw, _| mw.workspace().entity_id())
+                .unwrap(),
             workspace.entity_id(),
             "Excluded files in subfolders of a workspace root should be opened in the workspace"
         );
@@ -4864,6 +4940,7 @@ mod tests {
                 "lsp_tool",
                 "markdown",
                 "menu",
+                "multi_workspace",
                 "new_process_modal",
                 "notebook",
                 "notification_panel",
@@ -4951,7 +5028,7 @@ mod tests {
         cx.update(init);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let _window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
         cx.update(|cx| {
             cx.dispatch_action(&OpenDefaultSettings);
@@ -4960,10 +5037,12 @@ mod tests {
 
         assert_eq!(cx.read(|cx| cx.windows().len()), 1);
 
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        let active_editor = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace.active_item_as::<Editor>(cx)
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let active_editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
             })
             .unwrap();
         assert!(
@@ -5267,16 +5346,22 @@ mod tests {
             .await;
 
         let project_a = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_a =
-            cx.add_window(|window, cx| Workspace::test_new(project_a.clone(), window, cx));
+        let window_a = cx.add_window({
+            let project = project_a.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
 
         let project_b = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_b =
-            cx.add_window(|window, cx| Workspace::test_new(project_b.clone(), window, cx));
+        let window_b = cx.add_window({
+            let project = project_b.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
 
         let project_c = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window_c =
-            cx.add_window(|window, cx| Workspace::test_new(project_c.clone(), window, cx));
+        let window_c = cx.add_window({
+            let project = project_c.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
 
         for window in [window_a, window_b, window_c] {
             let _ = cx.update_window(*window, |_, window, _| {
@@ -5297,8 +5382,8 @@ mod tests {
             cx.update_window(*window, |_, window, _| assert!(window.is_window_active()))
                 .unwrap();
 
-            let _ = window.read_with(cx, |workspace, cx| {
-                let pane = workspace.active_pane().read(cx);
+            let _ = window.read_with(cx, |multi_workspace, cx| {
+                let pane = multi_workspace.workspace().read(cx).active_pane().read(cx);
                 let project_path = pane.active_item().unwrap().project_path(cx).unwrap();
 
                 assert_eq!(
@@ -5306,6 +5391,709 @@ mod tests {
                     path!("document.txt")
                 )
             });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_switches_to_best_workspace(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            use feature_flags::FeatureFlagAppExt as _;
+            cx.update_flags(false, vec!["agent-v2".to_string()]);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "dir1": {
+                        "a.txt": "content a"
+                    },
+                    "dir2": {
+                        "b.txt": "content b"
+                    },
+                    "dir3": {
+                        "c.txt": "content c"
+                    }
+                }),
+            )
+            .await;
+
+        // Create a window with workspace 0 containing /dir1
+        let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
+
+        let window = cx.add_window({
+            let project = project1.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1, "Should start with 1 window");
+
+        // Create workspace 2 with /dir2
+        let project2 = Project::test(app_state.fs.clone(), [path!("/dir2").as_ref()], cx).await;
+        let workspace2 = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project2.clone(), window, cx))
+            })
+            .unwrap();
+
+        // Create workspace 3 with /dir3
+        let project3 = Project::test(app_state.fs.clone(), [path!("/dir3").as_ref()], cx).await;
+        let workspace3 = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project3.clone(), window, cx))
+            })
+            .unwrap();
+
+        let workspace1 = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace2.clone(), cx);
+                multi_workspace.activate(workspace3.clone(), cx);
+                // Switch back to workspace1 for test setup
+                multi_workspace.activate(workspace1, cx);
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify setup: 3 workspaces, workspace 0 active, still 1 window
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.workspaces().len(), 3);
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
+
+        // Open a file in /dir3 - should switch to workspace 3 (not just "the other one")
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir3/c.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 2 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    2,
+                    "Should have switched to workspace 3 which contains /dir3"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "c.txt");
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1, "Should reuse existing window");
+
+        // Open a file in /dir2 - should switch to workspace 2
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir2/b.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 1 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    1,
+                    "Should have switched to workspace 2 which contains /dir2"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "b.txt");
+            })
+            .unwrap();
+
+        // Verify c.txt is still in workspace 3 (file opened in correct workspace, not active one)
+        workspace3.read_with(cx, |workspace, cx| {
+            let active_item = workspace
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .expect("Workspace 2 should have an active item");
+            assert_eq!(
+                active_item.tab_content_text(0, cx),
+                "c.txt",
+                "c.txt should have been opened in workspace 3, not the active workspace"
+            );
+        });
+
+        assert_eq!(cx.windows().len(), 1, "Should still have only 1 window");
+
+        // Open a file in /dir1 - should switch back to workspace 0
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir1/a.txt"))],
+                app_state.clone(),
+                OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace 0 is active and file opened there
+        window
+            .read_with(cx, |multi_workspace, cx| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    0,
+                    "Should have switched back to workspace 0 which contains /dir1"
+                );
+                let active_item = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .expect("Should have an active item");
+                assert_eq!(active_item.tab_content_text(0, cx), "a.txt");
+            })
+            .unwrap();
+        assert_eq!(cx.windows().len(), 1, "Should still have only 1 window");
+    }
+
+    #[gpui::test]
+    async fn test_quit_checks_all_workspaces_for_dirty_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+        cx.update(|cx| {
+            use feature_flags::FeatureFlagAppExt as _;
+            cx.update_flags(false, vec!["agent-v2".to_string()]);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "dir1": {
+                        "a.txt": "content a"
+                    },
+                    "dir2": {
+                        "b.txt": "content b"
+                    },
+                    "dir3": {
+                        "c.txt": "content c"
+                    }
+                }),
+            )
+            .await;
+
+        // === Setup Window 1 with two workspaces ===
+        let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
+        let window1 = cx.add_window({
+            let project = project1.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+
+        let project2 = Project::test(app_state.fs.clone(), [path!("/dir2").as_ref()], cx).await;
+        let workspace1_1 = window1
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let workspace1_2 = window1
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| Workspace::test_new(project2.clone(), window, cx))
+            })
+            .unwrap();
+
+        window1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace1_2.clone(), cx);
+                multi_workspace.activate(workspace1_1.clone(), cx);
+            })
+            .unwrap();
+
+        // === Setup Window 2 with one workspace ===
+        let project3 = Project::test(app_state.fs.clone(), [path!("/dir3").as_ref()], cx).await;
+        let window2 = cx.add_window({
+            let project = project3.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 2);
+
+        // === Case 1: Active workspace has dirty item, quit can be cancelled ===
+        let worktree1_id = project1.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor1 = window1
+            .update(cx, |_, window, cx| {
+                workspace1_1.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree1_id, rel_path("a.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window1
+            .update(cx, |_, window, cx| {
+                editor1.update(cx, |editor, cx| {
+                    editor.insert("dirty in active workspace", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace1_1 is active
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 1: Should prompt to save dirty item in active workspace"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 1: Windows should still exist after cancelling quit"
+        );
+
+        // Clean up Case 1: Close the dirty item without saving
+        let close_task = window1
+            .update(cx, |_, window, cx| {
+                workspace1_1.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_active_item(&Default::default(), window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Don't Save");
+        close_task.await.ok();
+        cx.run_until_parked();
+
+        // === Case 2: Non-active workspace (same window) has dirty item ===
+        let worktree2_id = project2.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor2 = window1
+            .update(cx, |_, window, cx| {
+                workspace1_2.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree2_id, rel_path("b.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window1
+            .update(cx, |_, window, cx| {
+                editor2.update(cx, |editor, cx| {
+                    editor.insert("dirty in non-active workspace", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace1_1 is still active (not workspace1_2 with dirty item)
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.active_workspace_index(), 0);
+            })
+            .unwrap();
+
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        // Verify the non-active workspace got activated to show the dirty item
+        window1
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(
+                    multi_workspace.active_workspace_index(),
+                    1,
+                    "Case 2: Non-active workspace should be activated when it has dirty item"
+                );
+            })
+            .unwrap();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 2: Should prompt to save dirty item in non-active workspace"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 2: Windows should still exist after cancelling quit"
+        );
+
+        // Clean up Case 2: Close the dirty item without saving
+        let close_task = window1
+            .update(cx, |_, window, cx| {
+                workspace1_2.update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_active_item(&Default::default(), window, cx)
+                    })
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Don't Save");
+        close_task.await.ok();
+        cx.run_until_parked();
+
+        // === Case 3: Non-active window has dirty item ===
+        let workspace3 = window2
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let worktree3_id = project3.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor3 = window2
+            .update(cx, |_, window, cx| {
+                workspace3.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree3_id, rel_path("c.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window2
+            .update(cx, |_, window, cx| {
+                editor3.update(cx, |editor, cx| {
+                    editor.insert("dirty in other window", window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Activate window1 explicitly (editing in window2 may have activated it)
+        window1
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Verify window2 is not active (window1 should still be active)
+        assert_eq!(
+            cx.update(|cx| window2.is_active(cx)),
+            Some(false),
+            "Case 3: window2 should not be active before quit"
+        );
+
+        // Dispatch quit from window1 (window2 has the dirty item)
+        cx.dispatch_action(*window1, Quit);
+        cx.run_until_parked();
+
+        // Verify window2 is now active (quit handler activated it to show dirty item)
+        assert_eq!(
+            cx.update(|cx| window2.is_active(cx)),
+            Some(true),
+            "Case 3: window2 should be activated when it has dirty item"
+        );
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Case 3: Should prompt to save dirty item in non-active window"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Case 3: Windows should still exist after cancelling quit"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
+        use collections::HashMap;
+        use session::Session;
+        use workspace::{Workspace, WorkspaceId};
+
+        let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            use feature_flags::FeatureFlagAppExt as _;
+            cx.update_flags(false, vec!["agent-v2".to_string()]);
+        });
+
+        let dir1 = path!("/dir1");
+        let dir2 = path!("/dir2");
+        let dir3 = path!("/dir3");
+
+        let fs = app_state.fs.clone();
+        let fake_fs = fs.as_fake();
+        fake_fs.insert_tree(dir1, json!({})).await;
+        fake_fs.insert_tree(dir2, json!({})).await;
+        fake_fs.insert_tree(dir3, json!({})).await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        // --- Create 3 workspaces in 2 windows ---
+        //
+        //   Window A: workspace for dir1, workspace for dir2
+        //   Window B: workspace for dir3
+        let (window_a, _) = cx
+            .update(|cx| {
+                Workspace::new_local(vec![dir1.into()], app_state.clone(), None, None, None, cx)
+            })
+            .await
+            .expect("failed to open first workspace");
+
+        window_a
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project(vec![dir2.into()], window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to open second workspace into window A");
+        cx.run_until_parked();
+
+        let (window_b, _) = cx
+            .update(|cx| {
+                Workspace::new_local(vec![dir3.into()], app_state.clone(), None, None, None, cx)
+            })
+            .await
+            .expect("failed to open third workspace");
+
+        // Currently dir2 is active because it was added last.
+        // So, switch window_a's active workspace to dir1 (index 0).
+        // This sets up a non-trivial assertion: after restore, dir1 should
+        // still be active rather than whichever workspace happened to restore last.
+        window_a
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate_index(0, window, cx);
+            })
+            .unwrap();
+
+        // --- Flush serialization ---
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+
+        // Verify all workspaces retained their session_ids.
+        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("expected session workspace locations");
+        assert_eq!(
+            locations.len(),
+            3,
+            "all 3 workspaces should have session_ids in the DB"
+        );
+
+        // Close the original windows.
+        window_a
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        window_b
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Simulate a new session launch: replace the session so that
+        // `last_session_id()` returns the ID used during workspace creation.
+        // `restore_on_startup` defaults to `LastSession`, which is what we need.
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        // --- Read back from DB and verify grouping ---
+        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("expected session workspace locations");
+
+        assert_eq!(locations.len(), 3, "expected 3 session workspaces");
+
+        let mut groups_by_window: HashMap<gpui::WindowId, Vec<WorkspaceId>> = HashMap::default();
+        for session_workspace in &locations {
+            if let Some(window_id) = session_workspace.window_id {
+                groups_by_window
+                    .entry(window_id)
+                    .or_default()
+                    .push(session_workspace.workspace_id);
+            }
+        }
+        assert_eq!(
+            groups_by_window.len(),
+            2,
+            "expected 2 window groups, got {groups_by_window:?}"
+        );
+        assert!(
+            groups_by_window.values().any(|g| g.len() == 2),
+            "expected one group with 2 workspaces"
+        );
+        assert!(
+            groups_by_window.values().any(|g| g.len() == 1),
+            "expected one group with 1 workspace"
+        );
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        // --- Verify the restored windows ---
+        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect()
+        });
+
+        assert_eq!(
+            restored_windows.len(),
+            2,
+            "expected 2 restored windows, got {}",
+            restored_windows.len()
+        );
+
+        let workspace_counts: Vec<usize> = restored_windows
+            .iter()
+            .map(|window| {
+                window
+                    .read_with(cx, |multi_workspace, _| multi_workspace.workspaces().len())
+                    .unwrap()
+            })
+            .collect();
+        let mut sorted_counts = workspace_counts.clone();
+        sorted_counts.sort();
+        assert_eq!(
+            sorted_counts,
+            vec![1, 2],
+            "expected one window with 1 workspace and one with 2, got {workspace_counts:?}"
+        );
+
+        let dir1_path: Arc<Path> = Path::new(dir1).into();
+        let dir2_path: Arc<Path> = Path::new(dir2).into();
+        let dir3_path: Arc<Path> = Path::new(dir3).into();
+
+        let all_restored_paths: Vec<Vec<Vec<Arc<Path>>>> = restored_windows
+            .iter()
+            .map(|window| {
+                window
+                    .read_with(cx, |multi_workspace, cx| {
+                        multi_workspace
+                            .workspaces()
+                            .iter()
+                            .map(|ws| ws.read(cx).root_paths(cx))
+                            .collect()
+                    })
+                    .unwrap()
+            })
+            .collect();
+
+        let two_ws_window = all_restored_paths
+            .iter()
+            .find(|paths| paths.len() == 2)
+            .expect("expected a window with 2 workspaces");
+        assert!(
+            two_ws_window.iter().any(|p| p.contains(&dir1_path)),
+            "2-workspace window should contain dir1, got {two_ws_window:?}"
+        );
+        assert!(
+            two_ws_window.iter().any(|p| p.contains(&dir2_path)),
+            "2-workspace window should contain dir2, got {two_ws_window:?}"
+        );
+
+        let one_ws_window = all_restored_paths
+            .iter()
+            .find(|paths| paths.len() == 1)
+            .expect("expected a window with 1 workspace");
+        assert!(
+            one_ws_window[0].contains(&dir3_path),
+            "1-workspace window should contain dir3, got {one_ws_window:?}"
+        );
+
+        // --- Verify the active workspace is preserved ---
+        for window in &restored_windows {
+            let (active_paths, workspace_count) = window
+                .read_with(cx, |multi_workspace, cx| {
+                    let active = multi_workspace.workspace();
+                    (
+                        active.read(cx).root_paths(cx),
+                        multi_workspace.workspaces().len(),
+                    )
+                })
+                .unwrap();
+
+            if workspace_count == 2 {
+                assert!(
+                    active_paths.contains(&dir1_path),
+                    "2-workspace window should have dir1 active, got {active_paths:?}"
+                );
+            } else {
+                assert!(
+                    active_paths.contains(&dir3_path),
+                    "1-workspace window should have dir3 active, got {active_paths:?}"
+                );
+            }
         }
     }
 }

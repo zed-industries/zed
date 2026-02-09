@@ -667,7 +667,7 @@ impl NativeAgent {
     fn handle_context_server_store_updated(
         &mut self,
         _store: Entity<project::context_server_store::ContextServerStore>,
-        _event: &project::context_server_store::Event,
+        _event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
         self.update_available_commands(cx);
