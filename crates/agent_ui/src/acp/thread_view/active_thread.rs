@@ -2802,7 +2802,6 @@ impl AcpThreadView {
         let show_cycle_row = supported_effort_levels.len() > 1;
 
         let tooltip = Tooltip::element({
-            let focus_handle = focus_handle.clone();
             move |_, cx| {
                 let mut content = v_flex().gap_1().child(
                     h_flex()
@@ -6990,7 +6989,7 @@ impl AcpThreadView {
                 if let Some(agent) = settings.agent.as_mut()
                     && let Some(default_model) = agent.default_model.as_mut()
                 {
-                    default_model.effort = Some(next_effort.clone());
+                    default_model.effort = Some(next_effort);
                 }
             });
         });
