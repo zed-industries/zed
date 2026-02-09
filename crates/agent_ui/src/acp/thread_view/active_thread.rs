@@ -173,6 +173,7 @@ pub struct AcpThreadView {
     pub server_view: WeakEntity<AcpServerView>,
     pub agent_icon: IconName,
     pub agent_name: SharedString,
+    pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
     pub title_editor: Option<Entity<Editor>>,
@@ -235,7 +236,11 @@ pub struct AcpThreadView {
 }
 impl Focusable for AcpThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.active_editor(cx).focus_handle(cx)
+        if self.parent_id.is_some() {
+            self.focus_handle.clone()
+        } else {
+            self.active_editor(cx).focus_handle(cx)
+        }
     }
 }
 
@@ -343,6 +348,7 @@ impl AcpThreadView {
         Self {
             id,
             parent_id,
+            focus_handle: cx.focus_handle(),
             thread,
             login,
             server_view,
@@ -2311,11 +2317,13 @@ impl AcpThreadView {
                     IconButton::new("minimize_subagent", IconName::Minimize)
                         .icon_size(IconSize::Small)
                         .tooltip(Tooltip::text("Minimize Subagent"))
-                        .on_click(move |_, _window, cx| {
-                            let _ = server_view.update(cx, |server_view, _cx| {
-                                if let Some(connected) = server_view.as_connected_mut() {
-                                    connected.navigate_to_session(parent_session_id.clone());
-                                };
+                        .on_click(move |_, window, cx| {
+                            let _ = server_view.update(cx, |server_view, cx| {
+                                server_view.navigate_to_session(
+                                    parent_session_id.clone(),
+                                    window,
+                                    cx,
+                                );
                             });
                         }),
                 ),
@@ -5936,16 +5944,14 @@ impl AcpThreadView {
                                     .visible_on_hover(card_header_id)
                                     .on_click({
                                         let session_id = session_id.clone();
-                                        cx.listener(move |this, _event, _window, cx| {
+                                        cx.listener(move |this, _event, window, cx| {
                                             this.server_view
                                                 .update(cx, |this, cx| {
-                                                    if let Some(connected) = this.as_connected_mut()
-                                                    {
-                                                        connected.navigate_to_session(
-                                                            session_id.clone(),
-                                                        );
-                                                        cx.notify();
-                                                    }
+                                                    this.navigate_to_session(
+                                                        session_id.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 })
                                                 .ok();
                                         })
@@ -7038,8 +7044,18 @@ impl Render for AcpThreadView {
 
         v_flex()
             .key_context("AcpThread")
+            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 this.cancel_generation(cx);
+            }))
+            .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
+                if let Some(parent_session_id) = this.parent_id.clone() {
+                    this.server_view
+                        .update(cx, |view, cx| {
+                            view.navigate_to_session(parent_session_id, window, cx);
+                        })
+                        .ok();
+                }
             }))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))

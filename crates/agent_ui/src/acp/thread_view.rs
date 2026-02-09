@@ -177,7 +177,7 @@ pub struct AcpServerView {
 }
 
 impl AcpServerView {
-    pub fn as_active_thread(&self) -> Option<Entity<AcpThreadView>> {
+    pub fn active_thread(&self) -> Option<Entity<AcpThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => Some(connected.current.clone()),
             _ => None,
@@ -218,6 +218,23 @@ impl AcpServerView {
             ServerState::Connected(connected) => Some(connected),
             _ => None,
         }
+    }
+
+    pub fn navigate_to_session(
+        &mut self,
+        session_id: acp::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connected) = self.as_connected_mut() else {
+            return;
+        };
+
+        connected.navigate_to_session(session_id);
+        if let Some(view) = self.active_thread() {
+            view.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
     }
 }
 
@@ -332,7 +349,7 @@ impl AcpServerView {
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let resume_thread_metadata = self
-            .as_active_thread()
+            .active_thread()
             .and_then(|thread| thread.read(cx).resume_thread_metadata.clone());
 
         self.server_state = Self::initial_state(
@@ -414,7 +431,7 @@ impl AcpServerView {
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
-                        } else if let Some(active) = this.as_active_thread() {
+                        } else if let Some(active) = this.active_thread() {
                             active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
                         }
                         cx.notify();
@@ -527,7 +544,7 @@ impl AcpServerView {
             while let Ok(new_version) = new_version_available_rx.recv().await {
                 if let Some(new_version) = new_version {
                     this.update(cx, |this, cx| {
-                        if let Some(thread) = this.as_active_thread() {
+                        if let Some(thread) = this.active_thread() {
                             thread.update(cx, |thread, _cx| {
                                 thread.new_server_version_available = Some(new_version.into());
                             });
@@ -884,7 +901,7 @@ impl AcpServerView {
         };
 
         if should_retry {
-            if let Some(active) = self.as_active_thread() {
+            if let Some(active) = self.active_thread() {
                 active.update(cx, |active, cx| {
                     active.clear_thread_error(cx);
                 });
@@ -913,7 +930,7 @@ impl AcpServerView {
     }
 
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
             });
@@ -927,7 +944,7 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.handle_title_editor_event(title_editor, event, window, cx);
             });
@@ -939,7 +956,7 @@ impl AcpServerView {
     }
 
     fn update_turn_tokens(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.update_turn_tokens(cx);
             });
@@ -953,7 +970,7 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.send_queued_message_at_index(index, is_send_now, window, cx);
             });
@@ -1043,7 +1060,7 @@ impl AcpServerView {
                     cx,
                 );
 
-                let should_send_queued = if let Some(active) = self.as_active_thread() {
+                let should_send_queued = if let Some(active) = self.active_thread() {
                     active.update(cx, |active, cx| {
                         if active.skip_queue_processing_count > 0 {
                             active.skip_queue_processing_count -= 1;
@@ -1161,7 +1178,7 @@ impl AcpServerView {
                 }
 
                 let has_commands = !available_commands.is_empty();
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.active_thread() {
                     active.update(cx, |active, _cx| {
                         active.available_commands.replace(available_commands);
                     });
@@ -1173,7 +1190,7 @@ impl AcpServerView {
                     .agent_display_name(&ExternalAgentServerName(self.agent.name()))
                     .unwrap_or_else(|| self.agent.name());
 
-                if let Some(active) = self.as_active_thread() {
+                if let Some(active) = self.active_thread() {
                     let new_placeholder =
                         placeholder_text(agent_display_name.as_ref(), has_commands);
                     active.update(cx, |active, cx| {
@@ -1317,7 +1334,7 @@ impl AcpServerView {
                                     {
                                         pending_auth_method.take();
                                     }
-                                    if let Some(active) = this.as_active_thread() {
+                                    if let Some(active) = this.active_thread() {
                                         active.update(cx, |active, cx| {
                                             active.handle_any_thread_error(err, cx);
                                         })
@@ -1432,7 +1449,7 @@ impl AcpServerView {
                         {
                             pending_auth_method.take();
                         }
-                        if let Some(active) = this.as_active_thread() {
+                        if let Some(active) = this.active_thread() {
                             active.update(cx, |active, cx| active.handle_any_thread_error(err, cx));
                         }
                     } else {
@@ -1625,7 +1642,7 @@ impl AcpServerView {
     }
 
     pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
-        self.as_active_thread().is_some_and(|active| {
+        self.active_thread().is_some_and(|active| {
             active
                 .read(cx)
                 .thread
@@ -1769,7 +1786,7 @@ impl AcpServerView {
         thread: &Entity<AcpThread>,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_thread) = self.as_active_thread() else {
+        let Some(active_thread) = self.active_thread() else {
             return;
         };
 
@@ -1923,18 +1940,18 @@ impl AcpServerView {
         &self,
         cx: &App,
     ) -> Option<Rc<agent::NativeAgentConnection>> {
-        let acp_thread = self.as_active_thread()?.read(cx).thread.read(cx);
+        let acp_thread = self.active_thread()?.read(cx).thread.read(cx);
         acp_thread.connection().clone().downcast()
     }
 
     pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
-        let acp_thread = self.as_active_thread()?.read(cx).thread.read(cx);
+        let acp_thread = self.active_thread()?.read(cx).thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
     }
 
     fn queued_messages_len(&self, cx: &App) -> usize {
-        self.as_active_thread()
+        self.active_thread()
             .map(|thread| thread.read(cx).local_queued_messages.len())
             .unwrap_or_default()
     }
@@ -1946,7 +1963,7 @@ impl AcpServerView {
         tracked_buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) -> bool {
-        match self.as_active_thread() {
+        match self.active_thread() {
             Some(thread) => thread.update(cx, |thread, _cx| {
                 if index < thread.local_queued_messages.len() {
                     thread.local_queued_messages[index] = QueuedMessage {
@@ -1963,7 +1980,7 @@ impl AcpServerView {
     }
 
     fn queued_message_contents(&self, cx: &App) -> Vec<Vec<acp::ContentBlock>> {
-        match self.as_active_thread() {
+        match self.active_thread() {
             None => Vec::new(),
             Some(thread) => thread
                 .read(cx)
@@ -1975,7 +1992,7 @@ impl AcpServerView {
     }
 
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let editor = match self.as_active_thread() {
+        let editor = match self.active_thread() {
             Some(thread) => thread.read(cx).queued_message_editors.get(index).cloned(),
             None => None,
         };
@@ -2009,7 +2026,7 @@ impl AcpServerView {
         let project = self.project.downgrade();
         let history = self.history.downgrade();
 
-        let Some(thread) = self.as_active_thread() else {
+        let Some(thread) = self.active_thread() else {
             return;
         };
         let prompt_capabilities = thread.read(cx).prompt_capabilities.clone();
@@ -2094,7 +2111,7 @@ impl AcpServerView {
             });
         }
 
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, _cx| {
                 active.last_synced_queue_length = needed_count;
             });
@@ -2273,7 +2290,7 @@ impl AcpServerView {
 
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_view_state) = self
-            .as_active_thread()
+            .active_thread()
             .map(|active| active.read(cx).entry_view_state.clone())
         {
             entry_view_state.update(cx, |entry_view_state, cx| {
@@ -2289,7 +2306,7 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active_thread) = self.as_active_thread() {
+        if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.message_editor.update(cx, |editor, cx| {
                     editor.insert_dragged_files(paths, added_worktrees, window, cx);
@@ -2301,7 +2318,7 @@ impl AcpServerView {
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active_thread) = self.as_active_thread() {
+        if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
                     editor.insert_selections(window, cx);
@@ -2317,7 +2334,7 @@ impl AcpServerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active_thread) = self.as_active_thread() {
+        if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.message_editor.update(cx, |editor, cx| {
                     editor.insert_terminal_crease(text, window, cx);
@@ -2331,7 +2348,7 @@ impl AcpServerView {
         // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
-            self.as_active_thread()
+            self.active_thread()
                 .and_then(|active| active.read(cx).model_selector.clone())
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
@@ -2350,7 +2367,7 @@ impl AcpServerView {
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent_name = self.agent.name();
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| active.clear_thread_error(cx));
         }
         let this = cx.weak_entity();
@@ -2390,7 +2407,7 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
 
 impl Focusable for AcpServerView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.as_active_thread() {
+        match self.active_thread() {
             Some(thread) => thread.read(cx).focus_handle(cx),
             None => self.focus_handle.clone(),
         }
@@ -2402,7 +2419,7 @@ impl AcpServerView {
     /// Expands a tool call so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_tool_call(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, _cx| {
                 active.expanded_tool_calls.insert(tool_call_id);
             });
@@ -2413,7 +2430,7 @@ impl AcpServerView {
     /// Expands a subagent card so its content is visible.
     /// This is primarily useful for visual testing.
     pub fn expand_subagent(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if let Some(active) = self.as_active_thread() {
+        if let Some(active) = self.active_thread() {
             active.update(cx, |active, _cx| {
                 active.expanded_subagents.insert(session_id);
             });
@@ -2427,8 +2444,8 @@ impl Render for AcpServerView {
         self.sync_queued_message_editors(window, cx);
 
         v_flex()
+            .track_focus(&self.focus_handle(cx))
             .size_full()
-            .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
@@ -2681,7 +2698,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         thread_view.read_with(cx, |view, cx| {
-            let state = view.as_active_thread().unwrap();
+            let state = view.active_thread().unwrap();
             assert!(state.read(cx).resumed_without_history);
             assert_eq!(state.read(cx).list_state.item_count(), 0);
         });
@@ -2705,7 +2722,7 @@ pub(crate) mod tests {
 
         // Check that the refusal error is set
         thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.as_active_thread().unwrap();
+            let state = thread_view.active_thread().unwrap();
             assert!(
                 matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
                 "Expected refusal error to be set"
@@ -3335,7 +3352,7 @@ pub(crate) mod tests {
 
         let thread = thread_view
             .read_with(cx, |view, cx| {
-                view.as_active_thread().map(|r| r.read(cx).thread.clone())
+                view.active_thread().map(|r| r.read(cx).thread.clone())
             })
             .unwrap();
 
@@ -3361,7 +3378,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             let entry_view_state = view
-                .as_active_thread()
+                .active_thread()
                 .map(|active| active.read(cx).entry_view_state.clone())
                 .unwrap();
             entry_view_state.read_with(cx, |entry_view_state, _| {
@@ -3402,7 +3419,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             let entry_view_state = view
-                .as_active_thread()
+                .active_thread()
                 .unwrap()
                 .read(cx)
                 .entry_view_state
@@ -3440,7 +3457,7 @@ pub(crate) mod tests {
         });
 
         thread_view.read_with(cx, |view, cx| {
-            let active = view.as_active_thread().unwrap();
+            let active = view.active_thread().unwrap();
             active
                 .read(cx)
                 .entry_view_state
@@ -3477,7 +3494,7 @@ pub(crate) mod tests {
 
         let thread = thread_view
             .read_with(cx, |view, cx| {
-                view.as_active_thread().map(|r| r.read(cx).thread.clone())
+                view.active_thread().map(|r| r.read(cx).thread.clone())
             })
             .unwrap();
 
@@ -3550,12 +3567,12 @@ pub(crate) mod tests {
 
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
 
-            view.as_active_thread()
+            view.active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
@@ -3571,7 +3588,7 @@ pub(crate) mod tests {
         cx.focus(&user_message_editor);
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -3589,7 +3606,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
@@ -3617,7 +3634,7 @@ pub(crate) mod tests {
         let thread = cx.read(|cx| {
             thread_view
                 .read(cx)
-                .as_active_thread()
+                .active_thread()
                 .unwrap()
                 .read(cx)
                 .thread
@@ -3661,12 +3678,12 @@ pub(crate) mod tests {
 
         let user_message_editor = thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .unwrap()
                     .read(cx)
                     .thread
@@ -3676,7 +3693,7 @@ pub(crate) mod tests {
                 2
             );
 
-            view.as_active_thread()
+            view.active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
@@ -3709,13 +3726,13 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
 
             let entries = view
-                .as_active_thread()
+                .active_thread()
                 .unwrap()
                 .read(cx)
                 .thread
@@ -3732,7 +3749,7 @@ pub(crate) mod tests {
             );
 
             let entry_view_state = view
-                .as_active_thread()
+                .active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .unwrap();
             let new_editor = entry_view_state.read_with(cx, |state, _cx| {
@@ -3763,11 +3780,11 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let (user_message_editor, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.as_active_thread().unwrap().read(cx).thread.read(cx);
+            let thread = view.active_thread().unwrap().read(cx).thread.read(cx);
             assert_eq!(thread.entries().len(), 1);
 
             let editor = view
-                .as_active_thread()
+                .active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
@@ -3786,7 +3803,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -3799,7 +3816,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -3817,7 +3834,7 @@ pub(crate) mod tests {
 
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -3831,7 +3848,7 @@ pub(crate) mod tests {
             assert_eq!(
                 thread_view
                     .read(cx)
-                    .as_active_thread()
+                    .active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -3865,7 +3882,7 @@ pub(crate) mod tests {
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
             let thread = view
-                .as_active_thread()
+                .active_thread()
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -3959,7 +3976,7 @@ pub(crate) mod tests {
         add_to_workspace(thread_view.clone(), cx);
 
         let thread = thread_view.read_with(cx, |view, cx| {
-            view.as_active_thread().unwrap().read(cx).thread.clone()
+            view.active_thread().unwrap().read(cx).thread.clone()
         });
 
         thread.read_with(cx, |thread, _cx| {
@@ -3999,7 +4016,7 @@ pub(crate) mod tests {
         active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
 
         let (thread, session_id) = thread_view.read_with(cx, |view, cx| {
-            let thread = view.as_active_thread().unwrap().read(cx).thread.clone();
+            let thread = view.active_thread().unwrap().read(cx).thread.clone();
 
             (thread.clone(), thread.read(cx).session_id().clone())
         });
@@ -4131,7 +4148,7 @@ pub(crate) mod tests {
 
         let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
             thread_view
-                .as_active_thread()
+                .active_thread()
                 .map(|active| &active.read(cx).entry_view_state)
                 .as_ref()
                 .unwrap()
@@ -4146,7 +4163,7 @@ pub(crate) mod tests {
         cx.focus(&user_message_editor);
         thread_view.read_with(cx, |view, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -4185,7 +4202,7 @@ pub(crate) mod tests {
 
         thread_view.update_in(cx, |view, window, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
@@ -4244,7 +4261,7 @@ pub(crate) mod tests {
 
         thread_view.update_in(cx, |view, window, cx| {
             assert_eq!(
-                view.as_active_thread()
+                view.active_thread()
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
@@ -4304,7 +4321,7 @@ pub(crate) mod tests {
         // Verify the tool call is in WaitingForConfirmation state with the expected options
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4411,7 +4428,7 @@ pub(crate) mod tests {
         // Verify the options
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4499,7 +4516,7 @@ pub(crate) mod tests {
         // Verify the options
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4588,7 +4605,7 @@ pub(crate) mod tests {
         // Verify only 2 options (no pattern button when command doesn't match pattern)
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4686,7 +4703,7 @@ pub(crate) mod tests {
         // Verify tool call is waiting for confirmation
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4716,7 +4733,7 @@ pub(crate) mod tests {
 
         // Verify tool call is no longer waiting for confirmation (was authorized)
         thread_view.read_with(cx, |thread_view, cx| {
-                let thread = thread_view.as_active_thread().expect("Thread should exist").read(cx).thread.clone();
+                let thread = thread_view.active_thread().expect("Thread should exist").read(cx).thread.clone();
                 let thread = thread.read(cx);
                 let tool_call = thread.first_tool_awaiting_confirmation();
                 assert!(
@@ -4801,7 +4818,7 @@ pub(crate) mod tests {
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -4858,7 +4875,7 @@ pub(crate) mod tests {
 
         // Verify default granularity is the last option (index 2 = "Only this time")
         thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.as_active_thread().unwrap();
+            let state = thread_view.active_thread().unwrap();
             let selected = state
                 .read(cx)
                 .selected_permission_granularity
@@ -4885,7 +4902,7 @@ pub(crate) mod tests {
 
         // Verify the selection was updated
         thread_view.read_with(cx, |thread_view, cx| {
-            let state = thread_view.as_active_thread().unwrap();
+            let state = thread_view.active_thread().unwrap();
             let selected = state
                 .read(cx)
                 .selected_permission_granularity
@@ -4982,7 +4999,7 @@ pub(crate) mod tests {
         // Verify tool call was authorized
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
@@ -5048,7 +5065,7 @@ pub(crate) mod tests {
         // Verify tool call was rejected (no longer waiting for confirmation)
         thread_view.read_with(cx, |thread_view, cx| {
             let thread = thread_view
-                .as_active_thread()
+                .active_thread()
                 .expect("Thread should exist")
                 .read(cx)
                 .thread
