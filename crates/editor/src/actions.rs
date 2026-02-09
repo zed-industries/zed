@@ -827,6 +827,8 @@ actions!(
         ToggleInlayHints,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
+        /// Toggles code lens display.
+        ToggleCodeLens,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.

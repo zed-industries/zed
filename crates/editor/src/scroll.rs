@@ -672,6 +672,7 @@ impl Editor {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                         editor.update_lsp_data(None, window, cx);
                         editor.colorize_brackets(false, cx);
+                        editor.refresh_code_lenses(window, cx);
                     })
                     .ok();
             });
