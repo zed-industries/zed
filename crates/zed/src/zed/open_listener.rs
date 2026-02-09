@@ -1,5 +1,5 @@
 use crate::handle_open_request;
-use crate::restorable_workspace_locations;
+use crate::restore_or_create_workspace;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -493,22 +493,13 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
+        return restore_or_create_workspace(app_state, cx).await;
+    }
+
     let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
         if paths.is_empty() && diff_paths.is_empty() {
-            if open_new_workspace == Some(true) {
-                Vec::new()
-            } else {
-                // TODO!(): This discards workspace_id, window_id, active workspace, and
-                // sidebar state — so multi-workspace grouping is lost and each workspace
-                // opens in its own window. Should use `restorable_workspaces` +
-                // `restore_session_windows` like `restore_or_create_workspace` does.
-                restorable_workspace_locations(cx, &app_state)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|session_workspace| (session_workspace.location, session_workspace.paths))
-                    .collect()
-            }
+            Vec::new()
         } else {
             vec![(
                 SerializedWorkspaceLocation::Local,
