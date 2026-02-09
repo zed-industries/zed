@@ -2479,6 +2479,7 @@ impl ShellExec {
                     show_summary: false,
                     show_command: false,
                     show_rerun: false,
+                    save: task::SaveStrategy::Default,
                 };
 
                 let task_status = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);

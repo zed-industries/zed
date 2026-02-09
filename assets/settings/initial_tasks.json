@@ -48,6 +48,11 @@
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
     "show_command": true,
+    // Which edited buffers to save before running the task:
+    // * `all` — save all edited buffers
+    // * `none` — don't save any buffers
+    // * `default` — use `save_before_task_run` from settings.json.
+    "save": "default",
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   },

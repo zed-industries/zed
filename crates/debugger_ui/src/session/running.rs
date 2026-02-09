@@ -1313,6 +1313,7 @@ impl RunningState {
             show_summary: false,
             show_command: false,
             show_rerun: false,
+            save: task::SaveStrategy::Default,
         };
 
         let workspace = self.workspace.clone();
