@@ -839,6 +839,12 @@ impl NativeAgent {
         }
 
         let database_future = ThreadsDatabase::connect(cx);
+        let worktree_paths: Vec<String> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .collect();
         let (id, db_thread) =
             thread.update(cx, |thread, cx| (thread.id().clone(), thread.to_db(cx)));
         let Some(session) = self.sessions.get_mut(&id) else {
@@ -850,7 +856,10 @@ impl NativeAgent {
                 return;
             };
             let db_thread = db_thread.await;
-            database.save_thread(id, db_thread).await.log_err();
+            database
+                .save_thread(id, db_thread, worktree_paths)
+                .await
+                .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
         });
     }

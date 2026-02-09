@@ -38,6 +38,17 @@ pub fn home_dir() -> &'static PathBuf {
     })
 }
 
+/// Compares two path strings for equality using the local filesystem's
+/// case sensitivity: case-insensitive on macOS/Windows, case-sensitive
+/// elsewhere.
+pub fn paths_eq(a: &str, b: &str) -> bool {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
 pub trait PathExt {
     /// Compacts a given file path by replacing the user's home directory
     /// prefix with a tilde (`~`).

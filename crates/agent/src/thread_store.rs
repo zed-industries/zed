@@ -78,12 +78,13 @@ impl ThreadStore {
         &mut self,
         id: acp::SessionId,
         thread: crate::DbThread,
+        worktree_paths: Vec<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, thread).await?;
+            database.save_thread(id, thread, worktree_paths).await?;
             this.update(cx, |this, cx| this.reload(cx))
         })
     }
@@ -129,6 +130,22 @@ impl ThreadStore {
 
     pub fn entries(&self) -> impl Iterator<Item = DbThreadMetadata> + '_ {
         self.threads.iter().cloned()
+    }
+
+    pub fn entries_for_project<'a>(
+        &'a self,
+        worktree_paths: &'a [String],
+    ) -> impl Iterator<Item = DbThreadMetadata> + 'a {
+        self.threads
+            .iter()
+            .filter(move |thread| {
+                !thread.worktree_paths.is_empty()
+                    && thread
+                        .worktree_paths
+                        .iter()
+                        .any(|path| worktree_paths.iter().any(|wp| util::paths::paths_eq(path, wp)))
+            })
+            .cloned()
     }
 }
 
@@ -177,12 +194,12 @@ mod tests {
         );
 
         let save_older = thread_store.update(cx, |store, cx| {
-            store.save_thread(older_id.clone(), older_thread, cx)
+            store.save_thread(older_id.clone(), older_thread, vec![], cx)
         });
         save_older.await.unwrap();
 
         let save_newer = thread_store.update(cx, |store, cx| {
-            store.save_thread(newer_id.clone(), newer_thread, cx)
+            store.save_thread(newer_id.clone(), newer_thread, vec![], cx)
         });
         save_newer.await.unwrap();
 
@@ -205,8 +222,9 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
 
-        let save_task =
-            thread_store.update(cx, |store, cx| store.save_thread(thread_id, thread, cx));
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(thread_id, thread, vec![], cx)
+        });
         save_task.await.unwrap();
 
         cx.run_until_parked();
@@ -237,11 +255,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, vec![], cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, vec![], cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -274,11 +292,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, cx)
+            store.save_thread(first_id.clone(), first_thread, vec![], cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, cx)
+            store.save_thread(second_id.clone(), second_thread, vec![], cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -288,7 +306,7 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         );
         let update_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), updated_first, cx)
+            store.save_thread(first_id.clone(), updated_first, vec![], cx)
         });
         update_task.await.unwrap();
         cx.run_until_parked();
@@ -297,5 +315,52 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
+    }
+
+    #[gpui::test]
+    async fn test_entries_for_project_filters_by_worktree_paths(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let with_project_id = session_id("thread-a");
+        let without_project_id = session_id("thread-b");
+        let project_path = "/Users/test/my-project".to_string();
+
+        let thread = make_thread(
+            "Thread with project",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let paths = vec![project_path.clone()];
+        thread_store
+            .update(cx, |store, cx| {
+                store.save_thread(with_project_id.clone(), thread, paths, cx)
+            })
+            .await
+            .unwrap();
+
+        let thread = make_thread(
+            "Thread without project",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+        thread_store
+            .update(cx, |store, cx| {
+                store.save_thread(without_project_id.clone(), thread, vec![], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let matched: Vec<_> = thread_store.read_with(cx, |store, _cx| {
+            store.entries_for_project(&[project_path]).collect()
+        });
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].id, with_project_id);
+
+        let unmatched: Vec<_> = thread_store.read_with(cx, |store, _cx| {
+            store
+                .entries_for_project(&["/Users/test/other".to_string()])
+                .collect()
+        });
+        assert_eq!(unmatched.len(), 0);
     }
 }
