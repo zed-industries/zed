@@ -536,6 +536,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::CodeLens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeAppearanceMode>(render_dropdown)

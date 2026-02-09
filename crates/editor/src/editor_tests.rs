@@ -25725,15 +25725,6 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                     data: None,
                 },
                 lsp::CodeLens {
-                    range: lsp::Range::default(),
-                    command: Some(lsp::Command {
-                        title: "Command not in capabilities".to_owned(),
-                        command: "not in capabilities".to_owned(),
-                        arguments: None,
-                    }),
-                    data: None,
-                },
-                lsp::CodeLens {
                     range: lsp::Range {
                         start: lsp::Position {
                             line: 1,

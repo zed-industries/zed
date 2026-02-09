@@ -313,6 +313,15 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
+  // Whether to display code lenses from language servers above code elements.
+  //
+  // Possible values:
+  //
+  // 1. Do not display code lenses.
+  //      "code_lens": "off",
+  // 2. Display code lenses from language servers above code elements.
+  //      "code_lens": "on",
+  "code_lens": "off",
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`

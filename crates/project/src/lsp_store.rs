@@ -1091,6 +1091,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens();
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -5340,20 +5341,20 @@ impl LspStore {
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
-                    && (edit.changes.is_some() || edit.document_changes.is_some()) {
-                        return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().context("no app present")?,
-                            edit.clone(),
-                            push_to_history,
-
-                            lang_server.clone(),
-                            cx,
-                        )
-                        .await;
-                    }
+                    && (edit.changes.is_some() || edit.document_changes.is_some())
+                {
+                    return LocalLspStore::deserialize_workspace_edit(
+                        this.upgrade().context("no app present")?,
+                        edit.clone(),
+                        push_to_history,
+                        lang_server.clone(),
+                        cx,
+                    )
+                    .await;
+                }
 
                 let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default())
+                    return Ok(ProjectTransaction::default());
                 };
 
                 let server_capabilities = lang_server.capabilities();
@@ -5364,15 +5365,17 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    return Ok(ProjectTransaction::default())
+                    log::warn!(
+                        "Executing command {} not listed in the language server capabilities",
+                        command.command
+                    );
                 }
 
-                let request_timeout = cx.update(|app|
+                let request_timeout = cx.update(|app| {
                     ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .get_request_timeout()
-                );
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
 
                 this.update(cx, |this, _| {
                     this.as_local_mut()
@@ -5382,12 +5385,16 @@ impl LspStore {
                 })?;
 
                 let _result = lang_server
-                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        ..lsp::ExecuteCommandParams::default()
-                    }, request_timeout)
-                    .await.into_response()
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
                     .context("execute command")?;
 
                 return this.update(cx, |this, _| {
