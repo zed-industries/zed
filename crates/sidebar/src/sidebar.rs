@@ -595,8 +595,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
                             cx.notify();
                         }
                     }))
-                    .tooltip(move |_, cx| {
-                        Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
+                    .when(!full_path.is_empty(), |this| {
+                        this.tooltip(move |_, cx| {
+                            Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
+                        })
                     })
                     .into_any_element(),
                 )
