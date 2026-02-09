@@ -1652,13 +1652,23 @@ pub(crate) fn balancing_block(
 ) -> Option<BlockProperties<Anchor>> {
     let my_anchor = my_block.placement.start();
     let my_point = my_anchor.to_point(&my_snapshot);
-    let their_point = companion
-        .convert_point_to_companion(my_display_map_id, my_snapshot, their_snapshot, my_point)
-        .start;
-    let their_anchor = their_snapshot.anchor_at(their_point, my_anchor.bias());
+    let their_range = companion.convert_point_to_companion(
+        my_display_map_id,
+        my_snapshot,
+        their_snapshot,
+        my_point,
+    );
+    let their_anchor = their_snapshot.anchor_at(their_range.start, my_anchor.bias());
     let their_placement = match my_block.placement {
         BlockPlacement::Above(_) => BlockPlacement::Above(their_anchor),
-        BlockPlacement::Below(_) => BlockPlacement::Below(their_anchor),
+        BlockPlacement::Below(_) => {
+            if their_range.is_empty() {
+                BlockPlacement::Above(their_anchor)
+            } else {
+                BlockPlacement::Below(their_anchor)
+            }
+        }
+        // Not supported for balancing
         BlockPlacement::Near(_) | BlockPlacement::Replace(_) => return None,
     };
     Some(BlockProperties {
