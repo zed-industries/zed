@@ -182,7 +182,15 @@ impl WorkspacePickerDelegate {
         active_workspace_index: usize,
         cx: &App,
     ) {
-        self.hovered_thread_item = None;
+        if let Some(hovered_index) = self.hovered_thread_item {
+            let still_exists = workspace_threads
+                .iter()
+                .any(|thread| thread.index == hovered_index);
+            if !still_exists {
+                self.hovered_thread_item = None;
+            }
+        }
+
         let old_statuses: HashMap<usize, AgentThreadStatus> = self
             .entries
             .iter()
@@ -364,8 +372,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let query_changed = self.query != query;
         self.query = query.clone();
-        self.hovered_thread_item = None;
+        if query_changed {
+            self.hovered_thread_item = None;
+        }
         let entries = self.entries.clone();
 
         if query.is_empty() {
