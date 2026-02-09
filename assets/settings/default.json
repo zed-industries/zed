@@ -1856,8 +1856,9 @@
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
   },
-  // Settings for which version of Node.js and NPM to use when installing
-  // language servers and Copilot.
+  // Settings for which version of Node.js/Bun and NPM to use when installing
+  // language servers and Copilot. Bun can be used as a drop-in replacement
+  // by setting `path` and `npm_path` to your Bun binary.
   //
   // Note: changing this setting currently requires restarting Zed.
   "node": {
@@ -1866,9 +1867,10 @@
     // to prevent this, and force Zed to always download and install its own
     // version of Node.
     "ignore_system_version": false,
-    // You can also specify alternative paths to Node and NPM. If you specify
-    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
-    // `${path}/../npm`.
+    // You can also specify alternative paths to Node (or Bun) and NPM.
+    // If you specify `path`, but not `npm_path`, Zed will assume that `npm`
+    // is located at `${path}/../npm`. When using Bun, set both `path` and
+    // `npm_path` to your Bun binary path.
     "path": null,
     "npm_path": null,
   },

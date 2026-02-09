@@ -24,6 +24,13 @@ use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
+/// Which package manager is backing the system runtime.
+#[derive(Clone, Debug, PartialEq)]
+enum PackageManager {
+    Npm { path: PathBuf },
+    Bun { path: PathBuf },
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
@@ -111,7 +118,12 @@ impl NodeRuntime {
         if let Some((node, npm)) = options.use_paths.as_ref() {
             let instance = match SystemNodeRuntime::new(node.clone(), npm.clone()).await {
                 Ok(instance) => {
-                    log::info!("using Node.js from `node.path` in settings: {:?}", instance);
+                    let runtime_name = if instance.is_bun() { "Bun" } else { "Node.js" };
+                    log::info!(
+                        "using {} from `node.path` in settings: {:?}",
+                        runtime_name,
+                        instance
+                    );
                     Box::new(instance)
                 }
                 Err(err) => {
@@ -248,30 +260,61 @@ impl NodeRuntime {
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<Version> {
         let http = self.0.lock().await.http.clone();
-        let output = self
-            .instance()
-            .await
-            .run_npm_subcommand(
-                None,
-                http.proxy(),
-                "info",
-                &[
-                    name,
-                    "--json",
-                    "--fetch-retry-mintimeout",
-                    "2000",
-                    "--fetch-retry-maxtimeout",
-                    "5000",
-                    "--fetch-timeout",
-                    "5000",
-                ],
-            )
-            .await?;
+        let instance = self.instance().await;
 
-        let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+        if instance.uses_bun() {
+            // Bun doesn't support `npm info --json`, so query the npm registry directly.
+            Self::fetch_latest_version_from_registry(&http, name).await
+        } else {
+            let output = instance
+                .run_npm_subcommand(
+                    None,
+                    http.proxy(),
+                    "info",
+                    &[
+                        name,
+                        "--json",
+                        "--fetch-retry-mintimeout",
+                        "2000",
+                        "--fetch-retry-maxtimeout",
+                        "5000",
+                        "--fetch-timeout",
+                        "5000",
+                    ],
+                )
+                .await?;
+
+            let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
+            info.dist_tags
+                .latest
+                .or_else(|| info.versions.pop())
+                .with_context(|| format!("no version found for npm package {name}"))
+        }
+    }
+
+    /// Queries the npm registry HTTP API directly to get the latest version of a package.
+    /// Used when bun is the package manager, since bun doesn't support `npm info --json`.
+    async fn fetch_latest_version_from_registry(
+        http: &Arc<dyn HttpClient>,
+        name: &str,
+    ) -> Result<Version> {
+        let url = format!("https://registry.npmjs.org/{name}");
+        let mut response = http
+            .get(&url, Default::default(), true)
+            .await
+            .with_context(|| format!("failed to query npm registry for {name}"))?;
+
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .read_to_end(&mut body)
+            .await
+            .context("failed to read npm registry response")?;
+
+        let info: NpmRegistryInfo = serde_json::from_slice(&body)
+            .with_context(|| format!("failed to parse npm registry response for {name}"))?;
         info.dist_tags
             .latest
-            .or_else(|| info.versions.pop())
             .with_context(|| format!("no version found for npm package {name}"))
     }
 
@@ -357,10 +400,24 @@ pub struct NpmInfoDistTags {
     latest: Option<Version>,
 }
 
+/// Response shape from the npm registry HTTP API (`https://registry.npmjs.org/<pkg>`).
+/// The `versions` field is an object (not an array), so we only need `dist-tags`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct NpmRegistryInfo {
+    #[serde(default)]
+    dist_tags: NpmInfoDistTags,
+}
+
 #[async_trait::async_trait]
 trait NodeRuntimeTrait: Send + Sync {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait>;
     fn binary_path(&self) -> Result<PathBuf>;
+
+    /// Returns `true` if this runtime uses Bun instead of npm.
+    fn uses_bun(&self) -> bool {
+        false
+    }
 
     async fn run_npm_subcommand(
         &self,
@@ -632,50 +689,84 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
 #[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
     node: PathBuf,
-    npm: PathBuf,
+    package_manager: PackageManager,
     global_node_modules: PathBuf,
     scratch_dir: PathBuf,
 }
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
+
+    /// Returns `true` if the given binary path looks like it points to Bun.
+    fn is_bun_binary(path: &Path) -> bool {
+        path.file_stem()
+            .map(|s| {
+                let name = s.to_string_lossy();
+                name == "bun" || name == "bunx"
+            })
+            .unwrap_or(false)
+    }
+
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
         let output = util::command::new_command(&node)
             .arg("--version")
             .output()
             .await
-            .with_context(|| format!("running node from {:?}", node))?;
+            .with_context(|| format!("running binary from {:?}", node))?;
         if !output.status.success() {
             anyhow::bail!(
-                "failed to run node --version. stdout: {}, stderr: {}",
+                "failed to run --version on {}. stdout: {}, stderr: {}",
+                node.display(),
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr),
             );
         }
         let version_str = String::from_utf8_lossy(&output.stdout);
-        let version = semver::Version::parse(version_str.trim().trim_start_matches('v'))?;
-        if version < Self::MIN_VERSION {
-            anyhow::bail!(
-                "node at {} is too old. want: {}, got: {}",
-                node.to_string_lossy(),
-                Self::MIN_VERSION,
-                version
-            )
+
+        let is_bun = Self::is_bun_binary(&node) || Self::is_bun_binary(&npm);
+
+        if !is_bun {
+            // Standard Node.js version check
+            let version = semver::Version::parse(version_str.trim().trim_start_matches('v'))?;
+            if version < Self::MIN_VERSION {
+                anyhow::bail!(
+                    "node at {} is too old. want: {}, got: {}",
+                    node.to_string_lossy(),
+                    Self::MIN_VERSION,
+                    version
+                )
+            }
+        } else {
+            log::info!(
+                "detected Bun runtime at {} (version {})",
+                node.display(),
+                version_str.trim()
+            );
         }
 
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 
+        let package_manager = if is_bun {
+            PackageManager::Bun { path: npm }
+        } else {
+            PackageManager::Npm { path: npm }
+        };
+
         let mut this = Self {
             node,
-            npm,
+            package_manager,
             global_node_modules: PathBuf::default(),
             scratch_dir,
         };
-        let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
-        this.global_node_modules =
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+
+        // Only query `npm root -g` for npm; bun doesn't need it.
+        if !is_bun {
+            let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
+            this.global_node_modules =
+                PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+        }
 
         Ok(this)
     }
@@ -684,6 +775,16 @@ impl SystemNodeRuntime {
         let node = which::which("node").map_err(DetectError::NotInPath)?;
         let npm = which::which("npm").map_err(DetectError::NotInPath)?;
         Self::new(node, npm).await.map_err(DetectError::Other)
+    }
+
+    fn is_bun(&self) -> bool {
+        matches!(self.package_manager, PackageManager::Bun { .. })
+    }
+
+    fn pm_path(&self) -> &Path {
+        match &self.package_manager {
+            PackageManager::Npm { path } | PackageManager::Bun { path } => path,
+        }
     }
 }
 
@@ -715,6 +816,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         Ok(self.node.clone())
     }
 
+    fn uses_bun(&self) -> bool {
+        self.is_bun()
+    }
+
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
@@ -722,15 +827,20 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let npm_command = self.npm_command(proxy, subcommand, args).await?;
-        let mut command = util::command::new_command(npm_command.path);
-        command.args(npm_command.args);
-        command.envs(npm_command.env);
-        configure_npm_command(&mut command, directory);
+        let pm_command = self.npm_command(proxy, subcommand, args).await?;
+        let mut command = util::command::new_command(pm_command.path);
+        command.args(pm_command.args);
+        command.envs(pm_command.env);
+        if self.is_bun() {
+            configure_bun_command(&mut command, directory);
+        } else {
+            configure_npm_command(&mut command, directory);
+        }
         let output = command.output().await?;
+        let pm_name = if self.is_bun() { "bun" } else { "npm" };
         anyhow::ensure!(
             output.status.success(),
-            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+            "failed to execute {pm_name} {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -743,22 +853,31 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
-        let command_args = build_npm_command_args(
-            None,
-            &self.scratch_dir.join("cache"),
-            None,
-            None,
-            proxy,
-            subcommand,
-            args,
-        );
-        let command_env = npm_command_env(Some(&self.node));
-
-        Ok(NpmCommand {
-            path: self.npm.clone(),
-            args: command_args,
-            env: command_env,
-        })
+        if self.is_bun() {
+            let command_args = build_bun_command_args(proxy, subcommand, args);
+            let command_env = npm_command_env(Some(&self.node));
+            Ok(NpmCommand {
+                path: self.pm_path().to_path_buf(),
+                args: command_args,
+                env: command_env,
+            })
+        } else {
+            let command_args = build_npm_command_args(
+                None,
+                &self.scratch_dir.join("cache"),
+                None,
+                None,
+                proxy,
+                subcommand,
+                args,
+            );
+            let command_env = npm_command_env(Some(&self.node));
+            Ok(NpmCommand {
+                path: self.pm_path().to_path_buf(),
+                args: command_args,
+                env: command_env,
+            })
+        }
     }
 
     async fn npm_package_installed_version(
@@ -892,6 +1011,78 @@ fn build_npm_command_args(
     }
     command_args.extend(args.into_iter().map(|a| a.to_string()));
     command_args
+}
+
+/// Translates an npm subcommand and its arguments into bun-compatible equivalents.
+///
+/// Key translations:
+/// - `install` with package args → `add`
+/// - `install` without package args → `install`
+/// - `run-script` → `run`
+/// - `exec` → `x`
+/// - `info` → `info` (bun does not support this, handled separately)
+///
+/// Strips npm-specific flags that bun doesn't understand:
+/// `--cache`, `--userconfig`, `--globalconfig`, `--fetch-retry-*`, `--fetch-timeout`
+///
+/// Converts:
+/// - `--save-exact` → `--exact`
+/// - `--prefix <dir>` → `--cwd <dir>` (via configure_bun_command)
+fn build_bun_command_args(_proxy: Option<&Url>, subcommand: &str, args: &[&str]) -> Vec<String> {
+    let mut command_args = Vec::new();
+
+    // Translate the subcommand
+    let has_package_args = args.iter().any(|a| !a.starts_with('-'));
+    let bun_subcommand = match subcommand {
+        "install" if has_package_args => "add",
+        "install" => "install",
+        "run-script" => "run",
+        "exec" => "x",
+        other => other,
+    };
+    command_args.push(bun_subcommand.to_string());
+
+    // Filter and translate arguments
+    let mut skip_next = false;
+    for arg in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        // Skip npm-specific flags that bun doesn't understand
+        if arg.starts_with("--cache=")
+            || arg.starts_with("--fetch-retry-")
+            || arg.starts_with("--fetch-timeout")
+        {
+            continue;
+        }
+
+        // Skip two-part flags: --userconfig <path>, --globalconfig <path>, --proxy <url>
+        if *arg == "--userconfig" || *arg == "--globalconfig" || *arg == "--proxy" {
+            skip_next = true;
+            continue;
+        }
+
+        // Translate --save-exact to --exact
+        if *arg == "--save-exact" {
+            command_args.push("--exact".to_string());
+            continue;
+        }
+
+        command_args.push(arg.to_string());
+    }
+
+    command_args
+}
+
+/// Configures a bun command with a working directory, using `--cwd` instead of
+/// npm's `--prefix`.
+fn configure_bun_command(command: &mut smol::process::Command, directory: Option<&Path>) {
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+        command.args(["--cwd".into(), directory.to_path_buf()]);
+    }
 }
 
 fn npm_command_env(node_binary: Option<&Path>) -> HashMap<String, String> {

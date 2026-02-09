@@ -676,9 +676,12 @@ pub struct InlineDiagnosticsSettingsContent {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct NodeBinarySettings {
-    /// The path to the Node binary.
+    /// The path to the Node (or Bun) binary. When set to a Bun binary,
+    /// Zed will automatically detect it and translate package manager
+    /// commands accordingly.
     pub path: Option<String>,
-    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
+    /// The path to the npm (or bun) binary Zed should use
+    /// (defaults to `.path/../npm`).
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     pub ignore_system_version: Option<bool>,
