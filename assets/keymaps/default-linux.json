@@ -249,6 +249,8 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
+      "alt-l": "agent::CycleFavoriteModels",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
@@ -316,8 +318,12 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AcpThread > Editor` context
+      "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {

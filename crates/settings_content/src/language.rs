@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{ExtendingVec, SemanticTokens, merge_from};
+use crate::{DocumentFoldingRanges, ExtendingVec, SemanticTokens, merge_from};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -195,8 +195,6 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
-    /// The number of edit prediction examples captured per ten thousand predictions.
-    pub example_capture_rate: Option<u16>,
 }
 
 #[with_fallible_options]
@@ -431,6 +429,15 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: "off"
     pub semantic_tokens: Option<SemanticTokens>,
+    /// Controls whether folding ranges from language servers are used instead of
+    /// tree-sitter and indent-based folding.
+    ///
+    /// Options:
+    /// - "off": Use tree-sitter and indent-based folding (default).
+    /// - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+    ///
+    /// Default: "off"
+    pub document_folding_ranges: Option<DocumentFoldingRanges>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already

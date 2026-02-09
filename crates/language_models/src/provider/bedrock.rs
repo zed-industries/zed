@@ -146,6 +146,9 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -153,6 +156,7 @@ impl From<ModelMode> for BedrockModelMode {
         match value {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -162,6 +166,7 @@ impl From<BedrockModelMode> for ModelMode {
         match value {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -770,6 +775,12 @@ pub fn into_bedrock(
                                 // And the AWS API demands that you strip them
                                 return None;
                             }
+                            if signature.is_none() {
+                                // Thinking blocks without a signature are invalid
+                                // (e.g. from cancellation mid-think) and must be
+                                // stripped to avoid API errors.
+                                return None;
+                            }
                             let thinking = BedrockThinkingTextBlock::builder()
                                 .text(text)
                                 .set_signature(signature)
@@ -850,6 +861,10 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if bedrock_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == bedrock_role
                 {
@@ -922,10 +937,16 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if request.thinking_allowed
-            && let BedrockModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                BedrockModelMode::Thinking { budget_tokens } => {
+                    Some(bedrock::Thinking::Enabled { budget_tokens })
+                }
+                BedrockModelMode::AdaptiveThinking { effort } => {
+                    Some(bedrock::Thinking::Adaptive { effort })
+                }
+                BedrockModelMode::Default => None,
+            }
         } else {
             None
         },

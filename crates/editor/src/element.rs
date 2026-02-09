@@ -7776,7 +7776,7 @@ pub fn render_breadcrumb_text(
     multibuffer_header: bool,
     window: &mut Window,
     cx: &App,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
     const MAX_SEGMENTS: usize = 12;
 
     let element = h_flex().flex_grow().text_ui(cx);
