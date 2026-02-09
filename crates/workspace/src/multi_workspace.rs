@@ -145,8 +145,6 @@ impl MultiWorkspace {
 
         if self.sidebar_open {
             self.close_sidebar(window, cx);
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
         } else {
             self.open_sidebar(window, cx);
             if let Some(sidebar) = &self.sidebar {
@@ -163,6 +161,9 @@ impl MultiWorkspace {
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
+        let pane = self.workspace().read(cx).active_pane().clone();
+        let pane_focus = pane.read(cx).focus_handle(cx);
+        window.focus(&pane_focus, cx);
         self.serialize(window, cx);
         cx.notify();
     }
