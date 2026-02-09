@@ -4579,11 +4579,11 @@ impl AcpThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
 
         // For subagent tool calls, render the subagent cards directly without wrapper
-        if let Some(subagent_session_id) = tool_call.subagent_session_id.clone() {
+        if tool_call.is_subagent() {
             return self.render_subagent_tool_call(
                 entry_ix,
                 tool_call,
-                subagent_session_id,
+                tool_call.subagent_session_id.clone(),
                 window,
                 cx,
             );
@@ -5741,31 +5741,47 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         tool_call: &ToolCall,
-        subagent_session_id: acp::SessionId,
+        subagent_session_id: Option<acp::SessionId>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
         let tool_call_status = &tool_call.status;
 
-        let content = if let Some(thread_view) = self
-            .server_view
-            .upgrade()
-            .and_then(|server_view| server_view.read(cx).as_connected())
-            .and_then(|connected| connected.threads.get(&subagent_session_id))
-        {
+        let content = if let Some(thread_view) = subagent_session_id.and_then(|id| {
+            self.server_view
+                .upgrade()
+                .and_then(|server_view| server_view.read(cx).as_connected())
+                .and_then(|connected| connected.threads.get(&id))
+        }) {
             let thread = thread_view.read(cx).thread.clone();
             self.render_subagent_card(entry_ix, 0, &thread, tool_call_status, window, cx)
         } else {
-            h_flex()
-                .p_1()
+            v_flex()
                 .w_full()
-                .gap_1p5()
                 .rounded_md()
                 .border_1()
                 .border_color(self.tool_card_border_color(cx))
-                .bg(self.tool_card_header_bg(cx))
-                .child(SpinnerLabel::new().size(LabelSize::Small))
-                .child(Label::new("Loading Subagent…").size(LabelSize::Small))
+                .overflow_hidden()
+                .child(
+                    h_flex()
+                        .p_1()
+                        .pl_1p5()
+                        .w_full()
+                        .gap_1()
+                        .justify_between()
+                        .bg(self.tool_card_header_bg(cx))
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    h_flex()
+                                        .w_4()
+                                        .justify_center()
+                                        .child(SpinnerLabel::new().size(LabelSize::Small)),
+                                )
+                                .child(Label::new("Spawning Subagent…").size(LabelSize::Small)),
+                        ),
+                )
                 .into_any_element()
         };
 
