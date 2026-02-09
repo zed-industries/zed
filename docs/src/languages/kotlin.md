@@ -5,9 +5,7 @@ Report issues to: [https://github.com/zed-extensions/kotlin/issues](https://gith
 
 - Tree-sitter: [fwcd/tree-sitter-kotlin](https://github.com/fwcd/tree-sitter-kotlin)
 - Language Server: [fwcd/kotlin-language-server](https://github.com/fwcd/kotlin-language-server)
-
-Although the official `Kotlin/kotlin-lsp` integration is currently in pre-alpha state, we recommend using it. 
-Please see the [Kotlin LSP section of the readme](https://github.com/zed-extensions/kotlin/blob/main/README.md#kotlin-lsp) for more information.
+- Alternate Language Server: [kotlin/kotlin-lsp](https://github.com/kotlin/kotlin-lsp)
 
 ## Configuration
 
