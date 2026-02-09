@@ -240,6 +240,9 @@ pub fn editor_content_with_blocks_and_size(
                 first_excerpt,
                 height,
             } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
@@ -251,15 +254,24 @@ pub fn editor_content_with_blocks_and_size(
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::ExcerptBoundary { height, .. } => {
                 for row in row.0..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::BufferHeader { excerpt, height } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
@@ -271,6 +283,9 @@ pub fn editor_content_with_blocks_and_size(
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
