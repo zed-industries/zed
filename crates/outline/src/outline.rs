@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -41,16 +41,15 @@ pub fn toggle(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let outline = editor
-        .read(cx)
-        .buffer()
-        .read(cx)
-        .snapshot(cx)
-        .outline(Some(cx.theme().syntax()));
-
-    let workspace = editor.read(cx).workspace();
-
-    if let Some((workspace, outline)) = workspace.zip(outline) {
+    if let Some((workspace, outline)) = Workspace::for_window(window, cx).and_then(|workspace| {
+        editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .outline(Some(cx.theme().syntax()))
+            .map(|outline| (workspace, outline))
+    }) {
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 OutlineView::new(outline, editor, window, cx)
