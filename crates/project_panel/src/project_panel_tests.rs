@@ -9050,7 +9050,7 @@ async fn test_ensure_temporary_folding_when_creating(cx: &mut gpui::TestAppConte
         panel.marked_entries.clear();
     });
     panel.update(cx, |panel, _| {
-        let leaf_entry_id = panel.state.selection.unwrap().entry_id;
+        let leaf_entry_id = panel.selection.unwrap().entry_id;
         let resolved_entry_id = panel.resolve_entry(leaf_entry_id);
         assert_ne!(
             resolved_entry_id, leaf_entry_id,
