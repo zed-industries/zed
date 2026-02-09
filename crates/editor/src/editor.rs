@@ -136,7 +136,7 @@ use language::{
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
-use linked_editing_ranges::refresh_linked_ranges;
+use linked_editing_ranges::{LinkedEdits, refresh_linked_ranges};
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
     LanguageServerId,
@@ -4485,6 +4485,7 @@ impl Editor {
         let start_difference = start_offset - start_byte_offset;
         let end_offset = TO::to_offset(&selection.end, &buffer_snapshot);
         let end_difference = end_offset - start_byte_offset;
+
         // Current range has associated linked ranges.
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         for range in linked_ranges.iter() {
@@ -4529,7 +4530,7 @@ impl Editor {
         let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
-        let mut linked_edits = HashMap::<_, Vec<_>>::default();
+        let mut linked_edits = LinkedEdits::new();
         let mut new_selections = Vec::with_capacity(selections.len());
         let mut new_autoclose_regions = Vec::new();
         let snapshot = self.buffer.read(cx).read(cx);
@@ -4829,16 +4830,8 @@ impl Editor {
                 });
 
                 if is_word_char {
-                    if let Some(ranges) = self
-                        .linked_editing_ranges_for(start_anchor.text_anchor..anchor.text_anchor, cx)
-                    {
-                        for (buffer, edits) in ranges {
-                            linked_edits
-                                .entry(buffer.clone())
-                                .or_default()
-                                .extend(edits.into_iter().map(|range| (range, text.clone())));
-                        }
-                    }
+                    let anchor_range = start_anchor.text_anchor..anchor.text_anchor;
+                    linked_edits.push(&self, anchor_range, text.clone(), cx);
                 } else {
                     clear_linked_edit_ranges = true;
                 }
@@ -4872,21 +4865,7 @@ impl Editor {
                     buffer.edit(edits, this.autoindent_mode.clone(), cx);
                 }
             });
-            for (buffer, edits) in linked_edits {
-                buffer.update(cx, |buffer, cx| {
-                    let snapshot = buffer.snapshot();
-                    let edits = edits
-                        .into_iter()
-                        .map(|(range, text)| {
-                            use text::ToPoint as TP;
-                            let end_point = TP::to_point(&range.end, &snapshot);
-                            let start_point = TP::to_point(&range.start, &snapshot);
-                            (start_point..end_point, text)
-                        })
-                        .sorted_by_key(|(range, _)| range.start);
-                    buffer.edit(edits, None, cx);
-                })
-            }
+            linked_edits.apply(cx);
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -5395,24 +5374,15 @@ impl Editor {
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
-            let mut linked_edits = HashMap::<_, Vec<_>>::default();
+            let mut linked_edits = LinkedEdits::new();
 
             if apply_linked_edits && !this.linked_edit_ranges.is_empty() {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 for selection in &old_selections {
                     let start_anchor = snapshot.anchor_before(selection.start);
                     let end_anchor = snapshot.anchor_after(selection.end);
-                    if let Some(editing_ranges) = this.linked_editing_ranges_for(
-                        start_anchor.text_anchor..end_anchor.text_anchor,
-                        cx,
-                    ) {
-                        for (buffer, ranges) in editing_ranges {
-                            linked_edits
-                                .entry(buffer)
-                                .or_default()
-                                .extend(ranges.into_iter().map(|range| (range, text.clone())));
-                        }
-                    }
+                    let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
+                    linked_edits.push(this, anchor_range, text.clone(), cx);
                 }
             }
 
@@ -5437,20 +5407,7 @@ impl Editor {
                 anchors
             });
 
-            for (buffer, ranges_edits) in linked_edits {
-                buffer.update(cx, |buffer, cx| {
-                    let snapshot = buffer.snapshot();
-                    let edits = ranges_edits
-                        .into_iter()
-                        .map(|(range, text)| {
-                            let end_point = text::ToPoint::to_point(&range.end, &snapshot);
-                            let start_point = text::ToPoint::to_point(&range.start, &snapshot);
-                            (start_point..end_point, text)
-                        })
-                        .sorted_by_key(|(range, _)| range.start);
-                    buffer.edit(edits, None, cx);
-                })
-            }
+            linked_edits.apply(cx);
 
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select_anchors(selection_anchors);
@@ -6440,8 +6397,9 @@ impl Editor {
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx));
         let mut ranges = Vec::new();
-        let mut linked_edits = HashMap::<_, Vec<_>>::default();
+        let mut linked_edits = LinkedEdits::new();
 
+        let text: Arc<str> = new_text.clone().into();
         for selection in &selections {
             let range = if selection.id == newest_anchor.id {
                 replace_range_multibuffer.clone()
@@ -6467,16 +6425,8 @@ impl Editor {
             if !self.linked_edit_ranges.is_empty() {
                 let start_anchor = snapshot.anchor_before(range.start);
                 let end_anchor = snapshot.anchor_after(range.end);
-                if let Some(ranges) = self
-                    .linked_editing_ranges_for(start_anchor.text_anchor..end_anchor.text_anchor, cx)
-                {
-                    for (buffer, edits) in ranges {
-                        linked_edits
-                            .entry(buffer.clone())
-                            .or_default()
-                            .extend(edits.into_iter().map(|range| (range, new_text.to_owned())));
-                    }
-                }
+                let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
+                linked_edits.push(&self, anchor_range, text.clone(), cx);
             }
         }
 
@@ -6508,22 +6458,7 @@ impl Editor {
                     multi_buffer.edit(edits, auto_indent, cx);
                 });
             }
-            for (buffer, edits) in linked_edits {
-                buffer.update(cx, |buffer, cx| {
-                    let snapshot = buffer.snapshot();
-                    let edits = edits
-                        .into_iter()
-                        .map(|(range, text)| {
-                            use text::ToPoint as TP;
-                            let end_point = TP::to_point(&range.end, &snapshot);
-                            let start_point = TP::to_point(&range.start, &snapshot);
-                            (start_point..end_point, text)
-                        })
-                        .sorted_by_key(|(range, _)| range.start);
-                    buffer.edit(edits, None, cx);
-                })
-            }
-
+            linked_edits.apply(cx);
             editor.refresh_edit_prediction(true, false, window, cx);
         });
         self.invalidate_autoclose_regions(&self.selections.disjoint_anchors_arc(), &snapshot);
@@ -10659,25 +10594,17 @@ impl Editor {
             this.select_autoclose_pair(window, cx);
 
             let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let mut linked_edits = LinkedEdits::new();
 
-            let mut linked_ranges = HashMap::<_, Vec<_>>::default();
             if !this.linked_edit_ranges.is_empty() {
+                let empty_text: Arc<str> = Arc::from("");
                 let selections = this.selections.all::<MultiBufferPoint>(&display_map);
                 let snapshot = this.buffer.read(cx).snapshot(cx);
 
                 for selection in selections.iter() {
                     let selection_start = snapshot.anchor_before(selection.start).text_anchor;
                     let selection_end = snapshot.anchor_after(selection.end).text_anchor;
-                    if selection_start.buffer_id != selection_end.buffer_id {
-                        continue;
-                    }
-                    if let Some(ranges) =
-                        this.linked_editing_ranges_for(selection_start..selection_end, cx)
-                    {
-                        for (buffer, entries) in ranges {
-                            linked_ranges.entry(buffer).or_default().extend(entries);
-                        }
-                    }
+                    linked_edits.push(this, selection_start..selection_end, empty_text.clone(), cx);
                 }
             }
 
@@ -10717,32 +10644,7 @@ impl Editor {
 
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
-            let empty_str: Arc<str> = Arc::from("");
-            for (buffer, edits) in linked_ranges {
-                let snapshot = buffer.read(cx).snapshot();
-                use text::ToPoint as TP;
-
-                let edits = edits
-                    .into_iter()
-                    .map(|range| {
-                        let end_point = TP::to_point(&range.end, &snapshot);
-                        let mut start_point = TP::to_point(&range.start, &snapshot);
-
-                        if end_point == start_point {
-                            let offset = text::ToOffset::to_offset(&range.start, &snapshot)
-                                .saturating_sub(1);
-                            start_point =
-                                snapshot.clip_point(TP::to_point(&offset, &snapshot), Bias::Left);
-                        };
-
-                        (start_point..end_point, empty_str.clone())
-                    })
-                    .sorted_by_key(|(range, _)| range.start)
-                    .collect::<Vec<_>>();
-                buffer.update(cx, |this, cx| {
-                    this.edit(edits, None, cx);
-                })
-            }
+            linked_edits.apply_with_left_expansion(cx);
             this.refresh_edit_prediction(true, false, window, cx);
             refresh_linked_ranges(this, window, cx);
         });
