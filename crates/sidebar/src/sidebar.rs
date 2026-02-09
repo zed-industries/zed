@@ -572,6 +572,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
+                    .icon(IconName::Folder)
                     .running(running)
                     .generation_done(has_notification)
                     .selected(selected)
