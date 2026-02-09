@@ -12019,11 +12019,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let project_item = cx.update(|_window, cx| TestProjectItem::new(1, "test.txt", cx));
 
         // Add item to pane A with project path
-        let item_a = cx.new(|cx| {
-            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
-        });
+        let item_a = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx)
         });
@@ -12034,9 +12033,7 @@ mod tests {
         });
 
         // Add item with SAME project path to pane B, and pin it
-        let item_b = cx.new(|cx| {
-            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
-        });
+        let item_b = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
         pane_b.update_in(cx, |pane, window, cx| {
             pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
             pane.set_pinned_count(1);
@@ -12058,19 +12055,32 @@ mod tests {
         });
         cx.executor().run_until_parked();
 
-        assert_eq!(
-            pane_a.read_with(cx, |pane, _| pane.items_len()),
-            0,
-            "Unpinned item in pane A should be closed"
-        );
-        assert_eq!(
-            pane_b.read_with(cx, |pane, _| pane.items_len()),
-            1,
-            "Pinned item in pane B should remain"
-        );
+        let item_count_a = pane_a.read_with(cx, |pane, _| pane.items_len());
+        let item_count_b = pane_b.read_with(cx, |pane, _| pane.items_len());
+        assert_eq!(item_count_a, 0, "Unpinned item in pane A should be closed");
+        assert_eq!(item_count_b, 1, "Pinned item in pane B should remain");
+
+        // Split again, seeing as closing the previous item also closed its
+        // pane, so only pane remains, which does not allow us to properly test
+        // that both items close when `close_pinned: true`.
+        let pane_c = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_b.clone(), SplitDirection::Right, window, cx)
+        });
+
+        // Add an item with the same project path to pane C so that
+        // close_item_in_all_panes can determine what to close across all panes
+        // (it reads the active item from the active pane, and split_pane
+        // creates an empty pane).
+        let item_c = cx.new(|cx| TestItem::new(cx).with_project_items(&[project_item.clone()]));
+        pane_c.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_c.clone()), true, true, None, window, cx);
+        });
 
         // close_pinned: true should close the pinned copy too
         workspace.update_in(cx, |workspace, window, cx| {
+            let panes_count = workspace.panes().len();
+            assert_eq!(panes_count, 2, "Workspace should have two panes (B and C)");
+
             workspace.close_item_in_all_panes(
                 &CloseItemInAllPanes {
                     save_intent: Some(SaveIntent::Close),
@@ -12082,11 +12092,10 @@ mod tests {
         });
         cx.executor().run_until_parked();
 
-        assert_eq!(
-            pane_b.read_with(cx, |pane, _| pane.items_len()),
-            0,
-            "Pinned item in pane B should be closed"
-        );
+        let item_count_b = pane_b.read_with(cx, |pane, _| pane.items_len());
+        let item_count_c = pane_c.read_with(cx, |pane, _| pane.items_len());
+        assert_eq!(item_count_b, 0, "Pinned item in pane B should be closed");
+        assert_eq!(item_count_c, 0, "Unpinned item in pane C should be closed");
     }
 
     mod register_project_item_tests {
