@@ -437,7 +437,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     project_context.update(cx, |project_context, _cx| {
         project_context.shell = "test-shell".into()
     });
-    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool, None));
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["abc"], cx)
@@ -573,7 +573,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Simulate a tool call and verify that the latest tool result is cached
-    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool, None));
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
@@ -659,7 +659,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     // Test a tool call that's likely to complete *before* streaming stops.
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
+            thread.add_tool(EchoTool, None);
             thread.send(
                 UserMessageId::new(),
                 ["Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'."],
@@ -675,7 +675,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.remove_tool(&EchoTool::NAME);
-            thread.add_tool(DelayTool);
+            thread.add_tool(DelayTool, None);
             thread.send(
                 UserMessageId::new(),
                 [
@@ -719,7 +719,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     // Test a tool call that's likely to complete *before* streaming stops.
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(WordListTool);
+            thread.add_tool(WordListTool, None);
             thread.send(UserMessageId::new(), ["Test the word_list tool."], cx)
         })
         .unwrap();
@@ -770,7 +770,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(ToolRequiringPermission);
+            thread.add_tool(ToolRequiringPermission, None);
             thread.send(UserMessageId::new(), ["abc"], cx)
         })
         .unwrap();
@@ -1111,7 +1111,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     // Test concurrent tool calls with different delay times
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(DelayTool);
+            thread.add_tool(DelayTool, None);
             thread.send(
                 UserMessageId::new(),
                 [
@@ -1156,9 +1156,9 @@ async fn test_profiles(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(DelayTool);
-        thread.add_tool(EchoTool);
-        thread.add_tool(InfiniteTool);
+        thread.add_tool(DelayTool, None);
+        thread.add_tool(EchoTool, None);
+        thread.add_tool(InfiniteTool, None);
     });
 
     // Override profiles and wait for settings to be loaded.
@@ -1324,7 +1324,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 
     // Send again after adding the echo tool, ensuring the name collision is resolved.
     let events = thread.update(cx, |thread, cx| {
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
         thread.send(UserMessageId::new(), ["Go"], cx).unwrap()
     });
     cx.run_until_parked();
@@ -1433,11 +1433,11 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("test".into()), cx);
-        thread.add_tool(EchoTool);
-        thread.add_tool(DelayTool);
-        thread.add_tool(WordListTool);
-        thread.add_tool(ToolRequiringPermission);
-        thread.add_tool(InfiniteTool);
+        thread.add_tool(EchoTool, None);
+        thread.add_tool(DelayTool, None);
+        thread.add_tool(WordListTool, None);
+        thread.add_tool(ToolRequiringPermission, None);
+        thread.add_tool(InfiniteTool, None);
     });
 
     // Set up multiple context servers with some overlapping tool names
@@ -1567,8 +1567,8 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(InfiniteTool);
-            thread.add_tool(EchoTool);
+            thread.add_tool(InfiniteTool, None);
+            thread.add_tool(EchoTool, None);
             thread.send(
                 UserMessageId::new(),
                 ["Call the echo tool, then call the infinite tool, then explain their output"],
@@ -1659,10 +1659,10 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command"], cx)
         })
         .unwrap();
@@ -1756,7 +1756,7 @@ async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppC
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(tool);
+            thread.add_tool(tool, None);
             thread.send(
                 UserMessageId::new(),
                 ["call the cancellation aware tool"],
@@ -1942,10 +1942,10 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     let message_id = UserMessageId::new();
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(message_id.clone(), ["run a command"], cx)
         })
         .unwrap();
@@ -2006,10 +2006,10 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment.clone(),
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment.clone()),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run multiple commands"], cx)
         })
         .unwrap();
@@ -2119,10 +2119,10 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command"], cx)
         })
         .unwrap();
@@ -2213,10 +2213,10 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command with timeout"], cx)
         })
         .unwrap();
@@ -2697,8 +2697,8 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 
     let _events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(ToolRequiringPermission);
-            thread.add_tool(EchoTool);
+            thread.add_tool(ToolRequiringPermission, None);
+            thread.add_tool(EchoTool, None);
             thread.send(UserMessageId::new(), ["Hey!"], cx)
         })
         .unwrap();
@@ -2902,7 +2902,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool));
+    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool, None));
     let fake_model = model.as_fake();
 
     let mut events = thread
@@ -3104,7 +3104,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
+            thread.add_tool(EchoTool, None);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
         .unwrap();
@@ -4168,9 +4168,9 @@ async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppCont
             std::collections::BTreeMap::new(),
             cx,
         );
-        thread.add_tool(EchoTool);
-        thread.add_tool(DelayTool);
-        thread.add_tool(WordListTool);
+        thread.add_tool(EchoTool, None);
+        thread.add_tool(DelayTool, None);
+        thread.add_tool(WordListTool, None);
         thread
     });
 
@@ -4444,7 +4444,7 @@ async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
     });
 
     subagent.update(cx, |thread, _| {
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
     });
 
     subagent
@@ -4583,7 +4583,7 @@ async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
             Some(model.clone()),
             cx,
         );
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
         thread
     });
 
@@ -4772,7 +4772,7 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
             std::collections::BTreeMap::new(),
             cx,
         );
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
         thread
     });
 
@@ -4944,7 +4944,7 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
             Some(model.clone()),
             cx,
         );
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
         thread
     });
 
@@ -5616,7 +5616,7 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
 
     // Add a tool so we can simulate tool calls
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
     });
 
     // Start a turn by sending a message
