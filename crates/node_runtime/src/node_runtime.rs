@@ -1050,16 +1050,18 @@ fn build_bun_command_args(_proxy: Option<&Url>, subcommand: &str, args: &[&str])
             continue;
         }
 
-        // Skip npm-specific flags that bun doesn't understand
-        if arg.starts_with("--cache=")
-            || arg.starts_with("--fetch-retry-")
-            || arg.starts_with("--fetch-timeout")
-        {
+        // Skip npm-specific flags (with `=` value) that bun doesn't understand
+        if arg.starts_with("--cache=") {
             continue;
         }
 
-        // Skip two-part flags: --userconfig <path>, --globalconfig <path>, --proxy <url>
-        if *arg == "--userconfig" || *arg == "--globalconfig" || *arg == "--proxy" {
+        // Skip two-part npm-specific flags (flag + next arg as value)
+        if arg.starts_with("--fetch-retry-")
+            || arg.starts_with("--fetch-timeout")
+            || *arg == "--userconfig"
+            || *arg == "--globalconfig"
+            || *arg == "--proxy"
+        {
             skip_next = true;
             continue;
         }
