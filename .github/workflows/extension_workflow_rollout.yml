@@ -39,7 +39,7 @@ jobs:
       matrix:
         repo: ${{ fromJson(needs.fetch_extension_repos.outputs.repos) }}
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 10
     steps:
     - id: generate-token
       name: extension_bump::generate_token

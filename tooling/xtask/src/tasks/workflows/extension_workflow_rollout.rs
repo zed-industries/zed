@@ -234,7 +234,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         .strategy(
             Strategy::default()
                 .fail_fast(false)
-                .max_parallel(5u32)
+                .max_parallel(10u32)
                 .matrix(json!({
                     "repo": format!("${{{{ fromJson(needs.{}.outputs.repos) }}}}", fetch_repos_job.name)
                 })),
