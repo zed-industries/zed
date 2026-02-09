@@ -1847,6 +1847,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
+    use workspace::MultiWorkspace;
 
     #[test]
     fn test_prepare_empty_task() {
@@ -1878,13 +1879,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -1963,13 +1965,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -2006,13 +2009,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 

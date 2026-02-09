@@ -3402,7 +3402,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
-    use workspace::{MultiWorkspace, Workspace};
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
@@ -3429,9 +3429,7 @@ mod tests {
 
         let workspace_b = multi_workspace
             .update(cx, |multi_workspace, window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project_b.clone(), window, cx));
-                multi_workspace.activate(workspace.clone(), cx);
-                workspace
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
             })
             .unwrap();
 

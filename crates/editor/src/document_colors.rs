@@ -415,14 +415,14 @@ mod tests {
     };
 
     use futures::StreamExt;
-    use gpui::{Rgba, TestAppContext, VisualTestContext};
+    use gpui::{Rgba, TestAppContext};
     use language::FakeLspAdapter;
     use languages::rust_lang;
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::{path, rel_path::rel_path};
     use workspace::{
-        CloseActiveItem, MoveItemToPaneInDirection, OpenOptions,
+        CloseActiveItem, MoveItemToPaneInDirection, MultiWorkspace, OpenOptions,
         item::{Item as _, SaveOptions},
     };
 
@@ -460,9 +460,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -490,7 +490,7 @@ mod tests {
         );
 
         let editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/a/first.rs")),
                     OpenOptions::default(),
@@ -498,7 +498,6 @@ mod tests {
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap()
             .downcast::<Editor>()
@@ -579,53 +578,49 @@ mod tests {
         });
 
         // opening another file in a split should not influence the LSP query counter
-        workspace
-            .update(cx, |workspace, window, cx| {
-                assert_eq!(
-                    workspace.panes().len(),
-                    1,
-                    "Should have one pane with one editor"
-                );
-                workspace.move_item_to_pane_in_direction(
-                    &MoveItemToPaneInDirection {
-                        direction: workspace::SplitDirection::Right,
-                        focus: false,
-                        clone: true,
-                    },
-                    window,
-                    cx,
-                );
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.panes().len(),
+                1,
+                "Should have one pane with one editor"
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: workspace::SplitDirection::Right,
+                    focus: false,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+        });
         cx.run_until_parked();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                let panes = workspace.panes();
-                assert_eq!(panes.len(), 2, "Should have two panes after splitting");
-                for pane in panes {
-                    let editor = pane
-                        .read(cx)
-                        .active_item()
-                        .and_then(|item| item.downcast::<Editor>())
-                        .expect("Should have opened an editor in each split");
-                    let editor_file = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .expect("test deals with singleton buffers")
-                        .read(cx)
-                        .file()
-                        .expect("test buffese should have a file")
-                        .path();
-                    assert_eq!(
-                        editor_file.as_ref(),
-                        rel_path("first.rs"),
-                        "Both editors should be opened for the same file"
-                    )
-                }
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, _, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 2, "Should have two panes after splitting");
+            for pane in panes {
+                let editor = pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("Should have opened an editor in each split");
+                let editor_file = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("test deals with singleton buffers")
+                    .read(cx)
+                    .file()
+                    .expect("test buffese should have a file")
+                    .path();
+                assert_eq!(
+                    editor_file.as_ref(),
+                    rel_path("first.rs"),
+                    "Both editors should be opened for the same file"
+                )
+            }
+        });
 
         cx.executor().advance_clock(Duration::from_millis(500));
         let save = editor.update_in(cx, |editor, window, cx| {
@@ -652,54 +647,44 @@ mod tests {
         );
 
         drop(editor);
-        let close = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                })
+        let close = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
-            .unwrap();
+        });
         close.await.unwrap();
-        let close = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                })
+        let close = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
-            .unwrap();
+        });
         close.await.unwrap();
         assert_eq!(
             2,
             requests_made.load(atomic::Ordering::Acquire),
             "After saving and closing all editors, no extra requests should be made"
         );
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(
-                    workspace.active_item(cx).is_none(),
-                    "Should close all editors"
-                )
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "Should close all editors"
+            )
+        });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.navigate_backward(&workspace::GoBack, window, cx);
-                })
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.navigate_backward(&workspace::GoBack, window, cx);
             })
-            .unwrap();
+        });
         cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
         cx.run_until_parked();
-        let editor = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_item(cx)
-                    .expect("Should have reopened the editor again after navigating back")
-                    .downcast::<Editor>()
-                    .expect("Should be an editor")
-            })
-            .unwrap();
+        let editor = workspace.update_in(cx, |workspace, _, cx| {
+            workspace
+                .active_item(cx)
+                .expect("Should have reopened the editor again after navigating back")
+                .downcast::<Editor>()
+                .expect("Should be an editor")
+        });
 
         assert_eq!(
             2,

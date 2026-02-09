@@ -413,7 +413,7 @@ fn convert_token(
 #[cfg(test)]
 mod tests {
     use std::{
-        ops::{Deref as _, Range},
+        ops::Range,
         sync::atomic::{self, AtomicUsize},
     };
 
@@ -430,7 +430,7 @@ mod tests {
     use rope::Point;
     use serde_json::json;
     use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
-    use workspace::{Workspace, WorkspaceHandle as _};
+    use workspace::{MultiWorkspace, Workspace, WorkspaceHandle as _};
 
     use crate::{
         Capability,
@@ -850,10 +850,9 @@ mod tests {
             )
             .await;
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        let (multi_workspace, mut cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
         project
             .update(&mut cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
@@ -1070,10 +1069,9 @@ mod tests {
             )
             .await;
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        let (multi_workspace, mut cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
         project
             .update(&mut cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
@@ -1302,10 +1300,9 @@ mod tests {
             )
             .await;
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-
-        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+        let (multi_workspace, mut cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(&cx, |mw, _| mw.workspace().clone());
         project
             .update(&mut cx, |project, cx| {
                 project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)

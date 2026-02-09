@@ -337,6 +337,18 @@ impl MultiWorkspace {
         Self::new(workspace, cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_add_workspace(
+        &mut self,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Workspace> {
+        let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+        self.activate(workspace.clone(), cx);
+        workspace
+    }
+
     pub fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.multi_workspace_enabled(cx) {
             return;

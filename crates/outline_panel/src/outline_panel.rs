@@ -5342,7 +5342,7 @@ mod tests {
     };
     use serde_json::json;
     use util::path;
-    use workspace::{OpenOptions, OpenVisible, ToolbarItemView};
+    use workspace::{MultiWorkspace, OpenOptions, OpenVisible, ToolbarItemView};
 
     use super::*;
 
@@ -5357,33 +5357,29 @@ mod tests {
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(
-                    workspace,
-                    &workspace::DeploySearch::default(),
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view expected to appear after new search event trigger")
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::default(),
+                window,
+                cx,
+            )
+        });
+        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view expected to appear after new search event trigger")
+        });
 
         let query = "param_names_for_lifetime_elision_hints";
         perform_project_search(&search_view, query, cx);
@@ -5590,33 +5586,29 @@ mod tests {
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(
-                    workspace,
-                    &workspace::DeploySearch::default(),
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view expected to appear after new search event trigger")
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::default(),
+                window,
+                cx,
+            )
+        });
+        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view expected to appear after new search event trigger")
+        });
 
         let query = "param_names_for_lifetime_elision_hints";
         perform_project_search(&search_view, query, cx);
@@ -5727,33 +5719,29 @@ mod tests {
         populate_with_test_ra_project(&fs, root).await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(
-                    workspace,
-                    &workspace::DeploySearch::default(),
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view expected to appear after new search event trigger")
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::default(),
+                window,
+                cx,
+            )
+        });
+        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view expected to appear after new search event trigger")
+        });
 
         let query = "param_names_for_lifetime_elision_hints";
         perform_project_search(&search_view, query, cx);
@@ -5953,15 +5941,15 @@ outline: fn hints_lifetimes_named  <==== selected"
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(path!("/root/one"))], cx).await;
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
         let items = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     vec![PathBuf::from(path!("/root/two"))],
                     OpenOptions {
@@ -5973,7 +5961,6 @@ outline: fn hints_lifetimes_named  <==== selected"
                     cx,
                 )
             })
-            .unwrap()
             .await;
         assert_eq!(items.len(), 1, "Were opening another worktree directory");
         assert!(
@@ -5981,26 +5968,22 @@ outline: fn hints_lifetimes_named  <==== selected"
             "Directory should be opened successfully"
         );
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(
-                    workspace,
-                    &workspace::DeploySearch::default(),
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view expected to appear after new search event trigger")
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::default(),
+                window,
+                cx,
+            )
+        });
+        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view expected to appear after new search event trigger")
+        });
 
         let query = "aaa";
         perform_project_search(&search_view, query, cx);
@@ -6138,8 +6121,8 @@ struct OutlineEntryExcerpt {
         .await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
@@ -6148,7 +6131,7 @@ struct OutlineEntryExcerpt {
         });
 
         let _editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/root/src/lib.rs")),
                     OpenOptions {
@@ -6159,7 +6142,6 @@ struct OutlineEntryExcerpt {
                     cx,
                 )
             })
-            .unwrap()
             .await
             .expect("Failed to open Rust source file")
             .downcast::<Editor>()
@@ -6500,33 +6482,29 @@ outline: struct OutlineEntryExcerpt
         )
         .await;
         let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.set_active(true, window, cx)
         });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(
-                    workspace,
-                    &workspace::DeploySearch::default(),
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view expected to appear after new search event trigger")
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::default(),
+                window,
+                cx,
+            )
+        });
+        let search_view = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view expected to appear after new search event trigger")
+        });
 
         let query = "static";
         perform_project_search(&search_view, query, cx);
@@ -6761,13 +6739,18 @@ outline: struct OutlineEntryExcerpt
     async fn add_outline_panel(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> WindowHandle<Workspace> {
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    ) -> (WindowHandle<MultiWorkspace>, Entity<Workspace>) {
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
+        let workspace_weak = workspace.downgrade();
         let outline_panel = window
             .update(cx, |_, window, cx| {
-                cx.spawn_in(window, async |this, cx| {
-                    OutlinePanel::load(this, cx.clone()).await
+                cx.spawn_in(window, async move |_this, cx| {
+                    OutlinePanel::load(workspace_weak, cx.clone()).await
                 })
             })
             .unwrap()
@@ -6775,24 +6758,24 @@ outline: struct OutlineEntryExcerpt
             .expect("Failed to load outline panel");
 
         window
-            .update(cx, |workspace, window, cx| {
-                workspace.add_panel(outline_panel, window, cx);
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.add_panel(outline_panel, window, cx);
+                });
             })
             .unwrap();
-        window
+        (window, workspace)
     }
 
     fn outline_panel(
-        workspace: &WindowHandle<Workspace>,
-        cx: &mut TestAppContext,
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
     ) -> Entity<OutlinePanel> {
-        workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .panel::<OutlinePanel>(cx)
-                    .expect("no outline panel")
-            })
-            .unwrap()
+        workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .panel::<OutlinePanel>(cx)
+                .expect("no outline panel")
+        })
     }
 
     fn display_entries(
@@ -7151,8 +7134,8 @@ outline: struct OutlineEntryExcerpt
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
@@ -7160,7 +7143,7 @@ outline: struct OutlineEntryExcerpt
         });
 
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/test/src/lib.rs"),
                     OpenOptions {
@@ -7171,7 +7154,6 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap();
 
@@ -7407,8 +7389,8 @@ outline: fn main"
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
@@ -7416,7 +7398,7 @@ outline: fn main"
         });
 
         let _editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/test/src/main.rs"),
                     OpenOptions {
@@ -7427,7 +7409,6 @@ outline: fn main"
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap();
 
@@ -7621,8 +7602,8 @@ outline: fn main"
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
@@ -7630,7 +7611,7 @@ outline: fn main"
         });
 
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/test/src/lib.rs"),
                     OpenOptions {
@@ -7641,7 +7622,6 @@ outline: fn main"
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap();
 
@@ -7796,11 +7776,11 @@ outline: fn main"
         .await;
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
         let editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/test/foo.txt"),
                     OpenOptions {
@@ -7811,22 +7791,19 @@ outline: fn main"
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
 
-        let search_bar = workspace
-            .update(cx, |_, window, cx| {
-                cx.new(|cx| {
-                    let mut search_bar = BufferSearchBar::new(None, window, cx);
-                    search_bar.set_active_pane_item(Some(&editor), window, cx);
-                    search_bar.show(window, cx);
-                    search_bar
-                })
+        let search_bar = workspace.update_in(cx, |_, window, cx| {
+            cx.new(|cx| {
+                let mut search_bar = BufferSearchBar::new(None, window, cx);
+                search_bar.set_active_pane_item(Some(&editor), window, cx);
+                search_bar.show(window, cx);
+                search_bar
             })
-            .unwrap();
+        });
 
         let outline_panel = outline_panel(&workspace, cx);
 
