@@ -25245,7 +25245,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
     drop(buffer_snapshot);
     let actions = cx
-        .update_window(*workspace, |_, window, cx| {
+        .update_window(*window, |_, window, cx| {
             project.code_actions(&buffer, anchor..anchor, window, cx)
         })
         .unwrap();
@@ -25370,12 +25370,9 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
 
     let actions_after_edits = cx
-        .update_window(*workspace, |_, window, cx| {
-            project.code_actions(&buffer, anchor..anchor, window, cx)
-        })
+        .update(|window, cx| project.code_actions(&buffer, anchor..anchor, window, cx))
         .unwrap()
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         actions, actions_after_edits,
         "For the same selection, same code lens actions should be returned"
@@ -25390,12 +25387,9 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
     cx.executor().run_until_parked();
     let new_actions = cx
-        .update_window(*workspace, |_, window, cx| {
-            project.code_actions(&buffer, anchor..anchor, window, cx)
-        })
+        .update(|window, cx| project.code_actions(&buffer, anchor..anchor, window, cx))
         .unwrap()
-        .await
-        .unwrap();
+        .await;
     assert_eq!(
         actions, new_actions,
         "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
