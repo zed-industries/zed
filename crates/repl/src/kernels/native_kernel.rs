@@ -370,17 +370,21 @@ impl RunningKernel for NativeRunningKernel {
     }
 
     fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<anyhow::Result<()>> {
+        self.kill();
+        Task::ready(Ok(()))
+    }
+
+    fn kill(&mut self) {
         self._process_status_task.take();
         self.request_tx.close_channel();
-        Task::ready(self.process.kill().context("killing the kernel process"))
+        self.process.kill().ok();
     }
 }
 
 impl Drop for NativeRunningKernel {
     fn drop(&mut self) {
         std::fs::remove_file(&self.connection_path).ok();
-        self.request_tx.close_channel();
-        self.process.kill().ok();
+        self.kill();
     }
 }
 

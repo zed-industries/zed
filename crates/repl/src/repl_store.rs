@@ -289,7 +289,11 @@ impl ReplStore {
     fn shutdown_all_sessions(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         for session in self.sessions.values() {
             session.update(cx, |session, _cx| {
-                session.kernel = Kernel::Shutdown;
+                if let Kernel::RunningKernel(mut kernel) =
+                    std::mem::replace(&mut session.kernel, Kernel::Shutdown)
+                {
+                    kernel.kill();
+                }
             });
         }
         self.sessions.clear();
