@@ -168,7 +168,11 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.new_text_thread(window, cx));
+                        panel.update(cx, |_, cx| {
+                            cx.defer_in(window, |panel, window, cx| {
+                                panel.new_text_thread(window, cx);
+                            });
+                        });
                     }
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
@@ -3359,7 +3363,8 @@ impl Dismissable for TrialEndUpsell {
     const KEY: &'static str = "dismissed-trial-end-upsell";
 }
 
-#[cfg(feature = "test-support")]
+/// Test-only helper methods
+#[cfg(any(test, feature = "test-support"))]
 impl AgentPanel {
     /// Opens an external thread using an arbitrary AgentServer.
     ///
@@ -3536,5 +3541,52 @@ mod tests {
                 "workspace B should have no active thread"
             );
         });
+    }
+
+    // Simple regression test
+    #[gpui::test]
+    async fn test_new_text_thread_action_handler(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        workspace_a.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        workspace_a.update_in(cx, |_, window, cx| {
+            window.dispatch_action(NewTextThread.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
     }
 }
