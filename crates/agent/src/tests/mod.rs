@@ -4111,7 +4111,6 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
                 label: "Long running task".to_string(),
                 task_prompt: "Do a very long task that takes forever".to_string(),
                 summary_prompt: "Summarize".to_string(),
-                context_low_prompt: "Context low".to_string(),
                 timeout_ms: None,
                 allowed_tools: None,
             },
@@ -4277,11 +4276,8 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
         })
         .expect("Failed to create subagent");
 
-    let summary_task = subagent_handle.wait_for_summary(
-        "summary prompt".to_string(),
-        "context low prompt".to_string(),
-        &cx.to_async(),
-    );
+    let summary_task =
+        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
 
     cx.run_until_parked();
 
@@ -4290,6 +4286,7 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
         // Ensure that model received a system prompt
         assert_eq!(messages[0].role, Role::System);
         // Ensure that model received a task prompt
+        assert_eq!(messages[1].role, Role::User);
         assert_eq!(
             messages[1].content,
             vec![MessageContent::Text("task prompt".to_string())]
@@ -4324,7 +4321,7 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded(
+async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceeded(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
@@ -4380,11 +4377,8 @@ async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded
         })
         .expect("Failed to create subagent");
 
-    let summary_task = subagent_handle.wait_for_summary(
-        "summary prompt".to_string(),
-        "context low prompt".to_string(),
-        &cx.to_async(),
-    );
+    let summary_task =
+        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
 
     cx.run_until_parked();
 
@@ -4414,7 +4408,7 @@ async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded
             .unwrap();
         assert_eq!(
             last_user_message.content,
-            vec![MessageContent::Text("context low prompt".to_string())]
+            vec![MessageContent::Text("The time to complete the task was exceeded. Stop with the task and follow the directions below:\nsummary prompt".to_string())]
         );
     }
 
@@ -4423,11 +4417,6 @@ async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded
 
     let result = summary_task.await;
     assert_eq!(result.unwrap(), "Some context low response...\n");
-}
-
-#[gpui::test]
-async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppContext) {
-    assert!(false, "todo");
 }
 
 #[gpui::test]

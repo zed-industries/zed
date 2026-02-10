@@ -1741,16 +1741,7 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_summary(
-        &self,
-        summary_prompt: String,
-        context_low_prompt: String,
-        cx: &AsyncApp,
-    ) -> Task<Result<String>> {
-        /// When a subagent's remaining context window falls below this fraction (25%),
-        /// the "context running out" prompt is sent to encourage the subagent to wrap up.
-        const CONTEXT_LOW_THRESHOLD: f32 = 0.25;
-
+    fn wait_for_summary(&self, summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
         let acp_thread = self.acp_thread.clone();
         let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
@@ -1761,23 +1752,16 @@ impl SubagentHandle for NativeSubagentHandle {
                 SubagentInitialPromptResult::Timeout => true,
             };
 
-            let should_interrupt =
-                timed_out || check_context_low(&thread, CONTEXT_LOW_THRESHOLD, cx);
-
-            if should_interrupt {
+            let summary_prompt = if timed_out {
                 thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                acp_thread
-                    .update(cx, |thread, cx| {
-                        thread.send(vec![context_low_prompt.into()], cx)
-                    })
-                    .await?;
+                format!("{}\n{}", "The time to complete the task was exceeded. Stop with the task and follow the directions below:", summary_prompt)
             } else {
-                acp_thread
-                    .update(cx, |thread, cx| {
-                        thread.send(vec![summary_prompt.into()], cx)
-                    })
-                    .await?;
-            }
+                summary_prompt
+            };
+
+            acp_thread
+                .update(cx, |thread, cx| thread.send(vec![summary_prompt.into()], cx))
+                .await?;
 
             thread.read_with(cx, |thread, _cx| {
                 thread
@@ -1807,17 +1791,6 @@ impl SubagentHandle for NativeSubagentHandle {
             result
         })
     }
-}
-
-fn check_context_low(thread: &Entity<Thread>, threshold: f32, cx: &mut AsyncApp) -> bool {
-    thread.read_with(cx, |thread, _| {
-        if let Some(usage) = thread.latest_token_usage() {
-            let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);
-            remaining_ratio <= threshold
-        } else {
-            false
-        }
-    })
 }
 
 pub struct AcpTerminalHandle {

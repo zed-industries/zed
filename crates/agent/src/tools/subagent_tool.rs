@@ -48,13 +48,6 @@ pub struct SubagentToolInput {
     /// Example: "Summarize what you found, listing the top 3 alternatives with pros/cons."
     pub summary_prompt: String,
 
-    /// The prompt sent if the subagent is running low on context (25% remaining).
-    /// Should instruct it to stop and summarize progress so far, plus what's left undone.
-    ///
-    /// Example: "Context is running low. Stop and summarize your progress so far,
-    /// and list what remains to be investigated."
-    pub context_low_prompt: String,
-
     /// Optional: Maximum runtime in milliseconds. If exceeded, the subagent is
     /// asked to summarize and return. No timeout by default.
     #[serde(default)]
@@ -178,8 +171,7 @@ impl AgentTool for SubagentTool {
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
         cx.spawn(async move |cx| {
-            let summary_task =
-                subagent.wait_for_summary(input.summary_prompt, input.context_low_prompt, cx);
+            let summary_task = subagent.wait_for_summary(input.summary_prompt, cx);
 
             futures::select_biased! {
                 summary = summary_task.fuse() => summary.map(|summary| SubagentToolOutput {
