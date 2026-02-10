@@ -553,7 +553,7 @@ itertools = "0.14.0"
 json_dotpath = "1.1"
 jsonschema = "0.37.0"
 jsonwebtoken = "10.0"
-jupyter-protocol = "1.1.0"
+jupyter-protocol = "1.1.1"
 jupyter-websocket-client = "1.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
