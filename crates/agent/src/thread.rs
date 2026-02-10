@@ -709,10 +709,12 @@ impl ToolPermissionContext {
         let (pattern, pattern_display) = if input_values.len() == 1 {
             extract_for_value(&input_values[0])
         } else {
-            let pairs: Vec<_> = input_values.iter().map(|v| extract_for_value(v)).collect();
-            let all_same_pattern = pairs.windows(2).all(|w| w[0].0 == w[1].0);
-            if all_same_pattern {
-                pairs.into_iter().next().unwrap_or((None, None))
+            let mut iter = input_values.iter().map(|v| extract_for_value(v));
+            let Some(first) = iter.next() else {
+                (None, None)
+            };
+            if iter.all(|pair| pair.0 == first.0) {
+                first
             } else {
                 (None, None)
             }
