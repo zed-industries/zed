@@ -1,15 +1,12 @@
 use audio::{AudioSettings, CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
-use cpal::{
-    DeviceId, default_host,
-    traits::{DeviceTrait, HostTrait},
-};
+use cpal::DeviceId;
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Render, Size, Window, WindowBounds, WindowKind,
     WindowOptions, prelude::*, px,
 };
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
-use rodio::{DeviceSinkBuilder, Source};
+use rodio::Source;
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, Settings};
 use std::{
     any::Any,
@@ -85,23 +82,10 @@ fn start_test_playback(
             let stop_signal = stop_signal.clone();
             move || {
                 let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
-                let output = if let Some(ref id) = output_device_id {
-                    if let Some(device) = default_host().device_by_id(id) {
-                        DeviceSinkBuilder::from_device(device)
-                            .and_then(|builder| builder.open_stream())
-                    } else {
-                        DeviceSinkBuilder::open_default_sink()
-                    }
-                } else {
-                    DeviceSinkBuilder::open_default_sink()
-                };
-                let Ok(mut output) = output else {
+                let Ok(output) = audio::open_output_stream(output_device_id) else {
                     log::error!("Could not open output device for audio test");
                     return;
                 };
-                output.log_on_drop(true);
-
-                log::info!("Audio test: output device opened successfully");
 
                 let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
                 let microphone = match open_test_microphone(input_device_id, stop_signal.clone()) {
@@ -129,34 +113,8 @@ fn start_test_playback(
 fn open_test_microphone(
     input_device_id: Option<DeviceId>,
     stop_signal: Arc<AtomicBool>,
-) -> anyhow::Result<impl Source<Item = f32>> {
-    let builder = rodio::microphone::MicrophoneBuilder::new();
-    let builder = if let Some(id) = input_device_id {
-        let mut found = None;
-        for input in rodio::microphone::available_inputs()? {
-            if input.clone().into_inner().id()? == id {
-                found = Some(builder.device(input));
-                break;
-            }
-        }
-        found.unwrap_or_else(|| builder.default_device())?
-    } else {
-        builder.default_device()?
-    };
-
-    let stream = builder
-        .default_config()?
-        .prefer_sample_rates([
-            SAMPLE_RATE,
-            SAMPLE_RATE.saturating_mul(rodio::nz!(2)),
-            SAMPLE_RATE.saturating_mul(rodio::nz!(3)),
-            SAMPLE_RATE.saturating_mul(rodio::nz!(4)),
-        ])
-        .prefer_channel_counts([rodio::nz!(1), rodio::nz!(2), rodio::nz!(3), rodio::nz!(4)])
-        .prefer_buffer_sizes(512..)
-        .open_stream()?;
-    log::info!("Opened test microphone: {:?}", stream.config());
-
+) -> anyhow::Result<impl Source> {
+    let stream = audio::open_input_stream(input_device_id)?;
     let stream = stream
         .possibly_disconnected_channels_to_mono()
         .constant_samplerate(SAMPLE_RATE)
@@ -170,7 +128,6 @@ fn open_test_microphone(
                 }
             },
         );
-
     Ok(stream)
 }
 

@@ -5,7 +5,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
 };
 use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
-use log::info;
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 mod non_windows_and_freebsd_deps {
@@ -122,18 +121,7 @@ impl Audio {
         );
 
         if self.output_handle.is_none() {
-            let output_handle = if let Some(id) = output_audio_device {
-                if let Some(device) = default_host().device_by_id(&id) {
-                    DeviceSinkBuilder::from_device(device)?.open_stream()
-                } else {
-                    DeviceSinkBuilder::open_default_sink()
-                }
-            } else {
-                DeviceSinkBuilder::open_default_sink()
-            };
-            let mut output_handle = output_handle.context("Could not open output stream")?;
-            output_handle.log_on_drop(false);
-            info!("Output stream: {:?}", output_handle);
+            let output_handle = open_output_stream(output_audio_device)?;
 
             // The webrtc apm is not yet compiling for windows & freebsd
             #[cfg(not(any(
@@ -190,36 +178,7 @@ impl Audio {
 
     #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
     pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
-        let builder = rodio::microphone::MicrophoneBuilder::new();
-        let builder = if let Some(id) = voip_parts.input_audio_device {
-            // TODO(jk): upstream patch
-            // if let Some(input_device) = default_host().device_by_id(id) {
-            //     builder.device(input_device);
-            // }
-            let mut found = None;
-            for input in rodio::microphone::available_inputs()? {
-                if input.clone().into_inner().id()? == id {
-                    found = Some(builder.device(input));
-                    break;
-                }
-            }
-            found.unwrap_or_else(|| builder.default_device())?
-        } else {
-            builder.default_device()?
-        };
-        let stream = builder
-            .default_config()?
-            .prefer_sample_rates([
-                SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
-                SAMPLE_RATE.saturating_mul(nz!(2)),
-                SAMPLE_RATE.saturating_mul(nz!(3)),
-                SAMPLE_RATE.saturating_mul(nz!(4)),
-            ])
-            .prefer_channel_counts([nz!(1), nz!(2), nz!(3), nz!(4)])
-            .prefer_buffer_sizes(512..)
-            .open_stream()?;
-        info!("Opened microphone: {:?}", stream.config());
-
+        let stream = open_input_stream(voip_parts.input_audio_device)?;
         let stream = stream
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
@@ -381,4 +340,55 @@ impl VoipParts {
             input_audio_device,
         })
     }
+}
+
+pub fn open_input_stream(
+    device_id: Option<DeviceId>,
+) -> anyhow::Result<rodio::microphone::Microphone> {
+    let builder = rodio::microphone::MicrophoneBuilder::new();
+    let builder = if let Some(id) = device_id {
+        // TODO(jk): upstream patch
+        // if let Some(input_device) = default_host().device_by_id(id) {
+        //     builder.device(input_device);
+        // }
+        let mut found = None;
+        for input in rodio::microphone::available_inputs()? {
+            if input.clone().into_inner().id()? == id {
+                found = Some(builder.device(input));
+                break;
+            }
+        }
+        found.unwrap_or_else(|| builder.default_device())?
+    } else {
+        builder.default_device()?
+    };
+    let stream = builder
+        .default_config()?
+        .prefer_sample_rates([
+            SAMPLE_RATE,
+            SAMPLE_RATE.saturating_mul(rodio::nz!(2)),
+            SAMPLE_RATE.saturating_mul(rodio::nz!(3)),
+            SAMPLE_RATE.saturating_mul(rodio::nz!(4)),
+        ])
+        .prefer_channel_counts([rodio::nz!(1), rodio::nz!(2), rodio::nz!(3), rodio::nz!(4)])
+        .prefer_buffer_sizes(512..)
+        .open_stream()?;
+    log::info!("Opened microphone: {:?}", stream.config());
+    Ok(stream)
+}
+
+pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<rodio::MixerDeviceSink> {
+    let output_handle = if let Some(id) = device_id {
+        if let Some(device) = default_host().device_by_id(&id) {
+            DeviceSinkBuilder::from_device(device)?.open_stream()
+        } else {
+            DeviceSinkBuilder::open_default_sink()
+        }
+    } else {
+        DeviceSinkBuilder::open_default_sink()
+    };
+    let mut output_handle = output_handle.context("Could not open output stream")?;
+    output_handle.log_on_drop(false);
+    log::info!("Output stream: {:?}", output_handle);
+    Ok(output_handle)
 }
