@@ -1386,9 +1386,6 @@ impl BufferSearchBar {
                 }
                 cx.notify();
             }
-            SearchEvent::DismissSearch => {
-                self.dismiss(&Dismiss, window, cx);
-            }
         }
     }
 

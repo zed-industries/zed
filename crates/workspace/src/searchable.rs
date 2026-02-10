@@ -36,7 +36,6 @@ pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
     ResultsCollapsedChanged(CollapseDirection),
-    DismissSearch,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
