@@ -490,13 +490,13 @@
     //
     // Select specific output audio device.
     // `null` means use system default.
-    // Any unrecognized output device will fallback to system default by default.
+    // Any unrecognized output device will fall back to system default.
     "experimental.output_audio_device": null,
     // Requires 'rodio_audio: true'
     //
     // Select specific input audio device.
     // `null` means use system default.
-    // Any unrecognized input device will fallback to system default by default.
+    // Any unrecognized input device will fall back to system default.
     "experimental.input_audio_device": null,
   },
   // Scrollbar related settings

@@ -8,10 +8,10 @@ use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 mod non_windows_and_freebsd_deps {
+    pub(super) use cpal::Sample;
     pub(super) use gpui::AsyncApp;
     pub(super) use libwebrtc::native::apm;
     pub(super) use parking_lot::Mutex;
-    pub(super) use rodio::cpal::Sample;
     pub(super) use rodio::source::LimitSettings;
     pub(super) use std::sync::Arc;
 }
@@ -377,7 +377,7 @@ pub fn open_input_stream(
     Ok(stream)
 }
 
-pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<rodio::MixerDeviceSink> {
+pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<MixerDeviceSink> {
     let output_handle = if let Some(id) = device_id {
         if let Some(device) = default_host().device_by_id(&id) {
             DeviceSinkBuilder::from_device(device)?.open_stream()
