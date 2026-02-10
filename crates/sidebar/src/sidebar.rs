@@ -17,12 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{Divider, ListItem, Tab, ThreadItem, Tooltip, prelude::*};
+use ui::{Divider, KeyBinding, ListItem, Tab, ThreadItem, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
+    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -982,6 +982,13 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
+        let is_focused = self.focus_handle(cx).is_focused(window);
+
+        let focus_tooltip_label = if is_focused {
+            "Focus Workspace"
+        } else {
+            "Focus Sidebar"
+        };
 
         v_flex()
             .id("workspace-sidebar")
@@ -1006,16 +1013,44 @@ impl Render for Sidebar {
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
+                    .child({
+                        let focus_handle = cx.focus_handle();
                         IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
                             .icon_size(IconSize::Small)
-                            .tooltip(|_window, cx| {
-                                Tooltip::for_action("Close Sidebar", &ToggleWorkspaceSidebar, cx)
-                            })
+                            .tooltip(Tooltip::element(move |_, cx| {
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .justify_between()
+                                            .child(Label::new("Close Sidebar"))
+                                            .child(KeyBinding::for_action_in(
+                                                &ToggleWorkspaceSidebar,
+                                                &focus_handle,
+                                                cx,
+                                            )),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .pt_1()
+                                            .gap_2()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .justify_between()
+                                            .child(Label::new(focus_tooltip_label))
+                                            .child(KeyBinding::for_action_in(
+                                                &FocusWorkspaceSidebar,
+                                                &focus_handle,
+                                                cx,
+                                            )),
+                                    )
+                                    .into_any_element()
+                            }))
                             .on_click(cx.listener(|_this, _, _window, cx| {
                                 cx.emit(SidebarEvent::Close);
-                            })),
-                    )
+                            }))
+                    })
                     .child(
                         IconButton::new("new-workspace", IconName::Plus)
                             .icon_size(IconSize::Small)
