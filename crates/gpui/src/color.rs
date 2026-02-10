@@ -674,6 +674,10 @@ pub enum ColorSpace {
     Srgb = 0,
     /// The Oklab color space.
     Oklab = 1,
+    /// The Display P3 wide gamut color space.
+    DisplayP3 = 2,
+    /// Untagged device color space without color management.
+    Untagged = 3,
 }
 
 impl Display for ColorSpace {
@@ -681,6 +685,8 @@ impl Display for ColorSpace {
         match self {
             ColorSpace::Srgb => write!(f, "sRGB"),
             ColorSpace::Oklab => write!(f, "Oklab"),
+            ColorSpace::DisplayP3 => write!(f, "Display P3"),
+            ColorSpace::Untagged => write!(f, "Untagged"),
         }
     }
 }

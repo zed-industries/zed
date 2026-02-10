@@ -38,9 +38,9 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, ColorSpace,
+    CursorStyle, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor,
+    Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
@@ -624,6 +624,7 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+    pub(crate) color_space: Rc<Cell<ColorSpace>>,
     quit_mode: QuitMode,
     quitting: bool,
     /// Per-App element arena. This isolates element allocations between different
@@ -658,6 +659,7 @@ impl App {
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
+                color_space: Rc::new(Cell::new(ColorSpace::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1159,6 +1161,22 @@ impl App {
     /// Returns the current text rendering mode for the application.
     pub fn text_rendering_mode(&self) -> TextRenderingMode {
         self.text_rendering_mode.get()
+    }
+
+    /// Sets the color space for the application.
+    pub fn set_color_space(&mut self, color_space: ColorSpace) {
+        self.color_space.set(color_space);
+        // Notify all windows to update
+        for window in self.windows.values() {
+            if let Some(window) = window.as_ref() {
+                window.set_color_space(color_space);
+            }
+        }
+    }
+
+    /// Returns the current color space for the application.
+    pub fn color_space(&self) -> ColorSpace {
+        self.color_space.get()
     }
 
     /// Writes data to the platform clipboard.
