@@ -59,6 +59,7 @@ pub struct SearchOptions {
     pub case: bool,
     pub word: bool,
     pub regex: bool,
+    /// Specifies whether the  supports search & replace.
     pub replacement: bool,
     pub selection: bool,
     pub find_in_results: bool,
