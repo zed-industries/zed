@@ -88,6 +88,8 @@ actions!(
         ConvertToRot47,
         /// Toggles comments for selected lines.
         ToggleComments,
+        /// Toggles block comments for selected lines.
+        ToggleBlockComments,
         /// Shows the current location in the file.
         ShowLocation,
         /// Undoes the last change.
@@ -125,6 +127,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
+    Vim::action(editor, cx, Vim::toggle_block_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
 
@@ -463,6 +466,9 @@ impl Vim {
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, forced_motion, window, cx)
             }
+            Some(Operator::ToggleBlockComments) => {
+                self.toggle_block_comments_motion(motion, times, forced_motion, window, cx)
+            }
             Some(Operator::ReplaceWithRegister) => {
                 self.replace_with_register_motion(motion, times, forced_motion, window, cx)
             }
@@ -532,6 +538,9 @@ impl Vim {
                 }
                 Some(Operator::ToggleComments) => {
                     self.toggle_comments_object(object, around, times, window, cx)
+                }
+                Some(Operator::ToggleBlockComments) => {
+                    self.toggle_block_comments_object(object, around, times, window, cx)
                 }
                 Some(Operator::ReplaceWithRegister) => {
                     self.replace_with_register_object(object, around, window, cx)
@@ -968,6 +977,26 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), window, cx);
+                vim.restore_selection_cursors(editor, window, cx, original_positions);
+            });
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, window, cx)
+        }
+    }
+
+    fn toggle_block_comments(
+        &mut self,
+        _: &ToggleBlockComments,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.store_visual_marks(window, cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let original_positions = vim.save_selection_starts(editor, cx);
+                editor.toggle_block_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
         });
