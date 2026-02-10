@@ -382,6 +382,7 @@ pub struct SplittableEditor {
     lhs: Option<LhsEditor>,
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
+    searched_side: Option<SplitSide>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -470,8 +471,10 @@ impl SplittableEditor {
                     _ => cx.emit(event.clone()),
                 },
             ),
-            cx.subscribe(&rhs_editor, |_, _, event: &SearchEvent, cx| {
-                cx.emit(event.clone());
+            cx.subscribe(&rhs_editor, |this, _, event: &SearchEvent, cx| {
+                if this.searched_side.is_none() || this.searched_side == Some(SplitSide::Right) {
+                    cx.emit(event.clone());
+                }
             }),
         ];
 
@@ -504,6 +507,7 @@ impl SplittableEditor {
             lhs: None,
             workspace: workspace.downgrade(),
             split_state,
+            searched_side: None,
             _subscriptions: subscriptions,
         }
     }
@@ -607,13 +611,20 @@ impl SplittableEditor {
             },
         )];
 
+        subscriptions.push(
+            cx.subscribe(&lhs_editor, |this, _, event: &SearchEvent, cx| {
+                if this.searched_side == Some(SplitSide::Left) {
+                    cx.emit(event.clone());
+                }
+            }),
+        );
+
         let lhs_focus_handle = lhs_editor.read(cx).focus_handle(cx);
         subscriptions.push(
             cx.on_focus_in(&lhs_focus_handle, window, |this, _window, cx| {
                 if let Some(lhs) = &mut this.lhs {
                     if !lhs.was_last_focused {
                         lhs.was_last_focused = true;
-                        cx.emit(SearchEvent::DismissSearch);
                         cx.notify();
                     }
                 }
@@ -626,7 +637,6 @@ impl SplittableEditor {
                 if let Some(lhs) = &mut this.lhs {
                     if lhs.was_last_focused {
                         lhs.was_last_focused = false;
-                        cx.emit(SearchEvent::DismissSearch);
                         cx.notify();
                     }
                 }
@@ -1762,6 +1772,34 @@ impl SearchableItem for SplittableEditor {
         self.editor_for_token(token).update(cx, |editor, cx| {
             editor.update_matches(matches, active_match_index, token, window, cx);
         });
+    }
+
+    fn search_bar_visibility_changed(
+        &mut self,
+        visible: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if visible {
+            let side = self.focused_side();
+            self.searched_side = Some(side);
+            match side {
+                SplitSide::Left => {
+                    self.rhs_editor.update(cx, |editor, cx| {
+                        editor.clear_matches(window, cx);
+                    });
+                }
+                SplitSide::Right => {
+                    if let Some(lhs) = &self.lhs {
+                        lhs.editor.update(cx, |editor, cx| {
+                            editor.clear_matches(window, cx);
+                        });
+                    }
+                }
+            }
+        } else {
+            self.searched_side = None;
+        }
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
