@@ -8410,7 +8410,33 @@ pub fn open_paths(
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        let (existing, open_visible) = find_existing_workspace(&abs_paths, &open_options, &SerializedWorkspaceLocation::Local, cx).await;
+        let (mut existing, mut open_visible) = find_existing_workspace(&abs_paths, &open_options, &SerializedWorkspaceLocation::Local, cx).await;
+
+        // Fallback: if no workspace contains the paths and all paths are files,
+        // prefer an existing local workspace window (active window first).
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            let all_metadatas = futures::future::join_all(all_paths)
+                .await
+                .into_iter()
+                .filter_map(|result| result.ok().flatten())
+                .collect::<Vec<_>>();
+
+            if all_metadatas.iter().all(|file| !file.is_dir) {
+                cx.update(|cx| {
+                    let windows = workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx);
+                    let window = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                        .filter(|window| windows.contains(window))
+                        .or_else(|| windows.into_iter().next());
+                    if let Some(window) = window {
+                        existing = Some(window);
+                        open_visible = OpenVisible::None;
+                    }
+                });
+            }
+        }
 
         let result = if let Some(existing) = existing {
             let open_task = existing
