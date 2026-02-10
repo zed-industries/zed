@@ -286,6 +286,17 @@ impl ConnectedServerState {
             self.current = session.clone();
         }
     }
+
+    pub fn close_all_sessions(&self, cx: &mut App) -> Task<()> {
+        let tasks = self
+            .threads
+            .keys()
+            .map(|id| self.connection.close_session(id, cx));
+        let task = futures::future::join_all(tasks);
+        cx.background_spawn(async move {
+            task.await;
+        })
+    }
 }
 
 impl AcpServerView {
@@ -313,6 +324,9 @@ impl AcpServerView {
         ];
 
         cx.on_release(|this, cx| {
+            if let Some(connected) = this.as_connected() {
+                connected.close_all_sessions(cx).detach();
+            }
             for window in this.notifications.drain(..) {
                 window
                     .update(cx, |_, window, _| {
@@ -348,12 +362,21 @@ impl AcpServerView {
         }
     }
 
+    fn set_server_state(&mut self, state: ServerState, cx: &mut Context<Self>) {
+        if let Some(connected) = self.as_connected() {
+            connected.close_all_sessions(cx).detach();
+        }
+
+        self.server_state = state;
+        cx.notify();
+    }
+
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let resume_thread_metadata = self
             .active_thread()
             .and_then(|thread| thread.read(cx).resume_thread_metadata.clone());
 
-        self.server_state = Self::initial_state(
+        let state = Self::initial_state(
             self.agent.clone(),
             resume_thread_metadata,
             self.project.clone(),
@@ -361,6 +384,7 @@ impl AcpServerView {
             window,
             cx,
         );
+        self.set_server_state(state, cx);
 
         if let Some(connected) = self.as_connected() {
             connected.current.update(cx, |this, cx| {
@@ -521,17 +545,18 @@ impl AcpServerView {
                                 .focus(window, cx);
                         }
 
-                        this.server_state = ServerState::Connected(ConnectedServerState {
-                            connection,
-                            auth_state: AuthState::Ok,
-                            current: current.clone(),
-                            threads: HashMap::from_iter([(
-                                current.read(cx).thread.read(cx).session_id().clone(),
-                                current,
-                            )]),
-                        });
-
-                        cx.notify();
+                        this.set_server_state(
+                            ServerState::Connected(ConnectedServerState {
+                                connection,
+                                auth_state: AuthState::Ok,
+                                current: current.clone(),
+                                threads: HashMap::from_iter([(
+                                    current.read(cx).thread.read(cx).session_id().clone(),
+                                    current,
+                                )]),
+                            }),
+                            cx,
+                        );
                     }
                     Err(err) => {
                         this.handle_load_error(err, window, cx);
@@ -879,8 +904,7 @@ impl AcpServerView {
             LoadError::Other(format!("{:#}", err).into())
         };
         self.emit_load_error_telemetry(&load_error);
-        self.server_state = ServerState::LoadError(load_error);
-        cx.notify();
+        self.set_server_state(ServerState::LoadError(load_error), cx);
     }
 
     fn handle_agent_servers_updated(
@@ -1135,7 +1159,7 @@ impl AcpServerView {
                     }
                     _ => {}
                 }
-                self.server_state = ServerState::LoadError(error.clone());
+                self.set_server_state(ServerState::LoadError(error.clone()), cx);
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
