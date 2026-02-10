@@ -57,27 +57,28 @@ function Configure-Sccache {
     $keyPrefix = if ($env:SCCACHE_KEY_PREFIX) { $env:SCCACHE_KEY_PREFIX } else { "sccache/" }
     $baseDir = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Get-Location).Path }
 
+    # Set in current process
+    $env:SCCACHE_ENDPOINT = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
+    $env:SCCACHE_BUCKET = $bucket
+    $env:SCCACHE_REGION = "auto"
+    $env:SCCACHE_S3_KEY_PREFIX = $keyPrefix
+    $env:SCCACHE_BASEDIR = $baseDir
+    $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+    $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+    $env:RUSTC_WRAPPER = "sccache"
+
+    # Also write to GITHUB_ENV for subsequent steps
     if ($env:GITHUB_ENV) {
         @(
-            "SCCACHE_ENDPOINT=https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
-            "SCCACHE_BUCKET=$bucket"
-            "SCCACHE_REGION=auto"
-            "SCCACHE_S3_KEY_PREFIX=$keyPrefix"
-            "SCCACHE_BASEDIR=$baseDir"
-            "AWS_ACCESS_KEY_ID=$($env:R2_ACCESS_KEY_ID)"
-            "AWS_SECRET_ACCESS_KEY=$($env:R2_SECRET_ACCESS_KEY)"
-            "RUSTC_WRAPPER=sccache"
+            "SCCACHE_ENDPOINT=$($env:SCCACHE_ENDPOINT)"
+            "SCCACHE_BUCKET=$($env:SCCACHE_BUCKET)"
+            "SCCACHE_REGION=$($env:SCCACHE_REGION)"
+            "SCCACHE_S3_KEY_PREFIX=$($env:SCCACHE_S3_KEY_PREFIX)"
+            "SCCACHE_BASEDIR=$($env:SCCACHE_BASEDIR)"
+            "AWS_ACCESS_KEY_ID=$($env:AWS_ACCESS_KEY_ID)"
+            "AWS_SECRET_ACCESS_KEY=$($env:AWS_SECRET_ACCESS_KEY)"
+            "RUSTC_WRAPPER=$($env:RUSTC_WRAPPER)"
         ) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-    }
-    else {
-        $env:SCCACHE_ENDPOINT = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
-        $env:SCCACHE_BUCKET = $bucket
-        $env:SCCACHE_REGION = "auto"
-        $env:SCCACHE_S3_KEY_PREFIX = $keyPrefix
-        $env:SCCACHE_BASEDIR = $baseDir
-        $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
-        $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
-        $env:RUSTC_WRAPPER = "sccache"
     }
 
     Write-Host "✓ sccache configured with Cloudflare R2 (bucket: $bucket)"
@@ -91,6 +92,7 @@ function Show-Config {
     Write-Host "SCCACHE_ENDPOINT: $($env:SCCACHE_ENDPOINT ?? '<not set>')"
     Write-Host "SCCACHE_REGION: $($env:SCCACHE_REGION ?? '<not set>')"
     Write-Host "SCCACHE_S3_KEY_PREFIX: $($env:SCCACHE_S3_KEY_PREFIX ?? '<not set>')"
+    Write-Host "SCCACHE_BASEDIR: $($env:SCCACHE_BASEDIR ?? '<not set>')"
 
     if ($env:AWS_ACCESS_KEY_ID) {
         Write-Host "AWS_ACCESS_KEY_ID: <set>"
