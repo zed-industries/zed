@@ -39,9 +39,7 @@ impl AgentTool for RestoreFileFromDiskTool {
     type Input = RestoreFileFromDiskToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "restore_file_from_disk"
-    }
+    const NAME: &'static str = "restore_file_from_disk";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other

@@ -39,7 +39,7 @@ jobs:
       matrix:
         repo: ${{ fromJson(needs.fetch_extension_repos.outputs.repos) }}
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 10
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -75,7 +75,6 @@ jobs:
         fi
         echo "Found previous rollout at commit: $PREV_COMMIT"
         echo "prev_commit=$PREV_COMMIT" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - id: calc-changes
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_removed_files
@@ -101,7 +100,6 @@ jobs:
 
         echo "Files to remove: $REMOVED_FILES"
         echo "removed_files=$REMOVED_FILES" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - name: extension_workflow_rollout::rollout_workflows_to_extension::sync_workflow_files
       run: |
@@ -125,23 +123,21 @@ jobs:
         else
             cp zed/extensions/workflows/shared/*.yml extension/.github/workflows/
         fi
-      shell: bash -euxo pipefail {0}
     - id: short-sha
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_short_sha
       run: |
         echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
       working-directory: zed
     - id: create-pr
       name: extension_workflow_rollout::rollout_workflows_to_extension::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
         path: extension
-        title: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
           based on the commit zed-industries/zed@${{ github.sha }}
-        commit-message: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        commit-message: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-workflows
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
@@ -156,7 +152,6 @@ jobs:
             cd extension
             gh pr merge "$PR_NUMBER" --auto --squash
         fi
-      shell: bash -euxo pipefail {0}
       env:
         GH_TOKEN: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 10
@@ -182,7 +177,6 @@ jobs:
       run: |
         git config user.name "zed-zippy[bot]"
         git config user.email "234243425+zed-zippy[bot]@users.noreply.github.com"
-      shell: bash -euxo pipefail {0}
     - name: extension_workflow_rollout::create_rollout_tag::update_rollout_tag
       run: |
         if git rev-parse "extension-workflows" >/dev/null 2>&1; then
@@ -193,5 +187,7 @@ jobs:
         echo "Creating new tag 'extension-workflows' at $(git rev-parse --short HEAD)"
         git tag "extension-workflows"
         git push origin "extension-workflows"
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 1
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

@@ -53,6 +53,7 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
     /// Time to wait in milliseconds before showing the informational hover box.
+    /// This delay also applies to auto signature help when `auto_signature_help` is enabled.
     ///
     /// Default: 300
     pub hover_popover_delay: Option<DelayMs>,
@@ -220,6 +221,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// How to display diffs in the editor.
+    ///
+    /// Default: stacked
+    pub diff_view_style: Option<DiffViewStyle>,
 }
 
 #[derive(
@@ -776,6 +782,34 @@ pub enum SnippetSortOrder {
     Bottom,
     /// Do not show snippets in the completion list
     None,
+}
+
+/// How to display diffs in the editor.
+///
+/// Default: stacked
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::Display,
+    strum::EnumIter,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffViewStyle {
+    /// Show diffs in a single stacked view.
+    #[default]
+    Stacked,
+    /// Show diffs in a side-by-side split view.
+    SideBySide,
 }
 
 /// Default options for buffer and project search items.

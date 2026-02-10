@@ -23,14 +23,12 @@ jobs:
         clean: false
     - name: autofix_pr::run_autofix::checkout_pr
       run: gh pr checkout ${{ inputs.pr_number }}
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -38,13 +36,10 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -58,21 +53,16 @@ jobs:
     - name: autofix_pr::run_autofix::run_cargo_fix
       if: ${{ inputs.run_clippy }}
       run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_cargo_machete_fix
       if: ${{ inputs.run_clippy }}
       run: cargo machete --fix
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}
       run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_prettier_fix
       run: ./script/prettier --write
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::run_autofix::run_cargo_fmt
       run: cargo fmt --all
-      shell: bash -euxo pipefail {0}
     - id: create-patch
       name: autofix_pr::run_autofix::create_patch
       run: |
@@ -83,7 +73,6 @@ jobs:
             git diff > autofix.patch
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
         fi
-      shell: bash -euxo pipefail {0}
     - name: upload artifact autofix-patch
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -95,7 +84,6 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     outputs:
       has_changes: ${{ steps.create-patch.outputs.has_changes }}
   commit_changes:
@@ -117,7 +105,6 @@ jobs:
         token: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::commit_changes::checkout_pr
       run: gh pr checkout ${{ inputs.pr_number }}
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::download_patch_artifact
@@ -126,12 +113,10 @@ jobs:
         name: autofix-patch
     - name: autofix_pr::commit_changes::apply_patch
       run: git apply autofix.patch
-      shell: bash -euxo pipefail {0}
     - name: autofix_pr::commit_changes::commit_and_push
       run: |
         git commit -am "Autofix"
         git push
-      shell: bash -euxo pipefail {0}
       env:
         GIT_COMMITTER_NAME: Zed Zippy
         GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
@@ -141,3 +126,6 @@ jobs:
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.pr_number }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

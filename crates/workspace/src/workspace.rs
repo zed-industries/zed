@@ -116,9 +116,11 @@ use std::{
     },
     time::Duration,
 };
-use task::{DebugScenario, SpawnInTerminal, TaskContext};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
-pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{
+    PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+};
 pub use ui;
 use ui::{Window, prelude::*};
 use util::{
@@ -178,7 +180,7 @@ pub trait DebuggerProvider {
     fn start_session(
         &self,
         definition: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
@@ -381,6 +383,17 @@ pub struct CloseAllItemsAndPanes {
 pub struct CloseInactiveTabsAndPanes {
     #[serde(default)]
     pub save_intent: Option<SaveIntent>,
+}
+
+/// Closes the active item across all panes.
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct CloseItemInAllPanes {
+    #[serde(default)]
+    pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
 }
 
 /// Sends a sequence of keystrokes to the active element.
@@ -1147,6 +1160,7 @@ type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        Option<String>,
         &mut Window,
         &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
@@ -1305,12 +1319,18 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
 
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(..) => {
+                &project::Event::WorktreeRemoved(id) | &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    this.update_history(cx);
+                    if this
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(id, cx)
+                        .is_some_and(|wt| wt.read(cx).is_visible())
+                    {
+                        this.serialize_workspace(window, cx);
+                        this.update_history(cx);
+                    }
                 }
-
                 project::Event::WorktreeUpdatedEntries(..) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
@@ -2392,7 +2412,7 @@ impl Workspace {
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let rx = prompt(self, lister, suggested_name, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
@@ -2420,7 +2440,7 @@ impl Workspace {
                         workspace.show_portal_error(err.to_string(), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(workspace, lister, window, cx);
+                        let rx = prompt(workspace, lister, suggested_name, window, cx);
                         workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
@@ -3275,6 +3295,61 @@ impl Workspace {
             cx,
         ) {
             task.detach_and_log_err(cx)
+        }
+    }
+
+    /// Closes the active item across all panes.
+    pub fn close_item_in_all_panes(
+        &mut self,
+        action: &CloseItemInAllPanes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_item) = self.active_pane().read(cx).active_item() else {
+            return;
+        };
+
+        let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
+        let close_pinned = action.close_pinned;
+
+        if let Some(project_path) = active_item.project_path(cx) {
+            self.close_items_with_project_path(
+                &project_path,
+                save_intent,
+                close_pinned,
+                window,
+                cx,
+            );
+        } else if close_pinned || !self.active_pane().read(cx).is_active_item_pinned() {
+            let item_id = active_item.item_id();
+            self.active_pane().update(cx, |pane, cx| {
+                pane.close_item_by_id(item_id, save_intent, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        }
+    }
+
+    /// Closes all items with the given project path across all panes.
+    pub fn close_items_with_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        save_intent: SaveIntent,
+        close_pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panes = self.panes().to_vec();
+        for pane in panes {
+            pane.update(cx, |pane, cx| {
+                pane.close_items_for_project_path(
+                    project_path,
+                    save_intent,
+                    close_pinned,
+                    window,
+                    cx,
+                )
+                .detach_and_log_err(cx);
+            });
         }
     }
 
@@ -6155,6 +6230,7 @@ impl Workspace {
             ))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
+            .on_action(cx.listener(Self::close_item_in_all_panes))
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
@@ -10270,143 +10346,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_zoomed_dock_persists_across_window_activation(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify the dock is open and zoomed with focus in the panel
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be open"
-            );
-            assert!(panel.is_zoomed(window, cx), "Panel should be zoomed");
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should track the zoomed panel"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "Workspace should track the zoomed dock position"
-            );
-            assert!(
-                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
-                "Panel should be focused"
-            );
-        });
-
-        // Deactivate the window (simulates cmd-tab away from Zed)
-        cx.deactivate_window();
-
-        // Verify the dock is still open while window is deactivated
-        // (the bug manifests on REactivation, not deactivation)
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should still be open while window is deactivated"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should still be zoomed while window is deactivated"
-            );
-            assert!(
-                workspace.zoomed_position.is_some(),
-                "zoomed_position should still be set while window is deactivated"
-            );
-        });
-
-        // Reactivate the window (simulates cmd-tab back to Zed)
-        // During reactivation, focus is restored to the dock panel
-        cx.update(|window, _cx| {
-            window.activate_window();
-        });
-        cx.run_until_parked();
-
-        // Verify zoomed dock remains open after reactivation
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(
-                workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should remain open after window reactivation"
-            );
-            assert!(
-                panel.is_zoomed(window, cx),
-                "Panel should remain zoomed after window reactivation"
-            );
-            assert!(
-                workspace.zoomed.is_some(),
-                "Workspace should still track the zoomed panel after window reactivation"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_zoomed_dock_dismissed_when_focus_moves_to_center_pane(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.toggle_dock(DockPosition::Bottom, window, cx);
-            panel
-        });
-
-        // Activate and zoom the panel
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::Activate));
-        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-
-        // Verify setup
-        workspace.update_in(cx, |workspace, window, cx| {
-            assert!(workspace.bottom_dock().read(cx).is_open());
-            assert!(panel.is_zoomed(window, cx));
-            assert!(workspace.zoomed_position.is_some());
-        });
-
-        // Explicitly focus the center pane (simulates user clicking in the editor)
-        workspace.update_in(cx, |workspace, window, cx| {
-            window.focus(&workspace.active_pane().focus_handle(cx), cx);
-        });
-        cx.run_until_parked();
-
-        // When user explicitly focuses the center pane, the zoomed dock SHOULD be dismissed
-        workspace.update_in(cx, |workspace, _window, cx| {
-            assert!(
-                !workspace.bottom_dock().read(cx).is_open(),
-                "Bottom dock should be closed when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed.is_none(),
-                "Workspace should not track zoomed panel when focus explicitly moves to center pane"
-            );
-            assert!(
-                workspace.zoomed_position.is_none(),
-                "Workspace zoomed_position should be None when focus explicitly moves to center pane"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_toggle_all_docks(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -12066,6 +12005,101 @@ mod tests {
                 workspace.panes
             );
         })
+    }
+
+    #[gpui::test]
+    async fn test_close_item_in_all_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        // Add item to pane A with project path
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx)
+        });
+
+        // Split to create pane B
+        let pane_b = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
+        });
+
+        // Add item with SAME project path to pane B, and pin it
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_b.clone()), true, true, None, window, cx);
+            pane.set_pinned_count(1);
+        });
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 1);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 1);
+
+        // close_pinned: false should only close the unpinned copy
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(
+                &CloseItemInAllPanes {
+                    save_intent: Some(SaveIntent::Close),
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+
+        let item_count_a = pane_a.read_with(cx, |pane, _| pane.items_len());
+        let item_count_b = pane_b.read_with(cx, |pane, _| pane.items_len());
+        assert_eq!(item_count_a, 0, "Unpinned item in pane A should be closed");
+        assert_eq!(item_count_b, 1, "Pinned item in pane B should remain");
+
+        // Split again, seeing as closing the previous item also closed its
+        // pane, so only pane remains, which does not allow us to properly test
+        // that both items close when `close_pinned: true`.
+        let pane_c = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_b.clone(), SplitDirection::Right, window, cx)
+        });
+
+        // Add an item with the same project path to pane C so that
+        // close_item_in_all_panes can determine what to close across all panes
+        // (it reads the active item from the active pane, and split_pane
+        // creates an empty pane).
+        let item_c = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+        pane_c.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item_c.clone()), true, true, None, window, cx);
+        });
+
+        // close_pinned: true should close the pinned copy too
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panes_count = workspace.panes().len();
+            assert_eq!(panes_count, 2, "Workspace should have two panes (B and C)");
+
+            workspace.close_item_in_all_panes(
+                &CloseItemInAllPanes {
+                    save_intent: Some(SaveIntent::Close),
+                    close_pinned: true,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+
+        let item_count_b = pane_b.read_with(cx, |pane, _| pane.items_len());
+        let item_count_c = pane_c.read_with(cx, |pane, _| pane.items_len());
+        assert_eq!(item_count_b, 0, "Pinned item in pane B should be closed");
+        assert_eq!(item_count_c, 0, "Unpinned item in pane C should be closed");
     }
 
     mod register_project_item_tests {

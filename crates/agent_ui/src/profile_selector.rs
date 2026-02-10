@@ -192,7 +192,7 @@ impl Render for ProfileSelector {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
                         .gap_1()
-                        .child(container().child(Label::new("Toggle Profile Menu")).child(
+                        .child(container().child(Label::new("Change Profile")).child(
                             KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
                         ))
                         .child(
@@ -237,7 +237,7 @@ enum ProfilePickerEntry {
     Profile(ProfileMatchEntry),
 }
 
-pub(crate) struct ProfilePickerDelegate {
+pub struct ProfilePickerDelegate {
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     foreground: ForegroundExecutor,

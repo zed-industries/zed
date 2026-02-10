@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -10,7 +11,7 @@ use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
 use crate::kernels::{
-    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -47,9 +48,12 @@ impl ReplStore {
     }
 
     pub fn new(fs: Arc<dyn Fs>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.set_enabled(JupyterSettings::enabled(cx), cx);
-        })];
+        let subscriptions = vec![
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                this.set_enabled(JupyterSettings::enabled(cx), cx);
+            }),
+            cx.on_app_quit(Self::shutdown_all_sessions),
+        ];
 
         let this = Self {
             fs,
@@ -279,6 +283,23 @@ impl ReplStore {
 
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
+    }
+
+    fn shutdown_all_sessions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        for session in self.sessions.values() {
+            session.update(cx, |session, _cx| {
+                if let Kernel::RunningKernel(mut kernel) =
+                    std::mem::replace(&mut session.kernel, Kernel::Shutdown)
+                {
+                    kernel.kill();
+                }
+            });
+        }
+        self.sessions.clear();
+        futures::future::ready(())
     }
 
     #[cfg(test)]

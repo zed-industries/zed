@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::patterns::migrate_language_setting;
+use crate::migrations::migrate_language_setting;
 
 pub fn make_auto_indent_an_enum(value: &mut Value) -> Result<()> {
     migrate_language_setting(value, migrate_auto_indent)

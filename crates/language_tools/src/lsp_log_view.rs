@@ -1349,6 +1349,7 @@ impl ServerInfo {
                 binary: Some(server.binary().clone()),
                 configuration: Some(server.configuration().clone()),
                 workspace_folders: server.workspace_folders(),
+                process_id: server.process_id(),
             },
         }
     }

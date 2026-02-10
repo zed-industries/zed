@@ -1,21 +1,26 @@
 use gh_workflow::*;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
-    run_tests::{orchestrate, tests_pass},
+    extension_bump::compare_versions,
+    run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
     vars::{PathCondition, StepOutput, one_workflow_per_non_main_branch},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "7cfce605704d41ca247e3f84804bf323f6c6caaf";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
+
+// This should follow the set target in crates/extension/src/extension_builder.rs
+const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
     let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
 
-    let orchestrate = orchestrate(&[&should_check_rust, &should_check_extension]);
+    let orchestrate =
+        orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);
 
     let jobs = [
         orchestrate,
@@ -33,10 +38,7 @@ pub(crate) fn extension_tests() -> Workflow {
         .add_env(("CARGO_INCREMENTAL", 0))
         .add_env(("ZED_EXTENSION_CLI_SHA", ZED_EXTENSION_CLI_SHA))
         .add_env(("RUSTUP_TOOLCHAIN", "stable"))
-        .add_env((
-            "CARGO_BUILD_TARGET",
-            extension::extension_builder::RUST_TARGET,
-        ))
+        .add_env(("CARGO_BUILD_TARGET", EXTENSION_RUST_TARGET))
         .map(|workflow| {
             jobs.into_iter()
                 .chain([tests_pass])
@@ -47,20 +49,17 @@ pub(crate) fn extension_tests() -> Workflow {
 }
 
 fn install_rust_target() -> Step<Run> {
-    named::bash(format!(
-        "rustup target add {rust_target}",
-        rust_target = extension::extension_builder::RUST_TARGET
-    ))
+    named::bash(format!("rustup target add {EXTENSION_RUST_TARGET}",))
 }
 
 fn run_clippy() -> Step<Run> {
-    named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
+    named::bash("cargo clippy --release --all-features -- --deny warnings")
 }
 
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
@@ -80,6 +79,8 @@ fn check_rust() -> NamedJob {
 
 pub(crate) fn check_extension() -> NamedJob {
     let (cache_download, cache_hit) = cache_zed_extension_cli();
+    let (check_version_job, version_changed, _) = compare_versions();
+
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
@@ -87,7 +88,9 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(steps::checkout_repo())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
-        .add_step(check());
+        .add_step(check())
+        .add_step(check_version_job)
+        .add_step(verify_version_did_not_change(version_changed));
 
     named::job(job)
 }
@@ -125,6 +128,17 @@ pub fn check() -> Step<Run> {
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+        "#
+    })
+}
+
+fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
+    named::bash(formatdoc! {r#"
+        if [[ {version_changed} == "true" && "${{{{ github.event_name }}}}" == "pull_request" && "${{{{ github.event.pull_request.user.login }}}}" != "zed-zippy[bot]" ]] ; then
+            echo "Version change detected in your change!"
+            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
+            exit 42
+        fi
         "#
     })
 }

@@ -57,6 +57,8 @@ world extension {
     import download-file: func(url: string, file-path: string, file-type: downloaded-file-type) -> result<_, string>;
 
     /// Makes the file at the given path executable.
+    ///
+    /// This is a no-op on Windows.
     import make-file-executable: func(filepath: string) -> result<_, string>;
 
     /// Updates the installation status for the given language server.
