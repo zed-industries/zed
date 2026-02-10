@@ -310,14 +310,8 @@ async fn test_echo(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
-        assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
-            indoc! {"
-                ## Assistant
-
-                Hello
-            "}
-        )
+        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
+        assert_eq!(thread.last_message().unwrap().to_markdown(), "Hello\n")
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
@@ -469,11 +463,10 @@ async fn test_thinking(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
+        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
         assert_eq!(
             thread.last_message().unwrap().to_markdown(),
             indoc! {"
-                ## Assistant
-
                 <think>Think</think>
                 Hello
             "}

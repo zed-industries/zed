@@ -2580,7 +2580,7 @@ impl Thread {
         }
 
         if let Some(message) = self.pending_message.as_ref() {
-            markdown.push('\n');
+            markdown.push_str("\n## Assistant\n\n");
             markdown.push_str(&message.to_markdown());
         }
 
