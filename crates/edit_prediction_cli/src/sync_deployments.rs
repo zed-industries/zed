@@ -12,7 +12,7 @@ use crate::pull_examples::{
 
 const DEFAULT_BASETEN_MODEL_NAME: &str = "zeta-2";
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
-const EDIT_PREDICTION_DEPLOYMENT_EVENT: &str = "Edit Prediction Deployment";
+pub(crate) const EDIT_PREDICTION_DEPLOYMENT_EVENT: &str = "Edit Prediction Deployment";
 
 #[derive(Debug, Clone, Deserialize)]
 struct BasetenModelsResponse {
