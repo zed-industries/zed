@@ -26,7 +26,7 @@ You can use Zed's Settings UI to configure tool permissions, or add rules direct
 }
 ```
 
-This example auto-approves `cargo` and `npm` commands in the terminal tool, while requiring manual confirmation on a case-by-case basis for `sudo` commands. Non-terminal commands are allowed by default, because of `"default": "allow"` under `"tool_permissions"`.
+This example auto-approves `cargo` and `npm` commands in the terminal tool, while requiring manual confirmation on a case-by-case basis for `sudo` commands. Non-terminal commands follow the global `"default": "allow"` setting, but tool-specific defaults and `always_confirm` rules can still prompt.
 
 ## How It Works
 
@@ -46,6 +46,7 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 | `move_path`        | Source and destination paths |
 | `copy_path`        | Source and destination paths |
 | `create_directory` | The directory path           |
+| `restore_file_from_disk` | The file paths         |
 | `save_file`        | The file paths               |
 | `fetch`            | The URL                      |
 | `web_search`       | The search query             |
@@ -237,7 +238,7 @@ To auto-approve all tool actions:
 }
 ```
 
-This bypasses confirmation prompts but `always_deny` patterns and built-in security rules still apply.
+This bypasses confirmation prompts for most actions, but `always_deny`, `always_confirm`, built-in security rules, and paths inside Zed settings directories still prompt or block.
 
 ## Shell Compatibility
 
@@ -264,13 +265,14 @@ Zed includes a small set of hardcoded security rules that **cannot be overridden
 
 These patterns catch any flag combination (e.g., `-fr`, `-rfv`, `-r -f`, `--recursive --force`) and are case-insensitive. They are checked against both the raw command and each parsed sub-command in chained commands (e.g., `ls && rm -rf /`).
 
-There are no other built-in rules. The default settings file ({#action zed::OpenDefaultSettings}) includes commented-out examples for protecting `.env` files, secrets directories, private keys, and `.git` directories — you can uncomment or adapt these to suit your needs.
+There are no other built-in rules. The default settings file ({#action zed::OpenDefaultSettings}) includes commented-out examples for protecting `.env` files, secrets directories, and private keys — you can uncomment or adapt these to suit your needs.
 
 ## UI Options
 
 When the agent requests permission, the dialog includes:
 
 - **Allow once** / **Deny once** — One-time decision
-- **Always allow** / **Always deny** — Adds a pattern to your settings
+- **Always for <tool>** — Sets a tool-level default to allow or deny
+- **Always for <pattern>** — Adds an `always_allow` or `always_deny` pattern (when a safe pattern can be extracted)
 
-Selecting "Always allow" or "Always deny" updates your `settings.json` with a pattern for that input.
+Selecting "Always for <tool>" sets `tools.<tool>.default` to allow or deny. When a pattern can be safely extracted, selecting "Always for <pattern>" adds an `always_allow` or `always_deny` rule for that input. MCP tools only support the tool-level option.

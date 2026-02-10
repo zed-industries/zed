@@ -2,7 +2,7 @@
 
 Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
 
-You can configure permissions for what tools are allowed to do, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for details.
+You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
 
 ## Read & Search Tools
 
