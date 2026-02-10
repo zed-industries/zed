@@ -4,7 +4,6 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
@@ -15,10 +14,9 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
-use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{RemoteSettings, open_remote_project};
+use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
@@ -340,21 +338,9 @@ pub async fn open_paths_with_positions(
     WindowHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
-    let mut caret_positions = HashMap::default();
-
     let paths = path_positions
         .iter()
-        .map(|path_with_position| {
-            let path = path_with_position.path.clone();
-            if let Some(row) = path_with_position.row
-                && path.is_file()
-            {
-                let row = row.saturating_sub(1);
-                let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
-                caret_positions.insert(path.clone(), Point::new(row, col));
-            }
-            path
-        })
+        .map(|path_with_position| path_with_position.path.clone())
         .collect::<Vec<_>>();
 
     let (workspace, mut items) = cx
@@ -386,24 +372,14 @@ pub async fn open_paths_with_positions(
     for (item, path) in items.iter_mut().zip(&paths) {
         if let Some(Err(error)) = item {
             *error = anyhow!("error opening {path:?}: {error}");
-            continue;
-        }
-        let Some(Ok(item)) = item else {
-            continue;
-        };
-        let Some(point) = caret_positions.remove(path) else {
-            continue;
-        };
-        if let Some(active_editor) = item.downcast::<Editor>() {
-            workspace
-                .update(cx, |_, window, cx| {
-                    active_editor.update(cx, |editor, cx| {
-                        editor.go_to_singleton_buffer_point(point, window, cx);
-                    });
-                })
-                .log_err();
         }
     }
+
+    let items_for_navigation = items
+        .iter()
+        .map(|item| item.as_ref().and_then(|r| r.as_ref().ok()).cloned())
+        .collect::<Vec<_>>();
+    navigate_to_positions(&workspace, items_for_navigation, path_positions, cx);
 
     Ok((workspace, items))
 }
