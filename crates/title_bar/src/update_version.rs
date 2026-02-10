@@ -17,7 +17,7 @@ impl UpdateVersion {
         if let Some(auto_updater) = AutoUpdater::get(cx) {
             cx.observe(&auto_updater, |this, auto_update, cx| {
                 this.status = auto_update.read(cx).status();
-                this.update_check_type = dbg!(auto_update.read(cx).update_check_type());
+                this.update_check_type = auto_update.read(cx).update_check_type();
                 if this.status.is_updated() {
                     this.dismissed = false;
                 }
@@ -56,7 +56,7 @@ impl UpdateVersion {
         };
 
         self.status = next_state;
-        self.update_check_type = dbg!(UpdateCheckType::Manual);
+        self.update_check_type = UpdateCheckType::Manual;
         self.dismissed = false;
         cx.notify()
     }
