@@ -514,13 +514,14 @@ dependencies = [
 [[package]]
 name = "alacritty_terminal"
 version = "0.25.1"
-source = "git+https://github.com/zed-industries/alacritty?rev=936aee8761a17affc84ab418ae21306c27c26221#936aee8761a17affc84ab418ae21306c27c26221"
+source = "git+https://github.com/zed-industries/alacritty?rev=9d9640d4#9d9640d4e56d67a09d049f9c0a300aae08d4f61e"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.10.0",
  "home",
  "libc",
  "log",
+ "mach2 0.5.0",
  "miow",
  "parking_lot",
  "piper",
