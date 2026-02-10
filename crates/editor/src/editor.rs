@@ -16046,9 +16046,7 @@ impl Editor {
                 let start_point = selection.start;
                 let mut end_point = selection.end;
 
-                // When the selection ends at column 0 of a subsequent line
-                // (e.g. visual line mode), move end back to the end of the
-                // previous line so `*/` doesn't land on the next line.
+                // Visual line mode: move end back to end of previous line
                 if end_point.column == 0 && end_point.row > start_point.row {
                     end_point.row -= 1;
                     end_point.column = snapshot.line_len(MultiBufferRow(end_point.row));
@@ -16062,257 +16060,159 @@ impl Editor {
                     continue;
                 };
 
-                if let Some(BlockCommentConfig {
-                    start: full_comment_prefix,
-                    end: full_comment_suffix,
+                let Some(BlockCommentConfig {
+                    start: comment_start,
+                    end: comment_end,
                     ..
                 }) = language.block_comment()
+                else {
+                    continue;
+                };
+
+                let prefix_needle = comment_start.trim_end().as_bytes();
+                let suffix_needle = comment_end.trim_start().as_bytes();
+
+                // Collect full lines spanning the selection as the search region
+                let region_start = Point::new(start_point.row, 0);
+                let region_end = Point::new(
+                    end_point.row,
+                    snapshot.line_len(MultiBufferRow(end_point.row)),
+                );
+                let region_bytes: Vec<u8> = snapshot
+                    .bytes_in_range(region_start..region_end)
+                    .flatten()
+                    .copied()
+                    .collect();
+
+                let to_byte = |target: Point| -> usize {
+                    let mut point = region_start;
+                    for (i, &b) in region_bytes.iter().enumerate() {
+                        if point == target {
+                            return i;
+                        }
+                        if b == b'\n' {
+                            point.row += 1;
+                            point.column = 0;
+                        } else {
+                            point.column += 1;
+                        }
+                    }
+                    region_bytes.len()
+                };
+
+                let to_point = |offset: usize| -> Point {
+                    let mut point = region_start;
+                    for &b in &region_bytes[..offset] {
+                        if b == b'\n' {
+                            point.row += 1;
+                            point.column = 0;
+                        } else {
+                            point.column += 1;
+                        }
+                    }
+                    point
+                };
+
+                let start_byte = to_byte(start_point);
+                let end_byte = to_byte(end_point);
+
+                let mut is_commented = false;
+                let mut prefix_range = start_point..start_point;
+                let mut suffix_range = end_point..end_point;
+
+                // Find rightmost /* at or before the selection end
+                if let Some(prefix_pos) = region_bytes[..end_byte.min(region_bytes.len())]
+                    .windows(prefix_needle.len())
+                    .rposition(|w| w == prefix_needle)
                 {
-                    // Check if the selection is wrapped in a block comment
-                    let mut is_commented = false;
-                    let mut prefix_range = start_point..start_point;
-                    let mut suffix_range = end_point..end_point;
+                    let after_prefix = prefix_pos + prefix_needle.len();
 
-                    // Helper to match bytes at a specific point
-                    let match_at = |point: Point, needle: &str| -> bool {
-                        snapshot
-                            .bytes_in_range(point..snapshot.max_point())
-                            .flatten()
-                            .copied()
-                            .take(needle.len())
-                            .eq(needle.bytes())
-                    };
-
-                    // Helper to match bytes ending at a specific point
-                    let match_ending_at = |point: Point, needle: &str| -> bool {
-                        if point.column < needle.len() as u32 {
-                            return false;
-                        }
-                        let start_search =
-                            Point::new(point.row, point.column - needle.len() as u32);
-                        snapshot
-                            .bytes_in_range(start_search..point)
-                            .flatten()
-                            .copied()
-                            .eq(needle.bytes())
-                    };
-
-                    // Check exact match around selection
-                    if match_at(start_point, full_comment_prefix)
-                        && match_ending_at(end_point, full_comment_suffix)
+                    // Find the first */ after that /*
+                    if let Some(suffix_pos) = region_bytes[after_prefix..]
+                        .windows(suffix_needle.len())
+                        .position(|w| w == suffix_needle)
+                        .map(|p| p + after_prefix)
                     {
-                        is_commented = true;
-                        prefix_range = start_point
-                            ..Point::new(
-                                start_point.row,
-                                start_point.column + full_comment_prefix.len() as u32,
-                            );
-                        suffix_range = Point::new(
-                            end_point.row,
-                            end_point.column - full_comment_suffix.len() as u32,
-                        )..end_point;
-                    }
+                        let suffix_end = suffix_pos + suffix_needle.len();
 
-                    if !is_commented {
-                        // Check if we are selecting the content of a comment, e.g. /* |content| */
-                        if match_ending_at(start_point, full_comment_prefix)
-                            && match_at(end_point, full_comment_suffix)
-                        {
-                            is_commented = true;
-                            prefix_range = Point::new(
-                                start_point.row,
-                                start_point.column - full_comment_prefix.len() as u32,
-                            )..start_point;
-                            suffix_range = end_point
-                                ..Point::new(
-                                    end_point.row,
-                                    end_point.column + full_comment_suffix.len() as u32,
-                                );
-                        }
-                    }
+                        // Case 1: /* ... */ surrounds the selection
+                        let markers_surround = prefix_pos <= start_byte
+                            && suffix_end >= end_byte
+                            && start_byte < suffix_end;
 
-                    // Check if the selection contains comment markers within it,
-                    // e.g. selecting `  /* content */  ` where markers are inside the selection
-                    if !is_commented {
-                        let prefix_trimmed = full_comment_prefix.trim_end();
-                        let suffix_trimmed = full_comment_suffix.trim_start();
-                        let prefix_needle = prefix_trimmed.as_bytes();
-                        let suffix_needle = suffix_trimmed.as_bytes();
-
-                        let selected_bytes: Vec<u8> = snapshot
-                            .bytes_in_range(start_point..end_point)
-                            .flatten()
-                            .copied()
-                            .collect();
-
-                        if let Some(prefix_byte_pos) = selected_bytes
-                            .windows(prefix_needle.len())
-                            .position(|w| w == prefix_needle)
-                        {
-                            if selected_bytes[..prefix_byte_pos]
+                        // Case 2: selection contains /* ... */ (only whitespace padding)
+                        let selection_contains = start_byte <= prefix_pos
+                            && suffix_end <= end_byte
+                            && region_bytes[start_byte..prefix_pos]
                                 .iter()
                                 .all(|&b| b.is_ascii_whitespace())
-                            {
-                                if let Some(suffix_byte_pos) = selected_bytes
-                                    .windows(suffix_needle.len())
-                                    .rposition(|w| w == suffix_needle)
-                                {
-                                    let after_suffix = suffix_byte_pos + suffix_needle.len();
-                                    if suffix_byte_pos > prefix_byte_pos
-                                        && selected_bytes[after_suffix..]
-                                            .iter()
-                                            .all(|&b| b.is_ascii_whitespace())
-                                    {
-                                        let mut prefix_start = start_point;
-                                        for &b in &selected_bytes[..prefix_byte_pos] {
-                                            if b == b'\n' {
-                                                prefix_start.row += 1;
-                                                prefix_start.column = 0;
-                                            } else {
-                                                prefix_start.column += 1;
-                                            }
-                                        }
-                                        let mut suffix_start = start_point;
-                                        for &b in &selected_bytes[..suffix_byte_pos] {
-                                            if b == b'\n' {
-                                                suffix_start.row += 1;
-                                                suffix_start.column = 0;
-                                            } else {
-                                                suffix_start.column += 1;
-                                            }
-                                        }
+                            && region_bytes[suffix_end..end_byte]
+                                .iter()
+                                .all(|&b| b.is_ascii_whitespace());
 
-                                        is_commented = true;
-                                        prefix_range = prefix_start
-                                            ..Point::new(
-                                                prefix_start.row,
-                                                prefix_start.column + prefix_needle.len() as u32,
-                                            );
-                                        suffix_range = suffix_start
-                                            ..Point::new(
-                                                suffix_start.row,
-                                                suffix_start.column + suffix_needle.len() as u32,
-                                            );
-                                    }
-                                }
-                            }
+                        if markers_surround || selection_contains {
+                            is_commented = true;
+                            let prefix_pt = to_point(prefix_pos);
+                            let suffix_pt = to_point(suffix_pos);
+                            prefix_range = prefix_pt
+                                ..Point::new(
+                                    prefix_pt.row,
+                                    prefix_pt.column + prefix_needle.len() as u32,
+                                );
+                            suffix_range = suffix_pt
+                                ..Point::new(
+                                    suffix_pt.row,
+                                    suffix_pt.column + suffix_needle.len() as u32,
+                                );
                         }
                     }
+                }
 
-                    // Fallback: search for comment markers surrounding the selection
-                    if !is_commented {
-                        let prefix_trimmed = full_comment_prefix.trim_end();
-                        let suffix_trimmed = full_comment_suffix.trim_start();
-                        let prefix_needle = prefix_trimmed.as_bytes();
-                        let suffix_needle = suffix_trimmed.as_bytes();
-
-                        let line_start = Point::new(start_point.row, 0);
-                        let bytes_before: Vec<u8> = snapshot
-                            .bytes_in_range(line_start..start_point)
-                            .flatten()
-                            .copied()
-                            .collect();
-
-                        if let Some(prefix_col) = bytes_before
-                            .windows(prefix_needle.len())
-                            .rposition(|w| w == prefix_needle)
-                        {
-                            let suffix_found = if start_point.row == end_point.row {
-                                let search_from = end_point;
-                                let line_end = Point::new(
-                                    start_point.row,
-                                    snapshot.line_len(MultiBufferRow(start_point.row)),
-                                );
-                                let bytes_after: Vec<u8> = snapshot
-                                    .bytes_in_range(search_from..line_end)
-                                    .flatten()
-                                    .copied()
-                                    .collect();
-                                bytes_after
-                                    .windows(suffix_needle.len())
-                                    .position(|w| w == suffix_needle)
-                                    .map(|pos| (start_point.row, search_from.column + pos as u32))
-                            } else {
-                                let search_from = end_point;
-                                let end_line_end = Point::new(
-                                    end_point.row,
-                                    snapshot.line_len(MultiBufferRow(end_point.row)),
-                                );
-                                let bytes_after: Vec<u8> = snapshot
-                                    .bytes_in_range(search_from..end_line_end)
-                                    .flatten()
-                                    .copied()
-                                    .collect();
-                                bytes_after
-                                    .windows(suffix_needle.len())
-                                    .position(|w| w == suffix_needle)
-                                    .map(|pos| (end_point.row, search_from.column + pos as u32))
-                            };
-
-                            if let Some((suffix_row, suffix_col)) = suffix_found {
-                                is_commented = true;
-                                prefix_range = Point::new(start_point.row, prefix_col as u32)
-                                    ..Point::new(
-                                        start_point.row,
-                                        prefix_col as u32 + prefix_needle.len() as u32,
-                                    );
-                                suffix_range = Point::new(suffix_row, suffix_col)
-                                    ..Point::new(
-                                        suffix_row,
-                                        suffix_col + suffix_needle.len() as u32,
-                                    );
-                            }
-                        }
+                if is_commented {
+                    // Also remove the space after /* and before */
+                    if snapshot
+                        .bytes_in_range(prefix_range.end..snapshot.max_point())
+                        .flatten()
+                        .next()
+                        == Some(&b' ')
+                    {
+                        prefix_range.end.column += 1;
                     }
-
-                    if is_commented {
-                        // Check for space after prefix
+                    if suffix_range.start.column > 0 {
+                        let before =
+                            Point::new(suffix_range.start.row, suffix_range.start.column - 1);
                         if snapshot
-                            .bytes_in_range(prefix_range.end..snapshot.max_point())
+                            .bytes_in_range(before..suffix_range.start)
                             .flatten()
                             .next()
                             == Some(&b' ')
                         {
-                            prefix_range.end.column += 1;
+                            suffix_range.start.column -= 1;
                         }
-
-                        // Check for space before suffix
-                        if suffix_range.start.column > 0 {
-                            let space_check =
-                                Point::new(suffix_range.start.row, suffix_range.start.column - 1);
-                            if snapshot
-                                .bytes_in_range(space_check..suffix_range.start)
-                                .flatten()
-                                .next()
-                                == Some(&b' ')
-                            {
-                                suffix_range.start.column -= 1;
-                            }
-                        }
-
-                        edits.push((prefix_range, empty_str.clone()));
-                        edits.push((suffix_range, empty_str.clone()));
-                    } else {
-                        let prefix = if full_comment_prefix.ends_with(' ') {
-                            full_comment_prefix.clone()
-                        } else {
-                            format!("{} ", full_comment_prefix).into()
-                        };
-                        let suffix = if full_comment_suffix.starts_with(' ') {
-                            full_comment_suffix.clone()
-                        } else {
-                            format!(" {}", full_comment_suffix).into()
-                        };
-
-                        edits.push((start_point..start_point, prefix.clone()));
-                        edits.push((end_point..end_point, suffix.clone()));
-                        markers_inserted.push((
-                            selection.id,
-                            prefix.len(),
-                            suffix.len(),
-                            selection.is_empty(),
-                        ));
                     }
+
+                    edits.push((prefix_range, empty_str.clone()));
+                    edits.push((suffix_range, empty_str.clone()));
+                } else {
+                    let prefix: Arc<str> = if comment_start.ends_with(' ') {
+                        comment_start.clone()
+                    } else {
+                        format!("{} ", comment_start).into()
+                    };
+                    let suffix: Arc<str> = if comment_end.starts_with(' ') {
+                        comment_end.clone()
+                    } else {
+                        format!(" {}", comment_end).into()
+                    };
+
+                    edits.push((start_point..start_point, prefix.clone()));
+                    edits.push((end_point..end_point, suffix.clone()));
+                    markers_inserted.push((
+                        selection.id,
+                        prefix.len(),
+                        suffix.len(),
+                        selection.is_empty(),
+                    ));
                 }
             }
 
@@ -16321,7 +16221,6 @@ impl Editor {
                 buffer.edit(edits, None, cx);
             });
 
-            // Adjust selections to include markers
             let mut selections = this
                 .selections
                 .all::<MultiBufferPoint>(&this.display_snapshot(cx));
@@ -16331,17 +16230,11 @@ impl Editor {
                     .find(|(id, _, _, _)| *id == selection.id)
                 {
                     if *was_empty {
-                        // For empty selection, cursor is likely at the end of inserted text.
-                        // We want to select the whole inserted comment.
-                        // Start needs to move back by prefix + suffix.
-                        // End stays at the end.
                         selection.start.column = selection
                             .start
                             .column
                             .saturating_sub((*prefix_len + *suffix_len) as u32);
                     } else {
-                        // For non-empty selection, selection wraps the content.
-                        // Start is after prefix. End is before suffix.
                         selection.start.column =
                             selection.start.column.saturating_sub(*prefix_len as u32);
                         selection.end.column += *suffix_len as u32;
