@@ -289,4 +289,8 @@ impl RunningKernel for RemoteRunningKernel {
             Ok(())
         })
     }
+
+    fn kill(&mut self) {
+        self.request_tx.close_channel();
+    }
 }

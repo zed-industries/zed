@@ -899,10 +899,9 @@ impl Motion {
     pub fn infallible(&self) -> bool {
         use Motion::*;
         match self {
-            StartOfDocument | EndOfDocument | CurrentLine => true,
+            StartOfDocument | EndOfDocument | CurrentLine | EndOfLine { .. } => true,
             Down { .. }
             | Up { .. }
-            | EndOfLine { .. }
             | MiddleOfLine { .. }
             | Matching { .. }
             | UnmatchedForward { .. }
@@ -3899,6 +3898,29 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             The quˇick brown fox
             jumps over the
+            lazy dog
+            "});
+
+        // Test that, when the cursor is moved to the end of the line using `l`,
+        // if `$` is used, the cursor stays at the end of the line when moving
+        // to a longer line, ensuring that the selection goal was correctly
+        // updated.
+        cx.set_shared_state(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy dˇog
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("l").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over the
+            lazy doˇg
+            "});
+        cx.simulate_shared_keystrokes("$ k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown fox
+            jumps over thˇe
             lazy dog
             "});
     }

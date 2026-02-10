@@ -2,7 +2,8 @@
 (
   (
     (function_declaration name: (_) @run
-      (#match? @run "^Test.*"))
+      (#match? @run "^Test.*")
+      (#not-match? @run "^TestMain$"))
   ) @_
   (#set! tag go-test)
 )
@@ -165,35 +166,37 @@
       (#eq? @_range_var @_collection_var)
     )
     body: (block
-      (expression_statement
-        (call_expression
-          function: (selector_expression
-            operand: (identifier)
-            field: (field_identifier) @_run_method
-            (#eq? @_run_method "Run")
-          )
-          arguments: (argument_list
-            .
-            [
-              (selector_expression
-                operand: (identifier) @_tc_var
-                (#eq? @_tc_var @_loop_var_inner)
-                field: (field_identifier) @_field_check
-                (#eq? @_field_check @_field_name)
-              )
-              (identifier) @_arg_var
-              (#eq? @_arg_var @_loop_var_outer)
-            ]
-            .
-            (func_literal
-              parameters: (parameter_list
-                (parameter_declaration
-                  type: (pointer_type
-                    (qualified_type
-                      package: (package_identifier) @_pkg
-                      name: (type_identifier) @_type
-                      (#eq? @_pkg "testing")
-                      (#eq? @_type "T")
+      (statement_list
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier)
+              field: (field_identifier) @_run_method
+              (#eq? @_run_method "Run")
+            )
+            arguments: (argument_list
+              .
+              [
+                (selector_expression
+                  operand: (identifier) @_tc_var
+                  (#eq? @_tc_var @_loop_var_inner)
+                  field: (field_identifier) @_field_check
+                  (#eq? @_field_check @_field_name)
+                )
+                (identifier) @_arg_var
+                (#eq? @_arg_var @_loop_var_outer)
+              ]
+              .
+              (func_literal
+                parameters: (parameter_list
+                  (parameter_declaration
+                    type: (pointer_type
+                      (qualified_type
+                        package: (package_identifier) @_pkg
+                        name: (type_identifier) @_type
+                        (#eq? @_pkg "testing")
+                        (#eq? @_type "T")
+                      )
                     )
                   )
                 )
@@ -259,35 +262,37 @@
       )
     )
     body: (block
-      (expression_statement
-        (call_expression
-          function: (selector_expression
-            operand: (identifier)
-            field: (field_identifier) @_run_method
-            (#eq? @_run_method "Run")
-          )
-          arguments: (argument_list
-            .
-            [
-              (selector_expression
-                operand: (identifier) @_tc_var
-                (#eq? @_tc_var @_loop_var_inner)
-                field: (field_identifier) @_field_check
-                (#eq? @_field_check @_field_name)
-              )
-              (identifier) @_arg_var
-              (#eq? @_arg_var @_loop_var_outer)
-            ]
-            .
-            (func_literal
-              parameters: (parameter_list
-                (parameter_declaration
-                  type: (pointer_type
-                    (qualified_type
-                      package: (package_identifier) @_pkg
-                      name: (type_identifier) @_type
-                      (#eq? @_pkg "testing")
-                      (#eq? @_type "T")
+      (statement_list
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier)
+              field: (field_identifier) @_run_method
+              (#eq? @_run_method "Run")
+            )
+            arguments: (argument_list
+              .
+              [
+                (selector_expression
+                  operand: (identifier) @_tc_var
+                  (#eq? @_tc_var @_loop_var_inner)
+                  field: (field_identifier) @_field_check
+                  (#eq? @_field_check @_field_name)
+                )
+                (identifier) @_arg_var
+                (#eq? @_arg_var @_loop_var_outer)
+              ]
+              .
+              (func_literal
+                parameters: (parameter_list
+                  (parameter_declaration
+                    type: (pointer_type
+                      (qualified_type
+                        package: (package_identifier) @_pkg
+                        name: (type_identifier) @_type
+                        (#eq? @_pkg "testing")
+                        (#eq? @_type "T")
+                      )
                     )
                   )
                 )

@@ -325,7 +325,8 @@ pub(crate) fn parse_edits(
         .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
         .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
 
-    let new_text = &content[content_start..content_end];
+    // if there is a single newline between markers, content_start will be 1 more than content_end. .min ensures empty slice in that case
+    let new_text = &content[content_start.min(content_end)..content_end];
 
     let old_text = snapshot
         .text_for_range(editable_range.clone())
@@ -716,5 +717,20 @@ mod tests {
                 let mut rng = rand::thread_rng();
             ```"#}
         );
+    }
+
+    #[gpui::test]
+    fn test_parse_edits_empty_editable_region(cx: &mut App) {
+        let text = "fn foo() {\n    let x = 42;\n}\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let output = "<|editable_region_start|>\n<|editable_region_end|>";
+        let editable_range = 0..text.len();
+        let edits = parse_edits(output, editable_range, &snapshot).unwrap();
+        assert_eq!(edits.len(), 1);
+        let (range, new_text) = &edits[0];
+        assert_eq!(range.to_offset(&snapshot), 0..text.len(),);
+        assert_eq!(new_text.as_ref(), "");
     }
 }

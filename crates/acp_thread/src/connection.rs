@@ -30,7 +30,7 @@ impl UserMessageId {
 pub trait AgentConnection {
     fn telemetry_id(&self) -> SharedString;
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -51,6 +51,16 @@ pub trait AgentConnection {
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
+    }
+
+    /// Whether this agent supports closing existing sessions.
+    fn supports_close_session(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Close an existing session. Allows the agent to free the session from memory.
+    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
     /// Whether this agent supports resuming existing sessions without loading history.
@@ -598,7 +608,7 @@ mod test_support {
             Some(self.model_selector_impl())
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -608,6 +618,7 @@ mod test_support {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,

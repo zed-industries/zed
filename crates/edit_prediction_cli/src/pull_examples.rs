@@ -14,22 +14,23 @@ use zeta_prompt::ZetaPromptInput;
 
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
+use crate::sync_deployments::EDIT_PREDICTION_DEPLOYMENT_EVENT;
 use edit_prediction::example_spec::{
     CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec,
     TelemetrySource,
 };
 use std::fmt::Write as _;
 
-const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
-const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
+pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
+pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
 const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
 
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_POLL_ATTEMPTS: usize = 120;
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -187,22 +188,22 @@ pub async fn fetch_captured_examples_after(
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeStatementResponse {
+pub(crate) struct SnowflakeStatementResponse {
     #[serde(default)]
-    data: Vec<Vec<JsonValue>>,
+    pub(crate) data: Vec<Vec<JsonValue>>,
     #[serde(default)]
-    result_set_meta_data: Option<SnowflakeResultSetMetaData>,
+    pub(crate) result_set_meta_data: Option<SnowflakeResultSetMetaData>,
     #[serde(default)]
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     #[serde(default)]
-    statement_handle: Option<String>,
+    pub(crate) statement_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeResultSetMetaData {
+pub(crate) struct SnowflakeResultSetMetaData {
     #[serde(default, rename = "rowType")]
     row_type: Vec<SnowflakeColumnMeta>,
     #[serde(default)]
@@ -313,7 +314,7 @@ async fn run_sql_with_polling(
     Ok(response)
 }
 
-async fn fetch_partition(
+pub(crate) async fn fetch_partition(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -402,7 +403,7 @@ async fn fetch_partition(
     })
 }
 
-async fn run_sql(
+pub(crate) async fn run_sql(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -759,29 +760,41 @@ pub async fn fetch_rated_examples_after(
 
         let statement = indoc! {r#"
             SELECT
-                event_properties:inputs AS inputs,
-                event_properties:output::string AS output,
-                event_properties:rating::string AS rating,
-                event_properties:feedback::string AS feedback,
-                device_id::string AS device_id,
-                time::string AS time
-            FROM events
-            WHERE event_type = ?
-                AND (? IS NULL OR event_properties:rating::string = ?)
-                AND time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND event_properties:inputs IS NOT NULL
-                AND event_properties:inputs:cursor_excerpt IS NOT NULL
-                AND event_properties:output IS NOT NULL
-            ORDER BY time ASC
+                rated.event_properties:request_id::string AS request_id,
+                rated.event_properties:inputs AS inputs,
+                rated.event_properties:output::string AS output,
+                rated.event_properties:rating::string AS rating,
+                rated.event_properties:feedback::string AS feedback,
+                rated.device_id::string AS device_id,
+                rated.time::string AS time,
+                deploy.event_properties:experiment_name::string AS experiment_name,
+                deploy.event_properties:environment::string AS environment
+            FROM events rated
+            LEFT JOIN events req
+                ON rated.event_properties:request_id::string = req.event_properties:request_id::string
+                AND req.event_type = ?
+            LEFT JOIN events deploy
+                ON req.event_properties:headers:x_baseten_model_id::string = deploy.event_properties:model_id::string
+                AND req.event_properties:headers:x_baseten_model_version_id::string = deploy.event_properties:model_version_id::string
+                AND deploy.event_type = ?
+            WHERE rated.event_type = ?
+                AND (? IS NULL OR rated.event_properties:rating::string = ?)
+                AND rated.time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND rated.event_properties:inputs IS NOT NULL
+                AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
+                AND rated.event_properties:output IS NOT NULL
+            ORDER BY rated.time ASC
             LIMIT ?
         "#};
 
         let bindings = json!({
-            "1": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
-            "2": { "type": "TEXT", "value": rating_value },
-            "3": { "type": "TEXT", "value": rating_value },
-            "4": { "type": "TEXT", "value": after_date },
-            "5": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
+            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+            "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
+            "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
+            "4": { "type": "TEXT", "value": rating_value },
+            "5": { "type": "TEXT", "value": rating_value },
+            "6": { "type": "TEXT", "value": after_date },
+            "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
         });
 
         let request = json!({
@@ -823,12 +836,15 @@ pub async fn fetch_rated_examples_after(
         let column_indices = get_column_indices(
             &response.result_set_meta_data,
             &[
+                "request_id",
                 "inputs",
                 "output",
                 "rating",
                 "feedback",
                 "device_id",
                 "time",
+                "experiment_name",
+                "environment",
             ],
         );
 
@@ -908,6 +924,7 @@ fn rated_examples_from_response<'a>(
                 }
             };
 
+            let request_id = get_string("request_id");
             let inputs_json = get_json("inputs");
             let inputs: Option<ZetaPromptInput> = match &inputs_json {
                 Some(v) => match serde_json::from_value(v.clone()) {
@@ -926,16 +943,21 @@ fn rated_examples_from_response<'a>(
             let feedback = get_string("feedback").unwrap_or_default();
             let device_id = get_string("device_id");
             let time = get_string("time");
+            let experiment_name = get_string("experiment_name");
+            let environment = get_string("environment");
 
             match (inputs, output.clone(), rating.clone(), device_id.clone(), time.clone()) {
                 (Some(inputs), Some(output), Some(rating), Some(device_id), Some(time)) => {
                     Some(build_rated_example(
+                        request_id,
                         device_id,
                         time,
                         inputs,
                         output,
                         rating,
                         feedback,
+                        experiment_name,
+                        environment,
                     ))
                 }
                 _ => {
@@ -956,12 +978,15 @@ fn rated_examples_from_response<'a>(
 }
 
 fn build_rated_example(
+    request_id: Option<String>,
     device_id: String,
     time: String,
     input: ZetaPromptInput,
     output: String,
     rating: String,
     feedback: String,
+    experiment_name: Option<String>,
+    environment: Option<String>,
 ) -> Example {
     let parsed_rating = if rating == "Positive" {
         EditPredictionRating::Positive
@@ -969,13 +994,20 @@ fn build_rated_example(
         EditPredictionRating::Negative
     };
     let is_positive = parsed_rating == EditPredictionRating::Positive;
-    let request_id = format!("rated-{}-{}", device_id, time);
+    let request_id = request_id.unwrap_or_else(|| format!("rated-{}-{}", device_id, time));
 
-    let tags = if is_positive {
-        vec!["rated:positive".to_string()]
+    let mut tags = Vec::with_capacity(3);
+    tags.push(if is_positive {
+        "rated:positive".to_string()
     } else {
-        vec!["rated:negative".to_string()]
-    };
+        "rated:negative".to_string()
+    });
+    if let Some(experiment) = experiment_name {
+        tags.push(format!("experiment:{experiment}"));
+    }
+    if let Some(env) = environment {
+        tags.push(format!("environment:{env}"));
+    }
 
     let mut example = build_example_from_snowflake(request_id, device_id, time, input, tags, None);
 
@@ -1344,7 +1376,7 @@ fn build_output_patch(
     patch
 }
 
-fn get_column_indices(
+pub(crate) fn get_column_indices(
     meta: &Option<SnowflakeResultSetMetaData>,
     names: &[&str],
 ) -> std::collections::HashMap<String, usize> {

@@ -1360,6 +1360,7 @@ impl AgentDiff {
             }
             AcpThreadEvent::TitleUpdated
             | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::PromptCapabilitiesUpdated
@@ -1762,7 +1763,7 @@ mod tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
@@ -1945,7 +1946,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
