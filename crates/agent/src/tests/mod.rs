@@ -161,13 +161,6 @@ struct FakeSubagentHandle {
 }
 
 impl FakeSubagentHandle {
-    fn new_with_summary(cx: &App, summary: String) -> Self {
-        Self {
-            session_id: acp::SessionId::new("subagent-id"),
-            wait_for_summary_task: cx.background_spawn(async move { summary }).shared(),
-        }
-    }
-
     fn new_never_completes(cx: &App) -> Self {
         Self {
             session_id: acp::SessionId::new("subagent-id"),
