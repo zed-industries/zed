@@ -681,7 +681,9 @@ fn link_pattern_file_candidates(candidate: &str) -> Vec<(String, Range<usize>)> 
 
     if let Some(captures) = MD_LINK_REGEX.captures(candidate) {
         if let Some(link) = captures.get(1) {
-            candidates.push((link.as_str().to_string(), link.range()));
+            if !link.as_str().is_empty() {
+                candidates.push((link.as_str().to_string(), link.range()));
+            }
         }
     }
     candidates
@@ -1463,7 +1465,31 @@ mod tests {
         assert_eq!(
             candidates,
             vec!["LinkTitle](link_(link_file)file.txt)", "link_(link_file",]
-        )
+        );
+
+        // Empty parens (zero-arg function calls like `foo()`) must not
+        // produce an empty-string candidate. The regex captures "" from
+        // inside `()`, which resolve_path_in_buffer turns into a worktree
+        // root match that blocks definitions() from ever being called.
+        let candidates: Vec<String> = link_pattern_file_candidates("foo()")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["foo()"]);
+
+        let candidates: Vec<String> =
+            link_pattern_file_candidates("std::collections::HashMap::new()")
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
+        assert_eq!(candidates, vec!["std::collections::HashMap::new()"]);
+
+        // Non-empty parens still produce an inner candidate
+        let candidates: Vec<String> = link_pattern_file_candidates("foo(bar)")
+            .into_iter()
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(candidates, vec!["foo(bar)", "bar"]);
     }
 
     #[gpui::test]
