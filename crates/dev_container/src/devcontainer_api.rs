@@ -5,11 +5,16 @@ use std::{
     sync::Arc,
 };
 
+use futures::{AsyncReadExt, channel::mpsc};
 use gpui::AsyncWindowContext;
 use node_runtime::NodeRuntime;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use settings::{DevContainerConnection, Settings as _};
-use smol::{fs, process::Command};
+use smol::{
+    fs,
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+};
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
@@ -96,6 +101,79 @@ impl Display for DevContainerError {
                 DevContainerError::NotInValidProject => "Not within a valid project".to_string(),
             }
         )
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DevContainerUpOutput {
+    pub level: DevContainerLogLevel,
+    pub text: String,
+}
+
+/// Strips ANSI escape sequences from a string
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
+impl DevContainerUpOutput {
+    pub fn from_json(json_str: &str) -> Option<Self> {
+        serde_json::from_str::<Self>(json_str)
+            .ok()
+            .map(|mut output| {
+                output.text = strip_ansi_codes(&output.text)
+                    .trim_end_matches(|c| c == '\n' || c == '\r')
+                    .to_string();
+                output
+            })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DevContainerLogLevel {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warning = 3,
+    Error = 4,
+    Critical = 5,
+    Off = 6,
+}
+
+impl<'de> Deserialize<'de> for DevContainerLogLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+
+        match value {
+            0 => Ok(Self::Trace),
+            1 => Ok(Self::Debug),
+            2 => Ok(Self::Info),
+            3 => Ok(Self::Warning),
+            4 => Ok(Self::Error),
+            5 => Ok(Self::Critical),
+            6 => Ok(Self::Off),
+            _ => Err(serde::de::Error::custom(format!(
+                "invalid log level: {}",
+                value
+            ))),
+        }
     }
 }
 
@@ -261,6 +339,7 @@ pub async fn start_dev_container_with_config(
     cx: &mut AsyncWindowContext,
     node_runtime: NodeRuntime,
     config: Option<DevContainerConfig>,
+    output_sender: mpsc::UnboundedSender<DevContainerUpOutput>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     let use_podman = use_podman(cx);
     check_for_docker(use_podman).await?;
@@ -280,6 +359,7 @@ pub async fn start_dev_container_with_config(
         directory.clone(),
         config_path.clone(),
         use_podman,
+        output_sender,
     )
     .await
     {
@@ -450,6 +530,7 @@ async fn devcontainer_up(
     path: Arc<Path>,
     config_path: Option<PathBuf>,
     use_podman: bool,
+    output_sender: mpsc::UnboundedSender<DevContainerUpOutput>,
 ) -> Result<DevContainerUp, DevContainerError> {
     let Ok(node_runtime_path) = node_runtime.binary_path().await else {
         log::error!("Unable to find node runtime path");
@@ -461,35 +542,83 @@ async fn devcontainer_up(
     command.arg("up");
     command.arg("--workspace-folder");
     command.arg(path.display().to_string());
+    command.arg("--log-format");
+    command.arg("json");
 
     if let Some(config) = config_path {
         command.arg("--config");
         command.arg(config.display().to_string());
     }
 
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+
     log::info!("Running full devcontainer up command: {:?}", command);
 
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                parse_json_from_cli(&raw)
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {}, err: {}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
+    let mut child = command.spawn().map_err(|e| {
+        let message = format!("Error spawning devcontainer up: {:?}", e);
+        log::error!("{}", &message);
+        DevContainerError::DevContainerUpFailed(message)
+    })?;
 
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+
+    let stdout_task = smol::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut output = String::new();
+        reader
+            .read_to_string(&mut output)
+            .await
+            .unwrap_or_else(|e| {
+                log::error!("Error reading stdout: {}", e);
+                0
+            });
+        output
+    });
+
+    let stderr_task = smol::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut output = String::new();
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end();
+                    if let Some(parsed) = DevContainerUpOutput::from_json(trimmed) {
+                        let _ = output_sender.unbounded_send(parsed);
+                    }
+                    output.push_str(&line);
+                }
+                Err(e) => {
+                    log::error!("Error reading stderr: {}", e);
+                    break;
+                }
             }
         }
-        Err(e) => {
-            let message = format!("Error running devcontainer up: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
+        output
+    });
+
+    let stdout_output = stdout_task.await;
+    let stderr_output = stderr_task.await;
+    let status = child.status().await.map_err(|e| {
+        let message = format!("Error waiting for devcontainer up: {:?}", e);
+        log::error!("{}", &message);
+        DevContainerError::DevContainerUpFailed(message)
+    })?;
+
+    if status.success() {
+        parse_json_from_cli(&stdout_output)
+    } else {
+        let message = format!(
+            "Non-success status running devcontainer up for workspace: out: {}, err: {}",
+            stdout_output, stderr_output
+        );
+        log::error!("{}", &message);
+        Err(DevContainerError::DevContainerUpFailed(message))
     }
 }
 

@@ -6,7 +6,8 @@ use crate::{
     ssh_config::parse_ssh_config_hosts,
 };
 use dev_container::{
-    DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
+    DevContainerConfig, DevContainerLogLevel, DevContainerUpOutput, find_devcontainer_configs,
+    start_dev_container_with_config,
 };
 use editor::Editor;
 
@@ -98,10 +99,28 @@ enum DevContainerCreationProgress {
 }
 
 #[derive(Clone)]
+struct DevContainerLogPanel {
+    logs: Vec<DevContainerUpOutput>,
+    scroll_handle: ScrollHandle,
+    expanded: bool,
+}
+
+impl DevContainerLogPanel {
+    fn new() -> Self {
+        Self {
+            logs: Vec::new(),
+            scroll_handle: ScrollHandle::new(),
+            expanded: false,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct CreateRemoteDevContainer {
     view_logs_entry: NavigableEntry,
     back_entry: NavigableEntry,
     progress: DevContainerCreationProgress,
+    log_panel: DevContainerLogPanel,
 }
 
 impl CreateRemoteDevContainer {
@@ -112,6 +131,7 @@ impl CreateRemoteDevContainer {
             view_logs_entry,
             back_entry,
             progress,
+            log_panel: DevContainerLogPanel::new(),
         }
     }
 }
@@ -1840,35 +1860,67 @@ impl RemoteServerProjects {
 
         let replace_window = window.window_handle().downcast::<Workspace>();
 
+        let (output_sender, mut output_receiver) =
+            futures::channel::mpsc::unbounded::<DevContainerUpOutput>();
+
         cx.spawn_in(window, async move |entity, cx| {
-            let (connection, starting_dir) =
-                match start_dev_container_with_config(cx, app_state.node_runtime.clone(), config)
-                    .await
-                {
-                    Ok((c, s)) => (Connection::DevContainer(c), s),
-                    Err(e) => {
-                        log::error!("Failed to start dev container: {:?}", e);
-                        cx.prompt(
-                            gpui::PromptLevel::Critical,
-                            "Failed to start Dev Container. See logs for details",
-                            Some(&format!("{e}")),
-                            &["Ok"],
-                        )
-                        .await
-                        .ok();
-                        entity
-                            .update_in(cx, |remote_server_projects, window, cx| {
-                                remote_server_projects.mode =
-                                    Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
-                                        DevContainerCreationProgress::Error(format!("{e}")),
-                                        cx,
-                                    ));
-                                remote_server_projects.focus_handle(cx).focus(window, cx);
+            let log_entity = entity.clone();
+            let mut log_cx = cx.clone();
+            cx.foreground_executor()
+                .spawn(async move {
+                    while let Some(log_output) =
+                        futures::StreamExt::next(&mut output_receiver).await
+                    {
+                        if log_entity
+                            .update_in(&mut log_cx, |remote_server_projects, _, cx| {
+                                if let Mode::CreateRemoteDevContainer(state) =
+                                    &mut remote_server_projects.mode
+                                {
+                                    state.log_panel.logs.push(log_output);
+                                    cx.notify();
+                                }
                             })
-                            .ok();
-                        return;
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
-                };
+                })
+                .detach();
+
+            let (connection, starting_dir) = match start_dev_container_with_config(
+                cx,
+                app_state.node_runtime.clone(),
+                config,
+                output_sender,
+            )
+            .await
+            {
+                Ok((c, s)) => (Connection::DevContainer(c), s),
+                Err(e) => {
+                    log::error!("Failed to start dev container: {:?}", e);
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Failed to start Dev Container. See logs for details",
+                        Some(&format!("{e}")),
+                        &["Ok"],
+                    )
+                    .await
+                    .ok();
+                    entity
+                        .update_in(cx, |remote_server_projects, window, cx| {
+                            remote_server_projects.mode =
+                                Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
+                                    DevContainerCreationProgress::Error(format!("{e}")),
+                                    cx,
+                                ));
+                            remote_server_projects.focus_handle(cx).focus(window, cx);
+                        })
+                        .ok();
+                    return;
+                }
+            };
+
             entity
                 .update(cx, |_, cx| {
                     cx.emit(DismissEvent);
@@ -2021,7 +2073,71 @@ impl RemoteServerProjects {
                                             .child(Label::new("Creating Dev Container"))
                                             .child(LoadingLabel::new("")),
                                     ),
-                            ),
+                            )
+                            .when(!state.log_panel.logs.is_empty(), |this| {
+                                this.child(
+                                    v_flex()
+                                        .child(
+                                            ListItem::new("toggle-logs")
+                                                .inset(true)
+                                                .spacing(ui::ListItemSpacing::Sparse)
+                                                .start_slot(
+                                                    Icon::new(if state.log_panel.expanded {
+                                                        IconName::ChevronDown
+                                                    } else {
+                                                        IconName::ChevronRight
+                                                    })
+                                                    .color(Color::Muted),
+                                                )
+                                                .child(Label::new(format!(
+                                                    "{} Logs ({} lines)",
+                                                    if state.log_panel.expanded { "Hide" } else { "Show" },
+                                                    state.log_panel.logs.len()
+                                                )))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    if let Mode::CreateRemoteDevContainer(state) =
+                                                        &mut this.mode
+                                                    {
+                                                        state.log_panel.expanded = !state.log_panel.expanded;
+                                                        this.focus_handle(cx).focus(window, cx);
+                                                        cx.notify();
+                                                    }
+                                                })),
+                                        )
+                                        .when(state.log_panel.expanded, |this| {
+                                            state.log_panel.scroll_handle.scroll_to_bottom();
+                                            this.child(
+                                                div()
+                                                    .id("devcontainer-build-logs")
+                                                    .bg(cx.theme().colors().editor_background)
+                                                    .h_80()
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&state.log_panel.scroll_handle)
+                                                    .mx_2()
+                                                    .my_1()
+                                                    .border_1()
+                                                    .border_color(
+                                                        cx.theme().colors().border_variant,
+                                                    )
+                                                    .p_2()
+                                                    .rounded_md()
+                                                    .child(v_flex().gap_0p5().children(
+                                                        state.log_panel.logs.iter().map(|log| {
+                                                            Label::new(log.text.clone())
+                                                                .size(LabelSize::Small)
+                                                                .color(match log.level {
+                                                                    DevContainerLogLevel::Trace => Color::Accent,
+                                                                    DevContainerLogLevel::Warning => Color::Warning,
+                                                                    DevContainerLogLevel::Error | DevContainerLogLevel::Critical  => Color::Error,
+                                                                    _ => Color::Muted,
+
+                                                                })
+                                                        }),
+                                                    )),
+                                            )
+                                        }),
+                                )
+                            }),
                     )
                     .into_any_element()
             }
