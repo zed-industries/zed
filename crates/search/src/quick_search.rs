@@ -16,8 +16,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEffects};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText, Subscription,
-    Task, WeakEntity, Window, actions, px, relative,
+    Focusable, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled, StyledText,
+    Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
 use menu;
@@ -220,7 +220,11 @@ impl Render for DragPreview {
     }
 }
 
-impl ModalView for QuickSearch {}
+impl ModalView for QuickSearch {
+    fn render_bare(&self) -> bool {
+        true
+    }
+}
 
 impl EventEmitter<DismissEvent> for QuickSearch {}
 
@@ -780,11 +784,27 @@ impl QuickSearch {
         let has_matches = match_count > 0;
 
         h_flex()
+            .id("quick-search-header")
             .px_4()
             .py_2()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .justify_between()
+            .on_drag(
+                QuickSearchDrag {
+                    mouse_start: window.mouse_position(),
+                    offset_start: self.offset,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<QuickSearchDrag>(cx.listener(
+                |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    this.offset =
+                        drag.offset_start + (event.event.position - drag.mouse_start);
+                    cx.notify();
+                },
+            ))
             .child(
                 h_flex()
                     .gap_2()
@@ -1234,7 +1254,22 @@ impl Render for QuickSearch {
             key_context.add("in_replace");
         }
 
-        v_flex()
+        div()
+            .absolute()
+            .size_full()
+            .inset_0()
+            .occlude()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt_20()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }),
+            )
+            .child(v_flex()
             .when(self.layout_mode == LayoutMode::Stacked, |this| {
                 this.child(self.render_vertical_resize(ResizeSide::Start, window, cx))
             })
@@ -1247,6 +1282,9 @@ impl Render for QuickSearch {
             .relative()
             .top(self.offset.y)
             .left(self.offset.x)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            })
             .child(
                 v_flex()
                     .key_context(key_context)
@@ -1398,24 +1436,9 @@ impl Render for QuickSearch {
                     .border_color(cx.theme().colors().border)
                     .rounded_lg()
                     .shadow_lg()
-                    .on_drag(
-                        QuickSearchDrag {
-                            mouse_start: window.mouse_position(),
-                            offset_start: self.offset,
-                        },
-                        |_, _, _, cx| cx.new(|_| DragPreview),
-                    )
-                    .on_drag_move::<QuickSearchDrag>(cx.listener(
-                        |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
-                            let drag = event.drag(cx);
-                            this.offset =
-                                drag.offset_start + (event.event.position - drag.mouse_start);
-                            cx.notify();
-                        },
-                    ))
                     .child(self.render_header(window, cx))
                     .child(self.render_content(window, cx)),
-            )
+            ))
     }
 }
 
