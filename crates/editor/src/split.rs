@@ -173,42 +173,93 @@ fn patches_for_range<F>(
 where
     F: Fn(&BufferDiffSnapshot, RangeInclusive<Point>, &text::BufferSnapshot) -> Patch<Point>,
 {
-    let mut result = Vec::new();
-    let mut patches = HashMap::default();
+    struct PendingExcerpt<'a> {
+        source_excerpt_id: ExcerptId,
+        target_excerpt_id: ExcerptId,
+        source_buffer: &'a text::BufferSnapshot,
+        target_buffer: &'a text::BufferSnapshot,
+        buffer_point_range: Range<Point>,
+        source_context_range: Range<text::Anchor>,
+    }
 
-    for (source_buffer, buffer_offset_range, source_excerpt_id) in
-        source_snapshot.range_to_buffer_ranges(source_bounds)
+    let mut result = Vec::new();
+    let mut current_buffer_id: Option<BufferId> = None;
+    let mut pending_excerpts: Vec<PendingExcerpt> = Vec::new();
+    let mut union_context_start: Option<Point> = None;
+    let mut union_context_end: Option<Point> = None;
+
+    let flush_buffer = |pending: &mut Vec<PendingExcerpt>,
+                        union_start: Point,
+                        union_end: Point,
+                        result: &mut Vec<CompanionExcerptPatch>| {
+        let Some(first) = pending.first() else {
+            return;
+        };
+
+        let diff = source_snapshot
+            .diff_for_buffer_id(first.source_buffer.remote_id())
+            .unwrap();
+        let rhs_buffer = if first.source_buffer.remote_id() == diff.base_text().remote_id() {
+            first.target_buffer
+        } else {
+            first.source_buffer
+        };
+
+        let patch = translate_fn(diff, union_start..=union_end, rhs_buffer);
+
+        for excerpt in pending.drain(..) {
+            result.push(patch_for_excerpt(
+                source_snapshot,
+                target_snapshot,
+                excerpt.source_excerpt_id,
+                excerpt.target_excerpt_id,
+                excerpt.source_buffer,
+                excerpt.target_buffer,
+                excerpt.source_context_range,
+                &patch,
+                excerpt.buffer_point_range,
+            ));
+        }
+    };
+
+    for (source_buffer, buffer_offset_range, source_excerpt_id, source_context_range) in
+        source_snapshot.range_to_buffer_ranges_with_context(source_bounds)
     {
         let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied().unwrap();
         let target_buffer = target_snapshot
             .buffer_for_excerpt(target_excerpt_id)
             .unwrap();
-        let patch = patches.entry(source_buffer.remote_id()).or_insert_with(|| {
-            let diff = source_snapshot
-                .diff_for_buffer_id(source_buffer.remote_id())
-                .unwrap();
-            let rhs_buffer = if source_buffer.remote_id() == diff.base_text().remote_id() {
-                &target_buffer
-            } else {
-                source_buffer
-            };
-            // TODO(split-diff) pass only the union of the ranges for the affected excerpts
-            translate_fn(diff, Point::zero()..=source_buffer.max_point(), rhs_buffer)
-        });
-        let buffer_point_range = buffer_offset_range.to_point(source_buffer);
 
-        // TODO(split-diff) maybe narrow the patch to only the edited part of the excerpt
-        // (less useful for project diff, but important if we want to do singleton side-by-side diff)
-        result.push(patch_for_excerpt(
-            source_snapshot,
-            target_snapshot,
+        let buffer_id = source_buffer.remote_id();
+
+        if current_buffer_id != Some(buffer_id) {
+            if let (Some(start), Some(end)) = (union_context_start.take(), union_context_end.take())
+            {
+                flush_buffer(&mut pending_excerpts, start, end, &mut result);
+            }
+            current_buffer_id = Some(buffer_id);
+        }
+
+        let buffer_point_range = buffer_offset_range.to_point(source_buffer);
+        let context_start = source_context_range.start.to_point(source_buffer);
+        let context_end = source_context_range.end.to_point(source_buffer);
+
+        union_context_start =
+            Some(union_context_start.map_or(context_start, |s| s.min(context_start)));
+        union_context_end = Some(union_context_end.map_or(context_end, |e| e.max(context_end)));
+
+        pending_excerpts.push(PendingExcerpt {
             source_excerpt_id,
             target_excerpt_id,
             source_buffer,
             target_buffer,
-            patch,
             buffer_point_range,
-        ));
+            source_context_range,
+        });
+    }
+
+    if let (Some(start), Some(end)) = (union_context_start, union_context_end) {
+        flush_buffer(&mut pending_excerpts, start, end, &mut result);
     }
 
     result
@@ -221,6 +272,7 @@ fn patch_for_excerpt(
     target_excerpt_id: ExcerptId,
     source_buffer: &text::BufferSnapshot,
     target_buffer: &text::BufferSnapshot,
+    source_context_range: Range<text::Anchor>,
     patch: &Patch<Point>,
     source_edited_range: Range<Point>,
 ) -> CompanionExcerptPatch {
@@ -228,9 +280,6 @@ fn patch_for_excerpt(
         .range_for_excerpt(source_excerpt_id)
         .unwrap();
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
-    let source_context_range = source_snapshot
-        .context_range_for_excerpt(source_excerpt_id)
-        .unwrap();
     let source_excerpt_start_in_buffer = source_context_range.start.to_point(&source_buffer);
     let source_excerpt_end_in_buffer = source_context_range.end.to_point(&source_buffer);
     let target_multibuffer_range = target_snapshot
