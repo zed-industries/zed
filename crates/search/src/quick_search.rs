@@ -17,7 +17,7 @@ use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEf
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
-    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
+    StyledText, Subscription, Task, WeakEntity, Window, actions, px,
 };
 use language::Buffer;
 use menu;
@@ -29,7 +29,7 @@ use project::search_history::SearchHistoryCursor;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use text::{Anchor, Point, ToOffset};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use ui::Divider;
 use ui::{
     ButtonLike, ContextMenu, IconButton, IconName, KeyBinding, ListItem, ListItemSpacing,
@@ -2497,7 +2497,10 @@ impl PickerDelegate for QuickSearchDelegate {
             }
         }
 
-        let text_style = window.text_style();
+        let mut text_style = window.text_style();
+        let settings = ThemeSettings::get_global(cx);
+        text_style.font_family = settings.buffer_font.family.clone();
+        text_style.font_size = settings.buffer_font_size(cx).into();
 
         Some(
             ListItem::new(ix)
@@ -2516,6 +2519,7 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
+                                .font_buffer(cx)
                                 .text_buffer(cx)
                                 .child(
                                     StyledText::new(line_text_string)
@@ -2523,26 +2527,13 @@ impl PickerDelegate for QuickSearchDelegate {
                                 ),
                         )
                         .child(
-                            h_flex()
-                                .w(relative(0.35))
+                            div()
                                 .flex_none()
-                                .justify_between()
-                                .gap_2()
-                                .child(
-                                    div().flex_1().overflow_hidden().child(
-                                        Label::new(path_str)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .truncate(),
-                                    ),
-                                )
-                                .child(
-                                    div().pr_2().child(
-                                        Label::new(search_match.line_number.to_string())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                                ),
+                                .pr_2()
+                                .font_buffer(cx)
+                                .text_buffer(cx)
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(format!("{path_str} {}", search_match.line_number)),
                         ),
                 ),
         )
