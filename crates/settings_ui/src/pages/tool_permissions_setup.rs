@@ -403,18 +403,24 @@ pub(crate) fn render_tool_config_page(
         .into_any_element()
 }
 
+fn render_hardcoded_rules(smaller_font_size: bool, cx: &App) -> AnyElement {
+    div()
+        .map(|this| {
+            if smaller_font_size {
+                this.text_xs()
+            } else {
+                this.text_sm()
+            }
+        })
+        .text_color(cx.theme().colors().text_muted)
+        .child(render_inline_code_markdown(HARDCODED_RULES_DESCRIPTION, cx))
+        .into_any_element()
+}
+
 fn render_hardcoded_security_banner(cx: &mut Context<SettingsWindow>) -> AnyElement {
     v_flex()
         .mt_3()
-        .child(
-            Banner::new().child(
-                div()
-                    .py_1()
-                    .text_sm()
-                    .text_color(cx.theme().colors().text)
-                    .child(render_inline_code_markdown(HARDCODED_RULES_DESCRIPTION, cx)),
-            ),
-        )
+        .child(Banner::new().child(render_hardcoded_rules(false, cx)))
         .into_any_element()
 }
 
@@ -490,7 +496,7 @@ fn render_verification_section(
     };
 
     let always_allow_description = "The Always Allow Tool Actions setting is enabled: all tools will be allowed regardless of these rules.";
-    let theme_colors = cx.theme().colors();
+    let color = cx.theme().colors();
 
     v_flex()
         .mt_3()
@@ -524,10 +530,10 @@ fn render_verification_section(
             v_flex()
                 .p_2p5()
                 .gap_1p5()
-                .bg(theme_colors.surface_background.opacity(0.15))
+                .bg(color.surface_background.opacity(0.15))
                 .border_1()
                 .border_dashed()
-                .border_color(theme_colors.border_variant)
+                .border_color(color.border_variant)
                 .rounded_sm()
                 .child(
                     Label::new("Test Your Rules")
@@ -541,16 +547,16 @@ fn render_verification_section(
                         .px_2()
                         .rounded_md()
                         .border_1()
-                        .border_color(theme_colors.border)
-                        .bg(theme_colors.editor_background)
+                        .border_color(color.border)
+                        .bg(color.editor_background)
                         .track_focus(&focus_handle)
                         .child(editor),
                 )
-                .when_some(authoritative_mode, |this, mode| {
+                .when_some(authoritative_mode, |this, _| {
                     this.when(patterns_agree, |this| {
                         if matched_patterns.is_empty() {
                             this.child(
-                                Label::new("No regex matches, using the default action.")
+                                Label::new("No regex matches, using the default action (confirm).")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -560,45 +566,27 @@ fn render_verification_section(
                     })
                     .when(!patterns_agree, |this| {
                         if is_hardcoded_denial {
-                            this.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().colors().text)
-                                    .child(render_inline_code_markdown(HARDCODED_RULES_DESCRIPTION, cx)),
-                            )
+                            this.child(render_hardcoded_rules(true, cx))
                         } else if let Some(reason) = &denial_reason {
                             this.child(
-                                Label::new(format!("Denied: {}", reason))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Warning),
+                                Label::new(reason).size(LabelSize::XSmall),
                             )
                         } else {
                             this.child(
                                 Label::new(
                                     "Pattern preview differs from engine — showing authoritative result.",
                                 )
-                                .size(LabelSize::XSmall)
-                                .color(Color::Warning),
+                                .size(LabelSize::XSmall),
                             )
                         }
                     })
-                    .child(render_verdict_label(mode))
                     .when(is_hardcoded_denial && patterns_agree, |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().colors().text)
-                                .child(render_inline_code_markdown(HARDCODED_RULES_DESCRIPTION, cx)),
-                        )
+                        this.child(render_hardcoded_rules(true, cx))
                     })
                     .when_some(
                         denial_reason.filter(|_| patterns_agree && !is_hardcoded_denial),
                         |this, reason| {
-                            this.child(
-                                Label::new(format!("Reason: {}", reason))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Error),
-                            )
+                            this.child(Label::new(reason).size(LabelSize::XSmall))
                         },
                     )
                 }),
@@ -781,19 +769,6 @@ fn mode_display_label(mode: ToolPermissionMode) -> &'static str {
         ToolPermissionMode::Deny => "Deny",
         ToolPermissionMode::Confirm => "Confirm",
     }
-}
-
-fn render_verdict_label(mode: ToolPermissionMode) -> AnyElement {
-    let (label, color) = match mode {
-        ToolPermissionMode::Allow => ("Verdict: Allow", Color::Success),
-        ToolPermissionMode::Deny => ("Verdict: Deny", Color::Error),
-        ToolPermissionMode::Confirm => ("Verdict: Confirm", Color::Warning),
-    };
-
-    Label::new(label)
-        .size(LabelSize::Small)
-        .color(color)
-        .into_any_element()
 }
 
 fn render_rule_section(
