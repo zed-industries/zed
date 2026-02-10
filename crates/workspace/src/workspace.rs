@@ -9511,12 +9511,20 @@ mod tests {
         });
 
         let item1 = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_project_items(&[new_test_project_item(1, "one.txt", worktree_id, cx)])
+            TestItem::new(cx).with_project_items(&[new_test_project_item(
+                1,
+                "one.txt",
+                worktree_id,
+                cx,
+            )])
         });
         let item2 = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_project_items(&[new_test_project_item(2, "two.txt", worktree_id, cx)])
+            TestItem::new(cx).with_project_items(&[new_test_project_item(
+                2,
+                "two.txt",
+                worktree_id,
+                cx,
+            )])
         });
 
         // Initially no document path
