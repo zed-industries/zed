@@ -2148,7 +2148,7 @@ impl Editor {
                         server_id,
                         request_id,
                     } => {
-                        editor.update_semantic_tokens(
+                        editor.refresh_semantic_tokens(
                             None,
                             Some(RefreshForServer {
                                 server_id: *server_id,
@@ -2157,9 +2157,10 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::LanguageServerRemoved(_server_id) => {
+                    project::Event::LanguageServerRemoved(_) => {
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
+                        editor.invalidate_semantic_tokens(None);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                         if editor.tasks_update_task.is_none() {
@@ -2640,13 +2641,14 @@ impl Editor {
                             editor
                                 .update_in(cx, |editor, window, cx| {
                                     editor.register_visible_buffers(cx);
-                                    editor.refresh_colors_for_visible_range(None, window, cx);
-                                    editor.refresh_folding_ranges(None, window, cx);
+                                    editor.colorize_brackets(false, cx);
                                     editor.refresh_inlay_hints(
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
-                                    editor.colorize_brackets(false, cx);
+                                    if !editor.buffer().read(cx).is_singleton() {
+                                        editor.update_lsp_data(None, window, cx);
+                                    }
                                 })
                                 .ok();
                         });
@@ -24197,7 +24199,7 @@ impl Editor {
                 if !inlay_splice.is_empty() {
                     self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
                 }
-                self.refresh_colors_for_visible_range(None, window, cx);
+                self.refresh_document_colors(None, window, cx);
             }
 
             self.refresh_inlay_hints(
@@ -24217,7 +24219,8 @@ impl Editor {
                 .semantic_token_state
                 .update_rules(new_semantic_token_rules)
             {
-                self.refresh_semantic_token_highlights(cx);
+                self.invalidate_semantic_tokens(None);
+                self.refresh_semantic_tokens(None, None, cx);
             }
         }
 
@@ -24235,7 +24238,8 @@ impl Editor {
             self.colorize_brackets(true, cx);
         }
 
-        self.refresh_semantic_token_highlights(cx);
+        self.invalidate_semantic_tokens(None);
+        self.refresh_semantic_tokens(None, None, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -25218,11 +25222,9 @@ impl Editor {
     ) {
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
-            self.update_semantic_tokens(Some(buffer_id), None, cx);
-        } else {
-            self.refresh_semantic_token_highlights(cx);
         }
-        self.refresh_colors_for_visible_range(for_buffer, window, cx);
+        self.refresh_semantic_tokens(for_buffer, None, cx);
+        self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
     }
 

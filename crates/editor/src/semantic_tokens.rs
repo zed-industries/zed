@@ -102,17 +102,25 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.semantic_token_state.toggle_enabled();
-        self.update_semantic_tokens(None, None, cx);
+        self.invalidate_semantic_tokens(None);
+        self.refresh_semantic_tokens(None, None, cx);
     }
 
-    pub(crate) fn update_semantic_tokens(
+    pub(super) fn invalidate_semantic_tokens(&mut self, for_buffer: Option<BufferId>) {
+        match for_buffer {
+            Some(for_buffer) => self.semantic_token_state.invalidate_buffer(&for_buffer),
+            None => self.semantic_token_state.fetched_for_buffers.clear(),
+        }
+    }
+
+    pub(super) fn refresh_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,
         for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
         if !self.mode().is_full() || !self.semantic_token_state.enabled() {
-            self.semantic_token_state.fetched_for_buffers.clear();
+            self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
                 display_map.semantic_token_highlights.clear();
             });
@@ -193,6 +201,7 @@ impl Editor {
                 editor.display_map.update(cx, |display_map, _| {
                     for buffer_id in invalidate_semantic_highlights_for_buffers {
                         display_map.invalidate_semantic_highlights(buffer_id);
+                        editor.semantic_token_state.invalidate_buffer(&buffer_id);
                     }
                 });
 
@@ -275,11 +284,6 @@ impl Editor {
                 cx.notify();
             }).ok();
         });
-    }
-
-    pub(super) fn refresh_semantic_token_highlights(&mut self, cx: &mut Context<Self>) {
-        self.semantic_token_state.fetched_for_buffers.clear();
-        self.update_semantic_tokens(None, None, cx);
     }
 }
 
