@@ -2923,9 +2923,11 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.update(|cx| connection.cancel(&session_id, cx));
     request.await.expect("prompt should fail gracefully");
 
-    // Ensure that dropping the ACP thread causes the native thread to be
-    // dropped as well.
-    cx.update(|_| drop(acp_thread));
+    // Explicitly close the session and drop the ACP thread.
+    cx.update(|cx| Rc::new(connection.clone()).close_session(&session_id, cx))
+        .await
+        .unwrap();
+    drop(acp_thread);
     let result = cx
         .update(|cx| {
             connection.prompt(

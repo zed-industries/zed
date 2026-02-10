@@ -382,9 +382,6 @@ impl NativeAgent {
         });
 
         let subscriptions = vec![
-            cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
-                this.sessions.remove(acp_thread.session_id());
-            }),
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
             cx.observe(&thread_handle, move |this, thread, cx| {
@@ -1263,6 +1260,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
         self.0
             .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
+    }
+
+    fn supports_close_session(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn close_session(
+        self: Rc<Self>,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.0.update(cx, |agent, _cx| {
+            agent.sessions.remove(session_id);
+        });
+        Task::ready(Ok(()))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -2260,11 +2272,12 @@ mod internal_tests {
         send.await.unwrap();
         cx.run_until_parked();
 
-        // Drop the thread so it can be reloaded from disk.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
         });
@@ -2366,11 +2379,12 @@ mod internal_tests {
         send.await.unwrap();
         cx.run_until_parked();
 
-        // Drop the thread so it can be reloaded from disk.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
         });
@@ -2497,11 +2511,12 @@ mod internal_tests {
 
         cx.run_until_parked();
 
-        // Drop the ACP thread, which should cause the session to be dropped as well.
-        cx.update(|_| {
-            drop(thread);
-            drop(acp_thread);
-        });
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
         agent.read_with(cx, |agent, _| {
             assert_eq!(agent.sessions.keys().cloned().collect::<Vec<_>>(), []);
         });

@@ -53,6 +53,20 @@ pub trait AgentConnection {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
     }
 
+    /// Whether this agent supports closing existing sessions.
+    fn supports_close_session(&self, _cx: &App) -> bool {
+        false
+    }
+
+    /// Close an existing session. Allows the agent to free the session from memory.
+    fn close_session(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
+    }
+
     /// Whether this agent supports resuming existing sessions without loading history.
     fn supports_resume_session(&self, _cx: &App) -> bool {
         false
