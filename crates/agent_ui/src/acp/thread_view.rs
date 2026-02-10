@@ -441,12 +441,12 @@ impl AcpServerView {
                 resume
                     .cwd
                     .as_ref()
+                    .and_then(|cwd| util::paths::normalize_lexically(cwd).ok())
                     .filter(|cwd| {
                         worktree_roots
                             .iter()
                             .any(|root| cwd.starts_with(root.as_ref()))
                     })
-                    .cloned()
                     .map(|path| path.into())
             })
             .or_else(|| root_dir.clone())
@@ -2835,6 +2835,57 @@ pub(crate) mod tests {
             captured_cwd.lock().as_deref(),
             Some(Path::new("/project")),
             "Should use fallback project cwd when session cwd is outside the project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resume_thread_rejects_unnormalized_cwd_outside_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "file.txt": "hello"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let connection = CwdCapturingConnection::new();
+        let captured_cwd = connection.captured_cwd.clone();
+
+        let mut session = AgentSessionInfo::new(SessionId::new("session-1"));
+        session.cwd = Some(PathBuf::from("/project/../outside"));
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let _thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpServerView::new(
+                    Rc::new(StubAgentServer::new(connection)),
+                    Some(session),
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    history,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            captured_cwd.lock().as_deref(),
+            Some(Path::new("/project")),
+            "Should reject unnormalized cwd that resolves outside the project and use fallback cwd"
         );
     }
 
