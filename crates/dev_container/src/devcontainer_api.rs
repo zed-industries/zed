@@ -586,7 +586,7 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -609,8 +609,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/project".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
         assert!(
@@ -634,8 +635,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/project".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
         assert_eq!(
@@ -666,8 +668,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/project".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
         assert_eq!(configs.len(), 2, "Expected two configs, got: {configs:?}");
@@ -692,8 +695,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/project".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
         assert_eq!(configs.len(), 3, "Expected three configs, got: {configs:?}");
@@ -722,8 +726,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/project".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let configs = cx.read(|cx| find_devcontainer_configs(workspace.read(cx), cx));
         assert_eq!(
