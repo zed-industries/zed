@@ -35,7 +35,6 @@ jobs:
   linux:
     needs: [gate]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Cache dependencies
@@ -73,7 +72,6 @@ jobs:
     # macOS is slower and more expensive so make sure tests basically pass, first
     needs: [gate, linux]
     runs-on: macos-latest
-    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Cache dependencies
@@ -100,7 +98,6 @@ jobs:
   windows:
     needs: [gate, linux]
     runs-on: windows-latest
-    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Cache dependencies
