@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use http_client::{AsyncBody, HttpClient, Method, Request};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::pull_examples::{
@@ -54,6 +55,12 @@ struct DeploymentRecord {
     environment: String,
     status: String,
     created_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct ExistingDeployment {
+    experiment_name: String,
+    environment: String,
 }
 
 async fn fetch_baseten_models(
@@ -227,7 +234,70 @@ async fn run_sql_with_polling(
     Ok(response)
 }
 
-async fn upsert_deployment_to_snowflake(
+/// Fetches all existing "Edit Prediction Deployment" events from Snowflake,
+/// keyed by model_version_id.
+async fn fetch_existing_deployments(
+    http_client: &Arc<dyn HttpClient>,
+    base_url: &str,
+    token: &str,
+    role: &Option<String>,
+) -> Result<HashMap<String, ExistingDeployment>> {
+    let statement = format!(
+        r#"
+SELECT
+    event_properties:model_version_id::string AS model_version_id,
+    event_properties:experiment_name::string AS experiment_name,
+    event_properties:environment::string AS environment
+FROM events
+WHERE event_type = '{EDIT_PREDICTION_DEPLOYMENT_EVENT}'
+"#
+    );
+
+    let request = json!({
+        "statement": statement,
+        "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+        "database": "EVENTS",
+        "schema": "PUBLIC",
+        "warehouse": "DBT",
+        "role": role,
+    });
+
+    let response = run_sql_with_polling(http_client.clone(), base_url, token, &request).await?;
+
+    let col_names = ["model_version_id", "experiment_name", "environment"];
+    let column_indices =
+        pull_examples::get_column_indices(&response.result_set_meta_data, &col_names);
+
+    let mut existing = HashMap::new();
+
+    for data_row in &response.data {
+        let get_string = |name: &str| -> Option<String> {
+            let &index = column_indices.get(name)?;
+            match data_row.get(index) {
+                Some(JsonValue::String(s)) => Some(s.clone()),
+                _ => None,
+            }
+        };
+
+        let Some(model_version_id) = get_string("model_version_id") else {
+            continue;
+        };
+        let experiment_name = get_string("experiment_name").unwrap_or_default();
+        let environment = get_string("environment").unwrap_or_default();
+
+        existing.insert(
+            model_version_id,
+            ExistingDeployment {
+                experiment_name,
+                environment,
+            },
+        );
+    }
+
+    Ok(existing)
+}
+
+async fn insert_deployment(
     http_client: &Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -246,26 +316,10 @@ async fn upsert_deployment_to_snowflake(
     let event_properties_str =
         serde_json::to_string(&event_properties).context("failed to serialize event_properties")?;
 
-    let statement = format!(
-        r#"
-MERGE INTO events AS target
-USING (
-    SELECT
-        ? AS event_type,
-        PARSE_JSON(?) AS event_properties,
-        'ep-cli' AS device_id,
-        CURRENT_TIMESTAMP() AS time
-) AS source
-ON target.event_type = '{EDIT_PREDICTION_DEPLOYMENT_EVENT}'
-   AND target.event_properties:model_id::string = source.event_properties:model_id::string
-   AND target.event_properties:model_version_id::string = source.event_properties:model_version_id::string
-WHEN MATCHED THEN UPDATE SET
-    target.event_properties = source.event_properties,
-    target.time = source.time
-WHEN NOT MATCHED THEN INSERT (event_type, event_properties, device_id, time)
-    VALUES (source.event_type, source.event_properties, source.device_id, source.time)
-"#
-    );
+    let statement = r#"
+INSERT INTO events (event_type, event_properties, device_id, time)
+VALUES (?, PARSE_JSON(?), 'ep-cli', CURRENT_TIMESTAMP())
+"#;
 
     let bindings = json!({
         "1": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
@@ -283,7 +337,47 @@ WHEN NOT MATCHED THEN INSERT (event_type, event_properties, device_id, time)
     });
 
     run_sql_with_polling(http_client.clone(), base_url, token, &request).await?;
+    Ok(())
+}
 
+async fn update_deployment(
+    http_client: &Arc<dyn HttpClient>,
+    base_url: &str,
+    token: &str,
+    role: &Option<String>,
+    record: &DeploymentRecord,
+) -> Result<()> {
+    let statement = format!(
+        r#"
+UPDATE events
+SET
+    event_properties = OBJECT_INSERT(
+        OBJECT_INSERT(event_properties, 'environment', ?::VARIANT, true),
+        'experiment_name', ?::VARIANT, true
+    ),
+    time = CURRENT_TIMESTAMP()
+WHERE event_type = '{EDIT_PREDICTION_DEPLOYMENT_EVENT}'
+    AND event_properties:model_version_id::string = ?
+"#
+    );
+
+    let bindings = json!({
+        "1": { "type": "TEXT", "value": record.environment },
+        "2": { "type": "TEXT", "value": record.experiment_name },
+        "3": { "type": "TEXT", "value": record.model_version_id }
+    });
+
+    let request = json!({
+        "statement": statement,
+        "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+        "database": "EVENTS",
+        "schema": "PUBLIC",
+        "warehouse": "DBT",
+        "role": role,
+        "bindings": bindings
+    });
+
+    run_sql_with_polling(http_client.clone(), base_url, token, &request).await?;
     Ok(())
 }
 
@@ -315,6 +409,21 @@ pub async fn run_sync_deployments(
             )
         })?;
 
+    eprintln!("Fetching existing deployments from Snowflake...");
+    let existing = fetch_existing_deployments(
+        &http_client,
+        &snowflake_base_url,
+        &snowflake_token,
+        &snowflake_role,
+    )
+    .await
+    .context("failed to fetch existing deployments from Snowflake")?;
+
+    eprintln!(
+        "Found {} existing deployment(s) in Snowflake.",
+        existing.len()
+    );
+
     let environments = fetch_baseten_environments(&http_client, &baseten_api_key, &model.id)
         .await
         .with_context(|| format!("failed to fetch environments for model '{}'", model.name))?;
@@ -322,25 +431,51 @@ pub async fn run_sync_deployments(
     let records = collect_deployment_records(&model.id, &environments);
 
     if records.is_empty() {
-        eprintln!("No deployments to sync.");
+        eprintln!("No deployments found on Baseten.");
         return Ok(());
     }
 
+    let mut inserts = Vec::new();
+    let mut updates = Vec::new();
+    let mut unchanged = 0;
+
+    for record in &records {
+        match existing.get(&record.model_version_id) {
+            Some(existing_deployment) => {
+                let environment_changed = existing_deployment.environment != record.environment;
+                let experiment_changed =
+                    existing_deployment.experiment_name != record.experiment_name;
+
+                if environment_changed || experiment_changed {
+                    updates.push(record);
+                } else {
+                    unchanged += 1;
+                }
+            }
+            None => {
+                inserts.push(record);
+            }
+        }
+    }
+
     eprintln!(
-        "Syncing {} deployment(s) for model '{}' to Snowflake...",
-        records.len(),
+        "Diff for model '{}': {} insert(s), {} update(s), {} unchanged",
         model.name,
+        inserts.len(),
+        updates.len(),
+        unchanged,
     );
 
-    for (i, record) in records.iter().enumerate() {
+    for (i, record) in inserts.iter().enumerate() {
         eprintln!(
-            "  [{}/{}] {} -> {}",
+            "  INSERT [{}/{}] {} -> {} (version_id={})",
             i + 1,
-            records.len(),
+            inserts.len(),
             record.experiment_name,
             record.environment,
+            record.model_version_id,
         );
-        upsert_deployment_to_snowflake(
+        insert_deployment(
             &http_client,
             &snowflake_base_url,
             &snowflake_token,
@@ -350,10 +485,44 @@ pub async fn run_sync_deployments(
         .await
         .with_context(|| {
             format!(
-                "failed to upsert deployment '{}' (model_version_id={})",
+                "failed to insert deployment '{}' (model_version_id={})",
                 record.experiment_name, record.model_version_id
             )
         })?;
+    }
+
+    for (i, record) in updates.iter().enumerate() {
+        let existing_deployment = existing
+            .get(&record.model_version_id)
+            .expect("update record must have existing entry");
+        eprintln!(
+            "  UPDATE [{}/{}] version_id={}: environment '{}' -> '{}', experiment '{}' -> '{}'",
+            i + 1,
+            updates.len(),
+            record.model_version_id,
+            existing_deployment.environment,
+            record.environment,
+            existing_deployment.experiment_name,
+            record.experiment_name,
+        );
+        update_deployment(
+            &http_client,
+            &snowflake_base_url,
+            &snowflake_token,
+            &snowflake_role,
+            record,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to update deployment '{}' (model_version_id={})",
+                record.experiment_name, record.model_version_id
+            )
+        })?;
+    }
+
+    if inserts.is_empty() && updates.is_empty() {
+        eprintln!("All deployments up to date, no writes needed.");
     }
 
     query_and_display_deployments(
