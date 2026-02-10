@@ -945,11 +945,13 @@ impl QuickSearch {
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .min_w(px(0.))
+                        .child(Label::new(file_name).size(LabelSize::Small).truncate())
                         .child(
                             Label::new(directory)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .truncate(),
                         ),
                 )
                 .child(self.render_split_menu(split_menu_handle, focus_handle, window, cx))
