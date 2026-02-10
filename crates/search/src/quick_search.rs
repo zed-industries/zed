@@ -17,7 +17,7 @@ use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEf
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
-    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
+    StyledText, Subscription, Task, WeakEntity, Window, actions, px,
 };
 use language::Buffer;
 use menu;
@@ -2507,26 +2507,15 @@ impl PickerDelegate for QuickSearchDelegate {
                                 ),
                         )
                         .child(
-                            h_flex()
-                                .w(relative(0.35))
-                                .flex_none()
-                                .justify_between()
-                                .gap_2()
-                                .child(
-                                    div().flex_1().overflow_hidden().child(
-                                        Label::new(path_str)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .truncate(),
-                                    ),
-                                )
-                                .child(
-                                    div().pr_2().child(
-                                        Label::new(search_match.line_number.to_string())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                                ),
+                            div().flex_none().pr_2().child(
+                                Label::new(format!(
+                                    "{path_str} {}",
+                                    search_match.line_number
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .single_line(),
+                            ),
                         ),
                 ),
         )
