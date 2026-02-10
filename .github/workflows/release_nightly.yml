@@ -38,6 +38,14 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -47,6 +55,9 @@ jobs:
       shell: pwsh
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -67,8 +78,19 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats; exit 0
       shell: pwsh
     timeout-minutes: 60
   bundle_linux_aarch64:
