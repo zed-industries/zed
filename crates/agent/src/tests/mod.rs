@@ -155,8 +155,58 @@ impl crate::TerminalHandle for FakeTerminalHandle {
     }
 }
 
+struct FakeSubagentHandle {
+    session_id: acp::SessionId,
+    wait_for_summary_task: Shared<Task<String>>,
+}
+
+impl FakeSubagentHandle {
+    fn new_with_summary(cx: &App, summary: String) -> Self {
+        Self {
+            session_id: acp::SessionId::new("subagent-id"),
+            wait_for_summary_task: cx.background_spawn(async move { summary }).shared(),
+        }
+    }
+
+    fn new_never_completes(cx: &App) -> Self {
+        Self {
+            session_id: acp::SessionId::new("subagent-id"),
+            wait_for_summary_task: cx.background_spawn(std::future::pending()).shared(),
+        }
+    }
+}
+
+impl SubagentHandle for FakeSubagentHandle {
+    fn id(&self) -> acp::SessionId {
+        self.session_id.clone()
+    }
+
+    fn wait_for_summary(&self, _summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
+        let task = self.wait_for_summary_task.clone();
+        cx.background_spawn(async move { Ok(task.await) })
+    }
+}
+
+#[derive(Default)]
 struct FakeThreadEnvironment {
-    handle: Rc<FakeTerminalHandle>,
+    terminal_handle: Option<Rc<FakeTerminalHandle>>,
+    subagent_handle: Option<Rc<FakeSubagentHandle>>,
+}
+
+impl FakeThreadEnvironment {
+    pub fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
+        Self {
+            terminal_handle: Some(terminal_handle.into()),
+            ..self
+        }
+    }
+
+    pub fn with_subagent(self, subagent_handle: FakeSubagentHandle) -> Self {
+        Self {
+            subagent_handle: Some(subagent_handle.into()),
+            ..self
+        }
+    }
 }
 
 impl crate::ThreadEnvironment for FakeThreadEnvironment {
@@ -167,7 +217,11 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _output_byte_limit: Option<u64>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
-        Task::ready(Ok(self.handle.clone() as Rc<dyn crate::TerminalHandle>))
+        let handle = self
+            .terminal_handle
+            .clone()
+            .expect("Terminal handle not available on FakeThreadEnvironment");
+        Task::ready(Ok(handle.clone() as Rc<dyn crate::TerminalHandle>))
     }
 
     fn create_subagent(
@@ -179,7 +233,11 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _allowed_tools: Option<Vec<String>>,
         _cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        unimplemented!()
+        Ok(self
+            .subagent_handle
+            .clone()
+            .expect("Subagent handle not available on FakeThreadEnvironment")
+            as Rc<dyn SubagentHandle>)
     }
 }
 
@@ -272,10 +330,10 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
@@ -339,10 +397,10 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
@@ -1652,10 +1710,10 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
@@ -1934,10 +1992,10 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let message_id = UserMessageId::new();
     let mut events = thread
@@ -2112,10 +2170,10 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
@@ -2206,10 +2264,10 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
@@ -3676,10 +3734,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
     // Test 1: Deny rule blocks command
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -3728,10 +3785,10 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
     // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -3786,10 +3843,10 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
     // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -3832,10 +3889,10 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
     // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -3892,8 +3949,9 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
 
     let thread = cx.new(|cx| {
         let mut thread = Thread::new(
@@ -3975,8 +4033,9 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
 
     let deep_parent_thread = cx.new(|cx| {
         let mut thread = Thread::new(
@@ -4084,8 +4143,9 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_subagent(FakeSubagentHandle::new_never_completes(cx))
+    }));
 
     let parent = cx.new(|cx| {
         Thread::new(
