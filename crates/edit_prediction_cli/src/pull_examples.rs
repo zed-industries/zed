@@ -20,16 +20,16 @@ use edit_prediction::example_spec::{
 };
 use std::fmt::Write as _;
 
-const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
-const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
+pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
+pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
 const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
 
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_POLL_ATTEMPTS: usize = 120;
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -187,22 +187,22 @@ pub async fn fetch_captured_examples_after(
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeStatementResponse {
+pub(crate) struct SnowflakeStatementResponse {
     #[serde(default)]
-    data: Vec<Vec<JsonValue>>,
+    pub(crate) data: Vec<Vec<JsonValue>>,
     #[serde(default)]
-    result_set_meta_data: Option<SnowflakeResultSetMetaData>,
+    pub(crate) result_set_meta_data: Option<SnowflakeResultSetMetaData>,
     #[serde(default)]
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     #[serde(default)]
-    statement_handle: Option<String>,
+    pub(crate) statement_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeResultSetMetaData {
+pub(crate) struct SnowflakeResultSetMetaData {
     #[serde(default, rename = "rowType")]
     row_type: Vec<SnowflakeColumnMeta>,
     #[serde(default)]
@@ -313,7 +313,7 @@ async fn run_sql_with_polling(
     Ok(response)
 }
 
-async fn fetch_partition(
+pub(crate) async fn fetch_partition(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -402,7 +402,7 @@ async fn fetch_partition(
     })
 }
 
-async fn run_sql(
+pub(crate) async fn run_sql(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
