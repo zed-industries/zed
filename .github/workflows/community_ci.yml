@@ -1,0 +1,121 @@
+# Run cross-platform tests for community members.
+#
+# The main tests workflow requires access to Zed's self-hosted
+# runners, which aren't available to non-organization members
+# without permission. However it's still useful for community
+# members to get cross-platform test feedback without blocking
+# on approval.
+#
+# The GitHub provided workers will be much slower than the official runners.
+name: Community CI
+
+on:
+  push:
+    branches: ["**"]
+  # pull_request:
+  #   branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  gate:
+    if: github.repository_owner != 'zed-industries'
+    # `run_tests.yml` and so on runs only in non-forks.
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Running community CI"
+
+  linux:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: Check for typos
+        uses: crate-ci/typos@v1.24.6
+        with:
+          config: ./typos.toml
+      - name: cargo clippy
+        run: ./script/clippy
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Run tests
+        run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      - name: Run doctests
+        run: cargo test --workspace --doc --no-fail-fast
+      - name: Build Zed
+        run: cargo build -p zed
+      - name: Clean CI config
+        if: always()
+        run: rm -rf ./../.cargo
+
+  macos:
+    # macOS is slower and more expensive so make sure tests basically pass, first
+    needs: [gate, linux]
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+      - name: cargo clippy
+        run: ./script/clippy
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Run tests
+        run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      - name: Build workspace
+        run: cargo build --workspace --bins --all-features
+      - name: Clean CI config
+        if: always()
+        run: rm -rf ./../.cargo
+
+  windows:
+    needs: [gate, linux]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CI
+        run: |
+          New-Item -ItemType Directory -Path "./../.cargo" -Force
+          Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+      - name: cargo clippy
+        run: .\script\clippy.ps1
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Run tests
+        run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      - name: Build Zed
+        run: cargo build
+      - name: Clean CI config
+        if: always()
+        run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
