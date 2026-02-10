@@ -203,6 +203,10 @@ impl PlatformWindow for TestWindow {
         WindowBackgroundAppearance::Opaque
     }
 
+    fn set_color_space(&self, _color_space: crate::ColorSpace) {
+        // Test platform - no-op
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         false
     }

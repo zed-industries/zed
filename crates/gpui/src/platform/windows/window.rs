@@ -798,6 +798,10 @@ impl PlatformWindow for WindowsWindow {
         true
     }
 
+    fn set_color_space(&self, _color_space: crate::ColorSpace) {
+        // TODO: Implement color space support for Windows using DXGI color space API
+    }
+
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))

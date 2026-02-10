@@ -19,6 +19,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: platform_default
     pub text_rendering_mode: Option<TextRenderingMode>,
+    /// The color space to use for rendering.
+    ///
+    /// Default: srgb
+    pub color_space: Option<ColorSpace>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -615,6 +619,34 @@ pub enum TextRenderingMode {
     Subpixel,
     /// Use grayscale text rendering.
     Grayscale,
+}
+
+/// The color space to use for rendering.
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorSpace {
+    /// Standard sRGB (default).
+    #[default]
+    #[strum(serialize = "sRGB")]
+    Srgb,
+    /// Wide gamut color space for modern displays.
+    #[strum(serialize = "Display P3")]
+    DisplayP3,
+    /// Untagged (device) color space
+    Untagged,
 }
 
 impl OnLastWindowClosed {

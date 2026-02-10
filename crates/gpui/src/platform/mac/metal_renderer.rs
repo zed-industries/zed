@@ -271,7 +271,7 @@ impl MetalRenderer {
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
-        Self {
+        let renderer = Self {
             device,
             layer,
             presents_with_transaction: false,
@@ -291,7 +291,12 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
-        }
+        };
+
+        // Set initial color space to default (sRGB)
+        renderer.update_color_space(crate::ColorSpace::default());
+
+        renderer
     }
 
     pub fn layer(&self) -> &metal::MetalLayerRef {
@@ -361,6 +366,31 @@ impl MetalRenderer {
 
     pub fn update_transparency(&self, transparent: bool) {
         self.layer.set_opaque(!transparent);
+    }
+
+    pub fn update_color_space(&self, color_space: crate::ColorSpace) {
+        use core_foundation::string::CFString;
+        use core_graphics::color_space::CGColorSpace;
+
+        unsafe {
+            match color_space {
+                crate::ColorSpace::Srgb | crate::ColorSpace::Oklab => {
+                    let srgb_name = CFString::from_static_string("kCGColorSpaceSRGB");
+                    if let Some(colorspace) = CGColorSpace::create_with_name(srgb_name.as_concrete_TypeRef()) {
+                        let _: () = msg_send![&*self.layer, setColorspace: colorspace.as_ptr()];
+                    }
+                }
+                crate::ColorSpace::DisplayP3 => {
+                    let p3_name = CFString::from_static_string("kCGColorSpaceDisplayP3");
+                    if let Some(colorspace) = CGColorSpace::create_with_name(p3_name.as_concrete_TypeRef()) {
+                        let _: () = msg_send![&*self.layer, setColorspace: colorspace.as_ptr()];
+                    }
+                }
+                crate::ColorSpace::Untagged => {
+                    let _: () = msg_send![&*self.layer, setColorspace: std::ptr::null::<cocoa::base::id>()];
+                }
+            }
+        }
     }
 
     pub fn destroy(&self) {
