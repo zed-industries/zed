@@ -9,8 +9,8 @@ use agent_settings::AgentSettings;
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
 
-/// The tool name for subagent spawning
-pub const SUBAGENT_TOOL_NAME: &str = "subagent";
+/// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
+pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
 
 /// Helper to extract tool name from ACP meta
 pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
@@ -18,6 +18,14 @@ pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
         .and_then(|m| m.get(TOOL_NAME_META_KEY))
         .and_then(|v| v.as_str())
         .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to extract subagent session id from ACP meta
+pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::SessionId> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| acp::SessionId::from(s.to_string()))
 }
 
 /// Helper to create meta with tool name
@@ -216,6 +224,7 @@ pub struct ToolCall {
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
+    pub subagent_session_id: Option<acp::SessionId>,
 }
 
 impl ToolCall {
@@ -254,6 +263,8 @@ impl ToolCall {
 
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
+        let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -267,6 +278,7 @@ impl ToolCall {
             raw_input_markdown,
             raw_output: tool_call.raw_output,
             tool_name,
+            subagent_session_id: subagent_session,
         };
         Ok(result)
     }
@@ -274,6 +286,7 @@ impl ToolCall {
     fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
@@ -296,6 +309,10 @@ impl ToolCall {
 
         if let Some(status) = status {
             self.status = status.into();
+        }
+
+        if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
+            self.subagent_session_id = Some(subagent_session_id);
         }
 
         if let Some(title) = title {
@@ -366,7 +383,6 @@ impl ToolCall {
             ToolCallContent::Diff(diff) => Some(diff),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Terminal(_) => None,
-            ToolCallContent::SubagentThread(_) => None,
         })
     }
 
@@ -375,24 +391,12 @@ impl ToolCall {
             ToolCallContent::Terminal(terminal) => Some(terminal),
             ToolCallContent::ContentBlock(_) => None,
             ToolCallContent::Diff(_) => None,
-            ToolCallContent::SubagentThread(_) => None,
-        })
-    }
-
-    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
-        self.content.iter().find_map(|content| match content {
-            ToolCallContent::SubagentThread(thread) => Some(thread),
-            _ => None,
         })
     }
 
     pub fn is_subagent(&self) -> bool {
-        matches!(self.kind, acp::ToolKind::Other)
-            && self
-                .tool_name
-                .as_ref()
-                .map(|n| n.as_ref() == SUBAGENT_TOOL_NAME)
-                .unwrap_or(false)
+        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+            || self.subagent_session_id.is_some()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -688,7 +692,6 @@ pub enum ToolCallContent {
     ContentBlock(ContentBlock),
     Diff(Entity<Diff>),
     Terminal(Entity<Terminal>),
-    SubagentThread(Entity<AcpThread>),
 }
 
 impl ToolCallContent {
@@ -760,20 +763,12 @@ impl ToolCallContent {
             Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
             Self::Diff(diff) => diff.read(cx).to_markdown(cx),
             Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
-            Self::SubagentThread(thread) => thread.read(cx).to_markdown(cx),
         }
     }
 
     pub fn image(&self) -> Option<&Arc<gpui::Image>> {
         match self {
             Self::ContentBlock(content) => content.image(),
-            _ => None,
-        }
-    }
-
-    pub fn subagent_thread(&self) -> Option<&Entity<AcpThread>> {
-        match self {
-            Self::SubagentThread(thread) => Some(thread),
             _ => None,
         }
     }
@@ -784,7 +779,6 @@ pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
     UpdateTerminal(ToolCallUpdateTerminal),
-    UpdateSubagentThread(ToolCallUpdateSubagentThread),
 }
 
 impl ToolCallUpdate {
@@ -793,7 +787,6 @@ impl ToolCallUpdate {
             Self::UpdateFields(update) => &update.tool_call_id,
             Self::UpdateDiff(diff) => &diff.id,
             Self::UpdateTerminal(terminal) => &terminal.id,
-            Self::UpdateSubagentThread(subagent) => &subagent.id,
         }
     }
 }
@@ -826,18 +819,6 @@ impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
 pub struct ToolCallUpdateTerminal {
     pub id: acp::ToolCallId,
     pub terminal: Entity<Terminal>,
-}
-
-impl From<ToolCallUpdateSubagentThread> for ToolCallUpdate {
-    fn from(subagent: ToolCallUpdateSubagentThread) -> Self {
-        Self::UpdateSubagentThread(subagent)
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct ToolCallUpdateSubagentThread {
-    pub id: acp::ToolCallId,
-    pub thread: Entity<AcpThread>,
 }
 
 #[derive(Debug, Default)]
@@ -949,6 +930,7 @@ pub struct RetryStatus {
 }
 
 pub struct AcpThread {
+    parent_session_id: Option<acp::SessionId>,
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
@@ -987,6 +969,7 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Retry(RetryStatus),
+    SubagentSpawned(acp::SessionId),
     Stopped,
     Error,
     LoadError(LoadError),
@@ -1163,6 +1146,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
+        parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -1185,6 +1169,7 @@ impl AcpThread {
         let (user_stop_tx, _user_stop_rx) = watch::channel(false);
 
         Self {
+            parent_session_id,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
@@ -1205,6 +1190,10 @@ impl AcpThread {
         }
     }
 
+    pub fn parent_session_id(&self) -> Option<&acp::SessionId> {
+        self.parent_session_id.as_ref()
+    }
+
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
     }
@@ -1214,6 +1203,7 @@ impl AcpThread {
         self.user_stopped
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.user_stop_tx.send(true).ok();
+        self.send_task.take();
     }
 
     pub fn was_stopped_by_user(&self) -> bool {
@@ -1479,6 +1469,10 @@ impl AcpThread {
         Task::ready(Ok(()))
     }
 
+    pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
         self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
@@ -1518,6 +1512,7 @@ impl AcpThread {
                     raw_input_markdown: None,
                     raw_output: None,
                     tool_name: None,
+                    subagent_session_id: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1530,7 +1525,14 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, path_style, &self.terminals, cx)?;
+                call.update_fields(
+                    update.fields,
+                    update.meta,
+                    languages,
+                    path_style,
+                    &self.terminals,
+                    cx,
+                )?;
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
@@ -1543,16 +1545,6 @@ impl AcpThread {
                 call.content.clear();
                 call.content
                     .push(ToolCallContent::Terminal(update.terminal));
-            }
-            ToolCallUpdate::UpdateSubagentThread(update) => {
-                debug_assert!(
-                    !call.content.iter().any(|c| {
-                        matches!(c, ToolCallContent::SubagentThread(existing) if existing == &update.thread)
-                    }),
-                    "Duplicate SubagentThread update for the same AcpThread entity"
-                );
-                call.content
-                    .push(ToolCallContent::SubagentThread(update.thread));
             }
         }
 
@@ -1605,6 +1597,7 @@ impl AcpThread {
 
             call.update_fields(
                 update.fields,
+                update.meta,
                 language_registry,
                 path_style,
                 &self.terminals,
@@ -2631,7 +2624,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2695,7 +2688,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2783,7 +2776,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project.clone(), Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project.clone(), Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2894,7 +2887,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2988,7 +2981,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3069,7 +3062,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3110,7 +3103,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3185,7 +3178,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3259,7 +3252,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3307,7 +3300,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3398,7 +3391,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3457,7 +3450,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3630,7 +3623,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3706,7 +3699,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3779,7 +3772,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3906,7 +3899,7 @@ mod tests {
             &self.auth_methods
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -3922,6 +3915,7 @@ mod tests {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,
@@ -4011,7 +4005,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -4077,7 +4071,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -4390,7 +4384,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
