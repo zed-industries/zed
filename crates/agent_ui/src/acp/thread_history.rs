@@ -38,7 +38,8 @@ pub struct AcpThreadHistory {
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
-    _update_task: Task<()>,
+    _visible_items_task: Task<()>,
+    _refresh_task: Task<()>,
     _watch_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -111,7 +112,8 @@ impl AcpThreadHistory {
             search_query: SharedString::default(),
             confirming_delete_history: false,
             _subscriptions: vec![search_editor_subscription],
-            _update_task: Task::ready(()),
+            _visible_items_task: Task::ready(()),
+            _refresh_task: Task::ready(()),
             _watch_task: None,
         };
         this.set_session_list(session_list, cx);
@@ -131,7 +133,7 @@ impl AcpThreadHistory {
             None
         };
 
-        self._update_task = cx.spawn(async move |this, cx| {
+        self._visible_items_task = cx.spawn(async move |this, cx| {
             let new_visible_items = new_list_items.await;
             this.update(cx, |this, cx| {
                 let new_selected_index = if let Some(history_entry) = selected_history_entry {
@@ -170,6 +172,8 @@ impl AcpThreadHistory {
         self.sessions.clear();
         self.visible_items.clear();
         self.selected_index = 0;
+        self._visible_items_task = Task::ready(());
+        self._refresh_task = Task::ready(());
 
         let Some(session_list) = self.session_list.as_ref() else {
             self._watch_task = None;
@@ -260,7 +264,7 @@ impl AcpThreadHistory {
             return;
         };
 
-        self._update_task = cx.spawn(async move |this, cx| {
+        self._refresh_task = cx.spawn(async move |this, cx| {
             let mut cursor: Option<String> = None;
             let mut is_first_page = true;
 
