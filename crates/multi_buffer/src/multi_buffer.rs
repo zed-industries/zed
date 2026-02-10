@@ -4022,6 +4022,25 @@ impl MultiBufferSnapshot {
         R: RangeBounds<T>,
         T: ToOffset,
     {
+        self.range_to_buffer_ranges_with_context(range)
+            .into_iter()
+            .map(|(buffer, range, id, _context)| (buffer, range, id))
+            .collect()
+    }
+
+    pub fn range_to_buffer_ranges_with_context<R, T>(
+        &self,
+        range: R,
+    ) -> Vec<(
+        &BufferSnapshot,
+        Range<BufferOffset>,
+        ExcerptId,
+        Range<text::Anchor>,
+    )>
+    where
+        R: RangeBounds<T>,
+        T: ToOffset,
+    {
         let start = match range.start_bound() {
             Bound::Included(start) => start.to_offset(self),
             Bound::Excluded(_) => panic!("excluded start bound not supported"),
@@ -4037,7 +4056,12 @@ impl MultiBufferSnapshot {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&start);
 
-        let mut result: Vec<(&BufferSnapshot, Range<BufferOffset>, ExcerptId)> = Vec::new();
+        let mut result: Vec<(
+            &BufferSnapshot,
+            Range<BufferOffset>,
+            ExcerptId,
+            Range<text::Anchor>,
+        )> = Vec::new();
         while let Some(region) = cursor.region() {
             let dominated_by_end_bound = match end_bound {
                 Bound::Included(end) => region.range.start > end,
@@ -4062,12 +4086,13 @@ impl MultiBufferSnapshot {
                     .buffer_range
                     .end
                     .min(region.buffer_range.start + end_overshoot);
-                if let Some(prev) = result.last_mut().filter(|(_, prev_range, excerpt_id)| {
+                let context = region.excerpt.range.context.clone();
+                if let Some(prev) = result.last_mut().filter(|(_, prev_range, excerpt_id, _)| {
                     *excerpt_id == region.excerpt.id && prev_range.end == start
                 }) {
                     prev.1.end = end;
                 } else {
-                    result.push((region.buffer, start..end, region.excerpt.id));
+                    result.push((region.buffer, start..end, region.excerpt.id, context));
                 }
             }
             cursor.next();
@@ -4075,13 +4100,19 @@ impl MultiBufferSnapshot {
 
         if let Some(excerpt) = cursor.excerpt() {
             let dominated_by_prev_excerpt =
-                result.last().is_some_and(|(_, _, id)| *id == excerpt.id);
+                result.last().is_some_and(|(_, _, id, _)| *id == excerpt.id);
             if !dominated_by_prev_excerpt && excerpt.text_summary.len == 0 {
                 let excerpt_position = self.len();
                 if bounds.contains(&excerpt_position) {
                     let buffer_offset =
                         BufferOffset(excerpt.range.context.start.to_offset(&excerpt.buffer));
-                    result.push((&excerpt.buffer, buffer_offset..buffer_offset, excerpt.id));
+                    let context = excerpt.range.context.clone();
+                    result.push((
+                        &excerpt.buffer,
+                        buffer_offset..buffer_offset,
+                        excerpt.id,
+                        context,
+                    ));
                 }
             }
         }

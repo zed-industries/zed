@@ -135,11 +135,7 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
         .id("provider-selector")
         .min_w_0()
         .gap_1p5()
-        .child(
-            SettingsSectionHeader::new("Active Provider")
-                .icon(IconName::Sparkle)
-                .no_padding(true),
-        )
+        .child(SettingsSectionHeader::new("Active Provider").no_padding(true))
         .child(
             h_flex()
                 .pt_2p5()
@@ -350,13 +346,8 @@ fn render_ollama_provider(
         .gap_1p5()
         .child(
             SettingsSectionHeader::new("Ollama")
-                .icon(IconName::ZedPredict)
+                .icon(IconName::AiOllama)
                 .no_padding(true),
-        )
-        .child(
-            Label::new("Configure the local Ollama server and model used for edit predictions.")
-                .size(LabelSize::Small)
-                .color(Color::Muted),
         )
         .child(div().px_neg_8().child(additional_fields))
 }

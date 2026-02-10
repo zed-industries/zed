@@ -21,7 +21,7 @@ use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
 use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingToggleFeatureFlag,
+    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingEffortFeatureFlag,
     FeatureFlagAppExt as _,
 };
 use file_icons::FileIcons;
@@ -73,10 +73,11 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, EditFirstQueuedMessage, ExpandMessageEditor,
-    ExternalAgentInitialContent, Follow, KeepAll, NewThread, OpenAddContextMenu, OpenAgentDiff,
-    OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage, SelectPermissionGranularity,
-    SendImmediately, SendNextQueuedMessage, ToggleProfileSelector, ToggleThinkingMode,
+    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
+    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
+    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
+    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -5099,7 +5100,7 @@ pub(crate) mod tests {
         assert!(
             allow_ids
                 .iter()
-                .any(|id| id.starts_with("always_allow_pattern:terminal:")),
+                .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
             "Missing allow pattern option"
         );
     }
@@ -5124,7 +5125,7 @@ pub(crate) mod tests {
         assert!(
             deny_ids
                 .iter()
-                .any(|id| id.starts_with("always_deny_pattern:terminal:")),
+                .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
             "Missing deny pattern option"
         );
     }

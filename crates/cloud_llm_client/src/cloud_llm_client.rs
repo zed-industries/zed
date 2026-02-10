@@ -291,6 +291,8 @@ pub struct LanguageModel {
     pub provider: LanguageModelProvider,
     pub id: LanguageModelId,
     pub display_name: String,
+    #[serde(default)]
+    pub is_latest: bool,
     pub max_token_count: usize,
     pub max_token_count_in_max_mode: Option<usize>,
     pub max_output_tokens: usize,

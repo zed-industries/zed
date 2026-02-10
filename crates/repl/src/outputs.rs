@@ -389,16 +389,13 @@ impl Output {
         cx: &mut App,
     ) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Json(json_object)) => {
-                let json_value = serde_json::Value::Object(json_object.clone());
-                match JsonView::from_value(json_value) {
-                    Ok(json_view) => Output::Json {
-                        content: cx.new(|_| json_view),
-                        display_id,
-                    },
-                    Err(_) => Output::Message("Failed to parse JSON".to_string()),
-                }
-            }
+            Some(MimeType::Json(json_value)) => match JsonView::from_value(json_value.clone()) {
+                Ok(json_view) => Output::Json {
+                    content: cx.new(|_| json_view),
+                    display_id,
+                },
+                Err(_) => Output::Message("Failed to parse JSON".to_string()),
+            },
             Some(MimeType::Plain(text)) => Output::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,

@@ -118,7 +118,9 @@ use std::{
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
-pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+pub use toolbar::{
+    PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+};
 pub use ui;
 use ui::{Window, prelude::*};
 use util::{

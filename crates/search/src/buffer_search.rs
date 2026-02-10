@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
-    SplittableEditor, ToggleSplitDiff,
+    SplittableEditor, ToggleDiffView,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
 use feature_flags::FeatureFlagAppExt as _;
@@ -22,15 +22,14 @@ use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    WeakEntity, Window, actions, div,
+    WeakEntity, Window, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
-use schemars::JsonSchema;
-use serde::Deserialize;
+
 use settings::Settings;
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
@@ -46,53 +45,12 @@ use workspace::{
     },
 };
 
-pub use registrar::DivRegistrar;
+pub use registrar::{DivRegistrar, register_pane_search_actions};
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-/// Opens the buffer search interface with the specified configuration.
-#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
-#[action(namespace = buffer_search)]
-#[serde(deny_unknown_fields)]
-pub struct Deploy {
-    #[serde(default = "util::serde::default_true")]
-    pub focus: bool,
-    #[serde(default)]
-    pub replace_enabled: bool,
-    #[serde(default)]
-    pub selection_search_enabled: bool,
-}
-
-actions!(
-    buffer_search,
-    [
-        /// Deploys the search and replace interface.
-        DeployReplace,
-        /// Dismisses the search bar.
-        Dismiss,
-        /// Focuses back on the editor.
-        FocusEditor
-    ]
-);
-
-impl Deploy {
-    pub fn find() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: false,
-            selection_search_enabled: false,
-        }
-    }
-
-    pub fn replace() -> Self {
-        Self {
-            focus: true,
-            replace_enabled: true,
-            selection_search_enabled: false,
-        }
-    }
-}
+pub use zed_actions::buffer_search::{Deploy, DeployReplace, Dismiss, FocusEditor};
 
 pub enum Event {
     UpdateLocation,
@@ -160,13 +118,13 @@ impl Render for BufferSearchBar {
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
                                 .tooltip(|_, cx| {
-                                    Tooltip::for_action("Stacked", &ToggleSplitDiff, cx)
+                                    Tooltip::for_action("Stacked", &ToggleDiffView, cx)
                                 })
                                 .when(is_split, |button| {
                                     let focus_handle = focus_handle.clone();
                                     button.on_click(move |_, window, cx| {
                                         focus_handle.focus(window, cx);
-                                        window.dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                        window.dispatch_action(ToggleDiffView.boxed_clone(), cx);
                                     })
                                 }),
                         )
@@ -175,7 +133,7 @@ impl Render for BufferSearchBar {
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
                                 .tooltip(|_, cx| {
-                                    Tooltip::for_action("Side by Side", &ToggleSplitDiff, cx)
+                                    Tooltip::for_action("Side by Side", &ToggleDiffView, cx)
                                 })
                                 .when(!is_split, |button| {
                                     button.on_click({
@@ -183,7 +141,7 @@ impl Render for BufferSearchBar {
                                         move |_, window, cx| {
                                             focus_handle.focus(window, cx);
                                             window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
                                         }
                                     })
                                 }),
