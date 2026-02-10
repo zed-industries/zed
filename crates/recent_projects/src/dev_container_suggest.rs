@@ -1,4 +1,5 @@
 use db::kvp::KEY_VALUE_STORE;
+use dev_container::find_configs_in_snapshot;
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
@@ -52,15 +53,7 @@ pub fn suggest_on_worktree_updated(
         return;
     }
 
-    let has_devcontainer_dir = worktree
-        .entry_for_path(devcontainer_dir_path())
-        .is_some_and(|entry| entry.is_dir());
-
-    let has_devcontainer_json = worktree
-        .entry_for_path(devcontainer_json_path())
-        .is_some_and(|entry| entry.is_file());
-
-    if !has_devcontainer_dir && !has_devcontainer_json {
+    if find_configs_in_snapshot(worktree).is_empty() {
         return;
     }
 

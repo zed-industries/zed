@@ -35,7 +35,7 @@ impl DevContainerConfig {
 
     pub fn root_config() -> Self {
         Self {
-            name: "default".to_string(),
+            name: "root".to_string(),
             config_path: PathBuf::from(".devcontainer.json"),
         }
     }
@@ -161,13 +161,14 @@ fn use_podman(cx: &mut AsyncWindowContext) -> bool {
 
 /// Finds all available devcontainer configurations in the project.
 ///
-/// This function scans for:
+/// Per the devcontainer spec, configurations are searched in this order of precedence:
 /// 1. `.devcontainer/devcontainer.json` (the default location)
-/// 2. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
-/// 3. `.devcontainer.json` in the project root (only if no configs found in `.devcontainer/`)
+/// 2. `.devcontainer.json` in the project root (used as default when #1 is absent)
+/// 3. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
 ///
-/// Per the devcontainer spec, `.devcontainer/devcontainer.json` takes precedence
-/// over `.devcontainer.json` in the root.
+/// `.devcontainer/devcontainer.json` and `.devcontainer.json` both serve as the
+/// "default" config — only the higher-precedence one is included. Subfolder
+/// configs are always returned alongside whichever default is found.
 ///
 /// Returns a list of found configurations, or an empty list if none are found.
 pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContainerConfig> {
@@ -200,10 +201,14 @@ pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContaine
 
 /// Scans a worktree snapshot for devcontainer configurations.
 ///
-/// Per the devcontainer spec, configurations are searched in this order:
+/// Per the devcontainer spec, configurations are searched in this order of precedence:
 /// 1. `.devcontainer/devcontainer.json` (the default location)
-/// 2. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
-/// 3. `.devcontainer.json` in the project root (only if no configs found in `.devcontainer/`)
+/// 2. `.devcontainer.json` in the project root (used as default when #1 is absent)
+/// 3. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
+///
+/// `.devcontainer/devcontainer.json` and `.devcontainer.json` both serve as the
+/// "default" config — only the higher-precedence one is included. Subfolder
+/// configs are always returned alongside whichever default is found.
 pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> {
     let mut configs = Vec::new();
 
@@ -256,17 +261,15 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
         }
     }
 
-    // Per the devcontainer spec, `.devcontainer.json` in the project root is only
-    // used when no configurations were found inside the `.devcontainer/` directory.
-    if configs.is_empty() {
-        let root_config_path = RelPath::unix(".devcontainer.json").expect("valid path");
-        if snapshot
-            .entry_for_path(root_config_path)
-            .is_some_and(|entry| entry.is_file())
-        {
-            log::debug!("find_configs_in_snapshot: Found .devcontainer.json in project root");
-            configs.push(DevContainerConfig::root_config());
-        }
+    // Always include `.devcontainer.json` so the user can pick it from the UI
+    // even when `.devcontainer/devcontainer.json` also exists.
+    let root_config_path = RelPath::unix(".devcontainer.json").expect("valid path");
+    if snapshot
+        .entry_for_path(root_config_path)
+        .is_some_and(|entry| entry.is_file())
+    {
+        log::debug!("find_configs_in_snapshot: Found .devcontainer.json in project root");
+        configs.push(DevContainerConfig::root_config());
     }
 
     log::info!(
@@ -275,12 +278,12 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
     );
 
     configs.sort_by(|a, b| {
-        if a.name == "default" {
-            std::cmp::Ordering::Less
-        } else if b.name == "default" {
-            std::cmp::Ordering::Greater
-        } else {
-            a.name.cmp(&b.name)
+        let a_is_primary = a.name == "default" || a.name == "root";
+        let b_is_primary = b.name == "default" || b.name == "root";
+        match (a_is_primary, b_is_primary) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
         }
     });
 
@@ -799,7 +802,7 @@ mod tests {
         });
 
         assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].name, "default");
+        assert_eq!(configs[0].name, "root");
         assert_eq!(configs[0].config_path, PathBuf::from(".devcontainer.json"));
     }
 
@@ -833,7 +836,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_find_configs_dir_takes_precedence_over_root(cx: &mut TestAppContext) {
+    async fn test_find_configs_dir_and_root_both_included(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -858,8 +861,9 @@ mod tests {
             find_configs_in_snapshot(worktree.read(cx))
         });
 
-        assert_eq!(configs.len(), 1);
+        assert_eq!(configs.len(), 2);
         assert_eq!(configs[0], DevContainerConfig::default_config());
+        assert_eq!(configs[1], DevContainerConfig::root_config());
     }
 
     #[gpui::test]
@@ -960,7 +964,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_find_configs_subfolder_takes_precedence_over_root(cx: &mut TestAppContext) {
+    async fn test_find_configs_root_json_and_subfolder_configs(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -987,10 +991,12 @@ mod tests {
             find_configs_in_snapshot(worktree.read(cx))
         });
 
-        assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].name, "rust");
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].name, "root");
+        assert_eq!(configs[0].config_path, PathBuf::from(".devcontainer.json"));
+        assert_eq!(configs[1].name, "rust");
         assert_eq!(
-            configs[0].config_path,
+            configs[1].config_path,
             PathBuf::from(".devcontainer/rust/devcontainer.json")
         );
     }
