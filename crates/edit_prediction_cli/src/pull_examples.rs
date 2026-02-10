@@ -1344,7 +1344,7 @@ fn build_output_patch(
     patch
 }
 
-fn get_column_indices(
+pub(crate) fn get_column_indices(
     meta: &Option<SnowflakeResultSetMetaData>,
     names: &[&str],
 ) -> std::collections::HashMap<String, usize> {
