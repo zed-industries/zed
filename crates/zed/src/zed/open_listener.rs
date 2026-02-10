@@ -10,7 +10,7 @@ use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future;
-use futures::future::join_all;
+
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
@@ -699,17 +699,30 @@ pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<PathWithPosition> {
-    join_all(path_strings.into_iter().map(|path_str| async move {
-        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
-        (path_str, canonicalized)
-    }))
-    .await
-    .into_iter()
-    .map(|(original, canonicalized)| match canonicalized {
-        Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
-        Err(_) => PathWithPosition::parse_str(original.as_ref()),
-    })
-    .collect()
+    let path_strings: Vec<_> = path_strings.into_iter().collect();
+    let mut result = Vec::with_capacity(path_strings.len());
+    for path_str in path_strings {
+        let original_path = Path::new(path_str.as_ref());
+        let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
+
+        // If a the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
+        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
+        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
+        if !cfg!(windows)
+            && parsed.row.is_some()
+            && parsed.path != original_path
+            && fs.is_file(original_path).await
+        {
+            parsed = PathWithPosition::from_path(original_path.to_path_buf());
+        }
+
+        if let Ok(canonicalized) = fs.canonicalize(&parsed.path).await {
+            parsed.path = canonicalized;
+        }
+
+        result.push(parsed);
+    }
+    result
 }
 
 #[cfg(test)]
