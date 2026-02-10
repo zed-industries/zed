@@ -104,7 +104,10 @@ use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
 };
-use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
+use editor_settings::{
+    GoToDefinitionAutoscroll, GoToDefinitionAutoscrollStrategy, GoToDefinitionFallback,
+    Minimap as MinimapSettings,
+};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
     FutureExt,
@@ -17393,8 +17396,39 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
+
+        let autoscroll = match &EditorSettings::get_global(cx).go_to_definition_autoscroll {
+            GoToDefinitionAutoscroll::Simple(strategy) => match strategy {
+                GoToDefinitionAutoscrollStrategy::Fit => Autoscroll::fit(),
+                GoToDefinitionAutoscrollStrategy::Center => Autoscroll::center(),
+                GoToDefinitionAutoscrollStrategy::Focused => Autoscroll::focused(),
+                GoToDefinitionAutoscrollStrategy::Top => Autoscroll::top(),
+                GoToDefinitionAutoscrollStrategy::Bottom => Autoscroll::bottom(),
+            },
+            GoToDefinitionAutoscroll::WithOffset { strategy, offset } => {
+                match strategy.as_str() {
+                    "center_relative" => Autoscroll::center_relative(*offset),
+                    "top_relative" => {
+                        if *offset >= 0 {
+                            Autoscroll::top_relative(*offset as usize)
+                        } else {
+                            Autoscroll::fit()
+                        }
+                    }
+                    "bottom_relative" => {
+                        if *offset >= 0 {
+                            Autoscroll::bottom_relative(*offset as usize)
+                        } else {
+                            Autoscroll::fit()
+                        }
+                    }
+                    _ => Autoscroll::fit(),
+                }
+            }
+        };
+
         self.change_selections(
-            SelectionEffects::default().nav_history(true),
+            SelectionEffects::scroll(autoscroll).nav_history(true),
             window,
             cx,
             |s| s.select_anchor_ranges([start..end]),

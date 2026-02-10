@@ -314,6 +314,13 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to position the cursor when navigating to a definition.
+  // Options: "fit" (default), "center", "focused", "top", "bottom"
+  // Or use an object for relative positioning:
+  //   {"strategy": "center_relative", "offset": -10}  // 10 lines above center
+  //   {"strategy": "top_relative", "offset": 5}       // 5 lines from top
+  //   {"strategy": "bottom_relative", "offset": 10}   // 10 lines from bottom
+  "go_to_definition_autoscroll": "fit",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt

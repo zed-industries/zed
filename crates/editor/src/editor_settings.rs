@@ -5,9 +5,10 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
-    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode,
-    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
-    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionAutoscroll,
+    GoToDefinitionAutoscrollStrategy, GoToDefinitionFallback, HideMouseMode, MinimapThumb,
+    MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
@@ -49,6 +50,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
+    pub go_to_definition_autoscroll: GoToDefinitionAutoscroll,
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
@@ -275,6 +277,7 @@ impl Settings for EditorSettings {
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
+            go_to_definition_autoscroll: editor.go_to_definition_autoscroll.clone().unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },
