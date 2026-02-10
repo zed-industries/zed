@@ -36,8 +36,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
-    ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -121,7 +120,6 @@ pub fn init(cx: &mut App) {
 
             if let Some(room) = ActiveCall::global(cx).read(cx).room() {
                 let romo_id_fut = room.read(cx).room_id();
-                let workspace_handle = cx.weak_entity();
                 cx.spawn(async move |workspace, cx| {
                     let room_id = romo_id_fut.await.context("Failed to get livekit room")?;
                     workspace.update(cx, |workspace, cx| {
@@ -136,7 +134,7 @@ pub fn init(cx: &mut App) {
                         );
                     })
                 })
-                .detach_and_notify_err(workspace_handle, window, cx);
+                .detach_and_notify_err(window, cx);
             } else {
                 workspace.show_error(&"There’s no active call; join one first.", cx);
             }
@@ -229,6 +227,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
+    filter_active_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -361,6 +360,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
+                filter_active_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
             };
@@ -681,13 +681,23 @@ impl CollabPanel {
 
             channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
 
+            if self.filter_active_channels {
+                let active_channel_ids_or_ancestors: HashSet<_> = channel_store
+                    .ordered_channels()
+                    .map(|(_, channel)| channel)
+                    .filter(|channel| !channel_store.channel_participants(channel.id).is_empty())
+                    .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
+                    .collect();
+                channels.retain(|channel| active_channel_ids_or_ancestors.contains(&channel.id));
+            }
+
             if let Some(state) = &self.channel_editing_state
                 && matches!(state, ChannelEditingState::Create { location: None, .. })
             {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
 
-            let should_respect_collapse = query.is_empty();
+            let should_respect_collapse = query.is_empty() && !self.filter_active_channels;
             let mut collapse_depth = None;
 
             for (idx, channel) in channels.into_iter().enumerate() {
@@ -2179,13 +2189,12 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            let workspace = self.workspace.clone();
-            cx.spawn_in(window, async move |this, mut cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
-                        .notify_workspace_async_err(workspace, &mut cx);
+                        .notify_async_err(cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
@@ -2214,13 +2223,12 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |_, mut cx| {
+        cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
                     .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .notify_workspace_async_err(workspace, &mut cx);
+                    .notify_async_err(cx);
             }
             anyhow::Ok(())
         })
@@ -2271,15 +2279,13 @@ impl CollabPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-
-        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+        let Some(handle) = window.window_handle().downcast::<Workspace>() else {
             return;
         };
         workspace::join_channel(
             channel_id,
             workspace.read(cx).app_state().clone(),
             Some(handle),
-            Some(self.workspace.clone()),
             cx,
         )
         .detach_and_prompt_err("Failed to join channel", window, cx, |_, _, _| None)
@@ -2322,13 +2328,12 @@ impl CollabPanel {
                             .full_width()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                let workspace = this.workspace.clone();
-                                cx.spawn_in(window, async move |_, mut cx| {
+                                cx.spawn_in(window, async move |_, cx| {
                                     client
-                                        .connect(true, &mut cx)
+                                        .connect(true, cx)
                                         .await
                                         .into_response()
-                                        .notify_workspace_async_err(workspace, &mut cx);
+                                        .notify_async_err(cx);
                                 })
                                 .detach()
                             })),
@@ -2561,12 +2566,36 @@ impl CollabPanel {
                     .tooltip(Tooltip::text("Search for new contact"))
                     .into_any_element(),
             ),
-            Section::Channels => Some(
-                IconButton::new("add-channel", IconName::Plus)
-                    .on_click(cx.listener(|this, _, window, cx| this.new_root_channel(window, cx)))
-                    .tooltip(Tooltip::text("Create a channel"))
-                    .into_any_element(),
-            ),
+            Section::Channels => {
+                Some(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("filter-active-channels", IconName::ListFilter)
+                                .toggle_state(self.filter_active_channels)
+                                .when(!self.filter_active_channels, |button| {
+                                    button.visible_on_hover("section-header")
+                                })
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.filter_active_channels = !this.filter_active_channels;
+                                    this.update_entries(true, cx);
+                                }))
+                                .tooltip(Tooltip::text(if self.filter_active_channels {
+                                    "Show All Channels"
+                                } else {
+                                    "Show Active Channels"
+                                })),
+                        )
+                        .child(
+                            IconButton::new("add-channel", IconName::Plus)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_root_channel(window, cx)
+                                }))
+                                .tooltip(Tooltip::text("Create a channel")),
+                        )
+                        .into_any_element(),
+                )
+            }
             _ => None,
         };
 

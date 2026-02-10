@@ -45,7 +45,7 @@ use std::{
     },
 };
 use util::path;
-use workspace::{MultiWorkspace, Workspace, WorkspaceStore};
+use workspace::{Workspace, WorkspaceStore};
 
 use livekit_client::test::TestServer as LivekitTestServer;
 
@@ -573,14 +573,9 @@ impl TestServer {
                 database_url: "".into(),
                 database_max_connections: 0,
                 api_token: "".into(),
-                invite_link_prefix: "".into(),
                 livekit_server: None,
                 livekit_key: None,
                 livekit_secret: None,
-                llm_database_url: None,
-                llm_database_max_connections: None,
-                llm_database_migrations_path: None,
-                llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
                 zed_environment: "test".into(),
@@ -589,19 +584,8 @@ impl TestServer {
                 blob_store_access_key: None,
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
-                openai_api_key: None,
-                google_ai_api_key: None,
-                anthropic_api_key: None,
-                anthropic_staff_api_key: None,
-                llm_closed_beta_model_name: None,
-                prediction_api_url: None,
-                prediction_api_key: None,
-                prediction_model: None,
                 zed_client_checksum_seed: None,
-                auto_join_channel_id: None,
-                migrations_path: None,
                 seed_path: None,
-                supermaven_admin_api_key: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -843,7 +827,7 @@ impl TestClient {
         channel_id: ChannelId,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, None, cx))
+        cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -897,19 +881,10 @@ impl TestClient {
         project: &Entity<Project>,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        let app_state = self.app_state.clone();
-        let project = project.clone();
-        let window = cx.add_window(|window, cx| {
+        cx.add_window_view(|window, cx| {
             window.activate_window();
-            let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
-        });
-        let cx = VisualTestContext::from_window(*window, cx).into_mut();
-        cx.run_until_parked();
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        (workspace, cx)
+            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
+        })
     }
 
     pub async fn build_test_workspace<'a>(
@@ -917,33 +892,19 @@ impl TestClient {
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
-        let app_state = self.app_state.clone();
-        let window = cx.add_window(|window, cx| {
+        cx.add_window_view(|window, cx| {
             window.activate_window();
-            let workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-            MultiWorkspace::new(workspace, cx)
-        });
-        let cx = VisualTestContext::from_window(*window, cx).into_mut();
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        (workspace, cx)
+            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
+        })
     }
 
     pub fn active_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
-        let window = cx.update(|cx| {
-            cx.active_window()
-                .unwrap()
-                .downcast::<MultiWorkspace>()
-                .unwrap()
-        });
+        let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
-        let entity = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
+        let entity = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
@@ -954,15 +915,8 @@ pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Entity<ChannelView>>> {
-    let window = cx.update(|_, cx| {
-        cx.active_window()
-            .unwrap()
-            .downcast::<MultiWorkspace>()
-            .unwrap()
-    });
-    let entity = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
+    let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let entity = window.root(cx).unwrap();
 
     cx.update(|window, cx| ChannelView::open(channel_id, None, entity.clone(), window, cx))
 }

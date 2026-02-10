@@ -75,16 +75,6 @@ pub enum AgentNotificationEvent {
 
 impl EventEmitter<AgentNotificationEvent> for AgentNotification {}
 
-impl AgentNotification {
-    pub fn accept(&mut self, cx: &mut Context<Self>) {
-        cx.emit(AgentNotificationEvent::Accepted);
-    }
-
-    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
-        cx.emit(AgentNotificationEvent::Dismissed);
-    }
-}
-
 impl Render for AgentNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
@@ -184,14 +174,14 @@ impl Render for AgentNotification {
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
-                                cx.listener(move |this, _event, _, cx| {
-                                    this.accept(cx);
+                                cx.listener(move |_this, _event, _, cx| {
+                                    cx.emit(AgentNotificationEvent::Accepted);
                                 })
                             }),
                     )
                     .child(Button::new("dismiss", "Dismiss").full_width().on_click({
-                        cx.listener(move |this, _event, _, cx| {
-                            this.dismiss(cx);
+                        cx.listener(move |_, _event, _, cx| {
+                            cx.emit(AgentNotificationEvent::Dismissed);
                         })
                     })),
             )

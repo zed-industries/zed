@@ -11,7 +11,6 @@ mod cherry_pick;
 mod compare_perf;
 mod danger;
 mod extension_bump;
-mod extension_release;
 mod extension_tests;
 mod extension_workflow_rollout;
 mod extensions;
@@ -135,7 +134,6 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(extension_bump::extension_bump),
-        WorkflowFile::zed(extension_release::extension_release),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
@@ -149,7 +147,6 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),
-        WorkflowFile::extension_shared(extensions::release_version::release_version),
     ];
 
     for workflow_file in workflows {

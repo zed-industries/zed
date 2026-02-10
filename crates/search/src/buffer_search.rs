@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
-    SplittableEditor, ToggleSplitDiff,
+    SplittableEditor, ToggleDiffView,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
 use feature_flags::FeatureFlagAppExt as _;
@@ -118,13 +118,13 @@ impl Render for BufferSearchBar {
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
                                 .tooltip(|_, cx| {
-                                    Tooltip::for_action("Stacked", &ToggleSplitDiff, cx)
+                                    Tooltip::for_action("Stacked", &ToggleDiffView, cx)
                                 })
                                 .when(is_split, |button| {
                                     let focus_handle = focus_handle.clone();
                                     button.on_click(move |_, window, cx| {
                                         focus_handle.focus(window, cx);
-                                        window.dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                        window.dispatch_action(ToggleDiffView.boxed_clone(), cx);
                                     })
                                 }),
                         )
@@ -133,7 +133,7 @@ impl Render for BufferSearchBar {
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
                                 .tooltip(|_, cx| {
-                                    Tooltip::for_action("Side by Side", &ToggleSplitDiff, cx)
+                                    Tooltip::for_action("Side by Side", &ToggleDiffView, cx)
                                 })
                                 .when(!is_split, |button| {
                                     button.on_click({
@@ -141,7 +141,7 @@ impl Render for BufferSearchBar {
                                         move |_, window, cx| {
                                             focus_handle.focus(window, cx);
                                             window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
                                         }
                                     })
                                 }),
