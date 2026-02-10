@@ -56,6 +56,7 @@ uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
 zed_actions.workspace = true
+zeromq.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

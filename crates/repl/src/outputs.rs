@@ -36,7 +36,8 @@
 use editor::{Editor, MultiBuffer};
 use gpui::{AnyElement, ClipboardItem, Entity, EventEmitter, Render, WeakEntity};
 use language::Buffer;
-use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
+use menu;
+use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBundle, MimeType};
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
 
 mod image;
@@ -441,6 +442,18 @@ pub enum ExecutionStatus {
 pub struct ExecutionViewFinishedEmpty;
 pub struct ExecutionViewFinishedSmall(pub String);
 
+pub struct InputReplyEvent {
+    pub value: String,
+    pub parent_message: JupyterMessage,
+}
+
+struct PendingInput {
+    prompt: String,
+    password: bool,
+    editor: Entity<Editor>,
+    parent_message: JupyterMessage,
+}
+
 /// An ExecutionView shows the outputs of an execution.
 /// It can hold zero or more outputs, which the user
 /// sees as "the output" for a single execution.
@@ -449,10 +462,12 @@ pub struct ExecutionView {
     workspace: WeakEntity<Workspace>,
     pub outputs: Vec<Output>,
     pub status: ExecutionStatus,
+    pending_input: Option<PendingInput>,
 }
 
 impl EventEmitter<ExecutionViewFinishedEmpty> for ExecutionView {}
 impl EventEmitter<ExecutionViewFinishedSmall> for ExecutionView {}
+impl EventEmitter<InputReplyEvent> for ExecutionView {}
 
 impl ExecutionView {
     pub fn new(
@@ -464,17 +479,37 @@ impl ExecutionView {
             workspace,
             outputs: Default::default(),
             status,
+            pending_input: None,
+        }
+    }
+
+    fn submit_input(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending_input) = self.pending_input.take() {
+            let value = pending_input.editor.read(cx).text(cx);
+
+            let display_text = if pending_input.password {
+                format!("{}{}", pending_input.prompt, "*".repeat(value.len()))
+            } else {
+                format!("{}{}", pending_input.prompt, value)
+            };
+            self.outputs.push(Output::Message(display_text));
+
+            cx.emit(InputReplyEvent {
+                value,
+                parent_message: pending_input.parent_message,
+            });
+            cx.notify();
         }
     }
 
     /// Accept a Jupyter message belonging to this execution
     pub fn push_message(
         &mut self,
-        message: &JupyterMessageContent,
+        message: &JupyterMessage,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let output: Output = match message {
+        let output: Output = match &message.content {
             JupyterMessageContent::ExecuteResult(result) => Output::new(
                 &result.data,
                 result.transient.as_ref().and_then(|t| t.display_id.clone()),
@@ -525,6 +560,28 @@ impl ExecutionView {
                 // Create a marker to clear the output after we get in a new output
                 Output::ClearOutputWaitMarker
             }
+            JupyterMessageContent::InputRequest(input_request) => {
+                let prompt = input_request.prompt.clone();
+                let password = input_request.password;
+
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    editor.set_placeholder_text("Type here and press Enter", window, cx);
+                    if password {
+                        editor.set_masked(true, cx);
+                    }
+                    editor
+                });
+
+                self.pending_input = Some(PendingInput {
+                    prompt,
+                    password,
+                    editor,
+                    parent_message: message.clone(),
+                });
+                cx.notify();
+                return;
+            }
             JupyterMessageContent::Status(status) => {
                 match status.execution_state {
                     ExecutionState::Busy => {
@@ -532,6 +589,7 @@ impl ExecutionView {
                     }
                     ExecutionState::Idle => {
                         self.status = ExecutionStatus::Finished;
+                        self.pending_input = None;
                         if self.outputs.is_empty() {
                             cx.emit(ExecutionViewFinishedEmpty);
                         } else if ReplSettings::get_global(cx).inline_output {
@@ -698,7 +756,35 @@ impl Render for ExecutionView {
                 .into_any_element(),
         };
 
-        if self.outputs.is_empty() {
+        let pending_input_element = self.pending_input.as_ref().map(|pending_input| {
+            let prompt_label = if pending_input.prompt.is_empty() {
+                "Input:".to_string()
+            } else {
+                pending_input.prompt.clone()
+            };
+
+            div()
+                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                    this.submit_input(window, cx);
+                }))
+                .w_full()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new(prompt_label).color(Color::Muted))
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_md()
+                                .child(pending_input.editor.clone()),
+                        ),
+                )
+        });
+
+        if self.outputs.is_empty() && pending_input_element.is_none() {
             return v_flex()
                 .min_h(window.line_height())
                 .justify_center()
@@ -713,6 +799,7 @@ impl Render for ExecutionView {
                     .iter()
                     .map(|output| output.render(self.workspace.clone(), window, cx)),
             )
+            .children(pending_input_element)
             .children(match self.status {
                 ExecutionStatus::Executing => vec![status],
                 ExecutionStatus::Queued => vec![status],

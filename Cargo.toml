@@ -740,6 +740,7 @@ wax = "0.7"
 which = "6.0.0"
 windows-core = "0.61"
 yawc = "0.2.5"
+zeromq = { version = "0.5.0", default-features = false, features = ["tcp-transport", "async-dispatcher-runtime"] }
 zeroize = "1.8"
 zstd = "0.11"
 
