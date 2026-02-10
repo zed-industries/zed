@@ -65,6 +65,9 @@ pub struct SearchOptions {
     pub find_in_results: bool,
 }
 
+// Whether to always select the current selection (even if empty)
+// or to use the default (restoring the previous search ranges if some,
+// otherwise using the whole file).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum FilteredSearchRange {
     Selection,
