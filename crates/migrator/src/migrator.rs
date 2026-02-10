@@ -3090,7 +3090,7 @@ mod tests {
 
     #[test]
     fn test_migrate_always_allow_tool_actions_to_default() {
-        // Case 1: No agent settings - no change
+        // No agent settings - no change
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3099,7 +3099,7 @@ mod tests {
             None,
         );
 
-        // Case 2: always_allow_tool_actions: true -> tool_permissions.default: "allow"
+        // always_allow_tool_actions: true -> tool_permissions.default: "allow"
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3134,7 +3134,7 @@ mod tests {
             ),
         );
 
-        // Case 3: always_allow_tool_actions: false -> just remove it
+        // always_allow_tool_actions: false -> just remove it
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3153,7 +3153,7 @@ mod tests {
             ),
         );
 
-        // Case 4: Preserve existing tool_permissions.tools when migrating
+        // Preserve existing tool_permissions.tools when migrating
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3200,7 +3200,7 @@ mod tests {
             ),
         );
 
-        // Case 5: Don't override existing default (and migrate default_mode to default)
+        // Don't override existing default (and migrate default_mode to default)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3238,7 +3238,7 @@ mod tests {
             ),
         );
 
-        // Case 6: Migrate existing default_mode to default (no always_allow_tool_actions)
+        // Migrate existing default_mode to default (no always_allow_tool_actions)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3267,7 +3267,7 @@ mod tests {
             ),
         );
 
-        // Case 7: No migration needed if already using new format with "default"
+        // No migration needed if already using new format with "default"
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3285,7 +3285,7 @@ mod tests {
             None,
         );
 
-        // Case 8: Migrate default_mode to default in tool-specific rules
+        // Migrate default_mode to default in tool-specific rules
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3324,7 +3324,7 @@ mod tests {
             ),
         );
 
-        // Case 9: When tool_permissions is null, replace it so always_allow is preserved
+        // When tool_permissions is null, replace it so always_allow is preserved
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3360,7 +3360,7 @@ mod tests {
             ),
         );
 
-        // Case 10: Platform-specific agent migration
+        // Platform-specific agent migration
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3399,7 +3399,7 @@ mod tests {
             ),
         );
 
-        // Case 11: Channel-specific agent migration
+        // Channel-specific agent migration
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3448,7 +3448,7 @@ mod tests {
             ),
         );
 
-        // Case 12: Profile-level migration
+        // Profile-level migration
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3486,7 +3486,7 @@ mod tests {
             ),
         );
 
-        // Case 13: Platform-specific agent with profiles
+        // Platform-specific agent with profiles
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3539,7 +3539,7 @@ mod tests {
             ),
         );
 
-        // Case 14: Root-level profile with always_allow_tool_actions
+        // Root-level profile with always_allow_tool_actions
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3582,7 +3582,7 @@ mod tests {
             ),
         );
 
-        // Case 15: Root-level profile with default_mode
+        // Root-level profile with default_mode
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3619,7 +3619,7 @@ mod tests {
             ),
         );
 
-        // Case 16: Root-level profile + root-level agent both migrated
+        // Root-level profile + root-level agent both migrated
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3672,7 +3672,7 @@ mod tests {
             ),
         );
 
-        // Case 17: Non-boolean always_allow_tool_actions (string "true") is left in place
+        // Non-boolean always_allow_tool_actions (string "true") is left in place
         // so the schema validator can report it, rather than silently dropping user data.
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
@@ -3689,7 +3689,7 @@ mod tests {
             None,
         );
 
-        // Case 18: null always_allow_tool_actions is removed (treated as false)
+        // null always_allow_tool_actions is removed (treated as false)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3705,7 +3705,7 @@ mod tests {
             Some(&"{\n    \"agent\": {\n        \n    }\n}\n"),
         );
 
-        // Case 19: Project-local settings (.zed/settings.json) with always_allow_tool_actions
+        // Project-local settings (.zed/settings.json) with always_allow_tool_actions
         // These files have no platform/channel overrides or root-level profiles.
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
@@ -3755,7 +3755,7 @@ mod tests {
             ),
         );
 
-        // Case 20: Project-local settings with only default_mode (no always_allow_tool_actions)
+        // Project-local settings with only default_mode (no always_allow_tool_actions)
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3784,7 +3784,7 @@ mod tests {
             ),
         );
 
-        // Case 21: Project-local settings with no agent section at all - no change
+        // Project-local settings with no agent section at all - no change
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3799,7 +3799,7 @@ mod tests {
             None,
         );
 
-        // Case 22: Don't override existing agent_servers default_mode values
+        // Don't override existing agent_servers default_mode values
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3842,7 +3842,7 @@ mod tests {
             ),
         );
 
-        // Case 23: Only override agent_servers entries that don't already have default_mode
+        // Only override agent_servers entries that don't already have default_mode
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3882,7 +3882,7 @@ mod tests {
             ),
         );
 
-        // Case 24: always_allow_tool_actions: false does NOT set agent_servers default_mode
+        // always_allow_tool_actions: false does NOT set agent_servers default_mode
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
