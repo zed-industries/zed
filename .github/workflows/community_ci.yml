@@ -41,6 +41,8 @@ jobs:
         uses: swatinem/rust-cache@v2
       - name: Install Linux dependencies
         run: ./script/linux
+      - name: Install Mold
+        run: ./script/install-mold
       - name: Configure CI
         run: |
           mkdir -p ./../.cargo
