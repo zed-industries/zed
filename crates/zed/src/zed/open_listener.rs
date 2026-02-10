@@ -1122,8 +1122,9 @@ mod tests {
 
         // Now test the reuse functionality - should replace the existing workspace
         let workspace_paths_reuse = vec![file1_path.to_string()];
+        let paths: Vec<PathBuf> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
         let window_to_replace = find_existing_workspace(
-            paths,
+            &paths,
             &workspace::OpenOptions::default(),
             &workspace::SerializedWorkspaceLocation::Local,
             &mut cx.to_async(),
