@@ -47,14 +47,6 @@ impl From<Nextest> for Step<Run> {
     }
 }
 
-pub fn restore_mtime() -> Step<Use> {
-    named::uses(
-        "zed-industries",
-        "git-restore-mtime-action",
-        "72cefcf20b50bf4fcd74ea8a0d2927b0680e2114",
-    )
-}
-
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
         "actions",

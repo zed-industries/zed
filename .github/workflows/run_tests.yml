@@ -151,9 +151,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -173,9 +170,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -204,9 +198,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -229,9 +220,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -263,9 +251,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -314,9 +299,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -351,9 +333,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: 0
-    - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:

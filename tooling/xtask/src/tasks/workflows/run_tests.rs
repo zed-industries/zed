@@ -384,8 +384,7 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         name: format!("clippy_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
-            .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
-            .add_step(steps::restore_mtime())
+            .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux || platform == Platform::Mac,
@@ -431,8 +430,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                         ),
                 )
             })
-            .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
-            .add_step(steps::restore_mtime())
+            .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux || platform == Platform::Mac,
@@ -515,8 +513,7 @@ fn doctests() -> NamedJob {
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
-            .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
-            .add_step(steps::restore_mtime())
+            .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
