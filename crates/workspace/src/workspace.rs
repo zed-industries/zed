@@ -8316,7 +8316,6 @@ pub fn open_workspace_by_id(
 
 pub async fn find_existing_workspace(
     abs_paths: &[PathBuf],
-    app_state: &Arc<AppState>,
     open_options: &OpenOptions,
     location: &SerializedWorkspaceLocation,
     cx: &mut AsyncApp,
@@ -8326,19 +8325,12 @@ pub async fn find_existing_workspace(
     let mut best_match = None;
 
     if open_options.open_new_workspace != Some(true) {
-        let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
-        let all_metadatas = futures::future::join_all(all_paths)
-            .await
-            .into_iter()
-            .filter_map(|result| result.ok().flatten())
-            .collect::<Vec<_>>();
-
         cx.update(|cx| {
             for window in workspace_windows_for_location(location, cx) {
                 if let Ok(workspace) = window.read(cx) {
-                    let m = workspace.project.read(cx).visibility_for_paths(
-                        &abs_paths,
-                        &all_metadatas,
+                    let project = workspace.project.read(cx);
+                    let m = project.visibility_for_paths(
+                        abs_paths,
                         open_options.open_new_workspace == None,
                         cx,
                     );
@@ -8353,31 +8345,45 @@ pub async fn find_existing_workspace(
             }
         });
 
+        let all_paths_are_files = existing
+            .and_then(|workspace| {
+                cx.update(|cx| {
+                    workspace
+                        .read(cx)
+                        .map(|workspace| {
+                            let project = workspace.project.read(cx);
+                            let path_style = workspace.path_style(cx);
+                            !abs_paths.iter().any(|path| {
+                                project.worktrees(cx).any(|worktree| {
+                                    let worktree = worktree.read(cx);
+                                    let abs_path = worktree.abs_path();
+                                    path_style
+                                        .strip_prefix(path, abs_path.as_ref())
+                                        .and_then(|rel| worktree.entry_for_path(&rel))
+                                        .is_some_and(|e| e.is_dir())
+                                })
+                            })
+                        })
+                        .ok()
+                })
+            })
+            .unwrap_or(false);
+
         if open_options.open_new_workspace.is_none()
-            && (existing.is_none() || open_options.wait)
-            && all_metadatas.iter().all(|file| !file.is_dir)
+            && existing.is_some()
+            && open_options.wait
+            && all_paths_are_files
         {
             cx.update(|cx| {
-                // Only fall back to active local window when opening local paths.
-                // For remote paths, we should not reuse a local workspace.
-                if matches!(location, SerializedWorkspaceLocation::Local) {
-                    if let Some(window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
-                        && let Ok(workspace) = window.read(cx)
-                    {
-                        let project = workspace.project().read(cx);
-                        if project.is_local() && !project.is_via_collab() {
-                            existing = Some(window);
-                            open_visible = OpenVisible::None;
-                            return;
-                        }
-                    }
-                }
-                for window in workspace_windows_for_location(location, cx) {
+                let windows = workspace_windows_for_location(location, cx);
+                let window = cx
+                    .active_window()
+                    .and_then(|window| window.downcast::<Workspace>())
+                    .filter(|window| windows.contains(window))
+                    .or_else(|| windows.into_iter().next());
+                if let Some(window) = window {
                     existing = Some(window);
                     open_visible = OpenVisible::None;
-                    break;
                 }
             });
         }
@@ -8404,7 +8410,7 @@ pub fn open_paths(
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        let (existing, open_visible) = find_existing_workspace(&abs_paths, &app_state, &open_options, &SerializedWorkspaceLocation::Local, cx).await;
+        let (existing, open_visible) = find_existing_workspace(&abs_paths, &open_options, &SerializedWorkspaceLocation::Local, cx).await;
 
         let result = if let Some(existing) = existing {
             let open_task = existing

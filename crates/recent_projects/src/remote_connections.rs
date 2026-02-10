@@ -136,7 +136,6 @@ pub async fn open_remote_project(
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
-        &app_state,
         &open_options,
         &SerializedWorkspaceLocation::Remote(connection_options.clone()),
         cx,

@@ -1111,7 +1111,6 @@ mod tests {
         let workspace_paths_reuse = vec![file1_path.to_string()];
         let window_to_replace = find_existing_workspace(
             paths,
-            &app_state,
             &workspace::OpenOptions::default(),
             &workspace::SerializedWorkspaceLocation::Local,
             &mut cx.to_async(),
