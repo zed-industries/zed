@@ -4505,22 +4505,43 @@ impl GitPanel {
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
                     this.pr_2().child(
-                        panel_icon_button("undo", IconName::Undo)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Uncommit",
-                                    Some(&git::Uncommit),
-                                    if has_unstaged {
-                                        "git reset HEAD^ --soft"
-                                    } else {
-                                        "git reset HEAD^"
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                panel_icon_button("view-commit", IconName::ListTree)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::simple("Open Git Commit List", cx)
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        if let Some(action) =
+                                            cx.build_action("git_graph::Open", None).log_err()
+                                        {
+                                            window.dispatch_action(action, cx)
+                                        }
+                                    }),
+                            )
+                            .child(
+                                panel_icon_button("undo", IconName::Undo)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Uncommit",
+                                            Some(&git::Uncommit),
+                                            if has_unstaged {
+                                                "git reset HEAD^ --soft"
+                                            } else {
+                                                "git reset HEAD^"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.uncommit(window, cx)
+                                    })),
+                            ),
                     )
                 }),
         )
