@@ -477,7 +477,6 @@ impl BufferDiffSnapshot {
     #[cfg(test)]
     pub(crate) fn patch_for_buffer_range_naive<'a>(
         &'a self,
-        _range: RangeInclusive<Point>,
         buffer: &'a text::BufferSnapshot,
     ) -> Patch<Point> {
         let original_snapshot = self.original_buffer_snapshot();
@@ -600,7 +599,6 @@ impl BufferDiffSnapshot {
     #[cfg(test)]
     pub(crate) fn patch_for_base_text_range_naive<'a>(
         &'a self,
-        _range: RangeInclusive<Point>,
         buffer: &'a text::BufferSnapshot,
     ) -> Patch<Point> {
         let original_snapshot = self.original_buffer_snapshot();
@@ -3854,7 +3852,7 @@ mod tests {
             let points = points_in_range(&range, &buffer_lines);
 
             let optimized_patch = diff.patch_for_buffer_range(range.clone(), &buffer_snapshot);
-            let naive_patch = diff.patch_for_buffer_range_naive(range.clone(), &buffer_snapshot);
+            let naive_patch = diff.patch_for_buffer_range_naive(&buffer_snapshot);
 
             for point in points {
                 let optimized_edit = optimized_patch.edit_for_old_position(point);
@@ -3878,7 +3876,7 @@ mod tests {
             let points = points_in_range(&range, &base_lines);
 
             let optimized_patch = diff.patch_for_base_text_range(range.clone(), &buffer_snapshot);
-            let naive_patch = diff.patch_for_base_text_range_naive(range.clone(), &buffer_snapshot);
+            let naive_patch = diff.patch_for_base_text_range_naive(&buffer_snapshot);
 
             for point in points {
                 let optimized_edit = optimized_patch.edit_for_old_position(point);
