@@ -26,25 +26,20 @@ struct BasetenModel {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct BasetenEnvironmentsResponse {
-    environments: Vec<BasetenEnvironment>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct BasetenEnvironment {
-    name: String,
-    current_deployment: Option<BasetenDeployment>,
+struct BasetenDeploymentsResponse {
+    deployments: Vec<BasetenDeployment>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct BasetenDeployment {
+    id: String,
     name: String,
-    #[serde(default)]
-    id: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     created_at: Option<String>,
+    #[serde(default)]
+    environment: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,12 +95,12 @@ async fn fetch_baseten_models(
     Ok(parsed.models)
 }
 
-async fn fetch_baseten_environments(
+async fn fetch_baseten_deployments(
     http_client: &Arc<dyn HttpClient>,
     api_key: &str,
     model_id: &str,
-) -> Result<Vec<BasetenEnvironment>> {
-    let url = format!("https://api.baseten.co/v1/models/{model_id}/environments");
+) -> Result<Vec<BasetenDeployment>> {
+    let url = format!("https://api.baseten.co/v1/models/{model_id}/deployments");
     let request = Request::builder()
         .method(Method::GET)
         .uri(url.as_str())
@@ -116,7 +111,7 @@ async fn fetch_baseten_environments(
     let response = http_client
         .send(request)
         .await
-        .context("failed to fetch baseten environments")?;
+        .context("failed to fetch baseten deployments")?;
 
     let status = response.status();
     let body_bytes = {
@@ -125,47 +120,38 @@ async fn fetch_baseten_environments(
         let mut bytes = Vec::new();
         body.read_to_end(&mut bytes)
             .await
-            .context("failed to read baseten environments response")?;
+            .context("failed to read baseten deployments response")?;
         bytes
     };
 
     if !status.is_success() {
         let body_text = String::from_utf8_lossy(&body_bytes);
         anyhow::bail!(
-            "baseten environments API http {}: {}",
+            "baseten deployments API http {}: {}",
             status.as_u16(),
             body_text
         );
     }
 
-    let parsed: BasetenEnvironmentsResponse =
-        serde_json::from_slice(&body_bytes).context("failed to parse environments response")?;
-    Ok(parsed.environments)
+    let parsed: BasetenDeploymentsResponse =
+        serde_json::from_slice(&body_bytes).context("failed to parse deployments response")?;
+    Ok(parsed.deployments)
 }
 
 fn collect_deployment_records(
     model_id: &str,
-    environments: &[BasetenEnvironment],
+    deployments: &[BasetenDeployment],
 ) -> Vec<DeploymentRecord> {
-    let mut records = Vec::new();
-    for env in environments {
-        let Some(deployment) = &env.current_deployment else {
-            continue;
-        };
-
-        let Some(model_version_id) = &deployment.id else {
-            eprintln!(
-                "warning: environment '{}' deployment '{}' has no id field, skipping",
-                env.name, deployment.name
-            );
-            continue;
-        };
-
-        records.push(DeploymentRecord {
+    deployments
+        .iter()
+        .map(|deployment| DeploymentRecord {
             model_id: model_id.to_string(),
-            model_version_id: model_version_id.clone(),
+            model_version_id: deployment.id.clone(),
             experiment_name: deployment.name.clone(),
-            environment: env.name.clone(),
+            environment: deployment
+                .environment
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
             status: deployment
                 .status
                 .clone()
@@ -174,9 +160,8 @@ fn collect_deployment_records(
                 .created_at
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string()),
-        });
-    }
-    records
+        })
+        .collect()
 }
 
 async fn run_sql_with_polling(
@@ -234,8 +219,6 @@ async fn run_sql_with_polling(
     Ok(response)
 }
 
-/// Fetches all existing "Edit Prediction Deployment" events from Snowflake,
-/// keyed by model_version_id.
 async fn fetch_existing_deployments(
     http_client: &Arc<dyn HttpClient>,
     base_url: &str,
@@ -381,6 +364,49 @@ WHERE event_type = '{EDIT_PREDICTION_DEPLOYMENT_EVENT}'
     Ok(())
 }
 
+fn display_deployments(existing: &HashMap<String, ExistingDeployment>) {
+    let col_names = ["version_id", "experiment", "environment"];
+
+    let mut col_widths: Vec<usize> = col_names.iter().map(|n| n.len()).collect();
+    let mut rows: Vec<[String; 3]> = Vec::new();
+
+    for (version_id, deployment) in existing {
+        let row = [
+            version_id.clone(),
+            deployment.experiment_name.clone(),
+            deployment.environment.clone(),
+        ];
+        for (i, val) in row.iter().enumerate() {
+            col_widths[i] = col_widths[i].max(val.len());
+        }
+        rows.push(row);
+    }
+
+    rows.sort_by(|a, b| a[2].cmp(&b[2]).then_with(|| a[1].cmp(&b[1])));
+
+    let print_row = |values: &[&str]| {
+        for (i, val) in values.iter().enumerate() {
+            if i > 0 {
+                eprint!("  ");
+            }
+            eprint!("{:width$}", val, width = col_widths[i]);
+        }
+        eprintln!();
+    };
+
+    eprintln!();
+    print_row(&col_names);
+
+    let separators: Vec<String> = col_widths.iter().map(|w| "─".repeat(*w)).collect();
+    let separator_refs: Vec<&str> = separators.iter().map(|s| s.as_str()).collect();
+    print_row(&separator_refs);
+
+    for row in &rows {
+        let refs: Vec<&str> = row.iter().map(|s| s.as_str()).collect();
+        print_row(&refs);
+    }
+}
+
 pub async fn run_sync_deployments(
     http_client: Arc<dyn HttpClient>,
     model_name: Option<String>,
@@ -410,7 +436,7 @@ pub async fn run_sync_deployments(
         })?;
 
     eprintln!("Fetching existing deployments from Snowflake...");
-    let existing = fetch_existing_deployments(
+    let mut existing = fetch_existing_deployments(
         &http_client,
         &snowflake_base_url,
         &snowflake_token,
@@ -424,16 +450,22 @@ pub async fn run_sync_deployments(
         existing.len()
     );
 
-    let environments = fetch_baseten_environments(&http_client, &baseten_api_key, &model.id)
+    let baseten_deployments = fetch_baseten_deployments(&http_client, &baseten_api_key, &model.id)
         .await
-        .with_context(|| format!("failed to fetch environments for model '{}'", model.name))?;
+        .with_context(|| format!("failed to fetch deployments for model '{}'", model.name))?;
 
-    let records = collect_deployment_records(&model.id, &environments);
+    let records = collect_deployment_records(&model.id, &baseten_deployments);
 
     if records.is_empty() {
         eprintln!("No deployments found on Baseten.");
         return Ok(());
     }
+
+    eprintln!(
+        "Found {} deployment(s) on Baseten for model '{}'.",
+        records.len(),
+        model.name
+    );
 
     let mut inserts = Vec::new();
     let mut updates = Vec::new();
@@ -459,8 +491,7 @@ pub async fn run_sync_deployments(
     }
 
     eprintln!(
-        "Diff for model '{}': {} insert(s), {} update(s), {} unchanged",
-        model.name,
+        "Diff: {} insert(s), {} update(s), {} unchanged",
         inserts.len(),
         updates.len(),
         unchanged,
@@ -489,12 +520,20 @@ pub async fn run_sync_deployments(
                 record.experiment_name, record.model_version_id
             )
         })?;
+
+        existing.insert(
+            record.model_version_id.clone(),
+            ExistingDeployment {
+                experiment_name: record.experiment_name.clone(),
+                environment: record.environment.clone(),
+            },
+        );
     }
 
     for (i, record) in updates.iter().enumerate() {
         let existing_deployment = existing
             .get(&record.model_version_id)
-            .expect("update record must have existing entry");
+            .context("update record missing from existing map")?;
         eprintln!(
             "  UPDATE [{}/{}] version_id={}: environment '{}' -> '{}', experiment '{}' -> '{}'",
             i + 1,
@@ -519,99 +558,21 @@ pub async fn run_sync_deployments(
                 record.experiment_name, record.model_version_id
             )
         })?;
+
+        existing.insert(
+            record.model_version_id.clone(),
+            ExistingDeployment {
+                experiment_name: record.experiment_name.clone(),
+                environment: record.environment.clone(),
+            },
+        );
     }
 
     if inserts.is_empty() && updates.is_empty() {
         eprintln!("All deployments up to date, no writes needed.");
     }
 
-    query_and_display_deployments(
-        &http_client,
-        &snowflake_base_url,
-        &snowflake_token,
-        &snowflake_role,
-    )
-    .await
-}
-
-async fn query_and_display_deployments(
-    http_client: &Arc<dyn HttpClient>,
-    base_url: &str,
-    token: &str,
-    role: &Option<String>,
-) -> Result<()> {
-    let statement = format!(
-        r#"
-SELECT
-    event_properties:model_version_id::string AS version_id,
-    event_properties:experiment_name::string AS experiment,
-    event_properties:environment::string AS environment,
-    event_properties:status::string AS status
-FROM events
-WHERE event_type = '{EDIT_PREDICTION_DEPLOYMENT_EVENT}'
-ORDER BY event_properties:environment::string, event_properties:experiment_name::string
-"#
-    );
-
-    let request = json!({
-        "statement": statement,
-        "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
-        "database": "EVENTS",
-        "schema": "PUBLIC",
-        "warehouse": "DBT",
-        "role": role,
-    });
-
-    let response = run_sql_with_polling(http_client.clone(), base_url, token, &request).await?;
-
-    let col_names = ["version_id", "experiment", "environment", "status"];
-    let column_indices =
-        pull_examples::get_column_indices(&response.result_set_meta_data, &col_names);
-
-    let mut col_widths: Vec<usize> = col_names.iter().map(|n| n.len()).collect();
-    let mut rows: Vec<Vec<String>> = Vec::new();
-
-    for data_row in &response.data {
-        let get_string = |name: &str| -> String {
-            let Some(&index) = column_indices.get(name) else {
-                return "—".to_string();
-            };
-            match data_row.get(index) {
-                Some(JsonValue::String(s)) => s.clone(),
-                Some(JsonValue::Null) | None => "—".to_string(),
-                Some(other) => other.to_string(),
-            }
-        };
-
-        let row: Vec<String> = col_names.iter().map(|name| get_string(name)).collect();
-        for (i, val) in row.iter().enumerate() {
-            if i < col_widths.len() {
-                col_widths[i] = col_widths[i].max(val.len());
-            }
-        }
-        rows.push(row);
-    }
-
-    let print_row = |values: &[&str]| {
-        for (i, val) in values.iter().enumerate() {
-            if i > 0 {
-                eprint!("  ");
-            }
-            eprint!("{:width$}", val, width = col_widths[i]);
-        }
-        eprintln!();
-    };
-
-    print_row(&col_names);
-
-    let separators: Vec<String> = col_widths.iter().map(|w| "─".repeat(*w)).collect();
-    let separator_refs: Vec<&str> = separators.iter().map(|s| s.as_str()).collect();
-    print_row(&separator_refs);
-
-    for row in &rows {
-        let refs: Vec<&str> = row.iter().map(|s| s.as_str()).collect();
-        print_row(&refs);
-    }
+    display_deployments(&existing);
 
     Ok(())
 }
