@@ -29,6 +29,7 @@ fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
 
 pub struct AcpThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
+    prefer_full_refreshes: bool,
     sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -99,6 +100,7 @@ impl AcpThreadHistory {
 
         let mut this = Self {
             session_list: None,
+            prefer_full_refreshes: false,
             sessions: Vec::new(),
             scroll_handle,
             selected_index: 0,
@@ -183,7 +185,7 @@ impl AcpThreadHistory {
         let Some(rx) = session_list.watch(cx) else {
             // No watch support - do a one-time refresh
             self._watch_task = None;
-            self.refresh_sessions(false, cx);
+            self.refresh_sessions(false, self.prefer_full_refreshes, cx);
             return;
         };
         session_list.notify_refresh();
@@ -196,25 +198,36 @@ impl AcpThreadHistory {
                     updates.push(update);
                 }
 
-                let needs_refresh = updates
-                    .iter()
-                    .any(|u| matches!(u, SessionListUpdate::Refresh));
-
                 this.update(cx, |this, cx| {
-                    // We will refresh the whole list anyway, so no need to apply incremental updates or do several refreshes
-                    if needs_refresh {
-                        this.refresh_sessions(true, cx);
-                    } else {
-                        for update in updates {
-                            if let SessionListUpdate::SessionInfo { session_id, update } = update {
+                    let mut needs_refresh = false;
+                    for update in updates {
+                        match update {
+                            SessionListUpdate::Refresh => needs_refresh = true,
+                            SessionListUpdate::SessionInfo { session_id, update } => {
                                 this.apply_info_update(session_id, update, cx);
                             }
                         }
+                    }
+
+                    if needs_refresh {
+                        this.refresh_sessions(true, this.prefer_full_refreshes, cx);
                     }
                 })
                 .ok();
             }
         }));
+    }
+
+    pub(crate) fn refresh_full_history(&mut self, cx: &mut Context<Self>) {
+        self.refresh_sessions(true, true, cx);
+    }
+
+    pub(crate) fn set_prefer_full_refreshes(
+        &mut self,
+        prefer_full_refreshes: bool,
+        _cx: &mut Context<Self>,
+    ) {
+        self.prefer_full_refreshes = prefer_full_refreshes;
     }
 
     fn apply_info_update(
@@ -258,7 +271,12 @@ impl AcpThreadHistory {
         self.update_visible_items(true, cx);
     }
 
-    fn refresh_sessions(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
+    fn refresh_sessions(
+        &mut self,
+        preserve_selected_item: bool,
+        load_all_pages: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session_list) = self.session_list.clone() else {
             self.update_visible_items(preserve_selected_item, cx);
             return;
@@ -299,6 +317,10 @@ impl AcpThreadHistory {
                 .ok();
 
                 is_first_page = false;
+                if !load_all_pages {
+                    break;
+                }
+
                 match next_cursor {
                     Some(next_cursor) => {
                         if cursor.as_ref() == Some(&next_cursor) {
@@ -1054,7 +1076,11 @@ mod tests {
     use acp_thread::AgentSessionListResponse;
     use chrono::NaiveDate;
     use gpui::TestAppContext;
-    use std::any::Any;
+    use std::{
+        any::Any,
+        cell::RefCell,
+        sync::{Arc, Mutex},
+    };
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1106,6 +1132,389 @@ mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    #[derive(Clone)]
+    struct PaginatedTestSessionList {
+        first_page_sessions: Vec<AgentSessionInfo>,
+        second_page_sessions: Vec<AgentSessionInfo>,
+        requested_cursors: Rc<RefCell<Vec<Option<String>>>>,
+        updates_tx: smol::channel::Sender<SessionListUpdate>,
+        updates_rx: smol::channel::Receiver<SessionListUpdate>,
+    }
+
+    impl PaginatedTestSessionList {
+        fn new(
+            first_page_sessions: Vec<AgentSessionInfo>,
+            second_page_sessions: Vec<AgentSessionInfo>,
+        ) -> Self {
+            let (tx, rx) = smol::channel::unbounded();
+            Self {
+                first_page_sessions,
+                second_page_sessions,
+                requested_cursors: Rc::new(RefCell::new(Vec::new())),
+                updates_tx: tx,
+                updates_rx: rx,
+            }
+        }
+
+        fn requested_cursors(&self) -> Vec<Option<String>> {
+            self.requested_cursors.borrow().clone()
+        }
+
+        fn clear_requested_cursors(&self) {
+            self.requested_cursors.borrow_mut().clear();
+        }
+
+        fn send_update(&self, update: SessionListUpdate) {
+            self.updates_tx.try_send(update).ok();
+        }
+    }
+
+    impl AgentSessionList for PaginatedTestSessionList {
+        fn list_sessions(
+            &self,
+            request: AgentSessionListRequest,
+            _cx: &mut App,
+        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            self.requested_cursors
+                .borrow_mut()
+                .push(request.cursor.clone());
+
+            let response = match request.cursor.as_deref() {
+                None => AgentSessionListResponse {
+                    sessions: self.first_page_sessions.clone(),
+                    next_cursor: Some("page-2".to_string()),
+                    meta: None,
+                },
+                Some("page-2") => AgentSessionListResponse::new(self.second_page_sessions.clone()),
+                Some(_) => AgentSessionListResponse::new(Vec::new()),
+            };
+
+            Task::ready(Ok(response))
+        }
+
+        fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+            Some(self.updates_rx.clone())
+        }
+
+        fn notify_refresh(&self) {
+            self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[derive(Clone)]
+    struct AsyncPaginatedTestSessionList {
+        first_page_sessions: Vec<AgentSessionInfo>,
+        second_page_sessions: Vec<AgentSessionInfo>,
+        requested_cursors: Arc<Mutex<Vec<Option<String>>>>,
+        updates_tx: smol::channel::Sender<SessionListUpdate>,
+        updates_rx: smol::channel::Receiver<SessionListUpdate>,
+    }
+
+    impl AsyncPaginatedTestSessionList {
+        fn new(
+            first_page_sessions: Vec<AgentSessionInfo>,
+            second_page_sessions: Vec<AgentSessionInfo>,
+        ) -> Self {
+            let (tx, rx) = smol::channel::unbounded();
+            Self {
+                first_page_sessions,
+                second_page_sessions,
+                requested_cursors: Arc::new(Mutex::new(Vec::new())),
+                updates_tx: tx,
+                updates_rx: rx,
+            }
+        }
+
+        fn requested_cursors(&self) -> Vec<Option<String>> {
+            self.requested_cursors.lock().unwrap().clone()
+        }
+
+        fn clear_requested_cursors(&self) {
+            self.requested_cursors.lock().unwrap().clear();
+        }
+    }
+
+    impl AgentSessionList for AsyncPaginatedTestSessionList {
+        fn list_sessions(
+            &self,
+            request: AgentSessionListRequest,
+            cx: &mut App,
+        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
+            let requested_cursors = self.requested_cursors.clone();
+            let first_page_sessions = self.first_page_sessions.clone();
+            let second_page_sessions = self.second_page_sessions.clone();
+            cx.foreground_executor().spawn(async move {
+                smol::future::yield_now().await;
+
+                requested_cursors
+                    .lock()
+                    .unwrap()
+                    .push(request.cursor.clone());
+
+                let response = match request.cursor.as_deref() {
+                    None => AgentSessionListResponse {
+                        sessions: first_page_sessions,
+                        next_cursor: Some("page-2".to_string()),
+                        meta: None,
+                    },
+                    Some("page-2") => AgentSessionListResponse::new(second_page_sessions),
+                    Some(_) => AgentSessionListResponse::new(Vec::new()),
+                };
+
+                Ok(response)
+            })
+        }
+
+        fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+            Some(self.updates_rx.clone())
+        }
+
+        fn notify_refresh(&self) {
+            self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    fn test_session(session_id: &str, title: &str) -> AgentSessionInfo {
+        AgentSessionInfo {
+            session_id: acp::SessionId::new(session_id),
+            cwd: None,
+            title: Some(title.to_string().into()),
+            updated_at: None,
+            meta: None,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_refresh_only_loads_first_page_by_default(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 1);
+            assert_eq!(
+                history.sessions[0].session_id,
+                acp::SessionId::new("session-1")
+            );
+        });
+        assert_eq!(session_list.requested_cursors(), vec![None]);
+    }
+
+    #[gpui::test]
+    async fn test_enabling_full_pagination_loads_all_pages(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+        session_list.clear_requested_cursors();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 2);
+            assert_eq!(
+                history.sessions[0].session_id,
+                acp::SessionId::new("session-1")
+            );
+            assert_eq!(
+                history.sessions[1].session_id,
+                acp::SessionId::new("session-2")
+            );
+        });
+        assert_eq!(
+            session_list.requested_cursors(),
+            vec![None, Some("page-2".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_standard_refresh_replaces_with_first_page_after_full_history_refresh(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+        session_list.clear_requested_cursors();
+
+        history.update(cx, |history, cx| {
+            history.set_prefer_full_refreshes(false, cx);
+            history.refresh(cx);
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 1);
+            assert_eq!(
+                history.sessions[0].session_id,
+                acp::SessionId::new("session-1")
+            );
+        });
+        assert_eq!(session_list.requested_cursors(), vec![None]);
+    }
+
+    #[gpui::test]
+    async fn test_re_entering_full_pagination_reloads_all_pages(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+        session_list.clear_requested_cursors();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 2);
+        });
+        assert_eq!(
+            session_list.requested_cursors(),
+            vec![None, Some("page-2".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_refresh_messages_use_full_pagination_when_preferred(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+        session_list.clear_requested_cursors();
+
+        history.update(cx, |history, cx| {
+            history.set_prefer_full_refreshes(true, cx);
+        });
+        session_list.notify_refresh();
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 2);
+        });
+        assert_eq!(
+            session_list.requested_cursors(),
+            vec![None, Some("page-2".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_partial_refresh_batch_drops_non_first_page_sessions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let second_page_session_id = acp::SessionId::new("session-2");
+        let session_list = Rc::new(PaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+
+        history.update(cx, |history, cx| {
+            history.set_prefer_full_refreshes(false, cx);
+        });
+        session_list.clear_requested_cursors();
+
+        session_list.send_update(SessionListUpdate::SessionInfo {
+            session_id: second_page_session_id.clone(),
+            update: acp::SessionInfoUpdate::new().title("Updated Second"),
+        });
+        session_list.send_update(SessionListUpdate::Refresh);
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 1);
+            assert_eq!(history.sessions[0].session_id, acp::SessionId::new("session-1"));
+            assert!(history
+                .sessions
+                .iter()
+                .all(|session| session.session_id != second_page_session_id));
+        });
+        assert_eq!(session_list.requested_cursors(), vec![None]);
+    }
+
+    #[gpui::test]
+    async fn test_full_pagination_works_with_async_page_fetches(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_list = Rc::new(AsyncPaginatedTestSessionList::new(
+            vec![test_session("session-1", "First")],
+            vec![test_session("session-2", "Second")],
+        ));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+        session_list.clear_requested_cursors();
+
+        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 2);
+        });
+        assert_eq!(
+            session_list.requested_cursors(),
+            vec![None, Some("page-2".to_string())]
+        );
     }
 
     #[gpui::test]
