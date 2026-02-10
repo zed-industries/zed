@@ -791,6 +791,12 @@
     },
   },
   {
+    "context": "vim_operator == gb",
+    "bindings": {
+      "c": "vim::CurrentLine",
+    },
+  },
+  {
     "context": "vim_operator == gR",
     "bindings": {
       "r": "vim::CurrentLine",
