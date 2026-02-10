@@ -2512,6 +2512,8 @@ impl PickerDelegate for QuickSearchDelegate {
                         .w_full()
                         .gap_4()
                         .justify_between()
+                        .font_buffer(cx)
+                        .text_buffer(cx)
                         .child(
                             div()
                                 .flex_1()
@@ -2519,8 +2521,6 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .font_buffer(cx)
-                                .text_buffer(cx)
                                 .child(
                                     StyledText::new(line_text_string)
                                         .with_default_highlights(&text_style, highlights),
@@ -2530,8 +2530,6 @@ impl PickerDelegate for QuickSearchDelegate {
                             div()
                                 .flex_none()
                                 .pr_2()
-                                .font_buffer(cx)
-                                .text_buffer(cx)
                                 .text_color(cx.theme().colors().text_muted)
                                 .child(format!("{path_str} {}", search_match.line_number)),
                         ),
