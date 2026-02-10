@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -10,7 +11,7 @@ use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
 use crate::kernels::{
-    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -34,6 +35,7 @@ impl ReplStore {
     pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let store = cx.new(move |cx| Self::new(fs, cx));
 
+        #[cfg(not(feature = "test-support"))]
         store
             .update(cx, |store, cx| store.refresh_kernelspecs(cx))
             .detach_and_log_err(cx);
@@ -46,9 +48,12 @@ impl ReplStore {
     }
 
     pub fn new(fs: Arc<dyn Fs>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.set_enabled(JupyterSettings::enabled(cx), cx);
-        })];
+        let subscriptions = vec![
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                this.set_enabled(JupyterSettings::enabled(cx), cx);
+            }),
+            cx.on_app_quit(Self::shutdown_all_sessions),
+        ];
 
         let this = Self {
             fs,
@@ -214,8 +219,9 @@ impl ReplStore {
         let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
 
         if let Some(language_at_cursor) = language_at_cursor {
-            selected_kernelspec
-                .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+            selected_kernelspec.or_else(|| {
+                self.kernelspec_legacy_by_lang_only(worktree_id, language_at_cursor, cx)
+            })
         } else {
             selected_kernelspec
         }
@@ -223,6 +229,7 @@ impl ReplStore {
 
     fn kernelspec_legacy_by_lang_only(
         &self,
+        worktree_id: WorktreeId,
         language_at_cursor: Arc<Language>,
         cx: &App,
     ) -> Option<KernelSpecification> {
@@ -232,8 +239,7 @@ impl ReplStore {
             .get(language_at_cursor.code_fence_block_name().as_ref());
 
         let found_by_name = self
-            .kernel_specifications
-            .iter()
+            .kernel_specifications_for_worktree(worktree_id)
             .find(|runtime_specification| {
                 if let (Some(selected), KernelSpecification::Jupyter(runtime_specification)) =
                     (selected_kernel, runtime_specification)
@@ -249,8 +255,7 @@ impl ReplStore {
             return Some(found_by_name);
         }
 
-        self.kernel_specifications
-            .iter()
+        self.kernel_specifications_for_worktree(worktree_id)
             .find(|kernel_option| match kernel_option {
                 KernelSpecification::Jupyter(runtime_specification) => {
                     runtime_specification.kernelspec.language.to_lowercase()
@@ -278,6 +283,23 @@ impl ReplStore {
 
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
+    }
+
+    fn shutdown_all_sessions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        for session in self.sessions.values() {
+            session.update(cx, |session, _cx| {
+                if let Kernel::RunningKernel(mut kernel) =
+                    std::mem::replace(&mut session.kernel, Kernel::Shutdown)
+                {
+                    kernel.kill();
+                }
+            });
+        }
+        self.sessions.clear();
+        futures::future::ready(())
     }
 
     #[cfg(test)]

@@ -1,22 +1,42 @@
 mod base_keymap_setting;
+mod content_into_gpui;
 mod editable_setting_control;
+mod editorconfig_store;
 mod keymap_file;
-pub mod merge_from;
-mod settings_content;
 mod settings_file;
-mod settings_json;
 mod settings_store;
 mod vscode_import;
 
-pub use settings_content::*;
+pub use settings_macros::RegisterSetting;
+
+pub mod settings_content {
+    pub use ::settings_content::*;
+}
+
+pub mod fallible_options {
+    pub use ::settings_content::{FallibleOption, parse_json};
+}
+
+#[doc(hidden)]
+pub mod private {
+    pub use crate::settings_store::{RegisteredSetting, SettingValue};
+    pub use inventory;
+}
 
 use gpui::{App, Global};
+
 use rust_embed::RustEmbed;
+use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
+pub use ::settings_content::*;
 pub use base_keymap_setting::*;
+pub use content_into_gpui::IntoGpui;
 pub use editable_setting_control::*;
+pub use editorconfig_store::{
+    Editorconfig, EditorconfigEvent, EditorconfigProperties, EditorconfigStore,
+};
 pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
@@ -24,8 +44,9 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
-    SettingsStore,
+    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, LocalSettingsPath,
+    MigrationStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey,
+    SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
@@ -36,6 +57,30 @@ pub use keymap_file::ActionSequence;
 pub struct ActiveSettingsProfileName(pub String);
 
 impl Global for ActiveSettingsProfileName {}
+
+pub trait UserSettingsContentExt {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_release_channel(&self) -> Option<&SettingsContent>;
+    fn for_os(&self) -> Option<&SettingsContent>;
+}
+
+impl UserSettingsContentExt for UserSettingsContent {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+        let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
+            return None;
+        };
+        self.profiles.get(&active_profile.0)
+    }
+
+    fn for_release_channel(&self) -> Option<&SettingsContent> {
+        self.release_channel_overrides
+            .get_by_key(release_channel::RELEASE_CHANNEL.dev_name())
+    }
+
+    fn for_os(&self) -> Option<&SettingsContent> {
+        self.platform_overrides.get_by_key(env::consts::OS)
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct WorktreeId(usize);
@@ -80,12 +125,15 @@ pub struct SettingsAssets;
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
-    BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
 pub fn default_settings() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/default.json")
+}
+
+pub fn default_semantic_token_rules() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/default_semantic_token_rules.json")
 }
 
 #[cfg(target_os = "macos")]

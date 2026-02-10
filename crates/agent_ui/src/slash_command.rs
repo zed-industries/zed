@@ -127,6 +127,8 @@ impl SlashCommandCompletionProvider {
                             new_text,
                             label: command.label(cx),
                             icon_path: None,
+                            match_start: None,
+                            snippet_deduplication_key: None,
                             insert_text_mode: None,
                             confirm,
                             source: CompletionSource::Custom,
@@ -232,6 +234,8 @@ impl SlashCommandCompletionProvider {
                             icon_path: None,
                             new_text,
                             documentation: None,
+                            match_start: None,
+                            snippet_deduplication_key: None,
                             confirm,
                             insert_text_mode: None,
                             source: CompletionSource::Custom,
@@ -337,7 +341,6 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);

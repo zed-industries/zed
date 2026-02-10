@@ -1,0 +1,25 @@
+[package]
+name = "platform_title_bar"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/platform_title_bar.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

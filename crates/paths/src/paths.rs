@@ -36,6 +36,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+// Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
@@ -68,15 +69,10 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
-        let mut path = PathBuf::from(dir);
-        if path.is_relative() && path.exists() {
-            let abs_path = path
-                .canonicalize()
-                .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = util::paths::SanitizedPath::new(&abs_path).into()
-        }
+        let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path
+        path.canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path")
     })
 }
 
@@ -126,6 +122,29 @@ pub fn data_dir() -> &'static PathBuf {
     })
 }
 
+pub fn state_dir() -> &'static PathBuf {
+    static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    STATE_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return home_dir().join(".local").join("state").join("Zed");
+        }
+
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
+                flatpak_xdg_state.into()
+            } else {
+                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
+            }
+            .join("zed");
+        } else {
+            // Windows
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
+        }
+    })
+}
+
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -153,6 +172,12 @@ pub fn temp_dir() -> &'static PathBuf {
 
         home_dir().join(".cache").join("zed")
     })
+}
+
+/// Returns the path to the hang traces directory.
+pub fn hang_traces_dir() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    LOGS_DIR.get_or_init(|| data_dir().join("hang_traces"))
 }
 
 /// Returns the path to the logs directory.
@@ -285,10 +310,9 @@ pub fn snippets_dir() -> &'static PathBuf {
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
-/// Returns the path to the contexts directory.
-///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn contexts_dir() -> &'static PathBuf {
+// Returns old path to contexts directory.
+// Fallback
+fn text_threads_dir_fallback() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -297,6 +321,17 @@ pub fn contexts_dir() -> &'static PathBuf {
             data_dir().join("conversations")
         }
     })
+}
+/// Returns the path to the contexts directory.
+///
+/// This is where the saved contexts from the Assistant are stored.
+pub fn text_threads_dir() -> &'static PathBuf {
+    let fallback_dir = text_threads_dir_fallback();
+    if fallback_dir.exists() {
+        return fallback_dir;
+    }
+    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXTS_DIR.get_or_init(|| state_dir().join("conversations"))
 }
 
 /// Returns the path to the contexts directory.
@@ -370,12 +405,12 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
     DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
-/// Returns the path to the agent servers directory
+/// Returns the path to the external agents directory
 ///
 /// This is where agent servers are downloaded to
-pub fn agent_servers_dir() -> &'static PathBuf {
-    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+pub fn external_agents_dir() -> &'static PathBuf {
+    static EXTERNAL_AGENTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    EXTERNAL_AGENTS_DIR.get_or_init(|| data_dir().join("external_agents"))
 }
 
 /// Returns the path to the Copilot directory.
@@ -400,6 +435,12 @@ pub fn default_prettier_dir() -> &'static PathBuf {
 pub fn remote_servers_dir() -> &'static PathBuf {
     static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
+}
+
+/// Returns the path to the directory where the devcontainer CLI is installed.
+pub fn devcontainer_dir() -> &'static PathBuf {
+    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
 }
 
 /// Returns the relative path to a `.zed` folder within a project.
@@ -460,8 +501,12 @@ pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
 
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
+pub fn global_ssh_config_file() -> Option<&'static Path> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(Path::new("/etc/ssh/ssh_config"))
+    }
 }
 
 /// Returns candidate paths for the vscode user settings file
@@ -486,8 +531,10 @@ fn vscode_user_data_paths() -> Vec<PathBuf> {
     // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
     const VSCODE_PRODUCT_NAMES: &[&str] = &[
         "Code",
+        "Code - Insiders",
         "Code - OSS",
         "VSCodium",
+        "VSCodium - Insiders",
         "Code Dev",
         "Code - OSS Dev",
         "code-oss-dev",

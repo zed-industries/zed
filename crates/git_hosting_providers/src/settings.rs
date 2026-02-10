@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use settings::{GitHostingProviderConfig, GitHostingProviderKind, Settings, SettingsStore};
+use settings::{
+    GitHostingProviderConfig, GitHostingProviderKind, RegisterSetting, Settings, SettingsStore,
+};
 use url::Url;
 use util::ResultExt as _;
 
-use crate::{Bitbucket, Github, Gitlab};
+use crate::{Bitbucket, Forgejo, Gitea, Github, Gitlab, SourceHut};
 
 pub(crate) fn init(cx: &mut App) {
-    GitHostingProviderSettings::register(cx);
-
     init_git_hosting_provider_settings(cx);
 }
 
@@ -46,13 +46,18 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
                 }
                 GitHostingProviderKind::Github => Arc::new(Github::new(&provider.name, url)) as _,
                 GitHostingProviderKind::Gitlab => Arc::new(Gitlab::new(&provider.name, url)) as _,
+                GitHostingProviderKind::Gitea => Arc::new(Gitea::new(&provider.name, url)) as _,
+                GitHostingProviderKind::Forgejo => Arc::new(Forgejo::new(&provider.name, url)) as _,
+                GitHostingProviderKind::SourceHut => {
+                    Arc::new(SourceHut::new(&provider.name, url)) as _
+                }
             })
         });
 
     provider_registry.set_setting_providers(iter);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RegisterSetting)]
 pub struct GitHostingProviderSettings {
     pub git_hosting_providers: Vec<GitHostingProviderConfig>,
 }

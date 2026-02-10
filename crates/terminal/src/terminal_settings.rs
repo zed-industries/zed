@@ -7,9 +7,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use settings::AlternateScroll;
+
 use settings::{
-    CursorShapeContent, SettingsContent, ShowScrollbar, TerminalBlink, TerminalDockPosition,
-    TerminalLineHeight, TerminalSettingsContent, VenvSettings, WorkingDirectory,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
+    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
     merge_from::MergeFrom,
 };
 use task::Shell;
@@ -20,7 +21,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
@@ -43,9 +44,12 @@ pub struct TerminalSettings {
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
+    pub scroll_multiplier: f32,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
+    pub path_hyperlink_regexes: Vec<String>,
+    pub path_hyperlink_timeout_ms: u64,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -81,7 +85,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(px),
+            font_size: user_content.font_size.map(|s| s.into_gpui()),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -91,8 +95,8 @@ impl settings::Settings for TerminalSettings {
                         .collect(),
                 )
             }),
-            font_features: user_content.font_features,
-            font_weight: user_content.font_weight.map(FontWeight),
+            font_features: user_content.font_features.map(|f| f.into_gpui()),
+            font_weight: user_content.font_weight.map(|w| w.into_gpui()),
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),
@@ -106,6 +110,7 @@ impl settings::Settings for TerminalSettings {
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
             detect_venv: project_content.detect_venv.unwrap(),
+            scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
@@ -114,81 +119,16 @@ impl settings::Settings for TerminalSettings {
                 show: user_content.scrollbar.unwrap().show,
             },
             minimum_contrast: user_content.minimum_contrast.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, content: &mut SettingsContent) {
-        let mut default = TerminalSettingsContent::default();
-        let current = content.terminal.as_mut().unwrap_or(&mut default);
-        let name = |s| format!("terminal.integrated.{s}");
-
-        vscode.f32_setting(&name("fontSize"), &mut current.font_size);
-        vscode.font_family_setting(
-            &name("fontFamily"),
-            &mut current.font_family,
-            &mut current.font_fallbacks,
-        );
-        vscode.bool_setting(&name("copyOnSelection"), &mut current.copy_on_select);
-        vscode.bool_setting("macOptionIsMeta", &mut current.option_as_meta);
-        vscode.usize_setting("scrollback", &mut current.max_scroll_history_lines);
-        match vscode.read_bool(&name("cursorBlinking")) {
-            Some(true) => current.blinking = Some(TerminalBlink::On),
-            Some(false) => current.blinking = Some(TerminalBlink::Off),
-            None => {}
-        }
-        vscode.enum_setting(
-            &name("cursorStyle"),
-            &mut current.cursor_shape,
-            |s| match s {
-                "block" => Some(CursorShapeContent::Block),
-                "line" => Some(CursorShapeContent::Bar),
-                "underline" => Some(CursorShapeContent::Underline),
-                _ => None,
-            },
-        );
-        // they also have "none" and "outline" as options but just for the "Inactive" variant
-        if let Some(height) = vscode
-            .read_value(&name("lineHeight"))
-            .and_then(|v| v.as_f64())
-        {
-            current.line_height = Some(TerminalLineHeight::Custom(height as f32))
-        }
-
-        #[cfg(target_os = "windows")]
-        let platform = "windows";
-        #[cfg(target_os = "linux")]
-        let platform = "linux";
-        #[cfg(target_os = "macos")]
-        let platform = "osx";
-        #[cfg(target_os = "freebsd")]
-        let platform = "freebsd";
-
-        // TODO: handle arguments
-        let shell_name = format!("{platform}Exec");
-        if let Some(s) = vscode.read_string(&name(&shell_name)) {
-            current.project.shell = Some(settings::Shell::Program(s.to_owned()))
-        }
-
-        if let Some(env) = vscode
-            .read_value(&name(&format!("env.{platform}")))
-            .and_then(|v| v.as_object())
-        {
-            for (k, v) in env {
-                if v.is_null()
-                    && let Some(zed_env) = current.project.env.as_mut()
-                {
-                    zed_env.remove(k);
-                }
-                let Some(v) = v.as_str() else { continue };
-                if let Some(zed_env) = current.project.env.as_mut() {
-                    zed_env.insert(k.clone(), v.to_owned());
-                } else {
-                    current.project.env = Some([(k.clone(), v.to_owned())].into_iter().collect())
-                }
-            }
-        }
-        if content.terminal.is_none() && default != TerminalSettingsContent::default() {
-            content.terminal = Some(default)
+            path_hyperlink_regexes: project_content
+                .path_hyperlink_regexes
+                .unwrap()
+                .into_iter()
+                .map(|regex| match regex {
+                    PathHyperlinkRegex::SingleLine(regex) => regex,
+                    PathHyperlinkRegex::MultiLine(regex) => regex.join("\n"),
+                })
+                .collect(),
+            path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
         }
     }
 }

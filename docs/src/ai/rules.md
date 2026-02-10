@@ -1,7 +1,6 @@
 # Using Rules {#using-rules}
 
-A rule is essentially a prompt that is inserted at the beginning of each interaction with the Agent.
-Currently, Zed supports `.rules` files at the directory's root and the Rules Library, which allows you to store multiple rules for on-demand usage.
+Rules are prompts inserted at the beginning of each agent interaction. Add them via files in your worktree (`.rules`, etc.) or through the Rules Library for reuse across projects and threads.
 
 ## `.rules` files
 
@@ -20,7 +19,7 @@ Other names for this file are also supported for compatibility with other agents
 
 ## Rules Library {#rules-library}
 
-The Rules Library is an interface for writing and managing rules. Like other text-driven UIs in Zed, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
+The Rules Library is an interface for writing and managing rules. It's a full editor with syntax highlighting and all standard keybindings.
 
 You can use the inline assistant right in the rules editor, allowing you to automate and rewrite rules.
 
@@ -30,7 +29,7 @@ You can use the inline assistant right in the rules editor, allowing you to auto
 2. Click on the Agent menu (`...`) in the top right corner.
 3. Select `Rules...` from the dropdown.
 
-You can also use the `agent: open rules library` command while in the Agent Panel.
+You can also reach it by running {#action agent::OpenRulesLibrary} in the command palette or through the {#kb agent::OpenRulesLibrary} keybinding.
 
 ### Managing Rules
 
@@ -42,11 +41,9 @@ Rules can be duplicated, deleted, or added to the default rules using the button
 
 To create a rule file, simply open the `Rules Library` and click the `+` button. Rules files are stored locally and can be accessed from the library at any time.
 
-Having a series of rules files specifically tailored to prompt engineering can also help you write consistent and effective rules.
+For guidance on writing effective rules:
 
-Here are a couple of helpful resources for writing better rules:
-
-- [Anthropic: Prompt Engineering](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview)
+- [Anthropic: Prompt Engineering](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview)
 - [OpenAI: Prompt Engineering](https://platform.openai.com/docs/guides/prompt-engineering)
 
 ### Editing the Default Rules {#default-rules}

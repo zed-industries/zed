@@ -93,8 +93,17 @@
 type: (primitive_type) @type.builtin
 (sized_type_specifier) @type.builtin
 
+; GNU __attribute__
+(attribute_specifier) @attribute
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C++11 [[attributes]]
 (attribute
-    name: (identifier) @attribute)
+  prefix: (identifier) @attribute)
+(attribute
+  name: (identifier) @attribute)
 
 ((identifier) @constant.builtin
  (#match? @constant.builtin "^_*[A-Z][A-Z\\d_]*$"))
@@ -106,32 +115,19 @@ type: (primitive_type) @type.builtin
 [
   "alignas"
   "alignof"
-  "break"
-  "case"
-  "catch"
   "class"
-  "co_await"
-  "co_return"
-  "co_yield"
   "concept"
   "consteval"
   "constexpr"
   "constinit"
-  "continue"
   "decltype"
-  "default"
   "delete"
-  "do"
-  "else"
   "enum"
   "explicit"
   "export"
   "extern"
   "final"
-  "for"
   "friend"
-  "goto"
-  "if"
   "import"
   "inline"
   "module"
@@ -144,27 +140,45 @@ type: (primitive_type) @type.builtin
   "protected"
   "public"
   "requires"
-  "return"
   "sizeof"
   "struct"
-  "switch"
   "template"
   "thread_local"
-  "throw"
-  "try"
   "typedef"
   "typename"
   "union"
   "using"
   "virtual"
-  "while"
   (storage_class_specifier)
   (type_qualifier)
 ] @keyword
 
 [
+  "break"
+  "case"
+  "catch"
+  "co_await"
+  "co_return"
+  "co_yield"
+  "continue"
+  "default"
+  "do"
+  "else"
+  "for"
+  "goto"
+  "if"
+  "return"
+  "switch"
+  "throw"
+  "try"
+  "while"
+] @keyword.control
+
+[
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
@@ -194,6 +208,8 @@ type: (primitive_type) @type.builtin
   (char_literal)
   (raw_string_literal)
 ] @string
+
+(escape_sequence) @string.escape
 
 [
   ","

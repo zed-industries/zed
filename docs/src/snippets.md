@@ -1,6 +1,6 @@
 # Snippets
 
-Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit a existing snippets file for a specified [scope](#scopes).
+Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
 
 The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
 
@@ -35,7 +35,7 @@ To create JSX snippets you have to use `javascript.json` snippets file, instead 
 
 ## Known Limitations
 
-- Only the first prefix is used when an list of prefixes is passed in.
+- Only the first prefix is used when a list of prefixes is passed in.
 - Currently only the `json` snippet file format is supported, even though the `simple-completion-language-server` supports both `json` and `toml` file formats.
 
 ## See also

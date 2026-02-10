@@ -78,9 +78,8 @@ pub fn init(cx: &mut App) {
                 return;
             }
 
-            cx.defer_in(window, |editor, window, cx| {
-                let workspace = Workspace::for_window(window, cx);
-                let project = workspace.map(|workspace| workspace.read(cx).project().clone());
+            cx.defer_in(window, |editor, _window, cx| {
+                let project = editor.project().cloned();
 
                 let is_local_project = project
                     .as_ref()
@@ -197,7 +196,7 @@ impl Item for ReplSessionsPage {
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
@@ -241,7 +240,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, window, cx)),
+                    .child(KeyBinding::for_action(&Run, cx)),
             );
         }
 

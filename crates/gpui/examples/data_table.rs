@@ -374,7 +374,6 @@ impl DataTable {
 impl Render for DataTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .text_sm()
             .size_full()
@@ -439,7 +438,7 @@ impl Render for DataTable {
                                     }),
                                 )
                                 .size_full()
-                                .track_scroll(self.scroll_handle.clone()),
+                                .track_scroll(&self.scroll_handle),
                             )
                             .child(self.render_scrollbar(window, cx)),
                     ),

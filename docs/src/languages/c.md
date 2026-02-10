@@ -11,6 +11,7 @@ C support is available natively in Zed.
 Clangd out of the box assumes mixed C++/C projects. If you have a C-only project you may wish to instruct clangd to treat all files as C using the `-xc` flag. To do this, create a `.clangd` file in the root of your project with the following:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add: [-xc]
 ```
@@ -27,9 +28,10 @@ By default clang and gcc will recognize `*.C` and `*.H` (uppercase extensions) a
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C code like the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
 ---
 BasedOnStyle: GNU
 IndentWidth: 2
@@ -66,6 +68,9 @@ After building your project, CMake will generate the `compile_commands.json` fil
 ## Debugging
 
 You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
+
+- [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
+- [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
 
 ### Build and Debug Binary
 

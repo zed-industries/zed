@@ -41,6 +41,9 @@
       name: (identifier) @function.special)
   ])
 
+(macro_invocation
+  "!" @function.special)
+
 (macro_definition
   name: (identifier) @function.special.definition)
 
@@ -53,6 +56,9 @@
 ; Assume all-caps names are constants
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+
+; Ensure enum variants are highlighted correctly regardless of naming convention
+(enum_variant name: (identifier) @type)
 
 [
   "("
@@ -82,44 +88,50 @@
 [
   "as"
   "async"
-  "await"
-  "break"
   "const"
-  "continue"
   "default"
   "dyn"
-  "else"
   "enum"
   "extern"
   "fn"
-  "for"
-  "if"
   "impl"
-  "in"
   "let"
-  "loop"
   "macro_rules!"
-  "match"
   "mod"
   "move"
   "pub"
   "raw"
   "ref"
-  "return"
   "static"
   "struct"
+  "for"
   "trait"
   "type"
   "union"
   "unsafe"
   "use"
   "where"
-  "while"
-  "yield"
   (crate)
   (mutable_specifier)
   (super)
 ] @keyword
+
+[
+  "await"
+  "break"
+  "continue"
+  "else"
+  "if"
+  "in"
+  "loop"
+  "match"
+  "return"
+  "while"
+  "yield"
+] @keyword.control
+
+(for_expression
+  ("for" @keyword.control))
 
 [
   (string_literal)
@@ -189,7 +201,9 @@
 (unary_expression "!" @operator)
 operator: "/" @operator
 
-(lifetime) @lifetime
+(lifetime
+  "'" @lifetime
+  (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 

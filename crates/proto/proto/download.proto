@@ -1,0 +1,36 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "worktree.proto";
+
+message DownloadFileByPath {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    uint64 file_id = 4;
+}
+
+message DownloadFileResponse {
+    uint64 file_id = 1;
+}
+
+message CreateFileForPeer {
+    uint64 project_id = 1;
+    PeerId peer_id = 2;
+    oneof variant {
+        FileState state = 3;
+        FileChunk chunk = 4;
+    }
+}
+
+message FileState {
+    uint64 id = 1;
+    optional File file = 2;
+    uint64 content_size = 3;
+}
+
+message FileChunk {
+    uint64 file_id = 1;
+    bytes data = 2;
+}

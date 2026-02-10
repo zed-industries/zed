@@ -71,9 +71,11 @@ impl LspInstaller for GoLspAdapter {
             {
                 cx.update(|cx| {
                     delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                })?
+                });
             }
-            anyhow::bail!("cannot install gopls");
+            anyhow::bail!(
+                "Could not install the Go language server `gopls`, because `go` was not found."
+            );
         }
 
         let release =
@@ -222,7 +224,7 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
                 let source = Rope::from(format!("import {text}").as_str());
-                let runs = language.highlight_text(&source, 7..7 + text.len());
+                let runs = language.highlight_text(&source, 7..7 + text[name_offset..].len());
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -231,11 +233,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((
                 lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE,
@@ -246,7 +244,7 @@ impl LspAdapter for GoLspAdapter {
                     Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 4..4 + text.len()),
+                    language.highlight_text(&source, 4..4 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -256,18 +254,14 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text.len()),
+                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -277,18 +271,14 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
                 let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text.len()),
+                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -298,11 +288,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
@@ -310,7 +296,7 @@ impl LspAdapter for GoLspAdapter {
                     Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 16..16 + text.len()),
+                    language.highlight_text(&source, 16..16 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -320,11 +306,7 @@ impl LspAdapter for GoLspAdapter {
                             .map(|start| start..start + filter_text.len())
                     })
                     .unwrap_or(0..label.len());
-                return Some(CodeLabel {
-                    text,
-                    runs,
-                    filter_range,
-                });
+                return Some(CodeLabel::new(text, filter_range, runs));
             }
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
@@ -332,7 +314,7 @@ impl LspAdapter for GoLspAdapter {
                     let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
                     let runs = adjust_runs(
                         name_offset,
-                        language.highlight_text(&source, 5..5 + text.len()),
+                        language.highlight_text(&source, 5..5 + text[name_offset..].len()),
                     );
                     let filter_range = completion
                         .filter_text
@@ -342,11 +324,7 @@ impl LspAdapter for GoLspAdapter {
                                 .map(|start| start..start + filter_text.len())
                         })
                         .unwrap_or(0..label.len());
-                    return Some(CodeLabel {
-                        filter_range,
-                        text,
-                        runs,
-                    });
+                    return Some(CodeLabel::new(text, filter_range, runs));
                 }
             }
             _ => {}
@@ -356,11 +334,11 @@ impl LspAdapter for GoLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("func {} () {{}}", name);
                 let filter_range = 5..5 + name.len();
@@ -406,11 +384,11 @@ impl LspAdapter for GoLspAdapter {
             _ => return None,
         };
 
-        Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+        Some(CodeLabel::new(
+            text[display_range.clone()].to_string(),
             filter_range,
-        })
+            language.highlight_text(&text.as_str().into(), display_range),
+        ))
     }
 
     fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
@@ -616,7 +594,10 @@ impl ContextProvider for GoContextProvider {
                     ),
                 ],
                 cwd: package_cwd.clone(),
-                tags: vec!["go-table-test-case".to_owned()],
+                tags: vec![
+                    "go-table-test-case".to_owned(),
+                    "go-table-test-case-without-explicit-variable".to_owned(),
+                ],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -678,7 +659,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "\\^{}\\$/\\^{}\\$",
+                        "'^{}$/^{}$'",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -810,15 +791,15 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "Hello(a B) c.D".to_string(),
-                filter_range: 0..5,
-                runs: vec![
+            Some(CodeLabel::new(
+                "Hello(a B) c.D".to_string(),
+                0..5,
+                vec![
                     (0..5, highlight_function),
                     (8..9, highlight_type),
                     (13..14, highlight_type),
-                ],
-            })
+                ]
+            ))
         );
 
         // Nested methods
@@ -834,15 +815,15 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "one.two.Three() [3]interface{}".to_string(),
-                filter_range: 0..13,
-                runs: vec![
+            Some(CodeLabel::new(
+                "one.two.Three() [3]interface{}".to_string(),
+                0..13,
+                vec![
                     (8..13, highlight_function),
                     (17..18, highlight_number),
                     (19..28, highlight_keyword),
                 ],
-            })
+            ))
         );
 
         // Nested fields
@@ -858,11 +839,45 @@ mod tests {
                     &language
                 )
                 .await,
-            Some(CodeLabel {
-                text: "two.Three a.Bcd".to_string(),
-                filter_range: 0..9,
-                runs: vec![(4..9, highlight_field), (12..15, highlight_type)],
-            })
+            Some(CodeLabel::new(
+                "two.Three a.Bcd".to_string(),
+                0..9,
+                vec![(4..9, highlight_field), (12..15, highlight_type)],
+            ))
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_test_main_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let example_test = r#"
+        package main
+
+        func TestMain(m *testing.M) {
+            os.Exit(m.Run())
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(example_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..example_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should NOT find go-test tag, found: {:?}",
+            tag_strings
         );
     }
 
@@ -1137,6 +1152,149 @@ mod tests {
         //     "Should find exactly 3 go-table-test-case, found: {}",
         //     go_table_test_count
         // );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_slice_without_explicit_variable_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            for _, tc := range []struct{
+                name string
+                anotherStr string
+            }{
+                {
+                    name: "test case 1",
+                    anotherStr: "foo",
+                },
+                {
+                    name: "test case 2",
+                    anotherStr: "bar",
+                },
+                {
+                    name: "test case 3",
+                    anotherStr: "baz",
+                },
+            } {
+                t.Run(tc.name, func(t *testing.T) {
+                    // test code here
+                })
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-table-test-case-without-explicit-variable".to_string()),
+            "Should find go-table-test-case-without-explicit-variable tag, found: {:?}",
+            tag_strings
+        );
+
+        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
+
+        assert!(
+            go_test_count == 1,
+            "Should find exactly 1 go-test, found: {}",
+            go_test_count
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_map_without_explicit_variable_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            for name, tc := range map[string]struct {
+          		someStr string
+          		fail    bool
+           	}{
+          		"test failure": {
+         			someStr: "foo",
+         			fail:    true,
+          		},
+          		"test success": {
+         			someStr: "bar",
+         			fail:    false,
+          		},
+           	} {
+                t.Run(name, func(t *testing.T) {
+                    // test code here
+                })
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-table-test-case-without-explicit-variable".to_string()),
+            "Should find go-table-test-case-without-explicit-variable tag, found: {:?}",
+            tag_strings
+        );
+
+        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
+        let go_table_test_count = tag_strings
+            .iter()
+            .filter(|&tag| tag == "go-table-test-case-without-explicit-variable")
+            .count();
+
+        assert!(
+            go_test_count == 1,
+            "Should find exactly 1 go-test, found: {}",
+            go_test_count
+        );
+        assert!(
+            go_table_test_count == 2,
+            "Should find exactly 2 go-table-test-case-without-explicit-variable, found: {}",
+            go_table_test_count
+        );
     }
 
     #[gpui::test]

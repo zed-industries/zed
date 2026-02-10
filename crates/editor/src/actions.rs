@@ -213,15 +213,6 @@ pub struct ExpandExcerptsDown {
     pub(super) lines: u32,
 }
 
-/// Shows code completion suggestions at the cursor position.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct ShowCompletions {
-    #[serde(default)]
-    pub(super) trigger: Option<String>,
-}
-
 /// Handles text input in the editor.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -246,6 +237,32 @@ pub struct DeleteToNextWordEnd {
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Deletes from the cursor to the end of the next subword.
+/// Stops before the end of the next subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToNextSubwordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Deletes from the cursor to the start of the previous subword.
+/// Stops before the start of the previous subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToPreviousSubwordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
     // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
@@ -318,6 +335,41 @@ pub struct GoToPreviousDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
+/// Adds a cursor above the current selection.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct AddSelectionAbove {
+    #[serde(default = "default_true")]
+    pub skip_soft_wrap: bool,
+}
+
+/// Adds a cursor below the current selection.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct AddSelectionBelow {
+    #[serde(default = "default_true")]
+    pub skip_soft_wrap: bool,
+}
+
+/// Inserts a snippet at the cursor.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct InsertSnippet {
+    /// Language name if using a named snippet, or `None` for a global snippet
+    ///
+    /// This is typically lowercase and matches the filename containing the snippet, without the `.json` extension.
+    pub language: Option<String>,
+    /// Name if using a named snippet
+    pub name: Option<String>,
+
+    /// Snippet body, if not using a named snippet
+    // todo(andrew): use `ListOrDirect` or similar for multiline snippet body
+    pub snippet: Option<String>,
+}
+
 actions!(
     debugger,
     [
@@ -344,11 +396,8 @@ actions!(
         AcceptEditPrediction,
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
-        AcceptPartialEditPrediction,
-        /// Adds a cursor above the current selection.
-        AddSelectionAbove,
-        /// Adds a cursor below the current selection.
-        AddSelectionBelow,
+        AcceptNextWordEditPrediction,
+        AcceptNextLineEditPrediction,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
@@ -427,10 +476,6 @@ actions!(
         DeleteLine,
         /// Deletes from cursor to end of line.
         DeleteToEndOfLine,
-        /// Deletes to the end of the next subword.
-        DeleteToNextSubwordEnd,
-        /// Deletes to the start of the previous subword.
-        DeleteToPreviousSubwordStart,
         /// Diffs the text stored in the clipboard against the current selection.
         DiffClipboardWithSelection,
         /// Displays names of all active cursors.
@@ -444,10 +489,10 @@ actions!(
         /// Expands all diff hunks in the editor.
         #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
         ExpandAllDiffHunks,
+        /// Collapses all diff hunks in the editor.
+        CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
-        /// Finds all references to the symbol at cursor.
-        FindAllReferences,
         /// Finds the next match in the search.
         FindNextMatch,
         /// Finds the previous match in the search.
@@ -523,6 +568,10 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next reference to the symbol under the cursor.
+        GoToNextReference,
+        /// Goes to the previous reference to the symbol under the cursor.
+        GoToPreviousReference,
         /// Goes to the type definition of the symbol at cursor.
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
@@ -553,8 +602,6 @@ actions!(
         LineDown,
         /// Moves cursor up one line.
         LineUp,
-        /// Moves cursor down.
-        MoveDown,
         /// Moves cursor left.
         MoveLeft,
         /// Moves the current line down.
@@ -589,8 +636,10 @@ actions!(
         MoveToEndOfExcerpt,
         /// Moves cursor to the end of the previous excerpt.
         MoveToEndOfPreviousExcerpt,
-        /// Moves cursor up.
-        MoveUp,
+        /// Moves cursor to the start of the next larger syntax node.
+        MoveToStartOfLargerSyntaxNode,
+        /// Moves cursor to the end of the next larger syntax node.
+        MoveToEndOfLargerSyntaxNode,
         /// Inserts a new line and moves cursor to it.
         Newline,
         /// Inserts a new line above the current line.
@@ -601,6 +650,8 @@ actions!(
         NextEditPrediction,
         /// Scrolls to the next screen.
         NextScreen,
+        /// Goes to the next snippet tabstop if one exists.
+        NextSnippetTabstop,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -634,6 +685,8 @@ actions!(
         Paste,
         /// Navigates to the previous edit prediction.
         PreviousEditPrediction,
+        /// Goes to the previous snippet tabstop if one exists.
+        PreviousSnippetTabstop,
         /// Redoes the last undone edit.
         Redo,
         /// Redoes the last selection change.
@@ -650,6 +703,10 @@ actions!(
         ReloadFile,
         /// Rewraps text to fit within the preferred line length.
         Rewrap,
+        /// Rotates selections or lines backward.
+        RotateSelectionsBackward,
+        /// Rotates selections or lines forward.
+        RotateSelectionsForward,
         /// Runs flycheck diagnostics.
         RunFlycheck,
         /// Scrolls the cursor to the bottom of the viewport.
@@ -676,6 +733,10 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects to the start of the next larger syntax node.
+        SelectToStartOfLargerSyntaxNode,
+        /// Selects to the end of the next larger syntax node.
+        SelectToEndOfLargerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
         /// Selects the next syntax node sibling.
@@ -712,6 +773,8 @@ actions!(
         SelectToStartOfParagraph,
         /// Extends selection up.
         SelectUp,
+        /// Shows code completion suggestions at the cursor position.
+        ShowCompletions,
         /// Shows the system character palette.
         ShowCharacterPalette,
         /// Shows edit prediction at cursor.
@@ -762,6 +825,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles semantic highlights display.
+        ToggleSemanticHighlights,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.
@@ -781,6 +846,12 @@ actions!(
         /// Toggles diff display for selected hunks.
         #[action(deprecated_aliases = ["editor::ToggleHunkDiff"])]
         ToggleSelectedDiffHunks,
+        /// Stores the diff review comment locally (for later batch submission).
+        SubmitDiffReviewComment,
+        /// Toggles the expanded state of the comments section in the overlay.
+        ToggleReviewCommentsExpanded,
+        /// Sends all stored review comments to the Agent panel.
+        SendReviewToAgent,
         /// Toggles the selection menu.
         ToggleSelectionMenu,
         /// Toggles soft wrap mode.
@@ -807,6 +878,55 @@ actions!(
         /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
-        WrapSelectionsInTag
+        WrapSelectionsInTag,
     ]
 );
+
+/// Finds all references to the symbol at cursor.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct FindAllReferences {
+    #[serde(default = "default_true")]
+    pub always_open_multibuffer: bool,
+}
+
+impl Default for FindAllReferences {
+    fn default() -> Self {
+        Self {
+            always_open_multibuffer: true,
+        }
+    }
+}
+
+/// Edits a stored review comment inline.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct EditReviewComment {
+    pub id: usize,
+}
+
+/// Deletes a stored review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteReviewComment {
+    pub id: usize,
+}
+
+/// Confirms an inline edit of a review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmEditReviewComment {
+    pub id: usize,
+}
+
+/// Cancels an inline edit of a review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CancelEditReviewComment {
+    pub id: usize,
+}

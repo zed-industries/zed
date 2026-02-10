@@ -115,26 +115,15 @@ impl From<IconName> for Icon {
 /// The source of an icon.
 enum IconSource {
     /// An SVG embedded in the Zed binary.
-    Svg(SharedString),
+    Embedded(SharedString),
     /// An image file located at the specified path.
     ///
-    /// Currently our SVG renderer is missing support for the following features:
-    /// 1. Loading SVGs from external files.
-    /// 2. Rendering polychrome SVGs.
+    /// Currently our SVG renderer is missing support for rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
-    Image(Arc<Path>),
-}
-
-impl IconSource {
-    fn from_path(path: impl Into<SharedString>) -> Self {
-        let path = path.into();
-        if path.starts_with("icons/") {
-            Self::Svg(path)
-        } else {
-            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
-        }
-    }
+    External(Arc<Path>),
+    /// An SVG not embedded in the Zed binary.
+    ExternalSvg(SharedString),
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -148,16 +137,34 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            source: IconSource::Svg(icon.path().into()),
+            source: IconSource::Embedded(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
         }
     }
 
+    /// Create an icon from a path. Uses a heuristic to determine if it's embedded or external:
+    /// - Paths starting with "icons/" are treated as embedded SVGs
+    /// - Other paths are treated as external raster images (from icon themes)
     pub fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        let source = if path.starts_with("icons/") {
+            IconSource::Embedded(path)
+        } else {
+            IconSource::External(Arc::from(PathBuf::from(path.as_ref())))
+        };
         Self {
-            source: IconSource::from_path(path),
+            source,
+            color: Color::default(),
+            size: IconSize::default().rems(),
+            transformation: Transformation::default(),
+        }
+    }
+
+    pub fn from_external_svg(svg: SharedString) -> Self {
+        Self {
+            source: IconSource::ExternalSvg(svg),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -193,14 +200,21 @@ impl Transformable for Icon {
 impl RenderOnce for Icon {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         match self.source {
-            IconSource::Svg(path) => svg()
+            IconSource::Embedded(path) => svg()
                 .with_transformation(self.transformation)
                 .size(self.size)
                 .flex_none()
                 .path(path)
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::Image(path) => img(path)
+            IconSource::ExternalSvg(path) => svg()
+                .external_path(path)
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::External(path) => img(path)
                 .size(self.size)
                 .flex_none()
                 .text_color(self.color.color(cx))
@@ -286,58 +300,42 @@ impl Component for Icon {
                 .children(vec![
                     example_group_with_title(
                         "Sizes",
-                        vec![
-                            single_example("Default", Icon::new(IconName::Star).into_any_element()),
-                            single_example(
-                                "Small",
-                                Icon::new(IconName::Star)
-                                    .size(IconSize::Small)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Large",
-                                Icon::new(IconName::Star)
-                                    .size(IconSize::XLarge)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Colors",
-                        vec![
-                            single_example("Default", Icon::new(IconName::Bell).into_any_element()),
-                            single_example(
-                                "Custom Color",
-                                Icon::new(IconName::Bell)
-                                    .color(Color::Error)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "All Icons",
                         vec![single_example(
-                            "All Icons",
+                            "XSmall, Small, Default, Large",
                             h_flex()
-                                .image_cache(gpui::retain_all("all icons"))
-                                .flex_wrap()
-                                .gap_2()
-                                .children(<IconName as strum::IntoEnumIterator>::iter().map(
-                                    |icon_name| {
-                                        h_flex()
-                                            .gap_1()
-                                            .border_1()
-                                            .rounded_md()
-                                            .px_2()
-                                            .py_1()
-                                            .border_color(Color::Muted.color(cx))
-                                            .child(SharedString::new_static(icon_name.into()))
-                                            .child(Icon::new(icon_name).into_any_element())
-                                    },
-                                ))
+                                .gap_1()
+                                .child(Icon::new(IconName::Star).size(IconSize::XSmall))
+                                .child(Icon::new(IconName::Star).size(IconSize::Small))
+                                .child(Icon::new(IconName::Star))
+                                .child(Icon::new(IconName::Star).size(IconSize::XLarge))
                                 .into_any_element(),
                         )],
                     ),
+                    example_group(vec![single_example(
+                        "All Icons",
+                        h_flex()
+                            .image_cache(gpui::retain_all("all icons"))
+                            .flex_wrap()
+                            .gap_2()
+                            .children(<IconName as strum::IntoEnumIterator>::iter().map(
+                                |icon_name: IconName| {
+                                    let name: SharedString = format!("{icon_name:?}").into();
+                                    v_flex()
+                                        .min_w_0()
+                                        .w_24()
+                                        .p_1p5()
+                                        .gap_2()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .bg(cx.theme().colors().element_disabled)
+                                        .rounded_sm()
+                                        .items_center()
+                                        .child(Icon::new(icon_name))
+                                        .child(Label::new(name).size(LabelSize::XSmall).truncate())
+                                },
+                            ))
+                            .into_any_element(),
+                    )]),
                 ])
                 .into_any_element(),
         )

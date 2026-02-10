@@ -9,16 +9,12 @@ pub struct Patch<T>(Vec<Edit<T>>);
 
 impl<T> Patch<T>
 where
-    T: 'static
-        + Clone
-        + Copy
-        + Ord
-        + Sub<T, Output = T>
-        + Add<T, Output = T>
-        + AddAssign
-        + Default
-        + PartialEq,
+    T: 'static + Clone + Copy + Ord + Default,
 {
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new(edits: Vec<Edit<T>>) -> Self {
         #[cfg(debug_assertions)]
         {
@@ -41,7 +37,50 @@ where
     pub fn into_inner(self) -> Vec<Edit<T>> {
         self.0
     }
+    pub fn invert(&mut self) -> &mut Self {
+        for edit in &mut self.0 {
+            mem::swap(&mut edit.old, &mut edit.new);
+        }
+        self
+    }
 
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn push(&mut self, edit: Edit<T>) {
+        if edit.is_empty() {
+            return;
+        }
+
+        if let Some(last) = self.0.last_mut() {
+            if last.old.end >= edit.old.start {
+                last.old.end = edit.old.end;
+                last.new.end = edit.new.end;
+            } else {
+                self.0.push(edit);
+            }
+        } else {
+            self.0.push(edit);
+        }
+    }
+}
+
+impl<T, TDelta> Patch<T>
+where
+    T: 'static
+        + Copy
+        + Ord
+        + Sub<T, Output = TDelta>
+        + Add<TDelta, Output = T>
+        + AddAssign<TDelta>
+        + Default,
+    TDelta: Ord + Copy,
+{
     #[must_use]
     pub fn compose(&self, new_edits_iter: impl IntoIterator<Item = Edit<T>>) -> Self {
         let mut old_edits_iter = self.0.iter().cloned().peekable();
@@ -169,38 +208,6 @@ where
         composed
     }
 
-    pub fn invert(&mut self) -> &mut Self {
-        for edit in &mut self.0 {
-            mem::swap(&mut edit.old, &mut edit.new);
-        }
-        self
-    }
-
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn push(&mut self, edit: Edit<T>) {
-        if edit.is_empty() {
-            return;
-        }
-
-        if let Some(last) = self.0.last_mut() {
-            if last.old.end >= edit.old.start {
-                last.old.end = edit.old.end;
-                last.new.end = edit.new.end;
-            } else {
-                self.0.push(edit);
-            }
-        } else {
-            self.0.push(edit);
-        }
-    }
-
     pub fn old_to_new(&self, old: T) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,
@@ -220,6 +227,46 @@ where
             }
         } else {
             old
+        }
+    }
+
+    /// Returns the edit that touches the given old position.
+    ///
+    /// An edit is considered to touch the given old position if edit.old.start <= old <= edit.old.end (note, inclusive on the right).
+    ///
+    /// If there are no edits touching the given old position, an empty edit with appropriate (empty) old and new ranges is returned.
+    pub fn edit_for_old_position(&self, old: T) -> Edit<T> {
+        let edits = self.edits();
+
+        let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&old)) {
+            Ok(ix) => ix,
+            Err(ix) => {
+                if ix == 0 {
+                    return Edit {
+                        old: old..old,
+                        new: old..old,
+                    };
+                } else {
+                    ix - 1
+                }
+            }
+        };
+
+        if let Some(edit) = edits.get(ix) {
+            if old > edit.old.end {
+                let translated = edit.new.end + (old - edit.old.end);
+                Edit {
+                    new: translated..translated,
+                    old: old..old,
+                }
+            } else {
+                edit.clone()
+            }
+        } else {
+            Edit {
+                old: old..old,
+                new: old..old,
+            }
         }
     }
 }

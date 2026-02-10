@@ -1,17 +1,11 @@
 #[cfg(test)]
 mod file_finder_tests;
-#[cfg(test)]
-mod open_path_prompt_tests;
-
-pub mod file_finder_settings;
-mod open_path_prompt;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -19,10 +13,14 @@ use gpui::{
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
     Window, actions, rems,
 };
-use open_path_prompt::OpenPathPrompt;
+use open_path_prompt::{
+    OpenPathPrompt,
+    file_finder_settings::{FileFinderSettings, FileFinderWidth},
+};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
-use search::ToggleIncludeIgnored;
+use project::{
+    PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
+};
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -49,6 +47,7 @@ use workspace::{
     ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
+use zed_actions::search::ToggleIncludeIgnored;
 
 actions!(
     file_finder,
@@ -88,12 +87,7 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
-pub fn init_settings(cx: &mut App) {
-    FileFinderSettings::register(cx);
-}
-
 pub fn init(cx: &mut App) {
-    init_settings(cx);
     cx.observe_new(FileFinder::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register_new_path).detach();
@@ -538,11 +532,14 @@ impl Matches {
 
     fn push_new_matches<'a>(
         &'a mut self,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &'a App,
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
         currently_opened: Option<&'a FoundPath>,
         query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
+        path_style: PathStyle,
     ) {
         let Some(query) = query else {
             // assuming that if there's no query, then there's no search matches.
@@ -556,8 +553,25 @@ impl Matches {
                 .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
-
-        let new_history_matches = matching_history_items(history_items, currently_opened, query);
+        // If several worktress are open we have to set the worktree root names in path prefix
+        let several_worktrees = worktree_store.read(cx).worktrees().count() > 1;
+        let worktree_name_by_id = several_worktrees.then(|| {
+            worktree_store
+                .read(cx)
+                .worktrees()
+                .map(|worktree| {
+                    let snapshot = worktree.read(cx).snapshot();
+                    (snapshot.id(), snapshot.root_name().into())
+                })
+                .collect()
+        });
+        let new_history_matches = matching_history_items(
+            history_items,
+            currently_opened,
+            worktree_name_by_id,
+            query,
+            path_style,
+        );
         let new_search_matches: Vec<Match> = new_search_matches
             .filter(|path_match| {
                 !new_history_matches.contains_key(&ProjectPath {
@@ -694,7 +708,9 @@ impl Matches {
 fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
+    worktree_name_by_id: Option<HashMap<WorktreeId, Arc<RelPath>>>,
     query: &FileSearchQuery,
+    path_style: PathStyle,
 ) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
@@ -734,13 +750,18 @@ fn matching_history_items<'a>(
     let mut matching_history_paths = HashMap::default();
     for (worktree, candidates) in history_items_by_worktrees {
         let max_results = candidates.len() + 1;
+        let worktree_root_name = worktree_name_by_id
+            .as_ref()
+            .and_then(|w| w.get(&worktree).cloned());
         matching_history_paths.extend(
             fuzzy::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
+                worktree_root_name,
                 query.path_query(),
                 false,
                 max_results,
+                path_style,
             )
             .into_iter()
             .filter_map(|path_match| {
@@ -866,7 +887,9 @@ impl FileFinderDelegate {
         let worktrees = self
             .project
             .read(cx)
-            .visible_worktrees(cx)
+            .worktree_store()
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
             .collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
@@ -935,15 +958,18 @@ impl FileFinderDelegate {
                 self.matches.get(self.selected_index).cloned()
             };
 
+            let path_style = self.project.read(cx).path_style(cx);
             self.matches.push_new_matches(
+                self.project.read(cx).worktree_store(),
+                cx,
                 &self.history_items,
                 self.currently_opened_path.as_ref(),
                 Some(&query),
                 matches.into_iter(),
                 extend_old_matches,
+                path_style,
             );
 
-            let path_style = self.project.read(cx).path_style(cx);
             let query_path = query.raw_query.as_str();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
@@ -1031,7 +1057,7 @@ impl FileFinderDelegate {
                         (
                             filename.to_string(),
                             Vec::new(),
-                            prefix.display(path_style).to_string() + path_style.separator(),
+                            prefix.display(path_style).to_string() + path_style.primary_separator(),
                             Vec::new(),
                         )
                     } else {
@@ -1042,7 +1068,7 @@ impl FileFinderDelegate {
                                 .map_or(String::new(), |f| f.to_string_lossy().into_owned()),
                             Vec::new(),
                             entry_path.absolute.parent().map_or(String::new(), |path| {
-                                path.to_string_lossy().into_owned() + path_style.separator()
+                                path.to_string_lossy().into_owned() + path_style.primary_separator()
                             }),
                             Vec::new(),
                         )
@@ -1196,35 +1222,27 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = if let Ok(task) = project.update(cx, |this, cx| {
-                this.resolve_abs_file_path(query.path_query(), cx)
-            }) {
-                task.await.is_some()
-            } else {
-                false
-            };
+            let abs_file_exists = project
+                .update(cx, |this, cx| {
+                    this.resolve_abs_file_path(query.path_query(), cx)
+                })
+                .await
+                .is_some();
 
             if abs_file_exists {
-                let update_result = project
-                    .update(cx, |project, cx| {
-                        if let Some((worktree, relative_path)) =
-                            project.find_worktree(query_path, cx)
-                        {
-                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                score: 1.0,
-                                positions: Vec::new(),
-                                worktree_id: worktree.read(cx).id().to_usize(),
-                                path: relative_path,
-                                path_prefix: RelPath::empty().into(),
-                                is_dir: false, // File finder doesn't support directories
-                                distance_to_relative_ancestor: usize::MAX,
-                            }));
-                        }
-                    })
-                    .log_err();
-                if update_result.is_none() {
-                    return abs_file_exists;
-                }
+                project.update(cx, |project, cx| {
+                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                            score: 1.0,
+                            positions: Vec::new(),
+                            worktree_id: worktree.read(cx).id().to_usize(),
+                            path: relative_path,
+                            path_prefix: RelPath::empty().into(),
+                            is_dir: false, // File finder doesn't support directories
+                            distance_to_relative_ancestor: usize::MAX,
+                        }));
+                    }
+                });
             }
 
             picker
@@ -1363,7 +1381,11 @@ impl PickerDelegate for FileFinderDelegate {
                     separate_history: self.separate_history,
                     ..Matches::default()
                 };
+                let path_style = self.project.read(cx).path_style(cx);
+
                 self.matches.push_new_matches(
+                    project.worktree_store(),
+                    cx,
                     self.history_items.iter().filter(|history_item| {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
@@ -1375,6 +1397,7 @@ impl PickerDelegate for FileFinderDelegate {
                     None,
                     None.into_iter(),
                     false,
+                    path_style,
                 );
 
                 self.first_update = false;
@@ -1624,11 +1647,7 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
         Some(
@@ -1657,12 +1676,11 @@ impl PickerDelegate for FileFinderDelegate {
                                 }),
                             {
                                 let focus_handle = focus_handle.clone();
-                                move |window, cx| {
+                                move |_window, cx| {
                                     Tooltip::for_action_in(
                                         "Filter Options",
                                         &ToggleFilterMenu,
                                         &focus_handle,
-                                        window,
                                         cx,
                                     )
                                 }
@@ -1684,7 +1702,7 @@ impl PickerDelegate for FileFinderDelegate {
                                                 ui::IconPosition::End,
                                                 Some(ToggleIncludeIgnored.boxed_clone()),
                                                 move |window, cx| {
-                                                    window.focus(&focus_handle);
+                                                    window.focus(&focus_handle, cx);
                                                     window.dispatch_action(
                                                         ToggleIncludeIgnored.boxed_clone(),
                                                         cx,
@@ -1712,14 +1730,13 @@ impl PickerDelegate for FileFinderDelegate {
                                     ButtonLike::new("split-trigger")
                                         .child(Label::new("Split…"))
                                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                        .children(
+                                        .child(
                                             KeyBinding::for_action_in(
                                                 &ToggleSplitMenu,
                                                 &focus_handle,
-                                                window,
                                                 cx,
                                             )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                            .size(rems_from_px(12.)),
                                         ),
                                 )
                                 .menu({
@@ -1732,16 +1749,19 @@ impl PickerDelegate for FileFinderDelegate {
                                                 menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
-                                                        pane::SplitLeft.boxed_clone(),
+                                                        pane::SplitLeft::default().boxed_clone(),
                                                     )
                                                     .action(
                                                         "Split Right",
-                                                        pane::SplitRight.boxed_clone(),
+                                                        pane::SplitRight::default().boxed_clone(),
                                                     )
-                                                    .action("Split Up", pane::SplitUp.boxed_clone())
+                                                    .action(
+                                                        "Split Up",
+                                                        pane::SplitUp::default().boxed_clone(),
+                                                    )
                                                     .action(
                                                         "Split Down",
-                                                        pane::SplitDown.boxed_clone(),
+                                                        pane::SplitDown::default().boxed_clone(),
                                                     )
                                             }
                                         }))
@@ -1751,13 +1771,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(
                             Button::new("open-selection", "Open")
                                 .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::Confirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(menu::Confirm.boxed_clone(), cx)

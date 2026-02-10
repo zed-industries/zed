@@ -1,5 +1,10 @@
-use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
+use crate::{
+    AssetSource, DevicePixels, IsZero, RenderImage, Result, SharedString, Size,
+    swap_rgba_pa_to_bgra,
+};
+use image::Frame;
 use resvg::tiny_skia::Pixmap;
+use smallvec::SmallVec;
 use std::{
     hash::Hash,
     sync::{Arc, LazyLock},
@@ -15,17 +20,22 @@ pub(crate) struct RenderSvgParams {
 }
 
 #[derive(Clone)]
+/// A struct holding everything necessary to render SVGs.
 pub struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
     usvg_options: Arc<usvg::Options<'static>>,
 }
 
+/// The size in which to render the SVG.
 pub enum SvgSize {
+    /// An absolute size in device pixels.
     Size(Size<DevicePixels>),
+    /// A scaling factor to apply to the size provided by the SVG.
     ScaleFactor(f32),
 }
 
 impl SvgRenderer {
+    /// Creates a new SVG renderer with the provided asset source.
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
         static FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
             let mut db = usvg::fontdb::Database::new();
@@ -54,33 +64,68 @@ impl SvgRenderer {
         }
     }
 
-    pub(crate) fn render(
+    /// Renders the given bytes into an image buffer.
+    pub fn render_single_frame(
+        &self,
+        bytes: &[u8],
+        scale_factor: f32,
+        to_brga: bool,
+    ) -> Result<Arc<RenderImage>, usvg::Error> {
+        self.render_pixmap(
+            bytes,
+            SvgSize::ScaleFactor(scale_factor * SMOOTH_SVG_SCALE_FACTOR),
+        )
+        .map(|pixmap| {
+            let mut buffer =
+                image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
+                    .unwrap();
+
+            if to_brga {
+                for pixel in buffer.chunks_exact_mut(4) {
+                    swap_rgba_pa_to_bgra(pixel);
+                }
+            }
+
+            let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
+            image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
+            Arc::new(image)
+        })
+    }
+
+    pub(crate) fn render_alpha_mask(
         &self,
         params: &RenderSvgParams,
+        bytes: Option<&[u8]>,
     ) -> Result<Option<(Size<DevicePixels>, Vec<u8>)>> {
         anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
-        // Load the tree.
-        let Some(bytes) = self.asset_source.load(&params.path)? else {
-            return Ok(None);
+        let render_pixmap = |bytes| {
+            let pixmap = self.render_pixmap(bytes, SvgSize::Size(params.size))?;
+
+            // Convert the pixmap's pixels into an alpha mask.
+            let size = Size::new(
+                DevicePixels(pixmap.width() as i32),
+                DevicePixels(pixmap.height() as i32),
+            );
+            let alpha_mask = pixmap
+                .pixels()
+                .iter()
+                .map(|p| p.alpha())
+                .collect::<Vec<_>>();
+
+            Ok(Some((size, alpha_mask)))
         };
 
-        let pixmap = self.render_pixmap(&bytes, SvgSize::Size(params.size))?;
-
-        // Convert the pixmap's pixels into an alpha mask.
-        let size = Size::new(
-            DevicePixels(pixmap.width() as i32),
-            DevicePixels(pixmap.height() as i32),
-        );
-        let alpha_mask = pixmap
-            .pixels()
-            .iter()
-            .map(|p| p.alpha())
-            .collect::<Vec<_>>();
-        Ok(Some((size, alpha_mask)))
+        if let Some(bytes) = bytes {
+            render_pixmap(bytes)
+        } else if let Some(bytes) = self.asset_source.load(&params.path)? {
+            render_pixmap(&bytes)
+        } else {
+            Ok(None)
+        }
     }
 
-    pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
+    fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
         let tree = usvg::Tree::from_data(bytes, &self.usvg_options)?;
         let svg_size = tree.size();
         let scale = match size {

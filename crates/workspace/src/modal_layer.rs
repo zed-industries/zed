@@ -22,12 +22,17 @@ pub trait ModalView: ManagedView {
     fn fade_out_background(&self) -> bool {
         false
     }
+
+    fn render_bare(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
+    fn render_bare(&self, cx: &mut App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -41,6 +46,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
 
     fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
+    }
+
+    fn render_bare(&self, cx: &mut App) -> bool {
+        self.read(cx).render_bare()
     }
 }
 
@@ -74,15 +83,22 @@ impl ModalLayer {
         }
     }
 
+    /// Toggles a modal of type `V`. If a modal of the same type is currently active,
+    /// it will be hidden. If a different modal is active, it will be replaced with the new one.
+    /// If no modal is active, the new modal will be shown.
+    ///
+    /// If closing the current modal fails (e.g., due to `on_before_dismiss` returning
+    /// `DismissDecision::Dismiss(false)` or `DismissDecision::Pending`), the new modal
+    /// will not be shown.
     pub fn toggle_modal<V, B>(&mut self, window: &mut Window, cx: &mut Context<Self>, build_view: B)
     where
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
-            let is_close = active_modal.modal.view().downcast::<V>().is_ok();
+            let should_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
-            if is_close || !did_close {
+            if should_close || !did_close {
                 return;
             }
         }
@@ -91,6 +107,8 @@ impl ModalLayer {
         cx.emit(ModalOpenedEvent);
     }
 
+    /// Shows a modal and sets up subscriptions for dismiss events and focus tracking.
+    /// The modal is automatically focused after being shown.
     fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
     where
         V: ModalView,
@@ -116,11 +134,18 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus(&new_modal.focus_handle(cx));
+            window.focus(&new_modal.focus_handle(cx), cx);
         });
         cx.notify();
     }
 
+    /// Attempts to hide the currently active modal.
+    ///
+    /// The modal's `on_before_dismiss` method is called to determine if dismissal should proceed.
+    /// If dismissal is allowed, the modal is removed and focus is restored to the previously
+    /// focused element.
+    ///
+    /// Returns `true` if the modal was successfully hidden, `false` otherwise.
     pub fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
@@ -128,9 +153,9 @@ impl ModalLayer {
         };
 
         match active_modal.modal.on_before_dismiss(window, cx) {
-            DismissDecision::Dismiss(dismiss) => {
-                self.dismiss_on_focus_lost = !dismiss;
-                if !dismiss {
+            DismissDecision::Dismiss(should_dismiss) => {
+                if !should_dismiss {
+                    self.dismiss_on_focus_lost = !should_dismiss;
                     return false;
                 }
             }
@@ -144,13 +169,15 @@ impl ModalLayer {
             if let Some(previous_focus) = active_modal.previous_focus_handle
                 && active_modal.focus_handle.contains_focused(window, cx)
             {
-                previous_focus.focus(window);
+                previous_focus.focus(window, cx);
             }
             cx.notify();
         }
+        self.dismiss_on_focus_lost = false;
         true
     }
 
+    /// Returns the currently active modal if it is of type `V`.
     pub fn active_modal<V>(&self) -> Option<Entity<V>>
     where
         V: 'static,
@@ -167,19 +194,22 @@ impl ModalLayer {
 impl Render for ModalLayer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
-            return div();
+            return div().into_any_element();
         };
 
+        if active_modal.modal.render_bare(cx) {
+            return active_modal.modal.view().into_any_element();
+        }
+
         div()
-            .occlude()
             .absolute()
             .size_full()
-            .top_0()
-            .left_0()
-            .when(active_modal.modal.fade_out_background(cx), |el| {
+            .inset_0()
+            .occlude()
+            .when(active_modal.modal.fade_out_background(cx), |this| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
-                el.bg(background)
+                this.bg(background)
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -191,8 +221,6 @@ impl Render for ModalLayer {
                 v_flex()
                     .h(px(0.0))
                     .top_20()
-                    .flex()
-                    .flex_col()
                     .items_center()
                     .track_focus(&active_modal.focus_handle)
                     .child(
@@ -204,5 +232,6 @@ impl Render for ModalLayer {
                             }),
                     ),
             )
+            .into_any_element()
     }
 }

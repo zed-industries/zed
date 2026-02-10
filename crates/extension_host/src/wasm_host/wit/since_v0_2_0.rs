@@ -2,13 +2,13 @@ use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
 use gpui::BackgroundExecutor;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-use super::latest;
+use super::{latest, since_v0_6_0};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
+pub const MIN_VERSION: Version = Version::new(0, 2, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -18,9 +18,9 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/github": since_v0_6_0::zed::extension::github,
          "zed:extension/http-client": latest::zed::extension::http_client,
-         "zed:extension/lsp": latest::zed::extension::lsp,
+         "zed:extension/lsp": since_v0_6_0::zed::extension::lsp,
          "zed:extension/nodejs": latest::zed::extension::nodejs,
          "zed:extension/platform": latest::zed::extension::platform,
          "zed:extension/slash-command": latest::zed::extension::slash_command,

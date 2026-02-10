@@ -46,10 +46,11 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        log::trace!("watcher add: {path:?}");
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             // Return early if an ancestor of this path was already being watched.
             // saves a huge amount of memory
@@ -63,12 +64,16 @@ impl Watcher for FsWatcher {
                 .next_back()
                 && path.starts_with(watched_path.as_ref())
             {
+                log::trace!(
+                    "path to watch is covered by existing registration: {path:?}, {watched_path:?}"
+                );
                 return Ok(());
             }
         }
         #[cfg(target_os = "linux")]
         {
             if self.registrations.lock().contains_key(path) {
+                log::trace!("path to watch is already watched: {path:?}");
                 return Ok(());
             }
         }
@@ -76,7 +81,7 @@ impl Watcher for FsWatcher {
         let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let mode = notify::RecursiveMode::Recursive;
         #[cfg(target_os = "linux")]
         let mode = notify::RecursiveMode::NonRecursive;
@@ -85,6 +90,7 @@ impl Watcher for FsWatcher {
             let path = path.clone();
             |g| {
                 g.add(path, mode, move |event: &notify::Event| {
+                    log::trace!("watcher received event: {event:?}");
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
@@ -126,6 +132,7 @@ impl Watcher for FsWatcher {
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        log::trace!("remove watched path: {path:?}");
         let Some(registration) = self.registrations.lock().remove(path) else {
             return Ok(());
         };
@@ -159,6 +166,8 @@ pub struct GlobalWatcher {
     watcher: Mutex<notify::KqueueWatcher>,
     #[cfg(target_os = "windows")]
     watcher: Mutex<notify::ReadDirectoryChangesWatcher>,
+    #[cfg(target_os = "macos")]
+    watcher: Mutex<notify::FsEventWatcher>,
 }
 
 impl GlobalWatcher {
@@ -171,9 +180,24 @@ impl GlobalWatcher {
     ) -> anyhow::Result<WatcherRegistrationId> {
         use notify::Watcher;
 
-        self.watcher.lock().watch(&path, mode)?;
-
         let mut state = self.state.lock();
+
+        // Check if this path is already covered by an existing watched ancestor path.
+        // On macOS and Windows, watching is recursive, so we don't need to watch
+        // child paths if an ancestor is already being watched.
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let path_already_covered = state.path_registrations.keys().any(|existing| {
+            path.starts_with(existing.as_ref()) && path.as_ref() != existing.as_ref()
+        });
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let path_already_covered = false;
+
+        if !path_already_covered && !state.path_registrations.contains_key(&path) {
+            drop(state);
+            self.watcher.lock().watch(&path, mode)?;
+            state = self.state.lock();
+        }
 
         let id = state.last_registration;
         state.last_registration = WatcherRegistrationId(id.0 + 1);
@@ -215,6 +239,7 @@ static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error
     OnceLock::new();
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
+    log::trace!("global handle event: {event:?}");
     // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
     // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
     let Some(event) = event

@@ -1,20 +1,10 @@
 # Vim Mode
 
-Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands Zed provides to help you navigate and edit your code, and generally how to make the most of vim mode in Zed.
-
-You'll learn how to:
-
-- Understand the core differences between Zed's vim mode and traditional Vim
-- Enable or disable vim mode
-- Make the most of Zed-specific features within vim mode
-- Customize vim mode key bindings
-- Configure vim mode settings
-
-Whether you're new to vim mode or an experienced Vim user looking to optimize your Zed experience, this guide will help you harness the full power of modal editing in Zed.
+Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.
 
 ## Zed's vim mode design
 
-Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses Zed-specific functionality to provide an editing experience that "just works" without requiring configuration on your part.
+Vim mode replicates the behavior of motions and commands where it makes sense and uses Zed-specific functionality where Zed's approach is better. The goal is a familiar experience that works out of the box without requiring configuration.
 
 This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
@@ -124,13 +114,15 @@ per language.
 
 These commands help you manage multiple cursors in Zed.
 
-| Command                                                      | Default Shortcut |
-| ------------------------------------------------------------ | ---------------- |
-| Add a cursor selecting the next copy of the current word     | `g l`            |
-| Add a cursor selecting the previous copy of the current word | `g L`            |
-| Skip latest word selection, and add next                     | `g >`            |
-| Skip latest word selection, and add previous                 | `g <`            |
-| Add a visual selection for every copy of the current word    | `g a`            |
+| Command                                                                           | Default Shortcut |
+| --------------------------------------------------------------------------------- | ---------------- |
+| Add a cursor selecting the next copy of the current word                          | `g l`            |
+| Add a cursor selecting the previous copy of the current word                      | `g L`            |
+| Add a cursor at the end of every line in the current visual selection             | `g A`            |
+| Add a cursor at the first character of every line in the current visual selection | `g I`            |
+| Add a visual selection for every copy of the current word                         | `g a`            |
+| Skip latest word selection, and add next                                          | `g >`            |
+| Skip latest word selection, and add previous                                      | `g <`            |
 
 ### Pane management
 
@@ -237,9 +229,9 @@ To use these text objects, you need to add bindings to your keymap. Here's an ex
 With this configuration, you can use commands like:
 
 - `cib` - Change inside brackets using AnyBrackets behavior
-- `cim` - Change inside brackets using MiniBrackets behavior
+- `ciB` - Change inside brackets using MiniBrackets behavior
 - `ciq` - Change inside quotes using AnyQuotes behavior
-- `ciM` - Change inside quotes using MiniQuotes behavior
+- `ciQ` - Change inside quotes using MiniQuotes behavior
 
 ## Command palette
 
@@ -367,12 +359,6 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 
 ## Customizing key bindings
 
-In this section, we'll learn how to customize the key bindings of Zed's vim mode. You'll learn:
-
-- How to select the correct context for your new key bindings.
-- Useful contexts for vim mode key bindings.
-- Common key bindings to customize for extra productivity.
-
 ### Selecting the correct context
 
 Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
@@ -471,7 +457,7 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 }
 ```
 
-Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
+Subword motion, which allows you to navigate and select individual words in `camelCase` or `snake_case`, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json [settings]
 {
@@ -484,6 +470,9 @@ Subword motion, which allows you to navigate and select individual words in came
   }
 }
 ```
+
+> Note: Operations like `dw` remain unaffected. If you would like operations to
+> also use subword motion, remove `vim_mode != operator` from the `context`.
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
@@ -543,14 +532,15 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 {
   "context": "Editor && !menu",
   "bindings": {
+    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
     "ctrl-c": "editor::Copy",               // vim default: return to normal mode
     "ctrl-x": "editor::Cut",                // vim default: decrement
     "ctrl-v": "editor::Paste",              // vim default: visual block mode
+    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-y": "editor::Undo",               // vim default: line up
-    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
+    "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-o": "workspace::Open",            // vim default: go back
     "ctrl-s": "workspace::Save",            // vim default: show signature
-    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },
@@ -566,6 +556,7 @@ You can change the following settings to modify vim mode's behavior:
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | deprecated                                                                                                                                                                                    |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
+| gdefault                     | If `true`, the `:substitute` command replaces all matches in a line by default (as if `g` flag was given). The `g` flag then toggles this, replacing only the first match.                    | false         |
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
 | highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
@@ -590,7 +581,8 @@ Here's an example of these settings changed:
     "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
-    "toggle_relative_line_numbers": true,
+    "gdefault": true,
+    "relative_line_numbers": "enabled",
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"
@@ -606,7 +598,7 @@ Here are a few general Zed settings that can help you fine-tune your Vim experie
 | Property                | Description                                                                                                                                                   | Default Value        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | cursor_blink            | If `true`, the cursor blinks.                                                                                                                                 | `true`               |
-| relative_line_numbers   | If `true`, line numbers in the left gutter are relative to the cursor.                                                                                        | `false`              |
+| relative_line_numbers   | If `"enabled"`, line numbers in the left gutter are relative to the cursor. If `"wrapped"`, they also display for wrapped lines.                              | `"disabled"`         |
 | scrollbar               | Object that controls the scrollbar display. Set to `{ "show": "never" }` to hide the scroll bar.                                                              | `{ "show": "auto" }` |
 | scroll_beyond_last_line | If set to `"one_page"`, allows scrolling up to one page beyond the last line. Set to `"off"` to prevent this behavior.                                        | `"one_page"`         |
 | vertical_scroll_margin  | The number of lines to keep above or below the cursor when scrolling. Set to `0` to allow the cursor to go up to the edges of the screen vertically.          | `3`                  |
@@ -620,7 +612,7 @@ Here's an example of these settings changed:
   // Disable cursor blink
   "cursor_blink": false,
   // Use relative line numbers
-  "relative_line_numbers": true,
+  "relative_line_numbers": "enabled",
   // Hide the scroll bar
   "scrollbar": { "show": "never" },
   // Prevent the buffer from scrolling beyond the last line
@@ -628,7 +620,7 @@ Here's an example of these settings changed:
   // Allow the cursor to reach the edges of the screen
   "vertical_scroll_margin": 0,
   "gutter": {
-    // Disable line numbers completely:
+    // Disable line numbers completely
     "line_numbers": false
   },
   "command_aliases": {

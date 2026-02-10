@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, UnderlineStyle, px,
+    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
@@ -75,11 +75,13 @@ impl TextSystem {
                 font(".ZedMono"),
                 font(".ZedSans"),
                 font("Helvetica"),
-                font("Segoe UI"),  // Windows
-                font("Cantarell"), // Gnome
-                font("Ubuntu"),    // Gnome (Ubuntu)
-                font("Noto Sans"), // KDE
-                font("DejaVu Sans")
+                font("Segoe UI"),     // Windows
+                font("Ubuntu"),       // Gnome (Ubuntu)
+                font("Adwaita Sans"), // Gnome 47
+                font("Cantarell"),    // Gnome
+                font("Noto Sans"),    // KDE
+                font("DejaVu Sans"),
+                font("Arial"), // macOS, Windows
             ],
         }
     }
@@ -324,6 +326,17 @@ impl TextSystem {
         self.platform_text_system
             .rasterize_glyph(params, raster_bounds)
     }
+
+    /// Returns the text rendering mode recommended by the platform for the given font and size.
+    /// The return value will never be [`TextRenderingMode::PlatformDefault`].
+    pub(crate) fn recommended_rendering_mode(
+        &self,
+        font_id: FontId,
+        font_size: Pixels,
+    ) -> TextRenderingMode {
+        self.platform_text_system
+            .recommended_rendering_mode(font_id, font_size)
+    }
 }
 
 /// The GPUI text layout subsystem.
@@ -416,23 +429,21 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
-        let mut line_start = 0;
-        let mut max_wrap_lines = line_clamp.unwrap_or(usize::MAX);
+        let mut max_wrap_lines = line_clamp;
         let mut wrapped_lines = 0;
 
-        let mut process_line = |line_text: SharedString| {
+        let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
-            let line_end = line_start + line_text.len();
 
-            let mut last_font: Option<FontId> = None;
-            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
+                    log::warn!("`TextRun`s do not cover the entire to be shaped text");
                     break;
                 };
 
-                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+                let run_len_within_line = cmp::min(line_end - run_start, run.len);
 
                 let decoration_changed = if let Some(last_run) = decoration_runs.last_mut()
                     && last_run.color == run.color
@@ -453,25 +464,23 @@ impl WindowTextSystem {
                     true
                 };
 
+                let font_id = self.resolve_font(&run.font);
                 if let Some(font_run) = font_runs.last_mut()
-                    && Some(font_run.font_id) == last_font
+                    && font_id == font_run.font_id
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
                 } else {
-                    let font_id = self.resolve_font(&run.font);
-                    last_font = Some(font_id);
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
                     });
                 }
 
-                if run_len_within_line == run.len {
+                // Preserve the remainder of the run for the next line
+                run.len -= run_len_within_line;
+                if run.len == 0 {
                     runs.next();
-                } else {
-                    // Preserve the remainder of the run for the next line
-                    run.len -= run_len_within_line;
                 }
                 run_start += run_len_within_line;
             }
@@ -481,7 +490,7 @@ impl WindowTextSystem {
                 font_size,
                 &font_runs,
                 wrap_width,
-                Some(max_wrap_lines - wrapped_lines),
+                max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
             );
             wrapped_lines += layout.wrap_boundaries.len();
 
@@ -492,7 +501,6 @@ impl WindowTextSystem {
             });
 
             // Skip `\n` character.
-            line_start = line_end + 1;
             if let Some(run) = runs.peek_mut() {
                 run.len -= 1;
                 if run.len == 0 {
@@ -502,21 +510,34 @@ impl WindowTextSystem {
         };
 
         let mut split_lines = text.split('\n');
-        let mut processed = false;
 
+        // Special case single lines to prevent allocating a sharedstring
         if let Some(first_line) = split_lines.next()
             && let Some(second_line) = split_lines.next()
         {
-            processed = true;
-            process_line(first_line.to_string().into());
-            process_line(second_line.to_string().into());
+            let mut line_start = 0;
+            process_line(
+                SharedString::new(first_line),
+                line_start,
+                line_start + first_line.len(),
+            );
+            line_start += first_line.len() + '\n'.len_utf8();
+            process_line(
+                SharedString::new(second_line),
+                line_start,
+                line_start + second_line.len(),
+            );
             for line_text in split_lines {
-                process_line(line_text.to_string().into());
+                line_start += line_text.len() + '\n'.len_utf8();
+                process_line(
+                    SharedString::new(line_text),
+                    line_start,
+                    line_start + line_text.len(),
+                );
             }
-        }
-
-        if !processed {
-            process_line(text);
+        } else {
+            let end = text.len();
+            process_line(text, 0, end);
         }
 
         self.font_runs_pool.lock().push(font_runs);
@@ -540,7 +561,6 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut last_font: Option<FontId> = None;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
@@ -558,14 +578,13 @@ impl WindowTextSystem {
                 true
             };
 
+            let font_id = self.resolve_font(&run.font);
             if let Some(font_run) = font_runs.last_mut()
-                && Some(font_run.font_id) == last_font
+                && font_id == font_run.font_id
                 && !decoration_changed
             {
                 font_run.len += run.len;
             } else {
-                let font_id = self.resolve_font(&run.font);
-                last_font = Some(font_id);
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
@@ -729,7 +748,7 @@ impl Display for FontStyle {
 }
 
 /// A styled run of text, for use in [`crate::TextLayout`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct TextRun {
     /// A number of utf8 bytes
     pub len: usize,
@@ -767,6 +786,7 @@ pub(crate) struct RenderGlyphParams {
     pub(crate) subpixel_variant: Point<u8>,
     pub(crate) scale_factor: f32,
     pub(crate) is_emoji: bool,
+    pub(crate) subpixel_rendering: bool,
 }
 
 impl Eq for RenderGlyphParams {}
@@ -779,6 +799,7 @@ impl Hash for RenderGlyphParams {
         self.subpixel_variant.hash(state);
         self.scale_factor.to_bits().hash(state);
         self.is_emoji.hash(state);
+        self.subpixel_rendering.hash(state);
     }
 }
 
@@ -801,6 +822,12 @@ pub struct Font {
 
     /// The font style.
     pub style: FontStyle,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        font(".SystemUIFont")
+    }
 }
 
 /// Get a [`Font`] for a given name.
@@ -913,6 +940,22 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
         ".SystemUIFont" => system,
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks_shared<'a>(
+    name: &'a SharedString,
+    system: &'a SharedString,
+) -> &'a SharedString {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name.as_str() {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
+        ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
 }

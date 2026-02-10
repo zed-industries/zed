@@ -6,7 +6,7 @@ use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
-use task::TaskContext;
+use task::SharedTaskContext;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
@@ -43,9 +43,6 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         terminal_view::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         command_palette_hooks::init(cx);
-        language::init(cx);
-        workspace::init_settings(cx);
-        Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
         dap_adapters::init(cx);
@@ -113,7 +110,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     workspace.update(cx, |workspace, window, cx| {
         workspace.start_debug_session(
             config.to_scenario(),
-            TaskContext::default(),
+            SharedTaskContext::default(),
             None,
             None,
             window,

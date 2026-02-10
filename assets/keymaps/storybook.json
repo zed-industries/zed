@@ -27,7 +27,7 @@
       "backspace": "editor::Backspace",
       "delete": "editor::Delete",
       "left": "editor::MoveLeft",
-      "right": "editor::MoveRight"
-    }
-  }
+      "right": "editor::MoveRight",
+    },
+  },
 ]

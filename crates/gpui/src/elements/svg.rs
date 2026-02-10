@@ -1,5 +1,7 @@
+use std::{fs, path::Path, sync::Arc};
+
 use crate::{
-    App, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
+    App, Asset, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
     StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
     radians, size,
@@ -11,6 +13,7 @@ pub struct Svg {
     interactivity: Interactivity,
     transformation: Option<Transformation>,
     path: Option<SharedString>,
+    external_path: Option<SharedString>,
 }
 
 /// Create a new SVG element.
@@ -20,6 +23,7 @@ pub fn svg() -> Svg {
         interactivity: Interactivity::new(),
         transformation: None,
         path: None,
+        external_path: None,
     }
 }
 
@@ -27,6 +31,12 @@ impl Svg {
     /// Set the path to the SVG file for this element.
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
+        self
+    }
+
+    /// Set the path to the SVG file for this element.
+    pub fn external_path(mut self, path: impl Into<SharedString>) -> Self {
+        self.external_path = Some(path.into());
         self
     }
 
@@ -117,7 +127,35 @@ impl Element for Svg {
                         .unwrap_or_default();
 
                     window
-                        .paint_svg(bounds, path.clone(), transformation, color, cx)
+                        .paint_svg(bounds, path.clone(), None, transformation, color, cx)
+                        .log_err();
+                } else if let Some((path, color)) =
+                    self.external_path.as_ref().zip(style.text.color)
+                {
+                    let Some(bytes) = window
+                        .use_asset::<SvgAsset>(path, cx)
+                        .and_then(|asset| asset.log_err())
+                    else {
+                        return;
+                    };
+
+                    let transformation = self
+                        .transformation
+                        .as_ref()
+                        .map(|transformation| {
+                            transformation.into_matrix(bounds.center(), window.scale_factor())
+                        })
+                        .unwrap_or_default();
+
+                    window
+                        .paint_svg(
+                            bounds,
+                            path.clone(),
+                            Some(&bytes),
+                            transformation,
+                            color,
+                            cx,
+                        )
                         .log_err();
                 }
             },
@@ -217,5 +255,23 @@ impl Transformation {
             .rotate(self.rotate)
             .scale(self.scale)
             .translate(center.scale(scale_factor).negate())
+    }
+}
+
+enum SvgAsset {}
+
+impl Asset for SvgAsset {
+    type Source = SharedString;
+    type Output = Result<Arc<[u8]>, Arc<std::io::Error>>;
+
+    fn load(
+        source: Self::Source,
+        _cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move {
+            let bytes = fs::read(Path::new(source.as_ref())).map_err(|e| Arc::new(e))?;
+            let bytes = Arc::from(bytes);
+            Ok(bytes)
+        }
     }
 }

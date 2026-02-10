@@ -51,3 +51,31 @@ pub fn external_agents_docs(cx: &App) -> String {
         server_url = server_url(cx)
     )
 }
+
+/// Returns the URL to Zed agent servers documentation.
+pub fn agent_server_docs(cx: &App) -> String {
+    format!(
+        "{server_url}/docs/extensions/agent-servers",
+        server_url = server_url(cx)
+    )
+}
+
+/// Returns the URL to Zed's edit prediction documentation.
+pub fn edit_prediction_docs(cx: &App) -> String {
+    format!(
+        "{server_url}/docs/ai/edit-prediction",
+        server_url = server_url(cx)
+    )
+}
+
+/// Returns the URL to Zed's ACP registry blog post.
+pub fn acp_registry_blog(cx: &App) -> String {
+    format!(
+        "{server_url}/blog/acp-registry",
+        server_url = server_url(cx)
+    )
+}
+
+pub fn shared_agent_thread_url(session_id: &str) -> String {
+    format!("zed://agent/shared/{}", session_id)
+}

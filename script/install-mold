@@ -12,12 +12,10 @@
 
 set -euo pipefail
 
-MOLD_VERSION="${MOLD_VERSION:-${1:-}}"
+MOLD_VERSION="2.34.0"
+
 if [ "$(uname -s)" != "Linux" ]; then
     echo "Error: This script is intended for Linux systems only."
-    exit 1
-elif [ -z "$MOLD_VERSION" ]; then
-    echo "Usage: $0 2.34.0"
     exit 1
 elif [ -e /usr/local/bin/mold ]; then
     echo "Warning: existing mold found at /usr/local/bin/mold. Skipping installation."

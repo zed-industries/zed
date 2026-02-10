@@ -122,7 +122,7 @@ impl LspCommand for ExpandMacro {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -256,7 +256,7 @@ impl LspCommand for OpenDocs {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -469,7 +469,7 @@ impl LspCommand for GoToParentModule {
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 
@@ -657,6 +657,7 @@ impl LspCommand for GetLspRunnables {
                     );
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
+                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
                         task_template.args.push("--".to_string());
                         task_template.args.extend(
                             cargo
@@ -682,7 +683,7 @@ impl LspCommand for GetLspRunnables {
                                 // That bit is not auto-expanded when using single quotes.
                                 // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
                                 .flat_map(|extra_arg| {
-                                    shlex::try_quote(&extra_arg).ok().map(|s| s.to_string())
+                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
                                 }),
                         );
                     }

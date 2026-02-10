@@ -116,7 +116,7 @@
       ],
       "tool_results": [
         {
-          "content": "[package]\nname = \"language_model_selector\"\nversion = \"0.1.0\"\nedition.workspace = true\npublish.workspace = true\nlicense = \"GPL-3.0-or-later\"\n\n[lints]\nworkspace = true\n\n[lib]\npath = \"src/language_model_selector.rs\"\n\n[dependencies]\ncollections.workspace = true\nfeature_flags.workspace = true\nfuzzy.workspace = true\ngpui.workspace = true\nlanguage_model.workspace = true\nlog.workspace = true\npicker.workspace = true\nproto.workspace = true\nui.workspace = true\nworkspace-hack.workspace = true\nzed_actions.workspace = true\n",
+          "content": "[package]\nname = \"language_model_selector\"\nversion = \"0.1.0\"\nedition.workspace = true\npublish.workspace = true\nlicense = \"GPL-3.0-or-later\"\n\n[lints]\nworkspace = true\n\n[lib]\npath = \"src/language_model_selector.rs\"\n\n[dependencies]\ncollections.workspace = true\nfeature_flags.workspace = true\nfuzzy.workspace = true\ngpui.workspace = true\nlanguage_model.workspace = true\nlog.workspace = true\npicker.workspace = true\nproto.workspace = true\nui.workspace = true\n\nzed_actions.workspace = true\n",
           "is_error": false,
           "output": null,
           "tool_use_id": "toolu_019Je2MLfJhpJr93g5igoRAH"

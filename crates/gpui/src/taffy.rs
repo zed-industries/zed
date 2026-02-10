@@ -3,12 +3,12 @@ use crate::{
     point, size,
 };
 use collections::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
+    prelude::min_content,
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -31,6 +31,7 @@ pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
+    layout_bounds_scratch_space: Vec<LayoutId>,
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -43,6 +44,7 @@ impl TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
+            layout_bounds_scratch_space: Vec::new(),
         }
     }
 
@@ -69,9 +71,7 @@ impl TaffyLayoutEngine {
         } else {
             self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(taffy_style, unsafe {
-                    std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
-                })
+                .new_with_children(taffy_style, LayoutId::to_taffy_slice(children))
                 .expect(EXPECT_MESSAGE)
                 .into()
         }
@@ -170,7 +170,7 @@ impl TaffyLayoutEngine {
         //
 
         if !self.computed_layouts.insert(id) {
-            let mut stack = SmallVec::<[LayoutId; 64]>::new();
+            let mut stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
@@ -179,7 +179,7 @@ impl TaffyLayoutEngine {
                         .children(id.into())
                         .expect(EXPECT_MESSAGE)
                         .into_iter()
-                        .map(Into::into),
+                        .map(LayoutId::from),
                 );
             }
         }
@@ -265,6 +265,13 @@ impl TaffyLayoutEngine {
 #[repr(transparent)]
 pub struct LayoutId(NodeId);
 
+impl LayoutId {
+    fn to_taffy_slice(node_ids: &[Self]) -> &[taffy::NodeId] {
+        // SAFETY: LayoutId is repr(transparent) to taffy::tree::NodeId.
+        unsafe { std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(node_ids) }
+    }
+}
+
 impl std::hash::Hash for LayoutId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         u64::from(self.0).hash(state);
@@ -308,6 +315,14 @@ impl ToTaffy<taffy::style::Style> for Style {
                 .unwrap_or_default()
         }
 
+        fn to_grid_repeat_min_content<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(min-content, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(min_content(), fr(1.0))])])
+                .unwrap_or_default()
+        }
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -332,7 +347,11 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_template_columns: to_grid_repeat(&self.grid_cols),
+            grid_template_columns: if self.grid_cols_min_content.is_some() {
+                to_grid_repeat_min_content(&self.grid_cols_min_content)
+            } else {
+                to_grid_repeat(&self.grid_cols)
+            },
             grid_row: self
                 .grid_location
                 .as_ref()

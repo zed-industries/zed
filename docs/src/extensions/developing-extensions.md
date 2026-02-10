@@ -1,8 +1,8 @@
 # Developing Extensions
 
-## Extension Capabilities
+## Extension Features
 
-Extensions can add the following capabilities to Zed:
+Extensions are able to provide the following features to Zed:
 
 - [Languages](./languages.md)
 - [Debuggers](./debugger-extensions.md)
@@ -23,11 +23,7 @@ From the extensions page, click the `Install Dev Extension` button (or the {#act
 
 If you need to troubleshoot, you can check the Zed.log ({#action zed::OpenLog}) for additional output. For debug output, close and relaunch zed with the `zed --foreground` from the command line which show more verbose INFO level logging.
 
-If you already have a published extension with the same name installed, your dev extension will override it.
-
-After installing, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
-
-Pre-installed extensions with the same name have to be uninstalled before installing the dev extension. See [#31106](https://github.com/zed-industries/zed/issues/31106) for more.
+If you already have the published version of the extension installed, the published version will be uninstalled prior to the installation of the dev extension. After successful installation, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
 
 ## Directory Structure of a Zed Extension
 
@@ -43,6 +39,8 @@ authors = ["Your Name <you@example.com>"]
 description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
+
+> Note: If you are working on a theme extension with the intend of publishing it later, is is recommended that you suffix your theme's extension ID with `-theme`. This might otherwise be raised during the process of [releasing your extension](#publishing-your-extension).
 
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
@@ -115,10 +113,16 @@ git submodule update
 
 ## Extension License Requirements
 
-As of October 1st, 2025, extension repositories must include one of the following licenses:
+As of October 1st, 2025, extension repositories must include a license.
+The following licenses are accepted:
 
-- [MIT](https://opensource.org/license/mit)
 - [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- [BSD 2-Clause](https://opensource.org/license/bsd-2-clause)
+- [BSD 3-Clause](https://opensource.org/license/bsd-3-clause)
+- [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html)
+- [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.en.html)
+- [MIT](https://opensource.org/license/mit)
+- [zlib](https://opensource.org/license/zlib)
 
 This allows us to distribute the resulting binary produced from your extension code to our users.
 Without a valid license, the pull request to add or update your extension in the following steps will fail CI.
@@ -166,7 +170,15 @@ To update an extension, open a PR to [the `zed-industries/extensions` repo](http
 
 In your PR do the following:
 
-1. Update the extension's submodule to the commit of the new version.
+1. Update the extension's submodule to the commit of the new version. For this, you can run
+
+```sh
+# From the root of the repository:
+git submodule update --remote extensions/your-extension-name
+```
+
+to update your extension to the latest commit available in your remote repository.
+
 2. Update the `version` field for the extension in `extensions.toml`
    - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
 

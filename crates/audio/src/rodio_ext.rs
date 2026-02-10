@@ -433,7 +433,7 @@ where
     /// Stores already emitted samples, once its full we call the callback.
     buffer: [Sample; N],
     /// Next free element in buffer. If this is equal to the buffer length
-    /// we have no more free lements.
+    /// we have no more free elements.
     free: usize,
 }
 

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{Animation, AnimationExt, FontWeight, pulsating_between};
+use gpui::{Animation, AnimationExt, FontWeight};
 use std::time::Duration;
 
 #[derive(IntoElement)]
@@ -84,38 +84,30 @@ impl RenderOnce for LoadingLabel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let text = self.text.clone();
 
-        self.base
-            .color(Color::Muted)
-            .with_animations(
-                "loading_label",
-                vec![
-                    Animation::new(Duration::from_secs(1)),
-                    Animation::new(Duration::from_secs(1)).repeat(),
-                ],
-                move |mut label, animation_ix, delta| {
-                    match animation_ix {
-                        0 => {
-                            let chars_to_show = (delta * text.len() as f32).ceil() as usize;
-                            let text = SharedString::from(text[0..chars_to_show].to_string());
-                            label.set_text(text);
-                        }
-                        1 => match delta {
-                            d if d < 0.25 => label.set_text(text.clone()),
-                            d if d < 0.5 => label.set_text(format!("{}.", text)),
-                            d if d < 0.75 => label.set_text(format!("{}..", text)),
-                            _ => label.set_text(format!("{}...", text)),
-                        },
-                        _ => {}
+        self.base.color(Color::Muted).with_animations(
+            "loading_label",
+            vec![
+                Animation::new(Duration::from_secs(1)),
+                Animation::new(Duration::from_secs(1)).repeat(),
+            ],
+            move |mut label, animation_ix, delta| {
+                match animation_ix {
+                    0 => {
+                        let byte_end =
+                            text.floor_char_boundary((delta * text.len() as f32).ceil() as usize);
+                        let visible_text = SharedString::new(&text[0..byte_end]);
+                        label.set_text(visible_text);
                     }
-                    label
-                },
-            )
-            .with_animation(
-                "pulsating-label",
-                Animation::new(Duration::from_secs(2))
-                    .repeat()
-                    .with_easing(pulsating_between(0.6, 1.)),
-                |label, delta| label.map_element(|label| label.alpha(delta)),
-            )
+                    1 => match delta {
+                        ..0.25 => label.set_text(text.clone()),
+                        ..0.5 => label.set_text(format!("{}.", text)),
+                        ..0.75 => label.set_text(format!("{}..", text)),
+                        _ => label.set_text(format!("{}...", text)),
+                    },
+                    _ => {}
+                }
+                label
+            },
+        )
     }
 }

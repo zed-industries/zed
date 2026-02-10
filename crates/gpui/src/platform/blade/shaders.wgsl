@@ -1,3 +1,4 @@
+enable dual_source_blending;
 /* Functions useful for debugging:
 
 // A heat map color for debugging (blue -> cyan -> green -> yellow -> red).
@@ -28,6 +29,9 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
 */
 
+// Contrast and gamma correction adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
 fn color_brightness(color: vec3<f32>) -> f32 {
     // REC. 601 luminance coefficients for perceived brightness
     return dot(color, vec3<f32>(0.30, 0.59, 0.11));
@@ -43,7 +47,17 @@ fn enhance_contrast(alpha: f32, k: f32) -> f32 {
     return alpha * (k + 1.0) / (alpha * k + 1.0);
 }
 
+fn enhance_contrast3(alpha: vec3<f32>, k: f32) -> vec3<f32> {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
 fn apply_alpha_correction(a: f32, b: f32, g: vec4<f32>) -> f32 {
+    let brightness_adjustment = g.x * b + g.y;
+    let correction = brightness_adjustment * a + (g.z * b + g.w);
+    return a + a * (1.0 - a) * correction;
+}
+
+fn apply_alpha_correction3(a: vec3<f32>, b: vec3<f32>, g: vec4<f32>) -> vec3<f32> {
     let brightness_adjustment = g.x * b + g.y;
     let correction = brightness_adjustment * a + (g.z * b + g.w);
     return a + a * (1.0 - a) * correction;
@@ -57,6 +71,13 @@ fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_c
     return apply_alpha_correction(contrasted, brightness, gamma_ratios);
 }
 
+fn apply_contrast_and_gamma_correction3(sample: vec3<f32>, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> vec3<f32> {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+
+    let contrasted = enhance_contrast3(sample, enhanced_contrast);
+    return apply_alpha_correction3(contrasted, color, gamma_ratios);
+}
+
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
@@ -66,6 +87,7 @@ struct GlobalParams {
 var<uniform> globals: GlobalParams;
 var<uniform> gamma_ratios: vec4<f32>;
 var<uniform> grayscale_enhanced_contrast: f32;
+var<uniform> subpixel_enhanced_contrast: f32;
 var t_sprite: texture_2d<f32>;
 var s_sprite: sampler;
 
@@ -107,6 +129,7 @@ struct Background {
     // 0u is Solid
     // 1u is LinearGradient
     // 2u is PatternSlash
+    // 3u is Checkerboard
     tag: u32,
     // 0u is sRGB linear color
     // 1u is Oklab color
@@ -377,7 +400,7 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
     solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
     var result = GradientColor();
 
-    if (tag == 0u || tag == 2u) {
+    if (tag == 0u || tag == 2u || tag == 3u) {
         result.solid = hsla_to_rgba(solid);
     } else if (tag == 1u) {
         // The hsla_to_rgba is returns a linear sRGB color
@@ -451,6 +474,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
+            // pattern slash
             let gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
             let pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
             let pattern_interval = (gradient_angle_or_pattern_height % 65535.0f) / 255.0f;
@@ -467,6 +491,18 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             let distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
             background_color = solid_color;
             background_color.a *= saturate(0.5 - distance);
+        }
+        case 3u: {
+            // checkerboard
+            let size = background.gradient_angle_or_pattern_height;
+            let relative_position = position - bounds.origin;
+            
+            let x_index = floor(relative_position.x / size);
+            let y_index = floor(relative_position.y / size);
+            let should_be_colored = (x_index + y_index) % 2.0;
+            
+            background_color = solid_color;
+            background_color.a *= saturate(should_be_colored);
         }
     }
 
@@ -1187,7 +1223,6 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
 
-    // convert to srgb space as the rest of the code (output swapchain) expects that
     return blend_color(input.color, alpha_corrected);
 }
 
@@ -1293,4 +1328,58 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         1.0);
 
     return ycbcr_to_RGB * y_cb_cr;
+}
+
+// --- subpixel sprites --- //
+
+struct SubpixelSprite {
+    order: u32,
+    pad: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    color: Hsla,
+    tile: AtlasTile,
+    transformation: TransformationMatrix,
+}
+var<storage, read> b_subpixel_sprites: array<SubpixelSprite>;
+
+struct SubpixelSpriteOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) tile_position: vec2<f32>,
+    @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(3) clip_distances: vec4<f32>,
+}
+
+struct SubpixelSpriteFragmentOutput {
+    @location(0) @blend_src(0) foreground: vec4<f32>,
+    @location(0) @blend_src(1) alpha: vec4<f32>,
+}
+
+@vertex
+fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> SubpixelSpriteOutput {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let sprite = b_subpixel_sprites[instance_id];
+
+    var out = SubpixelSpriteOutput();
+    out.position = to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    out.color = hsla_to_rgba(sprite.color);
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    return out;
+}
+
+@fragment
+fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutput {
+    let sample = textureSample(t_sprite, s_sprite, input.tile_position).rgb;
+    let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
+
+    // Alpha clip after using the derivatives.
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0));
+    }
+
+    var out = SubpixelSpriteFragmentOutput();
+    out.foreground = vec4<f32>(input.color.rgb, 1.0);
+    out.alpha = vec4<f32>(input.color.a * alpha_corrected, 1.0);
+    return out;
 }

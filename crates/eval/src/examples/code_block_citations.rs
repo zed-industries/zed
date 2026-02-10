@@ -29,16 +29,19 @@ impl Example for CodeBlockCitations {
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         const FILENAME: &str = "assistant_tool.rs";
-        cx.push_user_message(format!(
-            r#"
-            Show me the method bodies of all the methods of the `Tool` trait in {FILENAME}.
-
-            Please show each method in a separate code snippet.
-            "#
-        ));
 
         // Verify that the messages all have the correct formatting.
-        let texts: Vec<String> = cx.run_to_end().await?.texts().collect();
+        let texts: Vec<String> = cx
+            .prompt(format!(
+                r#"
+                Show me the method bodies of all the methods of the `Tool` trait in {FILENAME}.
+
+                Please show each method in a separate code snippet.
+                "#
+            ))
+            .await?
+            .texts()
+            .collect();
         let closing_fence = format!("\n{FENCE}");
 
         for text in texts.iter() {
@@ -59,39 +62,29 @@ impl Example for CodeBlockCitations {
                         cx.assert(citation.contains("/"), format!("Slash in {citation:?}",))
                     {
                         let path_range = PathWithRange::new(citation);
-                        let path = cx
-                            .agent_thread()
-                            .update(cx, |thread, cx| {
-                                thread
-                                    .project()
-                                    .read(cx)
-                                    .find_project_path(path_range.path.as_ref(), cx)
-                            })
-                            .ok()
-                            .flatten();
+                        let path = cx.agent_thread().update(cx, |thread, cx| {
+                            thread
+                                .project()
+                                .read(cx)
+                                .find_project_path(path_range.path.as_ref(), cx)
+                        });
 
                         if let Ok(path) = cx.assert_some(path, format!("Valid path: {citation:?}"))
                         {
                             let buffer_text = {
-                                let buffer = match cx.agent_thread().update(cx, |thread, cx| {
-                                    thread
-                                        .project()
-                                        .update(cx, |project, cx| project.open_buffer(path, cx))
-                                }) {
-                                    Ok(buffer_task) => buffer_task.await.ok(),
-                                    Err(err) => {
-                                        cx.assert(
-                                            false,
-                                            format!("Expected Ok(buffer), not {err:?}"),
-                                        )
-                                        .ok();
-                                        break;
-                                    }
-                                };
+                                let buffer = cx
+                                    .agent_thread()
+                                    .update(cx, |thread, cx| {
+                                        thread
+                                            .project()
+                                            .update(cx, |project, cx| project.open_buffer(path, cx))
+                                    })
+                                    .await
+                                    .ok();
 
                                 let Ok(buffer_text) = cx.assert_some(
-                                    buffer.and_then(|buffer| {
-                                        buffer.read_with(cx, |buffer, _| buffer.text()).ok()
+                                    buffer.map(|buffer| {
+                                        buffer.read_with(cx, |buffer, _| buffer.text())
                                     }),
                                     "Reading buffer text succeeded",
                                 ) else {

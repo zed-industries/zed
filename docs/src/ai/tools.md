@@ -1,12 +1,14 @@
 # Tools
 
-Zed's Agent has access to a variety of tools that allow it to interact with your codebase and perform tasks.
+Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
 
 ## Read & Search Tools
 
 ### `diagnostics`
 
 Gets errors and warnings for either a specific file or the entire project, useful after making edits to determine if further changes are needed.
+When a path is provided, shows all diagnostics for that specific file.
+When no path is provided, shows a summary of error and warning counts for all files in the project.
 
 ### `fetch`
 
@@ -54,10 +56,6 @@ Copies a file or directory recursively in the project, more efficient than manua
 
 Creates a new directory at the specified path within the project, creating all necessary parent directories (similar to `mkdir -p`).
 
-### `create_file`
-
-Creates a new file at a specified path with given text content, the most efficient way to create new files or completely replace existing ones.
-
 ### `delete_path`
 
 Deletes a file or directory (including contents recursively) at the specified path and confirms the deletion.
@@ -65,6 +63,14 @@ Deletes a file or directory (including contents recursively) at the specified pa
 ### `edit_file`
 
 Edits files by replacing specific text with new content.
+
+### `restore_file_from_disk`
+
+Reloads a file from disk, discarding any unsaved changes in the buffer.
+
+### `save_file`
+
+Saves a buffer's current contents to disk, preserving unsaved changes before the agent modifies the file.
 
 ### `move_path`
 

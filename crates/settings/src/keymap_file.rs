@@ -4,7 +4,7 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, register_action,
+    NoAction, SharedString, generate_list_of_all_registered_actions, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -15,10 +15,12 @@ use util::ResultExt as _;
 use util::{
     asset_str,
     markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
+    schemars::AllowTrailingCommas,
 };
 
-use crate::{
-    SettingsAssets, append_top_level_array_value_in_json_text, parse_json_with_comments,
+use crate::SettingsAssets;
+use settings_json::{
+    append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
 };
 
@@ -150,6 +152,9 @@ pub enum KeymapFileLoadResult {
 
 impl KeymapFile {
     pub fn parse(content: &str) -> anyhow::Result<Self> {
+        if content.trim().is_empty() {
+            return Ok(Self(Vec::new()));
+        }
         parse_json_with_comments::<Self>(content)
     }
 
@@ -211,11 +216,6 @@ impl KeymapFile {
     }
 
     pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
-        if content.is_empty() {
-            return KeymapFileLoadResult::Success {
-                key_bindings: Vec::new(),
-            };
-        }
         let keymap_file = match Self::parse(content) {
             Ok(keymap_file) => keymap_file,
             Err(error) => {
@@ -303,19 +303,21 @@ impl KeymapFile {
         if errors.is_empty() {
             KeymapFileLoadResult::Success { key_bindings }
         } else {
-            let mut error_message = "Errors in user keymap file.\n".to_owned();
+            let mut error_message = "Errors in user keymap file.".to_owned();
+
             for (context, section_errors) in errors {
                 if context.is_empty() {
-                    let _ = write!(error_message, "\n\nIn section without context predicate:");
+                    let _ = write!(error_message, "\nIn section without context predicate:");
                 } else {
                     let _ = write!(
                         error_message,
-                        "\n\nIn section with {}:",
+                        "\nIn section with {}:",
                         MarkdownInlineCode(&format!("context = \"{}\"", context))
                     );
                 }
                 let _ = write!(error_message, "{section_errors}");
             }
+
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message: MarkdownString(error_message),
@@ -452,7 +454,9 @@ impl KeymapFile {
     /// Creates a JSON schema generator, suitable for generating json schemas
     /// for actions
     pub fn action_schema_generator() -> schemars::SchemaGenerator {
-        schemars::generate::SchemaSettings::draft2019_09().into_generator()
+        schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(AllowTrailingCommas)
+            .into_generator()
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
@@ -473,6 +477,58 @@ impl KeymapFile {
             deprecations,
             deprecation_messages,
         )
+    }
+
+    pub fn generate_json_schema_from_inventory() -> Value {
+        let mut generator = Self::action_schema_generator();
+
+        let mut action_schemas = Vec::new();
+        let mut documentation = HashMap::default();
+        let mut deprecations = HashMap::default();
+        let mut deprecation_messages = HashMap::default();
+
+        for action_data in generate_list_of_all_registered_actions() {
+            let schema = (action_data.json_schema)(&mut generator);
+            action_schemas.push((action_data.name, schema));
+
+            if let Some(doc) = action_data.documentation {
+                documentation.insert(action_data.name, doc);
+            }
+            if let Some(msg) = action_data.deprecation_message {
+                deprecation_messages.insert(action_data.name, msg);
+            }
+            for &alias in action_data.deprecated_aliases {
+                deprecations.insert(alias, action_data.name);
+
+                let alias_schema = (action_data.json_schema)(&mut generator);
+                action_schemas.push((alias, alias_schema));
+            }
+        }
+
+        KeymapFile::generate_json_schema(
+            generator,
+            action_schemas,
+            &documentation,
+            &deprecations,
+            &deprecation_messages,
+        )
+    }
+
+    pub fn get_action_schema_by_name(
+        action_name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<schemars::Schema> {
+        for action_data in generate_list_of_all_registered_actions() {
+            if action_data.name == action_name {
+                return (action_data.json_schema)(generator);
+            }
+            for &alias in action_data.deprecated_aliases {
+                if alias == action_name {
+                    return (action_data.json_schema)(generator);
+                }
+            }
+        }
+        None
     }
 
     fn generate_json_schema(
@@ -614,7 +670,7 @@ impl KeymapFile {
         generator.definitions_mut().insert(
             KeymapAction::schema_name().to_string(),
             json!({
-                "oneOf": keymap_action_alternatives
+                "anyOf": keymap_action_alternatives
             }),
         );
 

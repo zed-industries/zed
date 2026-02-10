@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AnyProtoClient(Arc<State>);
 
 type RequestIds = Arc<
@@ -45,6 +45,15 @@ struct State {
     request_ids: RequestIds,
 }
 
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("next_lsp_request_id", &self.next_lsp_request_id)
+            .field("request_ids", &self.request_ids)
+            .finish_non_exhaustive()
+    }
+}
+
 pub trait ProtoClient: Send + Sync {
     fn request(
         &self,
@@ -59,6 +68,7 @@ pub trait ProtoClient: Send + Sync {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
 
     fn is_via_collab(&self) -> bool;
+    fn has_wsl_interop(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -226,6 +236,7 @@ impl AnyProtoClient {
     pub fn request_lsp<T>(
         &self,
         project_id: u64,
+        server_id: Option<u64>,
         timeout: Duration,
         executor: BackgroundExecutor,
         request: T,
@@ -247,6 +258,7 @@ impl AnyProtoClient {
 
         let query = proto::LspQuery {
             project_id,
+            server_id,
             lsp_request_id: new_id.0,
             request: Some(request.to_proto_query()),
         };
@@ -359,6 +371,15 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::InlayHintsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::SemanticTokensResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetFoldingRangesResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };
@@ -504,6 +525,10 @@ impl AnyProtoClient {
                 handle: entity.downgrade().into(),
             },
         );
+    }
+
+    pub fn has_wsl_interop(&self) -> bool {
+        self.0.client.has_wsl_interop()
     }
 }
 

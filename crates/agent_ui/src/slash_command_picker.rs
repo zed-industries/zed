@@ -155,8 +155,8 @@ impl PickerDelegate for SlashCommandDelegate {
             match command {
                 SlashCommandEntry::Info(info) => {
                     self.active_context_editor
-                        .update(cx, |context_editor, cx| {
-                            context_editor.insert_command(&info.name, window, cx)
+                        .update(cx, |text_thread_editor, cx| {
+                            text_thread_editor.insert_command(&info.name, window, cx)
                         })
                         .ok();
                 }

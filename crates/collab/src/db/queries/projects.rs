@@ -91,14 +91,18 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project { 1 } else { 0 };
+            let replica_id = if is_ssh_project {
+                clock::ReplicaId::REMOTE_SERVER
+            } else {
+                clock::ReplicaId::LOCAL
+            };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(replica_id)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id.as_u16() as i32)),
                 is_host: ActiveValue::set(true),
                 id: ActiveValue::NotSet,
                 committer_name: ActiveValue::Set(None),
@@ -358,6 +362,8 @@ impl Database {
                                 entry_ids: ActiveValue::set("[]".into()),
                                 head_commit_details: ActiveValue::set(None),
                                 merge_message: ActiveValue::set(None),
+                                remote_upstream_url: ActiveValue::set(None),
+                                remote_origin_url: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -507,6 +513,8 @@ impl Database {
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
                 merge_message: ActiveValue::set(update.merge_message.clone()),
+                remote_upstream_url: ActiveValue::set(update.remote_upstream_url.clone()),
+                remote_origin_url: ActiveValue::set(update.remote_origin_url.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -752,6 +760,7 @@ impl Database {
                     path: ActiveValue::Set(update.path.clone()),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
+                    outside_worktree: ActiveValue::Set(update.outside_worktree.unwrap_or(false)),
                 })
                 .on_conflict(
                     OnConflict::columns([
@@ -759,7 +768,10 @@ impl Database {
                         worktree_settings_file::Column::WorktreeId,
                         worktree_settings_file::Column::Path,
                     ])
-                    .update_column(worktree_settings_file::Column::Content)
+                    .update_columns([
+                        worktree_settings_file::Column::Content,
+                        worktree_settings_file::Column::OutsideWorktree,
+                    ])
                     .to_owned(),
                 )
                 .exec(&*tx)
@@ -841,7 +853,7 @@ impl Database {
             .iter()
             .map(|c| c.replica_id)
             .collect::<HashSet<_>>();
-        let mut replica_id = ReplicaId(1);
+        let mut replica_id = ReplicaId(clock::ReplicaId::FIRST_COLLAB_ID.as_u16() as i32);
         while replica_ids.contains(&replica_id) {
             replica_id.0 += 1;
         }
@@ -1001,6 +1013,8 @@ impl Database {
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
                         stash_entries: Vec::new(),
+                        remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
+                        remote_origin_url: db_repository_entry.remote_origin_url.clone(),
                     });
                 }
             }
@@ -1040,6 +1054,7 @@ impl Database {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
+                        outside_worktree: db_settings_file.outside_worktree,
                     });
                 }
             }

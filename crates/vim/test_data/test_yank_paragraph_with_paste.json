@@ -1,0 +1,10 @@
+{"Put":{"state":"first paragraph\nˇstill first\n\nsecond paragraph\nstill second\n\nthird paragraph\n"}}
+{"Key":"y"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"ˇfirst paragraph\nstill first\n\nsecond paragraph\nstill second\n\nthird paragraph\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"first paragraph\nstill first\n\n"}}
+{"Key":"j"}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"first paragraph\nstill first\n\nˇfirst paragraph\nstill first\n\nsecond paragraph\nstill second\n\nthird paragraph\n","mode":"Normal"}}

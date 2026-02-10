@@ -9,7 +9,7 @@ use rpc::{
     proto::{self, PeerId},
 };
 use std::{sync::Arc, time::Duration};
-use text::BufferId;
+use text::{BufferId, ReplicaId};
 use util::ResultExt;
 
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
@@ -65,9 +65,14 @@ impl ChannelBuffer {
 
         let buffer = cx.new(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
-            language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
-        })?;
-        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+            language::Buffer::remote(
+                buffer_id,
+                ReplicaId::new(response.replica_id as u16),
+                capability,
+                base_text,
+            )
+        });
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -88,7 +93,7 @@ impl ChannelBuffer {
             };
             this.replace_collaborators(response.collaborators, cx);
             this
-        })?)
+        }))
     }
 
     fn release(&mut self, _: &mut App) {
@@ -163,7 +168,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })?;
+        });
 
         Ok(())
     }
@@ -177,7 +182,8 @@ impl ChannelBuffer {
             this.replace_collaborators(message.payload.collaborators, cx);
             cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     fn on_buffer_update(
@@ -272,7 +278,7 @@ impl ChannelBuffer {
         self.connected
     }
 
-    pub fn replica_id(&self, cx: &App) -> u16 {
+    pub fn replica_id(&self, cx: &App) -> ReplicaId {
         self.buffer.read(cx).replica_id()
     }
 }

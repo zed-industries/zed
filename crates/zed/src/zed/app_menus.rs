@@ -20,22 +20,26 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             "Reset Zoom",
             zed_actions::ResetBufferFontSize { persist: false },
         ),
+        MenuItem::action(
+            "Reset All Zoom",
+            zed_actions::ResetAllZoom { persist: false },
+        ),
         MenuItem::separator(),
         MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
         MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
         MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
-        MenuItem::action("Close All Docks", workspace::CloseAllDocks),
+        MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
         MenuItem::submenu(Menu {
             name: "Editor Layout".into(),
             items: vec![
-                MenuItem::action("Split Up", workspace::SplitUp),
-                MenuItem::action("Split Down", workspace::SplitDown),
-                MenuItem::action("Split Left", workspace::SplitLeft),
-                MenuItem::action("Split Right", workspace::SplitRight),
+                MenuItem::action("Split Up", workspace::SplitUp::default()),
+                MenuItem::action("Split Down", workspace::SplitDown::default()),
+                MenuItem::action("Split Left", workspace::SplitLeft::default()),
+                MenuItem::action("Split Right", workspace::SplitRight::default()),
             ],
         }),
         MenuItem::separator(),
-        MenuItem::action("Project Panel", project_panel::ToggleFocus),
+        MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
@@ -65,7 +69,11 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     items: vec![
                         MenuItem::action("Open Settings", zed_actions::OpenSettings),
                         MenuItem::action("Open Settings File", super::OpenSettingsFile),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
+                        MenuItem::action("Open Project Settings", zed_actions::OpenProjectSettings),
+                        MenuItem::action(
+                            "Open Project Settings File",
+                            super::OpenProjectSettingsFile,
+                        ),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
                         MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
@@ -146,6 +154,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         close_pinned: true,
                     },
                 ),
+                MenuItem::action("Close Project", workspace::CloseProject),
                 MenuItem::action("Close Window", workspace::CloseWindow),
             ],
         },
@@ -161,7 +170,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find In Project", workspace::DeploySearch::find()),
+                MenuItem::action("Find in Project", workspace::DeploySearch::find()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",
@@ -185,8 +194,18 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     editor::actions::SelectPreviousSyntaxNode,
                 ),
                 MenuItem::separator(),
-                MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
-                MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
+                MenuItem::action(
+                    "Add Cursor Above",
+                    editor::actions::AddSelectionAbove {
+                        skip_soft_wrap: true,
+                    },
+                ),
+                MenuItem::action(
+                    "Add Cursor Below",
+                    editor::actions::AddSelectionBelow {
+                        skip_soft_wrap: true,
+                    },
+                ),
                 MenuItem::action(
                     "Select Next Occurrence",
                     editor::actions::SelectNext {
@@ -229,7 +248,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
-                MenuItem::action("Find All References", editor::actions::FindAllReferences),
+                MenuItem::action(
+                    "Find All References",
+                    editor::actions::FindAllReferences::default(),
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(
@@ -259,7 +281,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
                 MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
-                MenuItem::action("Clear all Breakpoints", debugger_ui::ClearAllBreakpoints),
+                MenuItem::action("Clear All Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {

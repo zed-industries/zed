@@ -13,14 +13,11 @@ use gpui::{
 };
 pub use panel_settings::{CollaborationPanelSettings, NotificationPanelSettings};
 use release_channel::ReleaseChannel;
-use settings::Settings;
 use ui::px;
 use workspace::AppState;
 
+// Another comment, nice.
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
-    CollaborationPanelSettings::register(cx);
-    NotificationPanelSettings::register(cx);
-
     channel_view::init(cx);
     collab_panel::init(cx);
     notification_panel::init(cx);

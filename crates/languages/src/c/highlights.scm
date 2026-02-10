@@ -1,31 +1,36 @@
 [
+  "const"
+  "enum"
+  "extern"
+  "inline"
+  "sizeof"
+  "static"
+  "struct"
+  "typedef"
+  "union"
+  "volatile"
+] @keyword
+
+[
   "break"
   "case"
-  "const"
   "continue"
   "default"
   "do"
   "else"
-  "enum"
-  "extern"
   "for"
   "goto"
   "if"
-  "inline"
   "return"
-  "sizeof"
-  "static"
-  "struct"
   "switch"
-  "typedef"
-  "union"
-  "volatile"
   "while"
-] @keyword
+] @keyword.control
 
 [
   "#define"
   "#elif"
+  "#elifdef"
+  "#elifndef"
   "#else"
   "#endif"
   "#if"
@@ -33,7 +38,7 @@
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword
+] @keyword.directive
 
 [
   "="
@@ -95,6 +100,8 @@
   (char_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 (comment) @comment
 
 (number_literal) @number
@@ -129,3 +136,15 @@
   (primitive_type)
   (sized_type_specifier)
 ] @type
+
+; GNU __attribute__
+(attribute_specifier) @attribute
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C23 [[attributes]]
+(attribute
+  prefix: (identifier) @attribute)
+(attribute
+  name: (identifier) @attribute)

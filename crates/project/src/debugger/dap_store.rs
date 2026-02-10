@@ -4,6 +4,8 @@ use super::{
     locators,
     session::{self, Session, SessionStateEvent},
 };
+use remote::Interactive;
+
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
     debugger::session::SessionQuirks,
@@ -49,7 +51,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, Shell, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, SharedTaskContext, SpawnInTerminal, TaskTemplate};
 use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
@@ -261,16 +263,27 @@ impl DapStore {
                     .get(&adapter.name());
                 let user_installed_path = dap_settings.and_then(|s| match &s.binary {
                     DapBinary::Default => None,
-                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                    DapBinary::Custom(binary) => {
+                        let path = PathBuf::from(binary);
+                        Some(worktree.read(cx).resolve_executable_path(path))
+                    }
                 });
-                let user_args = dap_settings.map(|s| s.args.clone());
+                let user_args = dap_settings.and_then(|s| s.args.clone());
+                let user_env = dap_settings.and_then(|s| s.env.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
-                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
+                let worktree = worktree.clone();
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
-                        .get_binary(&delegate, &definition, user_installed_path, user_args, cx)
+                        .get_binary(
+                            &delegate,
+                            &definition,
+                            user_installed_path,
+                            user_args,
+                            user_env,
+                            cx,
+                        )
                         .await?;
 
                     let env = this
@@ -279,11 +292,7 @@ impl DapStore {
                                 .unwrap()
                                 .environment
                                 .update(cx, |environment, cx| {
-                                    environment.get_local_directory_environment(
-                                        &Shell::System,
-                                        cwd,
-                                        cx,
-                                    )
+                                    environment.worktree_environment(worktree, cx)
                                 })
                         })?
                         .await;
@@ -316,7 +325,7 @@ impl DapStore {
                     if let Some(c) = binary.connection {
                         let host = Ipv4Addr::LOCALHOST;
                         let port;
-                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface())? {
+                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface()) {
                             port = c.port;
                             port_forwarding = None;
                         } else {
@@ -334,14 +343,15 @@ impl DapStore {
                     }
 
                     let command = remote.read_with(cx, |remote, _cx| {
-                        remote.build_command(
+                        remote.build_command_with_options(
                             binary.command,
                             &binary.arguments,
                             &binary.envs,
                             binary.cwd.map(|path| path.display().to_string()),
                             port_forwarding,
+                            Interactive::No,
                         )
-                    })??;
+                    })?;
 
                     Ok(DebugAdapterBinary {
                         command: Some(command.program),
@@ -389,11 +399,12 @@ impl DapStore {
                 // Pre-resolve args with existing environment.
                 let locators = DapRegistry::global(cx).locators();
                 let locator = locators.get(locator_name);
+                let executor = cx.background_executor().clone();
 
                 if let Some(locator) = locator.cloned() {
                     cx.background_spawn(async move {
                         let result = locator
-                            .run(build_command.clone())
+                            .run(build_command.clone(), executor)
                             .await
                             .log_with_level(log::Level::Error);
                         if let Some(result) = result {
@@ -440,7 +451,7 @@ impl DapStore {
         &mut self,
         label: Option<SharedString>,
         adapter: DebugAdapterName,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         parent_session: Option<Entity<Session>>,
         quirks: SessionQuirks,
         cx: &mut Context<Self>,
@@ -523,7 +534,7 @@ impl DapStore {
                 session
                     .update(cx, |session, cx| {
                         session.boot(binary, worktree, dap_store, cx)
-                    })?
+                    })
                     .await
             }
         })
@@ -576,7 +587,7 @@ impl DapStore {
             } else {
                 Task::ready(HashMap::default())
             }
-        })?
+        })
         .await;
 
         Ok(())
@@ -599,9 +610,9 @@ impl DapStore {
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
             local_store.toolchain_store.clone(),
-            local_store.environment.update(cx, |env, cx| {
-                env.get_worktree_environment(worktree.clone(), cx)
-            }),
+            local_store
+                .environment
+                .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
         ))
     }
@@ -684,16 +695,14 @@ impl DapStore {
                         });
                     }
                     VariableLookupKind::Expression => {
-                        let Ok(eval_task) = session.read_with(cx, |session, _| {
-                            session.mode.request_dap(EvaluateCommand {
+                        let eval_task = session.read_with(cx, |session, _| {
+                            session.state.request_dap(EvaluateCommand {
                                 expression: inline_value_location.variable_name.clone(),
                                 frame_id: Some(stack_frame_id),
                                 source: None,
                                 context: Some(EvaluateArgumentsContext::Variables),
                             })
-                        }) else {
-                            continue;
-                        };
+                        });
 
                         if let Some(response) = eval_task.await.log_err() {
                             inlay_hints.push(InlayHint {
@@ -809,7 +818,7 @@ impl DapStore {
         let request = this
             .update(&mut cx, |this, cx| {
                 this.run_debug_locator(&locator, build_task, cx)
-            })?
+            })
             .await?;
 
         Ok(request.to_proto())
@@ -839,8 +848,7 @@ impl DapStore {
                                 })
                                 .ok();
                         }
-                    })
-                    .ok();
+                    });
                 }
             }
         })
@@ -851,7 +859,7 @@ impl DapStore {
                 this.worktree_store
                     .read(cx)
                     .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
-            })?
+            })
             .context("Failed to find worktree with a given ID")?;
         let binary = this
             .update(&mut cx, |this, cx| {
@@ -862,7 +870,7 @@ impl DapStore {
                     tx,
                     cx,
                 )
-            })?
+            })
             .await?;
         Ok(binary.to_proto())
     }
@@ -883,7 +891,8 @@ impl DapStore {
                     .unbounded_send(envelope.payload.message)
                     .ok();
             })
-        })
+        });
+        Ok(())
     }
 
     pub fn sync_adapter_options(

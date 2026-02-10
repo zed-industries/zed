@@ -5,10 +5,15 @@ use super::{BladeAtlas, BladeContext};
 use crate::{
     Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    get_gamma_correction_ratios,
 };
+#[cfg(any(test, feature = "test-support"))]
+use anyhow::Result;
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 use std::sync::Arc;
@@ -91,6 +96,16 @@ struct ShaderMonoSpritesData {
 }
 
 #[derive(blade_macros::ShaderData)]
+struct ShaderSubpixelSpritesData {
+    globals: GlobalParams,
+    gamma_ratios: [f32; 4],
+    subpixel_enhanced_contrast: f32,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
+    b_subpixel_sprites: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
 struct ShaderPolySpritesData {
     globals: GlobalParams,
     t_sprite: gpu::TextureView,
@@ -129,6 +144,7 @@ struct BladePipelines {
     paths: gpu::RenderPipeline,
     underlines: gpu::RenderPipeline,
     mono_sprites: gpu::RenderPipeline,
+    subpixel_sprites: gpu::RenderPipeline,
     poly_sprites: gpu::RenderPipeline,
     surfaces: gpu::RenderPipeline,
 }
@@ -272,6 +288,31 @@ impl BladePipelines {
                 color_targets,
                 multisample_state: gpu::MultisampleState::default(),
             }),
+            subpixel_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "subpixel-sprites",
+                data_layouts: &[&ShaderSubpixelSpritesData::layout()],
+                vertex: shader.at("vs_subpixel_sprite"),
+                vertex_fetches: &[],
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: Some(shader.at("fs_subpixel_sprite")),
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_info.format,
+                    blend: Some(gpu::BlendState {
+                        color: gpu::BlendComponent {
+                            src_factor: gpu::BlendFactor::Src1,
+                            dst_factor: gpu::BlendFactor::OneMinusSrc1,
+                            operation: gpu::BlendOperation::Add,
+                        },
+                        alpha: gpu::BlendComponent::OVER,
+                    }),
+                    write_mask: gpu::ColorWrites::COLOR,
+                }],
+                multisample_state: gpu::MultisampleState::default(),
+            }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
                 data_layouts: &[&ShaderPolySpritesData::layout()],
@@ -310,6 +351,7 @@ impl BladePipelines {
         gpu.destroy_render_pipeline(&mut self.paths);
         gpu.destroy_render_pipeline(&mut self.underlines);
         gpu.destroy_render_pipeline(&mut self.mono_sprites);
+        gpu.destroy_render_pipeline(&mut self.subpixel_sprites);
         gpu.destroy_render_pipeline(&mut self.poly_sprites);
         gpu.destroy_render_pipeline(&mut self.surfaces);
     }
@@ -677,7 +719,8 @@ impl BladeRenderer {
         profiling::scope!("render pass");
         for batch in scene.batches() {
             match batch {
-                PrimitiveBatch::Quads(quads) => {
+                PrimitiveBatch::Quads(range) => {
+                    let quads = &scene.quads[range];
                     let instance_buf = unsafe { self.instance_belt.alloc_typed(quads, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.quads);
                     encoder.bind(
@@ -689,7 +732,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, quads.len() as u32);
                 }
-                PrimitiveBatch::Shadows(shadows) => {
+                PrimitiveBatch::Shadows(range) => {
+                    let shadows = &scene.shadows[range];
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(shadows, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.shadows);
@@ -702,7 +746,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, shadows.len() as u32);
                 }
-                PrimitiveBatch::Paths(paths) => {
+                PrimitiveBatch::Paths(range) => {
+                    let paths = &scene.paths[range];
                     let Some(first_path) = paths.first() else {
                         continue;
                     };
@@ -758,7 +803,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::Underlines(underlines) => {
+                PrimitiveBatch::Underlines(range) => {
+                    let underlines = &scene.underlines[range];
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(underlines, &self.gpu) };
                     let mut encoder = pass.with(&self.pipelines.underlines);
@@ -771,10 +817,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, underlines.len() as u32);
                 }
-                PrimitiveBatch::MonochromeSprites {
-                    texture_id,
-                    sprites,
-                } => {
+                PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                    let sprites = &scene.monochrome_sprites[range];
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
@@ -794,10 +838,8 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::PolychromeSprites {
-                    texture_id,
-                    sprites,
-                } => {
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                    let sprites = &scene.polychrome_sprites[range];
                     let tex_info = self.atlas.get_texture_info(texture_id);
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
@@ -813,7 +855,29 @@ impl BladeRenderer {
                     );
                     encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
-                PrimitiveBatch::Surfaces(surfaces) => {
+                PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                    let sprites = &scene.subpixel_sprites[range];
+                    let tex_info = self.atlas.get_texture_info(texture_id);
+                    let instance_buf =
+                        unsafe { self.instance_belt.alloc_typed(sprites, &self.gpu) };
+                    let mut encoder = pass.with(&self.pipelines.subpixel_sprites);
+                    encoder.bind(
+                        0,
+                        &ShaderSubpixelSpritesData {
+                            globals,
+                            gamma_ratios: self.rendering_parameters.gamma_ratios,
+                            subpixel_enhanced_contrast: self
+                                .rendering_parameters
+                                .subpixel_enhanced_contrast,
+                            t_sprite: tex_info.raw_view,
+                            s_sprite: self.atlas_sampler,
+                            b_subpixel_sprites: instance_buf,
+                        },
+                    );
+                    encoder.draw(0, 4, 0, sprites.len() as u32);
+                }
+                PrimitiveBatch::Surfaces(range) => {
+                    let surfaces = &scene.surfaces[range];
                     let mut _encoder = pass.with(&self.pipelines.surfaces);
 
                     for surface in surfaces {
@@ -916,6 +980,14 @@ impl BladeRenderer {
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
     }
+
+    /// Renders the scene to a texture and returns the pixel data as an RGBA image.
+    /// This is not yet implemented for BladeRenderer.
+    #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)]
+    pub fn render_to_image(&mut self, _scene: &Scene) -> Result<RgbaImage> {
+        anyhow::bail!("render_to_image is not yet implemented for BladeRenderer")
+    }
 }
 
 fn create_path_intermediate_texture(
@@ -1003,6 +1075,10 @@ struct RenderingParameters {
     // Allowed range: [0.0, ..), other values are clipped
     // Default: 1.0
     grayscale_enhanced_contrast: f32,
+    // Env var: ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST
+    // Allowed range: [0.0, ..), other values are clipped
+    // Default: 0.5
+    subpixel_enhanced_contrast: f32,
 }
 
 impl RenderingParameters {
@@ -1023,50 +1099,23 @@ impl RenderingParameters {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.8_f32)
             .clamp(1.0, 2.2);
-        let gamma_ratios = Self::get_gamma_ratios(gamma);
+        let gamma_ratios = get_gamma_correction_ratios(gamma);
         let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0_f32)
+            .max(0.0);
+        let subpixel_enhanced_contrast = env::var("ZED_FONTS_SUBPIXEL_ENHANCED_CONTRAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5_f32)
             .max(0.0);
 
         Self {
             path_sample_count,
             gamma_ratios,
             grayscale_enhanced_contrast,
+            subpixel_enhanced_contrast,
         }
-    }
-
-    // Gamma ratios for brightening/darkening edges for better contrast
-    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
-    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
-        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
-            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
-            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
-            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
-            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
-            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
-            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
-            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
-            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
-            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
-            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
-            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
-            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
-            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
-        ];
-
-        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
-        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
-
-        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
-        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
-
-        [
-            ratios[0] * NORM13,
-            ratios[1] * NORM24,
-            ratios[2] * NORM13,
-            ratios[3] * NORM24,
-        ]
     }
 }

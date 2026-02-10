@@ -8,36 +8,6 @@ use util::ResultExt;
 use super::*;
 
 impl Database {
-    pub async fn get_extensions(
-        &self,
-        filter: Option<&str>,
-        provides_filter: Option<&BTreeSet<ExtensionProvides>>,
-        max_schema_version: i32,
-        limit: usize,
-    ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
-            let mut condition = Condition::all()
-                .add(
-                    extension::Column::LatestVersion
-                        .into_expr()
-                        .eq(extension_version::Column::Version.into_expr()),
-                )
-                .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
-            if let Some(filter) = filter {
-                let fuzzy_name_filter = Self::fuzzy_like_string(filter);
-                condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
-            }
-
-            if let Some(provides_filter) = provides_filter {
-                condition = apply_provides_filter(condition, provides_filter);
-            }
-
-            self.get_extensions_where(condition, Some(limit as u64), &tx)
-                .await
-        })
-        .await
-    }
-
     pub async fn get_extensions_by_ids(
         &self,
         ids: &[&str],
@@ -69,7 +39,7 @@ impl Database {
         extensions: &[extension::Model],
         constraints: Option<&ExtensionVersionConstraints>,
         tx: &DatabaseTransaction,
-    ) -> Result<HashMap<ExtensionId, (extension_version::Model, SemanticVersion)>> {
+    ) -> Result<HashMap<ExtensionId, (extension_version::Model, Version)>> {
         let mut versions = extension_version::Entity::find()
             .filter(
                 extension_version::Column::ExtensionId
@@ -79,11 +49,10 @@ impl Database {
             .await?;
 
         let mut max_versions =
-            HashMap::<ExtensionId, (extension_version::Model, SemanticVersion)>::default();
+            HashMap::<ExtensionId, (extension_version::Model, Version)>::default();
         while let Some(version) = versions.next().await {
             let version = version?;
-            let Some(extension_version) = SemanticVersion::from_str(&version.version).log_err()
-            else {
+            let Some(extension_version) = Version::from_str(&version.version).log_err() else {
                 continue;
             };
 
@@ -102,7 +71,7 @@ impl Database {
                 }
 
                 if let Some(wasm_api_version) = version.wasm_api_version.as_ref() {
-                    if let Some(version) = SemanticVersion::from_str(wasm_api_version).log_err() {
+                    if let Some(version) = Version::from_str(wasm_api_version).log_err() {
                         if !constraints.wasm_api_versions.contains(&version) {
                             continue;
                         }
@@ -255,7 +224,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
-                    external_id: ActiveValue::Set(external_id.to_string()),
+                    external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
                     total_download_count: ActiveValue::NotSet,
@@ -309,6 +278,9 @@ impl Database {
                             version
                                 .provides
                                 .contains(&ExtensionProvides::ContextServers),
+                        ),
+                        provides_agent_servers: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::AgentServers),
                         ),
                         provides_slash_commands: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::SlashCommands),
@@ -394,53 +366,6 @@ impl Database {
     }
 }
 
-fn apply_provides_filter(
-    mut condition: Condition,
-    provides_filter: &BTreeSet<ExtensionProvides>,
-) -> Condition {
-    if provides_filter.contains(&ExtensionProvides::Themes) {
-        condition = condition.add(extension_version::Column::ProvidesThemes.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::IconThemes) {
-        condition = condition.add(extension_version::Column::ProvidesIconThemes.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::Languages) {
-        condition = condition.add(extension_version::Column::ProvidesLanguages.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::Grammars) {
-        condition = condition.add(extension_version::Column::ProvidesGrammars.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::LanguageServers) {
-        condition = condition.add(extension_version::Column::ProvidesLanguageServers.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::ContextServers) {
-        condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::SlashCommands) {
-        condition = condition.add(extension_version::Column::ProvidesSlashCommands.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::IndexedDocsProviders) {
-        condition = condition.add(extension_version::Column::ProvidesIndexedDocsProviders.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::Snippets) {
-        condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
-    }
-
-    if provides_filter.contains(&ExtensionProvides::DebugAdapters) {
-        condition = condition.add(extension_version::Column::ProvidesDebugAdapters.eq(true));
-    }
-
-    condition
-}
-
 fn metadata_from_extension_and_version(
     extension: extension::Model,
     version: extension_version::Model,
@@ -449,7 +374,7 @@ fn metadata_from_extension_and_version(
 
     ExtensionMetadata {
         id: extension.external_id.into(),
-        manifest: rpc::ExtensionApiManifest {
+        manifest: cloud_api_types::ExtensionApiManifest {
             name: extension.name,
             version: version.version.into(),
             authors: version

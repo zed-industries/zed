@@ -2,14 +2,13 @@ use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
-    Window, px, swap_rgba_pa_to_bgra,
+    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
 use anyhow::{Context as _, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
+    AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
 use smallvec::SmallVec;
@@ -160,13 +159,15 @@ pub trait StyledImage: Sized {
         self
     }
 
-    /// Set the object fit for the image.
+    /// Set a fallback function that will be invoked to render an error view should
+    /// the image fail to load.
     fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
         self.image_style().fallback = Some(Box::new(fallback));
         self
     }
 
-    /// Set the object fit for the image.
+    /// Set a fallback function that will be invoked to render a view while the image
+    /// is still being loaded.
     fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
         self.image_style().loading = Some(Box::new(loading));
         self
@@ -631,7 +632,7 @@ impl Asset for ImageAssetLoader {
                 }
             };
 
-            let data = if let Ok(format) = image::guess_format(&bytes) {
+            if let Ok(format) = image::guess_format(&bytes) {
                 let data = match format {
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
@@ -689,25 +690,12 @@ impl Asset for ImageAssetLoader {
                     }
                 };
 
-                RenderImage::new(data)
+                Ok(Arc::new(RenderImage::new(data)))
             } else {
-                let pixmap =
-                    // TODO: Can we make svgs always rescale?
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
-
-                let mut buffer =
-                    ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
-
-                for pixel in buffer.chunks_exact_mut(4) {
-                    swap_rgba_pa_to_bgra(pixel);
-                }
-
-                let mut image = RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1));
-                image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
-                image
-            };
-
-            Ok(Arc::new(data))
+                svg_renderer
+                    .render_single_frame(&bytes, 1.0, true)
+                    .map_err(Into::into)
+            }
         }
     }
 }

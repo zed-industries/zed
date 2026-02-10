@@ -26,12 +26,12 @@ any_vec.workspace = true
 bitflags.workspace = true
 collections.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -39,13 +39,22 @@ smol.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+util_macros.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
+itertools.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
+pretty_assertions.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

@@ -357,6 +357,7 @@ impl DebugTaskFile {
             "$schema": meta_schema,
             "title": "Debug Configurations",
             "description": "Configuration for debug scenarios",
+            "allowTrailingCommas": true,
             "type": "array",
             "items": {
                 "type": "object",
