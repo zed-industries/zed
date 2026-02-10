@@ -1,5 +1,5 @@
 {
-  description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
+  description = "Zed is a minimal code editor crafted for speed and collaboration with humans and AI.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

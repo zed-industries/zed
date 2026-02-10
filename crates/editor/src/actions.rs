@@ -825,6 +825,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles semantic highlights display.
+        ToggleSemanticHighlights,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.

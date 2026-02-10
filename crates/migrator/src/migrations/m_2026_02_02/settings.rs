@@ -1,11 +1,13 @@
 use anyhow::Result;
 use serde_json::Value;
 
-pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> Result<()> {
-    let Some(obj) = value.as_object_mut() else {
-        return Ok(());
-    };
+use crate::migrations::migrate_settings;
 
+pub fn move_edit_prediction_provider_to_edit_predictions(value: &mut Value) -> Result<()> {
+    migrate_settings(value, migrate_one)
+}
+
+fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
     let Some(features) = obj.get_mut("features") else {
         return Ok(());
     };

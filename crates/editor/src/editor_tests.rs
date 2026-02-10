@@ -17,7 +17,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Rgba, TestAppContext, UpdateGlobal, VisualTestContext,
+    BackgroundExecutor, DismissEvent, TestAppContext, UpdateGlobal, VisualTestContext,
     WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
@@ -34,7 +34,7 @@ use language::{
 use language_settings::Formatter;
 use languages::markdown_lang;
 use languages::rust_lang;
-use lsp::CompletionParams;
+use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{
     ExcerptRange, IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
 };
@@ -48,9 +48,9 @@ use project::{
 };
 use serde_json::{self, json};
 use settings::{
-    AllLanguageSettingsContent, DelayMs, EditorSettingsContent, IndentGuideBackgroundColoring,
-    IndentGuideColoring, InlayHintSettingsContent, ProjectSettingsContent, SearchSettingsContent,
-    SettingsStore,
+    AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
+    IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
+    ProjectSettingsContent, SearchSettingsContent, SettingsStore,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -67,8 +67,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
-    OpenOptions, ViewId,
+    CloseActiveItem, CloseAllItems, CloseOtherItems, NavigationEntry, OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -7853,6 +7852,7 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.run_until_parked();
 
     cx.set_state(indoc! {"
         fn a() {
@@ -13089,26 +13089,29 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
             async move {
                 lock.lock().await;
                 fake.server
-                    .request::<lsp::request::ApplyWorkspaceEdit>(lsp::ApplyWorkspaceEditParams {
-                        label: None,
-                        edit: lsp::WorkspaceEdit {
-                            changes: Some(
-                                [(
-                                    lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
-                                    vec![lsp::TextEdit {
-                                        range: lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 0),
-                                        ),
-                                        new_text: "applied-code-action-1-command\n".into(),
-                                    }],
-                                )]
-                                .into_iter()
-                                .collect(),
-                            ),
-                            ..Default::default()
+                    .request::<lsp::request::ApplyWorkspaceEdit>(
+                        lsp::ApplyWorkspaceEditParams {
+                            label: None,
+                            edit: lsp::WorkspaceEdit {
+                                changes: Some(
+                                    [(
+                                        lsp::Uri::from_file_path(path!("/file.rs")).unwrap(),
+                                        vec![lsp::TextEdit {
+                                            range: lsp::Range::new(
+                                                lsp::Position::new(0, 0),
+                                                lsp::Position::new(0, 0),
+                                            ),
+                                            new_text: "applied-code-action-1-command\n".into(),
+                                        }],
+                                    )]
+                                    .into_iter()
+                                    .collect(),
+                                ),
+                                ..Default::default()
+                            },
                         },
-                    })
+                        DEFAULT_LSP_REQUEST_TIMEOUT,
+                    )
                     .await
                     .into_response()
                     .unwrap();
@@ -16625,10 +16628,10 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
                 trigger_characters: Some(vec![".".to_string()]),
-                resolve_provider: Some(true),
-                ..Default::default()
+                resolve_provider: Some(false),
+                ..lsp::CompletionOptions::default()
             }),
-            ..Default::default()
+            ..lsp::ServerCapabilities::default()
         },
         cx,
     )
@@ -17614,15 +17617,13 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        struct Type1;
-        struct Type2;
-
         let buffer = editor.buffer.read(cx).snapshot(cx);
 
         let anchor_range =
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
-        editor.highlight_background::<Type1>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(0),
             &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
@@ -17632,7 +17633,8 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |_, _| Hsla::red(),
             cx,
         );
-        editor.highlight_background::<Type2>(
+        editor.highlight_background(
+            HighlightKey::ColorizeBracket(1),
             &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
@@ -22343,6 +22345,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
@@ -22359,6 +22362,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
@@ -22375,6 +22379,7 @@ async fn test_active_indent_guide_respect_indented_range(cx: &mut TestAppContext
             s.select_ranges([Point::new(3, 0)..Point::new(3, 0)])
         });
     });
+    cx.run_until_parked();
 
     assert_indent_guides(
         0..4,
@@ -23927,10 +23932,10 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let selection_range = Point::new(1, 0)..Point::new(2, 0);
     multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        enum TestHighlight {}
         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
         let highlight_range = selection_range.clone().to_anchors(&multi_buffer_snapshot);
-        editor.highlight_text::<TestHighlight>(
+        editor.highlight_text(
+            HighlightKey::Editor,
             vec![highlight_range.clone()],
             HighlightStyle::color(Hsla::green()),
             cx,
@@ -24838,6 +24843,108 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_breakpoint_phantom_indicator_collision_on_toggle(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Simulate hovering over row 0 with no existing breakpoint.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on the same row (row 0) — collision should flip to true.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            indicator.collides_with_existing_breakpoint,
+            "Adding a breakpoint on the hovered row should set collision to true"
+        );
+    });
+
+    // Toggle again on the same row — breakpoint is removed, collision should flip back to false.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Removing a breakpoint on the hovered row should set collision to false"
+        );
+    });
+
+    // Now move cursor to row 2 while phantom indicator stays on row 0.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+        editor.move_down(&MoveDown, window, cx);
+    });
+
+    // Ensure phantom indicator is still on row 0, not colliding.
+    editor.update(cx, |editor, _cx| {
+        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+            display_row: DisplayRow(0),
+            is_active: true,
+            collides_with_existing_breakpoint: false,
+        });
+    });
+
+    // Toggle breakpoint on row 2 (cursor row) — phantom on row 0 should NOT be affected.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+    editor.update(cx, |editor, _cx| {
+        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
+        assert!(
+            !indicator.collides_with_existing_breakpoint,
+            "Toggling a breakpoint on a different row should not affect the phantom indicator"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let capabilities = lsp::ServerCapabilities {
@@ -24856,7 +24963,8 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -24934,7 +25042,8 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
     cx.update_editor(|editor, _window, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &[highlight_range],
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -25210,6 +25319,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                     ..lsp::WorkspaceEdit::default()
                                 },
                             },
+                            DEFAULT_LSP_REQUEST_TIMEOUT,
                         )
                         .await
                         .into_response()
@@ -27546,7 +27656,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    let ensure_result_id = |expected: Option<SharedString>, cx: &mut TestAppContext| {
+    let ensure_result_id = |expected_result_id: Option<SharedString>, cx: &mut TestAppContext| {
         project.update(cx, |project, cx| {
             let buffer_id = editor
                 .read(cx)
@@ -27560,7 +27670,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .lsp_store()
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
-            assert_eq!(expected, buffer_result_id);
+            assert_eq!(expected_result_id, buffer_result_id);
         });
     };
 
@@ -27857,324 +27967,171 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(iterations = 10)]
-async fn test_document_colors(cx: &mut TestAppContext) {
-    let expected_color = Rgba {
-        r: 0.33,
-        g: 0.33,
-        b: 0.33,
-        a: 0.33,
-    };
+#[gpui::test]
+async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
+    use crate::inlays::inlay_hints::InlayHintRefreshReason;
+    use crate::inlays::inlay_hints::tests::{cached_hint_labels, init_test, visible_hint_labels};
+    use settings::InlayHintSettingsContent;
+    use std::sync::atomic::AtomicU32;
+    use std::time::Duration;
 
-    init_test(cx, |_| {});
+    const BASE_TIMEOUT_SECS: u64 = 1;
+
+    let request_count = Arc::new(AtomicU32::new(0));
+    let closure_request_count = request_count.clone();
+
+    init_test(cx, |settings| {
+        settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+            enabled: Some(true),
+            ..InlayHintSettingsContent::default()
+        })
+    });
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                    request_timeout: Some(BASE_TIMEOUT_SECS),
+                    button: Some(true),
+                    notifications: None,
+                    semantic_token_rules: None,
+                });
+            });
+        });
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/a"),
         json!({
-            "first.rs": "fn main() { let a = 5; }",
+            "main.rs": "fn main() { let a = 5; }",
         }),
     )
     .await;
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
-                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                 ..lsp::ServerCapabilities::default()
             },
-            name: "rust-analyzer",
-            ..FakeLspAdapter::default()
-        },
-    );
-    let mut fake_servers_without_capabilities = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                color_provider: Some(lsp::ColorProviderCapability::Simple(false)),
-                ..lsp::ServerCapabilities::default()
-            },
-            name: "not-rust-analyzer",
+            initializer: Some(Box::new(move |fake_server| {
+                let request_count = closure_request_count.clone();
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, cx| {
+                        let request_count = request_count.clone();
+                        async move {
+                            cx.background_executor()
+                                .timer(Duration::from_secs(BASE_TIMEOUT_SECS * 2))
+                                .await;
+                            let count = request_count.fetch_add(1, atomic::Ordering::Release) + 1;
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                            );
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 1),
+                                label: lsp::InlayHintLabel::String(count.to_string()),
+                                kind: None,
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            })),
             ..FakeLspAdapter::default()
         },
     );
 
-    let editor = workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.open_abs_path(
-                PathBuf::from(path!("/a/first.rs")),
-                OpenOptions::default(),
-                window,
-                cx,
-            )
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
         })
-        .unwrap()
         .await
-        .unwrap()
-        .downcast::<Editor>()
         .unwrap();
-    let fake_language_server = fake_servers.next().await.unwrap();
-    let fake_language_server_without_capabilities =
-        fake_servers_without_capabilities.next().await.unwrap();
-    let requests_made = Arc::new(AtomicUsize::new(0));
-    let closure_requests_made = Arc::clone(&requests_made);
-    let mut color_request_handle = fake_language_server
-        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
-            let requests_made = Arc::clone(&closure_requests_made);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
-                );
-                requests_made.fetch_add(1, atomic::Ordering::Release);
-                Ok(vec![
-                    lsp::ColorInformation {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: 0,
-                                character: 0,
-                            },
-                            end: lsp::Position {
-                                line: 0,
-                                character: 1,
-                            },
-                        },
-                        color: lsp::Color {
-                            red: 0.33,
-                            green: 0.33,
-                            blue: 0.33,
-                            alpha: 0.33,
-                        },
-                    },
-                    lsp::ColorInformation {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: 0,
-                                character: 0,
-                            },
-                            end: lsp::Position {
-                                line: 0,
-                                character: 1,
-                            },
-                        },
-                        color: lsp::Color {
-                            red: 0.33,
-                            green: 0.33,
-                            blue: 0.33,
-                            alpha: 0.33,
-                        },
-                    },
-                ])
-            }
-        });
+    let editor = cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
-    let _handle = fake_language_server_without_capabilities
-        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |_, _| async move {
-            panic!("Should not be called");
-        });
-    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        1,
-        requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per editor open"
-    );
-    editor.update_in(cx, |editor, _, cx| {
-        assert_eq!(
-            vec![expected_color],
-            extract_color_inlays(editor, cx),
-            "Should have an initial inlay"
-        );
-    });
+    cx.executor().run_until_parked();
+    let fake_server = fake_servers.next().await.unwrap();
 
-    // opening another file in a split should not influence the LSP query counter
-    workspace
-        .update(cx, |workspace, window, cx| {
-            assert_eq!(
-                workspace.panes().len(),
-                1,
-                "Should have one pane with one editor"
+    cx.executor()
+        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+    cx.executor().run_until_parked();
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert!(
+                cached_hint_labels(editor, cx).is_empty(),
+                "First request should time out, no hints cached"
             );
-            workspace.move_item_to_pane_in_direction(
-                &MoveItemToPaneInDirection {
-                    direction: SplitDirection::Right,
-                    focus: false,
-                    clone: true,
+        })
+        .unwrap();
+
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.refresh_inlay_hints(
+                InlayHintRefreshReason::RefreshRequested {
+                    server_id: fake_server.server.server_id(),
+                    request_id: Some(1),
                 },
-                window,
                 cx,
             );
         })
         .unwrap();
-    cx.run_until_parked();
-    workspace
-        .update(cx, |workspace, _, cx| {
-            let panes = workspace.panes();
-            assert_eq!(panes.len(), 2, "Should have two panes after splitting");
-            for pane in panes {
-                let editor = pane
-                    .read(cx)
-                    .active_item()
-                    .and_then(|item| item.downcast::<Editor>())
-                    .expect("Should have opened an editor in each split");
-                let editor_file = editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .expect("test deals with singleton buffers")
-                    .read(cx)
-                    .file()
-                    .expect("test buffese should have a file")
-                    .path();
-                assert_eq!(
-                    editor_file.as_ref(),
-                    rel_path("first.rs"),
-                    "Both editors should be opened for the same file"
-                )
-            }
-        })
-        .unwrap();
-
-    cx.executor().advance_clock(Duration::from_millis(500));
-    let save = editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.handle_input("dirty", window, cx);
-        editor.save(
-            SaveOptions {
-                format: true,
-                autosave: true,
-            },
-            project.clone(),
-            window,
-            cx,
-        )
-    });
-    save.await.unwrap();
-
-    color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        2,
-        requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per save (deduplicated) and once per formatting after save"
-    );
-
-    drop(editor);
-    let close = workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem::default(), window, cx)
-            })
-        })
-        .unwrap();
-    close.await.unwrap();
-    let close = workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.close_active_item(&CloseActiveItem::default(), window, cx)
-            })
-        })
-        .unwrap();
-    close.await.unwrap();
-    assert_eq!(
-        2,
-        requests_made.load(atomic::Ordering::Acquire),
-        "After saving and closing all editors, no extra requests should be made"
-    );
-    workspace
-        .update(cx, |workspace, _, cx| {
+    cx.executor()
+        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+    cx.executor().run_until_parked();
+    editor
+        .update(cx, |editor, _window, cx| {
             assert!(
-                workspace.active_item(cx).is_none(),
-                "Should close all editors"
-            )
+                cached_hint_labels(editor, cx).is_empty(),
+                "Second request should also time out with BASE_TIMEOUT, no hints cached"
+            );
         })
         .unwrap();
 
-    workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(&workspace::GoBack, window, cx);
-            })
-        })
-        .unwrap();
-    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
-    cx.run_until_parked();
-    let editor = workspace
-        .update(cx, |workspace, _, cx| {
-            workspace
-                .active_item(cx)
-                .expect("Should have reopened the editor again after navigating back")
-                .downcast::<Editor>()
-                .expect("Should be an editor")
-        })
-        .unwrap();
-
-    assert_eq!(
-        2,
-        requests_made.load(atomic::Ordering::Acquire),
-        "Cache should be reused on buffer close and reopen"
-    );
-    editor.update(cx, |editor, cx| {
-        assert_eq!(
-            vec![expected_color],
-            extract_color_inlays(editor, cx),
-            "Should have an initial inlay"
-        );
-    });
-
-    drop(color_request_handle);
-    let closure_requests_made = Arc::clone(&requests_made);
-    let mut empty_color_request_handle = fake_language_server
-        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
-            let requests_made = Arc::clone(&closure_requests_made);
-            async move {
-                assert_eq!(
-                    params.text_document.uri,
-                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
-                );
-                requests_made.fetch_add(1, atomic::Ordering::Release);
-                Ok(Vec::new())
-            }
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                    request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    button: Some(true),
+                    notifications: None,
+                    semantic_token_rules: None,
+                });
+            });
         });
-    let save = editor.update_in(cx, |editor, window, cx| {
-        editor.move_to_end(&MoveToEnd, window, cx);
-        editor.handle_input("dirty_again", window, cx);
-        editor.save(
-            SaveOptions {
-                format: false,
-                autosave: true,
-            },
-            project.clone(),
-            window,
-            cx,
-        )
     });
-    save.await.unwrap();
-
-    cx.executor().advance_clock(FETCH_COLORS_DEBOUNCE_TIMEOUT);
-    empty_color_request_handle.next().await.unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        3,
-        requests_made.load(atomic::Ordering::Acquire),
-        "Should query for colors once per save only, as formatting was not requested"
-    );
-    editor.update(cx, |editor, cx| {
-        assert_eq!(
-            Vec::<Rgba>::new(),
-            extract_color_inlays(editor, cx),
-            "Should clear all colors when the server returns an empty response"
-        );
-    });
+    editor
+        .update(cx, |editor, _window, cx| {
+            editor.refresh_inlay_hints(
+                InlayHintRefreshReason::RefreshRequested {
+                    server_id: fake_server.server.server_id(),
+                    request_id: Some(2),
+                },
+                cx,
+            );
+        })
+        .unwrap();
+    cx.executor()
+        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
+    cx.executor().run_until_parked();
+    editor
+        .update(cx, |editor, _window, cx| {
+            assert_eq!(
+                vec!["1".to_string()],
+                cached_hint_labels(editor, cx),
+                "With extended timeout (BASE * 4), hints should arrive successfully"
+            );
+            assert_eq!(vec!["1".to_string()], visible_hint_labels(editor, cx));
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -28361,7 +28318,8 @@ let result = variable * 2;",
             .map(|range| range.clone().to_anchors(&buffer_snapshot))
             .collect();
 
-        editor.highlight_background::<DocumentHighlightRead>(
+        editor.highlight_background(
+            HighlightKey::DocumentHighlightRead,
             &anchor_ranges,
             |_, theme| theme.colors().editor_document_highlight_read_background,
             cx,
@@ -28880,16 +28838,6 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
     cx.update(|_, cx| assert!(editor.is_dirty(cx)));
 }
 
-#[track_caller]
-fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
-    editor
-        .all_inlays(cx)
-        .into_iter()
-        .filter_map(|inlay| inlay.get_color())
-        .map(Rgba::from)
-        .collect()
-}
-
 #[gpui::test]
 fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -29061,8 +29009,10 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
             e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-            let style = e.style(cx).clone();
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), &style, cx)
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -29289,6 +29239,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                 cx,
             );
         });
+        cx.run_until_parked();
         cx.simulate_click(
             gpui::Point {
                 x: px(0.),
@@ -29296,9 +29247,9 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
             },
             Modifiers::none(),
         );
+        cx.run_until_parked();
         cx.update_editor(|e, _, cx| (e.scroll_position(cx), display_ranges(e, cx)))
     };
-
     assert_eq!(
         scroll_and_click(
             4.5, // impl Bar is halfway off the screen

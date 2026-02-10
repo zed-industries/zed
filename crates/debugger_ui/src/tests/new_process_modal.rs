@@ -5,7 +5,10 @@ use project::{FakeFs, Fs as _, Project};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
+use task::{
+    DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
+    ZedDebugConfig,
+};
 use text::Point;
 use util::path;
 
@@ -40,11 +43,12 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     .into_iter()
     .collect();
 
-    let task_context = TaskContext {
+    let task_context: SharedTaskContext = TaskContext {
         cwd: None,
         task_variables: test_variables,
         project_env: Default::default(),
-    };
+    }
+    .into();
 
     let home_dir = paths::home_dir();
 

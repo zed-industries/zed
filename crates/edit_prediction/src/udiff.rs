@@ -676,9 +676,9 @@ pub enum DiffLine<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct HunkLocation {
-    start_line_old: u32,
+    pub start_line_old: u32,
     count_old: u32,
-    start_line_new: u32,
+    pub start_line_new: u32,
     count_new: u32,
 }
 

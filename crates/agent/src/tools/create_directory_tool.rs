@@ -1,3 +1,4 @@
+use super::edit_file_tool::{SensitiveSettingsKind, sensitive_settings_kind};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -7,12 +8,11 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
@@ -46,9 +46,7 @@ impl AgentTool for CreateDirectoryTool {
     type Input = CreateDirectoryToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "create_directory"
-    }
+    const NAME: &'static str = "create_directory";
 
     fn kind() -> ToolKind {
         ToolKind::Read
@@ -73,7 +71,15 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.path, settings);
+        let mut decision = decide_permission_for_path(Self::NAME, &input.path, settings);
+        let sensitive_kind = sensitive_settings_kind(Path::new(&input.path));
+
+        if matches!(decision, ToolPermissionDecision::Allow)
+            && !settings.always_allow_tool_actions
+            && sensitive_kind.is_some()
+        {
+            decision = ToolPermissionDecision::Confirm;
+        }
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -81,34 +87,34 @@ impl AgentTool for CreateDirectoryTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
+                let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
+                let title = match &sensitive_kind {
+                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                    None => title,
+                };
                 let context = crate::ToolPermissionContext {
-                    tool_name: "create_directory".to_string(),
+                    tool_name: Self::NAME.to_string(),
                     input_value: input.path.clone(),
                 };
-                Some(event_stream.authorize(
-                    format!("Create directory {}", MarkdownInlineCode(&input.path)),
-                    context,
-                    cx,
-                ))
+                Some(event_stream.authorize(title, context, cx))
             }
         };
 
-        let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {
-            Some(project_path) => project_path,
-            None => {
-                return Task::ready(Err(anyhow!("Path to create was outside the project")));
-            }
-        };
         let destination_path: Arc<str> = input.path.as_str().into();
 
-        let create_entry = self.project.update(cx, |project, cx| {
-            project.create_entry(project_path.clone(), true, cx)
-        });
-
-        cx.spawn(async move |_cx| {
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
             if let Some(authorize) = authorize {
                 authorize.await?;
             }
+
+            let create_entry = project.update(cx, |project, cx| {
+                match project.find_project_path(&input.path, cx) {
+                    Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
+                    None => Err(anyhow!("Path to create was outside the project")),
+                }
+            })?;
 
             futures::select! {
                 result = create_entry.fuse() => {

@@ -386,6 +386,10 @@ pub enum Event {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
+    RefreshSemanticTokens {
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+    },
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
@@ -829,6 +833,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
+    pub container_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3352,6 +3357,13 @@ impl Project {
                 server_id: *server_id,
                 request_id: *request_id,
             }),
+            LspStoreEvent::RefreshSemanticTokens {
+                server_id,
+                request_id,
+            } => cx.emit(Event::RefreshSemanticTokens {
+                server_id: *server_id,
+                request_id: *request_id,
+            }),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
@@ -5712,6 +5724,32 @@ impl Project {
                 .filter_map(|server_id| lsp_store.lsp_server_capabilities.get(&server_id))
                 .any(InlayHints::check_capabilities)
         })
+    }
+
+    pub fn any_language_server_supports_semantic_tokens(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        let Some(language) = buffer.language().cloned() else {
+            return false;
+        };
+        let lsp_store = self.lsp_store.read(cx);
+        let relevant_language_servers = lsp_store
+            .languages
+            .lsp_adapters(&language.name())
+            .into_iter()
+            .map(|lsp_adapter| lsp_adapter.name())
+            .collect::<HashSet<_>>();
+        lsp_store
+            .language_server_statuses()
+            .filter_map(|(server_id, server_status)| {
+                relevant_language_servers
+                    .contains(&server_status.name)
+                    .then_some(server_id)
+            })
+            .filter_map(|server_id| lsp_store.lsp_server_capabilities.get(&server_id))
+            .any(|capabilities| capabilities.semantic_tokens_provider.is_some())
     }
 
     pub fn language_server_id_for_name(

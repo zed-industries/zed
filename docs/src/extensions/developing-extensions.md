@@ -40,6 +40,8 @@ description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
+> Note: If you are working on a theme extension with the intend of publishing it later, is is recommended that you suffix your theme's extension ID with `-theme`. This might otherwise be raised during the process of [releasing your extension](#publishing-your-extension).
+
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
 ```
@@ -115,6 +117,7 @@ As of October 1st, 2025, extension repositories must include a license.
 The following licenses are accepted:
 
 - [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- [BSD 2-Clause](https://opensource.org/license/bsd-2-clause)
 - [BSD 3-Clause](https://opensource.org/license/bsd-3-clause)
 - [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html)
 - [GNU LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.en.html)

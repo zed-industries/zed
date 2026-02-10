@@ -318,8 +318,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
 
             let buffer = buffer.read(cx);
             let snapshot = buffer.snapshot();
-            for syntax_layer in snapshot.syntax_layers() {
-                let language = syntax_layer.language;
+            for language in snapshot.syntax_layers_languages() {
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
