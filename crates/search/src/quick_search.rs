@@ -12,7 +12,8 @@ use crate::{
     ToggleWholeWord,
 };
 use editor::EditorSettings;
-use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions};
+use editor::scroll::Autoscroll;
+use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEffects};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, HighlightStyle, KeyContext, ParentElement, Render, Styled, StyledText, Subscription,
@@ -1566,9 +1567,14 @@ impl QuickSearchDelegate {
 
             let start = multi_buffer::MultiBufferOffset(range.start);
             let end = multi_buffer::MultiBufferOffset(range.end);
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges([start..end]);
-            });
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| {
+                    s.select_ranges([start..end]);
+                },
+            );
         });
     }
 
