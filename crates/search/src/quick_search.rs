@@ -16,8 +16,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEffects};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled, StyledText,
-    Subscription, Task, WeakEntity, Window, actions, px, relative,
+    Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
+    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
 use menu;
@@ -37,7 +37,7 @@ use ui::{
 };
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
+use workspace::{DismissDecision, ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
 use zed_actions::editor::{MoveDown, MoveUp};
 pub use zed_actions::quick_search::Toggle;
 
@@ -116,6 +116,18 @@ pub enum LayoutMode {
     Stacked,
     Telescope,
 }
+
+#[derive(Clone)]
+struct SavedQuickSearchLayout {
+    modal_width: Pixels,
+    layout_mode: LayoutMode,
+    stacked_results_height: Pixels,
+    stacked_preview_height: Pixels,
+    telescope_content_height: Pixels,
+    telescope_preview_width: Pixels,
+}
+
+impl Global for SavedQuickSearchLayout {}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum InputPanel {
@@ -221,6 +233,15 @@ impl Render for DragPreview {
 }
 
 impl ModalView for QuickSearch {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.save_layout(cx);
+        DismissDecision::Dismiss(true)
+    }
+
     fn render_bare(&self) -> bool {
         true
     }
@@ -383,8 +404,30 @@ impl QuickSearch {
             ),
         ];
 
-        let modal_width =
-            rems(StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
+        let (modal_width, layout_mode, stacked, telescope) =
+            if let Some(saved) = cx.try_global::<SavedQuickSearchLayout>() {
+                (
+                    saved.modal_width,
+                    saved.layout_mode,
+                    StackedLayoutState {
+                        results_height: saved.stacked_results_height,
+                        preview_height: saved.stacked_preview_height,
+                    },
+                    TelescopeLayoutState {
+                        content_height: saved.telescope_content_height,
+                        preview_width: saved.telescope_preview_width,
+                    },
+                )
+            } else {
+                let modal_width = rems(StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS)
+                    .to_pixels(window.rem_size());
+                (
+                    modal_width,
+                    LayoutMode::default(),
+                    StackedLayoutState::new(),
+                    TelescopeLayoutState::new(),
+                )
+            };
 
         Self {
             picker,
@@ -393,9 +436,9 @@ impl QuickSearch {
             focus_handle,
             offset: gpui::Point::default(),
             modal_width,
-            layout_mode: LayoutMode::default(),
-            stacked: StackedLayoutState::new(),
-            telescope: TelescopeLayoutState::new(),
+            layout_mode,
+            stacked,
+            telescope,
             _subscriptions: subscriptions,
             _autosave_task: None,
         }
@@ -419,6 +462,17 @@ impl QuickSearch {
                         .add(&mut delegate.search_history_cursor, query);
                 }
             });
+        });
+    }
+
+    fn save_layout(&self, cx: &mut Context<Self>) {
+        cx.set_global(SavedQuickSearchLayout {
+            modal_width: self.modal_width,
+            layout_mode: self.layout_mode,
+            stacked_results_height: self.stacked.results_height,
+            stacked_preview_height: self.stacked.preview_height,
+            telescope_content_height: self.telescope.content_height,
+            telescope_preview_width: self.telescope.preview_width,
         });
     }
 
