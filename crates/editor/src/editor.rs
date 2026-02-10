@@ -16192,6 +16192,7 @@ impl Editor {
                         prefix.len(),
                         suffix.len(),
                         selection.is_empty(),
+                        end_point.row,
                     ));
                 }
             }
@@ -16205,9 +16206,10 @@ impl Editor {
                 .selections
                 .all::<MultiBufferPoint>(&this.display_snapshot(cx));
             for selection in &mut selections {
-                if let Some((_, prefix_len, suffix_len, was_empty)) = markers_inserted
-                    .iter()
-                    .find(|(id, _, _, _)| *id == selection.id)
+                if let Some((_, prefix_len, suffix_len, was_empty, suffix_row)) =
+                    markers_inserted
+                        .iter()
+                        .find(|(id, _, _, _, _)| *id == selection.id)
                 {
                     if *was_empty {
                         selection.start.column = selection
@@ -16217,7 +16219,9 @@ impl Editor {
                     } else {
                         selection.start.column =
                             selection.start.column.saturating_sub(*prefix_len as u32);
-                        selection.end.column += *suffix_len as u32;
+                        if selection.end.row == *suffix_row {
+                            selection.end.column += *suffix_len as u32;
+                        }
                     }
                 }
             }
