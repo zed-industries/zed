@@ -37,7 +37,9 @@ use ui::{
 };
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathMatcher};
-use workspace::{DismissDecision, ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem};
+use workspace::{
+    DismissDecision, ModalView, SplitDirection, Workspace, pane, searchable::SearchableItem,
+};
 use zed_actions::editor::{MoveDown, MoveUp};
 pub use zed_actions::quick_search::Toggle;
 
@@ -419,8 +421,8 @@ impl QuickSearch {
                     },
                 )
             } else {
-                let modal_width = rems(StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS)
-                    .to_pixels(window.rem_size());
+                let modal_width =
+                    rems(StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS).to_pixels(window.rem_size());
                 (
                     modal_width,
                     LayoutMode::default(),
@@ -446,15 +448,14 @@ impl QuickSearch {
 
     fn save_history(&mut self, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
-            let delegate = &mut picker.delegate;
-            let query = delegate.current_query.clone();
+            let query = picker.query(cx);
 
             if query.is_empty() {
                 return;
             }
 
+            let delegate = &mut picker.delegate;
             delegate.project.update(cx, |project, _| {
-                // Only add to history if it's different from the last entry
                 let last_query = project.search_history(SearchInputKind::Query).iter().next();
                 if last_query != Some(query.as_str()) {
                     project
@@ -854,8 +855,7 @@ impl QuickSearch {
             .on_drag_move::<QuickSearchDrag>(cx.listener(
                 |this, event: &DragMoveEvent<QuickSearchDrag>, _window, cx| {
                     let drag = event.drag(cx);
-                    this.offset =
-                        drag.offset_start + (event.event.position - drag.mouse_start);
+                    this.offset = drag.offset_start + (event.event.position - drag.mouse_start);
                     cx.notify();
                 },
             ))
@@ -1321,176 +1321,192 @@ impl Render for QuickSearch {
             .on_click(cx.listener(|_, _, _, cx| {
                 cx.emit(DismissEvent);
             }))
-            .child(v_flex()
-            .when(self.layout_mode == LayoutMode::Stacked, |this| {
-                this.child(self.render_vertical_resize(ResizeSide::Start, window, cx))
-            })
-            .when(self.layout_mode == LayoutMode::Telescope, |this| {
-                this.child(self.render_telescope_height_resize(ResizeSide::Start, window, cx))
-            })
-            .child(self.render_horizontal_resize(ResizeSide::Start, window, cx))
-            .child(self.render_horizontal_resize(ResizeSide::End, window, cx))
-            .m_4()
-            .relative()
-            .top(self.offset.y)
-            .left(self.offset.x)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                cx.stop_propagation();
-            })
             .child(
                 v_flex()
-                    .key_context(key_context)
-                    .id("quick-search")
-                    .track_focus(&focus_handle)
-                    .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                        cx.emit(DismissEvent);
-                    }))
-                    .on_action(cx.listener(|this, _: &ReplaceNext, window, cx| {
-                        this.replace_next(window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &ReplaceAll, window, cx| {
-                        this.replace_all(window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
-                            let focus_handle = if picker.delegate.filters_enabled {
-                                picker.delegate.included_files_editor.focus_handle(cx)
-                            } else {
-                                picker.focus_handle(cx)
-                            };
-                            window.focus(&focus_handle, cx);
-                        });
-                        cx.notify();
-                    }))
-                    .on_action(cx.listener(|this, _: &NextHistoryQuery, window, cx| {
-                        this.navigate_history(HistoryDirection::Next, window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &PreviousHistoryQuery, window, cx| {
-                        this.navigate_history(HistoryDirection::Previous, window, cx);
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
-                        let handle = this
-                            .picker
-                            .read(cx)
-                            .delegate
-                            .history_popover_menu_handle
-                            .clone();
-                        handle.toggle(window, cx);
-                        cx.notify();
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .search_options
-                                .toggle(SearchOptions::CASE_SENSITIVE);
-                            picker.refresh(window, cx);
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .search_options
-                                .toggle(SearchOptions::WHOLE_WORD);
-                            picker.refresh(window, cx);
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker
-                                .delegate
-                                .search_options
-                                .toggle(SearchOptions::INCLUDE_IGNORED);
-                            picker.refresh(window, cx);
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleRegex, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.delegate.search_options.toggle(SearchOptions::REGEX);
-                            picker.refresh(window, cx);
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleReplace, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
-                            let focus_handle = if picker.delegate.replace_enabled {
-                                picker.delegate.replacement_editor.focus_handle(cx)
-                            } else {
-                                picker.focus_handle(cx)
-                            };
-                            window.focus(&focus_handle, cx);
-                        });
-                        cx.notify();
-                    }))
-                    .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            let match_count = picker.delegate.matches.len();
-                            if match_count > 0 {
-                                let new_index = (picker.delegate.selected_index + 1) % match_count;
-                                picker.set_selected_index(new_index, None, true, window, cx);
-                            }
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            let match_count = picker.delegate.matches.len();
-                            if match_count > 0 {
-                                let new_index = if picker.delegate.selected_index == 0 {
-                                    match_count - 1
-                                } else {
-                                    picker.delegate.selected_index - 1
+                    .when(self.layout_mode == LayoutMode::Stacked, |this| {
+                        this.child(self.render_vertical_resize(ResizeSide::Start, window, cx))
+                    })
+                    .when(self.layout_mode == LayoutMode::Telescope, |this| {
+                        this.child(self.render_telescope_height_resize(
+                            ResizeSide::Start,
+                            window,
+                            cx,
+                        ))
+                    })
+                    .child(self.render_horizontal_resize(ResizeSide::Start, window, cx))
+                    .child(self.render_horizontal_resize(ResizeSide::End, window, cx))
+                    .m_4()
+                    .relative()
+                    .top(self.offset.y)
+                    .left(self.offset.x)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        v_flex()
+                            .key_context(key_context)
+                            .id("quick-search")
+                            .track_focus(&focus_handle)
+                            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                                cx.emit(DismissEvent);
+                            }))
+                            .on_action(cx.listener(|this, _: &ReplaceNext, window, cx| {
+                                this.replace_next(window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &ReplaceAll, window, cx| {
+                                this.replace_all(window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleFilters, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker.delegate.filters_enabled =
+                                        !picker.delegate.filters_enabled;
+                                    let focus_handle = if picker.delegate.filters_enabled {
+                                        picker.delegate.included_files_editor.focus_handle(cx)
+                                    } else {
+                                        picker.focus_handle(cx)
+                                    };
+                                    window.focus(&focus_handle, cx);
+                                });
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(|this, _: &NextHistoryQuery, window, cx| {
+                                this.navigate_history(HistoryDirection::Next, window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &PreviousHistoryQuery, window, cx| {
+                                this.navigate_history(HistoryDirection::Previous, window, cx);
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleHistory, window, cx| {
+                                let handle = this
+                                    .picker
+                                    .read(cx)
+                                    .delegate
+                                    .history_popover_menu_handle
+                                    .clone();
+                                handle.toggle(window, cx);
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker
+                                        .delegate
+                                        .search_options
+                                        .toggle(SearchOptions::CASE_SENSITIVE);
+                                    picker.refresh(window, cx);
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker
+                                        .delegate
+                                        .search_options
+                                        .toggle(SearchOptions::WHOLE_WORD);
+                                    picker.refresh(window, cx);
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker
+                                        .delegate
+                                        .search_options
+                                        .toggle(SearchOptions::INCLUDE_IGNORED);
+                                    picker.refresh(window, cx);
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleRegex, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker.delegate.search_options.toggle(SearchOptions::REGEX);
+                                    picker.refresh(window, cx);
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleReplace, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker.delegate.replace_enabled =
+                                        !picker.delegate.replace_enabled;
+                                    let focus_handle = if picker.delegate.replace_enabled {
+                                        picker.delegate.replacement_editor.focus_handle(cx)
+                                    } else {
+                                        picker.focus_handle(cx)
+                                    };
+                                    window.focus(&focus_handle, cx);
+                                });
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(|this, _: &SelectNextMatch, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    let match_count = picker.delegate.matches.len();
+                                    if match_count > 0 {
+                                        let new_index =
+                                            (picker.delegate.selected_index + 1) % match_count;
+                                        picker
+                                            .set_selected_index(new_index, None, true, window, cx);
+                                    }
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &SelectPreviousMatch, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    let match_count = picker.delegate.matches.len();
+                                    if match_count > 0 {
+                                        let new_index = if picker.delegate.selected_index == 0 {
+                                            match_count - 1
+                                        } else {
+                                            picker.delegate.selected_index - 1
+                                        };
+                                        picker
+                                            .set_selected_index(new_index, None, true, window, cx);
+                                    }
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleSplitMenu, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    let menu_handle = &picker.delegate.split_popover_menu_handle;
+                                    if menu_handle.is_deployed() {
+                                        menu_handle.hide(cx);
+                                    } else {
+                                        menu_handle.show(window, cx);
+                                    }
+                                });
+                            }))
+                            .on_action(cx.listener(|this, _: &ToggleLayout, window, cx| {
+                                this.layout_mode = match this.layout_mode {
+                                    LayoutMode::Stacked => LayoutMode::Telescope,
+                                    LayoutMode::Telescope => LayoutMode::Stacked,
                                 };
-                                picker.set_selected_index(new_index, None, true, window, cx);
-                            }
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleSplitMenu, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            let menu_handle = &picker.delegate.split_popover_menu_handle;
-                            if menu_handle.is_deployed() {
-                                menu_handle.hide(cx);
-                            } else {
-                                menu_handle.show(window, cx);
-                            }
-                        });
-                    }))
-                    .on_action(cx.listener(|this, _: &ToggleLayout, window, cx| {
-                        this.layout_mode = match this.layout_mode {
-                            LayoutMode::Stacked => LayoutMode::Telescope,
-                            LayoutMode::Telescope => LayoutMode::Stacked,
-                        };
-                        let default_width_rems = match this.layout_mode {
-                            LayoutMode::Stacked => StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS,
-                            LayoutMode::Telescope => TelescopeLayoutState::DEFAULT_MODAL_WIDTH_REMS,
-                        };
-                        this.modal_width = rems(default_width_rems).to_pixels(window.rem_size());
-                        cx.notify();
-                    }))
-                    .on_action(cx.listener(Self::go_to_file_split_left))
-                    .on_action(cx.listener(Self::go_to_file_split_right))
-                    .on_action(cx.listener(Self::go_to_file_split_up))
-                    .on_action(cx.listener(Self::go_to_file_split_down))
-                    .on_action(cx.listener(|this, action: &MoveUp, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.editor_move_up(action, window, cx);
-                        });
-                    }))
-                    .on_action(cx.listener(|this, action: &MoveDown, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.editor_move_down(action, window, cx);
-                        });
-                    }))
-                    .w(modal_width)
-                    .bg(cx.theme().colors().elevated_surface_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_lg()
-                    .shadow_lg()
-                    .child(self.render_header(window, cx))
-                    .child(self.render_content(window, cx)),
-            ))
+                                let default_width_rems = match this.layout_mode {
+                                    LayoutMode::Stacked => {
+                                        StackedLayoutState::DEFAULT_MODAL_WIDTH_REMS
+                                    }
+                                    LayoutMode::Telescope => {
+                                        TelescopeLayoutState::DEFAULT_MODAL_WIDTH_REMS
+                                    }
+                                };
+                                this.modal_width =
+                                    rems(default_width_rems).to_pixels(window.rem_size());
+                                cx.notify();
+                            }))
+                            .on_action(cx.listener(Self::go_to_file_split_left))
+                            .on_action(cx.listener(Self::go_to_file_split_right))
+                            .on_action(cx.listener(Self::go_to_file_split_up))
+                            .on_action(cx.listener(Self::go_to_file_split_down))
+                            .on_action(cx.listener(|this, action: &MoveUp, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker.editor_move_up(action, window, cx);
+                                });
+                            }))
+                            .on_action(cx.listener(|this, action: &MoveDown, window, cx| {
+                                this.picker.update(cx, |picker, cx| {
+                                    picker.editor_move_down(action, window, cx);
+                                });
+                            }))
+                            .w(modal_width)
+                            .bg(cx.theme().colors().elevated_surface_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_lg()
+                            .shadow_lg()
+                            .child(self.render_header(window, cx))
+                            .child(self.render_content(window, cx)),
+                    ),
+            )
     }
 }
 
@@ -1551,13 +1567,13 @@ impl QuickSearchDelegate {
             last_confirm_time: None,
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
+            current_query: initial_query.clone().unwrap_or_default(),
             pending_initial_query: RefCell::new(initial_query),
             editor_configured: Cell::new(false),
             panels_with_errors: HashMap::default(),
             split_popover_menu_handle: PopoverMenuHandle::default(),
             history_popover_menu_handle: PopoverMenuHandle::default(),
             search_history_cursor: SearchHistoryCursor::default(),
-            current_query: String::new(),
             match_count: 0,
             file_count: 0,
             unique_files: HashSet::default(),
