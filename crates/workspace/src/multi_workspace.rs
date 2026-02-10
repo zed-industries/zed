@@ -1,8 +1,8 @@
 use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, Focusable, ManagedView,
-    MouseButton, Pixels, Render, Subscription, Task, Window, actions, deferred, px,
+    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Window, actions, deferred, px,
 };
 use project::Project;
 use std::path::PathBuf;
@@ -25,6 +25,8 @@ actions!(
         PreviousWorkspaceInWindow,
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Moves focus to or from the workspace sidebar without closing it.
+        FocusWorkspaceSidebar,
     ]
 );
 
@@ -42,6 +44,7 @@ pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
 pub trait SidebarHandle: 'static + Send + Sync {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn focus(&self, window: &mut Window, cx: &mut App);
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
@@ -64,6 +67,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
         self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
     }
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -145,8 +152,32 @@ impl MultiWorkspace {
 
         if self.sidebar_open {
             self.close_sidebar(window, cx);
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        } else {
+            self.open_sidebar(window, cx);
+            if let Some(sidebar) = &self.sidebar {
+                sidebar.focus(window, cx);
+            }
+        }
+    }
+
+    pub fn focus_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            let sidebar_is_focused = self
+                .sidebar
+                .as_ref()
+                .is_some_and(|s| s.focus_handle(cx).contains_focused(window, cx));
+
+            if sidebar_is_focused {
+                let pane = self.workspace().read(cx).active_pane().clone();
+                let pane_focus = pane.read(cx).focus_handle(cx);
+                window.focus(&pane_focus, cx);
+            } else if let Some(sidebar) = &self.sidebar {
+                sidebar.focus(window, cx);
+            }
         } else {
             self.open_sidebar(window, cx);
             if let Some(sidebar) = &self.sidebar {
@@ -163,6 +194,9 @@ impl MultiWorkspace {
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
+        let pane = self.workspace().read(cx).active_pane().clone();
+        let pane_focus = pane.read(cx).focus_handle(cx);
+        window.focus(&pane_focus, cx);
         self.serialize(window, cx);
         cx.notify();
     }
@@ -496,6 +530,11 @@ impl Render for MultiWorkspace {
                         this.toggle_sidebar(window, cx);
                     },
                 ))
+                .on_action(
+                    cx.listener(|this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
+                        this.focus_sidebar(window, cx);
+                    }),
+                )
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
                     |this| {

@@ -17,12 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{CommonAnimationExt, Divider, HighlightedLabel, ListItem, Tab, Tooltip, prelude::*};
+use ui::{Divider, KeyBinding, ListItem, Tab, ThreadItem, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
-    MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar, SidebarEvent,
-    ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
+    SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,6 +155,7 @@ struct WorkspacePickerDelegate {
     matches: Vec<SidebarMatch>,
     selected_index: usize,
     query: String,
+    hovered_thread_item: Option<usize>,
     notified_workspaces: HashSet<usize>,
 }
 
@@ -170,6 +171,7 @@ impl WorkspacePickerDelegate {
             matches: Vec::new(),
             selected_index: 0,
             query: String::new(),
+            hovered_thread_item: None,
             notified_workspaces: HashSet::new(),
         }
     }
@@ -180,6 +182,15 @@ impl WorkspacePickerDelegate {
         active_workspace_index: usize,
         cx: &App,
     ) {
+        if let Some(hovered_index) = self.hovered_thread_item {
+            let still_exists = workspace_threads
+                .iter()
+                .any(|thread| thread.index == hovered_index);
+            if !still_exists {
+                self.hovered_thread_item = None;
+            }
+        }
+
         let old_statuses: HashMap<usize, AgentThreadStatus> = self
             .entries
             .iter()
@@ -361,7 +372,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
+        let query_changed = self.query != query;
         self.query = query.clone();
+        if query_changed {
+            self.hovered_thread_item = None;
+        }
         let entries = self.entries.clone();
 
         if query.is_empty() {
@@ -496,88 +511,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
         index: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let match_entry = self.matches.get(index)?;
         let SidebarMatch { entry, positions } = match_entry;
-
-        fn render_title(text: SharedString, positions: &[usize]) -> AnyElement {
-            if positions.is_empty() {
-                div()
-                    .p_0p5()
-                    .child(Label::new(text).truncate())
-                    .into_any_element()
-            } else {
-                div()
-                    .p_0p5()
-                    .child(HighlightedLabel::new(text, positions.to_vec()).truncate())
-                    .into_any_element()
-            }
-        }
-
-        fn render_thread_status_icon(
-            workspace_index: usize,
-            status: &AgentThreadStatus,
-            has_notification: bool,
-        ) -> AnyElement {
-            match status {
-                AgentThreadStatus::Running => Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted)
-                    .with_keyed_rotate_animation(
-                        SharedString::from(format!("workspace-{}-spinner", workspace_index)),
-                        3,
-                    )
-                    .into_any_element(),
-                AgentThreadStatus::Completed => {
-                    let color = if has_notification {
-                        Color::Accent
-                    } else {
-                        Color::Muted
-                    };
-                    Icon::new(IconName::Check)
-                        .size(IconSize::XSmall)
-                        .color(color)
-                        .into_any_element()
-                }
-            }
-        }
-
-        fn render_project_row(
-            title: AnyElement,
-            thread_subtitle: Option<SharedString>,
-            status_icon: Option<AnyElement>,
-            cx: &App,
-        ) -> Div {
-            h_flex()
-                .items_start()
-                .gap(DynamicSpacing::Base06.rems(cx))
-                .child(
-                    div().pt(px(4.0)).child(
-                        Icon::new(IconName::Folder)
-                            .color(Color::Muted)
-                            .size(IconSize::XSmall),
-                    ),
-                )
-                .child(v_flex().overflow_hidden().child(title).when_some(
-                    thread_subtitle,
-                    |this, subtitle| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .items_center()
-                                .px_0p5()
-                                .when_some(status_icon, |this, icon| this.child(icon))
-                                .child(
-                                    Label::new(subtitle)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .truncate(),
-                                ),
-                        )
-                    },
-                ))
-        }
 
         match entry {
             SidebarEntry::Separator(title) => Some(
@@ -598,80 +535,85 @@ impl PickerDelegate for WorkspacePickerDelegate {
             SidebarEntry::WorkspaceThread(thread_entry) => {
                 let worktree_label = thread_entry.worktree_label.clone();
                 let full_path = thread_entry.full_path.clone();
-                let title = render_title(worktree_label.clone(), positions);
                 let thread_info = thread_entry.thread_info.clone();
                 let workspace_index = thread_entry.index;
                 let multi_workspace = self.multi_workspace.clone();
-                let workspace_count = self.multi_workspace.read(_cx).workspaces().len();
+                let workspace_count = self.multi_workspace.read(cx).workspaces().len();
+                let is_hovered = self.hovered_thread_item == Some(workspace_index);
 
-                let close_button = if workspace_count > 1 {
-                    Some(
-                        IconButton::new(
-                            SharedString::from(format!("close-workspace-{}", workspace_index)),
-                            IconName::Close,
-                        )
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Close Workspace"))
-                        .on_click({
-                            let multi_workspace = multi_workspace;
-                            move |_, window, cx| {
-                                multi_workspace.update(cx, |mw, cx| {
-                                    mw.remove_workspace(workspace_index, window, cx);
-                                });
-                            }
-                        }),
-                    )
-                } else {
-                    None
-                };
+                let remove_btn = IconButton::new(
+                    format!("remove-workspace-{}", workspace_index),
+                    IconName::Close,
+                )
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Remove Workspace"))
+                .on_click({
+                    let multi_workspace = multi_workspace;
+                    move |_, window, cx| {
+                        multi_workspace.update(cx, |mw, cx| {
+                            mw.remove_workspace(workspace_index, window, cx);
+                        });
+                    }
+                });
 
                 let has_notification = self.notified_workspaces.contains(&workspace_index);
-                let (thread_subtitle, status_icon) = match thread_info {
-                    Some(info) => (
-                        Some(info.title),
-                        Some(render_thread_status_icon(
-                            workspace_index,
-                            &info.status,
-                            has_notification,
-                        )),
-                    ),
-                    None => (None, None),
-                };
+                let thread_subtitle = thread_info.as_ref().map(|info| info.title.clone());
+                let running = matches!(
+                    thread_info,
+                    Some(AgentThreadInfo {
+                        status: AgentThreadStatus::Running,
+                        ..
+                    })
+                );
 
                 Some(
-                    ListItem::new(("workspace-item", thread_entry.index))
-                        .toggle_state(selected)
-                        .when_some(close_button, |item, button| item.end_hover_slot(button))
-                        .child(render_project_row(title, thread_subtitle, status_icon, _cx))
-                        .when(!full_path.is_empty(), |item| {
-                            item.tooltip(move |_, cx| {
-                                Tooltip::with_meta(
-                                    worktree_label.clone(),
-                                    None,
-                                    full_path.clone(),
-                                    cx,
-                                )
-                            })
+                    ThreadItem::new(
+                        ("workspace-item", thread_entry.index),
+                        thread_subtitle.unwrap_or("New Thread".into()),
+                    )
+                    .icon(IconName::Folder)
+                    .running(running)
+                    .generation_done(has_notification)
+                    .selected(selected)
+                    .worktree(worktree_label.clone())
+                    .worktree_highlight_positions(positions.clone())
+                    .when(workspace_count > 1, |item| item.action_slot(remove_btn))
+                    .hovered(is_hovered)
+                    .on_hover(cx.listener(move |picker, is_hovered, _window, cx| {
+                        let mut changed = false;
+                        if *is_hovered {
+                            if picker.delegate.hovered_thread_item != Some(workspace_index) {
+                                picker.delegate.hovered_thread_item = Some(workspace_index);
+                                changed = true;
+                            }
+                        } else if picker.delegate.hovered_thread_item == Some(workspace_index) {
+                            picker.delegate.hovered_thread_item = None;
+                            changed = true;
+                        }
+                        if changed {
+                            cx.notify();
+                        }
+                    }))
+                    .when(!full_path.is_empty(), |this| {
+                        this.tooltip(move |_, cx| {
+                            Tooltip::with_meta(worktree_label.clone(), None, full_path.clone(), cx)
                         })
-                        .into_any_element(),
+                    })
+                    .into_any_element(),
                 )
             }
             SidebarEntry::RecentProject(project_entry) => {
                 let name = project_entry.name.clone();
                 let full_path = project_entry.full_path.clone();
-                let title = render_title(name.clone(), positions);
                 let item_id: SharedString =
                     format!("recent-project-{:?}", project_entry.workspace_id).into();
-                let thread_title = self
-                    .recent_project_thread_titles
-                    .get(&project_entry.full_path)
-                    .cloned();
 
                 Some(
-                    ListItem::new(item_id)
-                        .toggle_state(selected)
-                        .child(render_project_row(title, thread_title, None, _cx))
+                    ThreadItem::new(item_id, name.clone())
+                        .icon(IconName::Folder)
+                        .selected(selected)
+                        .highlight_positions(positions.clone())
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta(name.clone(), None, full_path.clone(), cx)
                         })
@@ -1040,6 +982,13 @@ impl Render for Sidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme::setup_ui_font(window, cx);
+        let is_focused = self.focus_handle(cx).is_focused(window);
+
+        let focus_tooltip_label = if is_focused {
+            "Focus Workspace"
+        } else {
+            "Focus Sidebar"
+        };
 
         v_flex()
             .id("workspace-sidebar")
@@ -1057,23 +1006,51 @@ impl Render for Sidebar {
                     .w_full()
                     .mt_px()
                     .pb_px()
-                    .pr_2()
+                    .pr_1()
                     .when(cfg!(target_os = "macos"), |this| {
                         this.pl(px(TRAFFIC_LIGHT_PADDING))
                     })
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
+                    .child({
+                        let focus_handle = cx.focus_handle();
                         IconButton::new("close-sidebar", IconName::WorkspaceNavOpen)
                             .icon_size(IconSize::Small)
-                            .tooltip(|_window, cx| {
-                                Tooltip::for_action("Close Sidebar", &ToggleWorkspaceSidebar, cx)
-                            })
+                            .tooltip(Tooltip::element(move |_, cx| {
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .justify_between()
+                                            .child(Label::new("Close Sidebar"))
+                                            .child(KeyBinding::for_action_in(
+                                                &ToggleWorkspaceSidebar,
+                                                &focus_handle,
+                                                cx,
+                                            )),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .pt_1()
+                                            .gap_2()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .justify_between()
+                                            .child(Label::new(focus_tooltip_label))
+                                            .child(KeyBinding::for_action_in(
+                                                &FocusWorkspaceSidebar,
+                                                &focus_handle,
+                                                cx,
+                                            )),
+                                    )
+                                    .into_any_element()
+                            }))
                             .on_click(cx.listener(|_this, _, _window, cx| {
                                 cx.emit(SidebarEvent::Close);
-                            })),
-                    )
+                            }))
+                    })
                     .child(
                         IconButton::new("new-workspace", IconName::Plus)
                             .icon_size(IconSize::Small)
