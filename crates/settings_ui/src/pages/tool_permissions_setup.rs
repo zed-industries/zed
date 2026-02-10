@@ -15,6 +15,7 @@ use crate::{SettingsWindow, components::SettingsInputField};
 
 const HARDCODED_RULES_DESCRIPTION: &str =
     "`rm -rf` commands are always blocked when run on `$HOME`, `~`, `.`, `..`, or `/`";
+const SETTINGS_DISCLAIMER: &str = "Note: custom tool permissions only apply to the Zed native agent and don’t extend to external agents connected through the Agent Client Protocol (ACP).";
 
 /// Tools that support permission rules
 const TOOLS: &[ToolInfo] = &[
@@ -182,6 +183,14 @@ pub(crate) fn render_tool_permissions_setup_page(
         .pb_16()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
+        .child(
+            Banner::new().child(
+                Label::new(SETTINGS_DISCLAIMER)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .mt_0p5(),
+            ),
+        )
         .child(
             v_flex().children(tool_items.into_iter().enumerate().flat_map(|(i, item)| {
                 let mut elements: Vec<AnyElement> = vec![item];
@@ -418,7 +427,7 @@ fn render_hardcoded_rules(smaller_font_size: bool, cx: &App) -> AnyElement {
 }
 
 fn render_hardcoded_security_banner(cx: &mut Context<SettingsWindow>) -> AnyElement {
-    v_flex()
+    div()
         .mt_3()
         .child(Banner::new().child(render_hardcoded_rules(false, cx)))
         .into_any_element()
