@@ -76,6 +76,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
       - name: Configure CI
         run: |
           mkdir -p ./../.cargo
@@ -101,6 +103,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
       - name: Configure CI
         run: |
           New-Item -ItemType Directory -Path "./../.cargo" -Force
