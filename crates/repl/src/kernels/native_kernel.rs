@@ -5,13 +5,13 @@ use futures::{
     io::BufReader,
     stream::FuturesUnordered,
 };
-use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
+use gpui::{App, AppContext as _, Entity, EntityId, Task, Window, WindowHandle};
 use jupyter_protocol::{
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
-use runtimelib::dirs;
+use runtimelib::{RuntimeError, dirs};
 use smol::{net::TcpListener, process::Command};
 use std::{
     env,
@@ -173,16 +173,56 @@ impl NativeRunningKernel {
 
                 async move |cx| -> anyhow::Result<()> {
                     loop {
-                        let message = futures::select! {
-                            msg = iopub.read().fuse() => msg.context("iopub recv")?,
-                            msg = shell.read().fuse() => msg.context("shell recv")?,
-                            msg = control.read().fuse() => msg.context("control recv")?,
+                        let (channel, result) = futures::select! {
+                            msg = iopub.read().fuse() => ("iopub", msg),
+                            msg = shell.read().fuse() => ("shell", msg),
+                            msg = control.read().fuse() => ("control", msg),
                         };
-                        session
-                            .update_in(cx, |session, window, cx| {
-                                session.route(&message, window, cx);
-                            })
-                            .ok();
+                        match result {
+                            Ok(message) => {
+                                session
+                                    .update_in(cx, |session, window, cx| {
+                                        session.route(&message, window, cx);
+                                    })
+                                    .ok();
+                            }
+                            Err(
+                                RuntimeError::ParseError { .. } | RuntimeError::SerdeError(_),
+                            ) => {
+                                let error_message = format!("{channel}: {result:?}");
+                                log::warn!(
+                                    "kernel: skipping unreadable message: {error_message}"
+                                );
+                                let workspace_window: Option<
+                                    WindowHandle<workspace::Workspace>,
+                                > = session
+                                    .update_in(cx, |_, window, _cx| {
+                                        window
+                                            .window_handle()
+                                            .downcast::<workspace::Workspace>()
+                                    })
+                                    .ok()
+                                    .flatten();
+                                if let Some(workspace_window) = workspace_window {
+                                    workspace_window
+                                        .update(cx, |workspace, _window, cx| {
+                                            struct KernelReadError;
+                                            workspace.show_toast(
+                                                workspace::Toast::new(
+                                                    workspace::notifications::NotificationId::unique::<KernelReadError>(),
+                                                    format!("Kernel: skipped unreadable message on {channel}"),
+                                                )
+                                                .autohide(),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            }
+                            Err(err) => {
+                                anyhow::bail!("{channel} recv: {err}");
+                            }
+                        }
                     }
                 }
             });
