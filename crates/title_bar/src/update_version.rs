@@ -1,53 +1,68 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, VersionCheckType};
-use gpui::{Empty, EventEmitter, Render};
+use std::sync::Arc;
+
+use anyhow::anyhow;
+use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType, VersionCheckType};
+use gpui::{Empty, Render};
+use semver::Version;
 use ui::{UpdateButton, prelude::*};
 
-pub enum UpdateVersionEvent {
-    Dismissed,
-}
-
-/// Simulated auto-update states for testing/debugging
-#[derive(Clone)]
-pub enum SimulatedUpdateState {
-    Checking,
-    Downloading { version: String },
-    Installing { version: String },
-    Updated { version: String },
-    Errored { error: String },
-}
-
 pub struct UpdateVersion {
-    simulated_state: Option<SimulatedUpdateState>,
+    status: AutoUpdateStatus,
+    update_check_type: UpdateCheckType,
+    dismissed: bool,
 }
 
 impl UpdateVersion {
-    pub fn new() -> Self {
-        Self {
-            simulated_state: None,
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        if let Some(auto_updater) = AutoUpdater::get(cx) {
+            cx.observe(&auto_updater, |this, auto_update, cx| {
+                this.status = auto_update.read(cx).status();
+                this.update_check_type = dbg!(auto_update.read(cx).update_check_type());
+                if this.status.is_updated() {
+                    this.dismissed = false;
+                }
+            })
+            .detach();
+            Self {
+                status: auto_updater.read(cx).status(),
+                update_check_type: UpdateCheckType::Automatic,
+                dismissed: false,
+            }
+        } else {
+            Self {
+                status: AutoUpdateStatus::Idle,
+                update_check_type: UpdateCheckType::Automatic,
+                dismissed: false,
+            }
         }
     }
 
-    pub fn simulate_state(&mut self, state: SimulatedUpdateState) {
-        self.simulated_state = Some(state);
+    pub fn update_simulation(&mut self, cx: &mut Context<Self>) {
+        let next_state = match self.status {
+            AutoUpdateStatus::Idle => AutoUpdateStatus::Checking,
+            AutoUpdateStatus::Checking => AutoUpdateStatus::Downloading {
+                version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
+            },
+            AutoUpdateStatus::Downloading { .. } => AutoUpdateStatus::Installing {
+                version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
+            },
+            AutoUpdateStatus::Installing { .. } => AutoUpdateStatus::Updated {
+                version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
+            },
+            AutoUpdateStatus::Updated { .. } => AutoUpdateStatus::Errored {
+                error: Arc::new(anyhow!("Network timeout")),
+            },
+            AutoUpdateStatus::Errored { .. } => AutoUpdateStatus::Idle,
+        };
+
+        self.status = next_state;
+        self.update_check_type = dbg!(UpdateCheckType::Manual);
+        self.dismissed = false;
+        cx.notify()
     }
 
-    pub fn clear_simulation(&mut self) {
-        self.simulated_state = None;
-    }
-
-    pub fn is_simulating(&self) -> bool {
-        self.simulated_state.is_some()
-    }
-
-    pub fn is_simulating_updated(&self) -> bool {
-        matches!(
-            self.simulated_state,
-            Some(SimulatedUpdateState::Updated { .. })
-        )
-    }
-
-    pub fn simulated_state(&self) -> Option<&SimulatedUpdateState> {
-        self.simulated_state.as_ref()
+    pub fn show_update_in_menu_bar(&self) -> bool {
+        self.dismissed && self.status.is_updated()
     }
 
     fn version_tooltip_message(version: &VersionCheckType) -> String {
@@ -60,105 +75,54 @@ impl UpdateVersion {
     }
 }
 
-impl EventEmitter<UpdateVersionEvent> for UpdateVersion {}
-
 impl Render for UpdateVersion {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(state) = &self.simulated_state {
-            let is_simulating = true;
-            return self
-                .render_simulated_button(state.clone(), is_simulating, cx)
-                .into_any_element();
-        }
-
-        let Some(auto_updater) = AutoUpdater::get(cx) else {
+        if self.dismissed {
             return Empty.into_any_element();
-        };
-
-        let status = auto_updater.read(cx).status();
-
-        match status {
-            AutoUpdateStatus::Idle => Empty.into_any_element(),
-
-            AutoUpdateStatus::Checking => UpdateButton::checking().into_any_element(),
-
-            AutoUpdateStatus::Downloading { version } => {
+        }
+        match &self.status {
+            AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
+                UpdateButton::checking().into_any_element()
+            }
+            AutoUpdateStatus::Downloading { version } if self.update_check_type.is_manual() => {
                 let tooltip = Self::version_tooltip_message(&version);
                 UpdateButton::downloading(tooltip).into_any_element()
             }
-
-            AutoUpdateStatus::Installing { version } => {
+            AutoUpdateStatus::Installing { version } if self.update_check_type.is_manual() => {
                 let tooltip = Self::version_tooltip_message(&version);
                 UpdateButton::installing(tooltip).into_any_element()
             }
-
             AutoUpdateStatus::Updated { version } => {
                 let tooltip = Self::version_tooltip_message(&version);
                 UpdateButton::updated(tooltip)
                     .on_click(|_, _, cx| {
                         workspace::reload(cx);
                     })
-                    .on_dismiss(cx.listener(|_this, _, _window, cx| {
-                        cx.emit(UpdateVersionEvent::Dismissed);
+                    .on_dismiss(cx.listener(|this, _, _window, cx| {
+                        this.dismissed = true;
+                        cx.notify()
                     }))
                     .into_any_element()
             }
-
             AutoUpdateStatus::Errored { error } => {
                 let error_str = error.to_string();
                 UpdateButton::errored(error_str)
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(workspace::OpenLog), cx);
                     })
-                    .on_dismiss(cx.listener(|_this, _, _window, cx| {
-                        cx.emit(UpdateVersionEvent::Dismissed);
+                    .on_dismiss(cx.listener(|this, _, _window, cx| {
+                        this.dismissed = true;
+                        cx.notify()
                     }))
                     .into_any_element()
             }
+            AutoUpdateStatus::Idle
+            | AutoUpdateStatus::Checking { .. }
+            | AutoUpdateStatus::Downloading { .. }
+            | AutoUpdateStatus::Installing { .. } => Empty.into_any_element(),
         }
     }
 }
-
-impl UpdateVersion {
-    fn render_simulated_button(
-        &self,
-        state: SimulatedUpdateState,
-        _is_simulating: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        match state {
-            SimulatedUpdateState::Checking => UpdateButton::new(
-                IconName::ArrowCircle,
-                "Checking for Zed updates… (simulated)",
-            )
-            .icon_animate(true),
-            SimulatedUpdateState::Downloading { version } => {
-                UpdateButton::new(IconName::Download, "Downloading Zed update… (simulated)")
-                    .tooltip(format!("Version: {} (simulated)", version))
-            }
-            SimulatedUpdateState::Installing { version } => {
-                UpdateButton::new(IconName::ArrowCircle, "Installing Zed update… (simulated)")
-                    .icon_animate(true)
-                    .tooltip(format!("Version: {} (simulated)", version))
-            }
-            SimulatedUpdateState::Updated { version } => {
-                UpdateButton::updated(format!("Version: {} (simulated)", version)).on_dismiss(
-                    cx.listener(|_this, _, _window, cx| {
-                        cx.emit(UpdateVersionEvent::Dismissed);
-                    }),
-                )
-            }
-            SimulatedUpdateState::Errored { error } => {
-                UpdateButton::errored(format!("{} (simulated)", error)).on_dismiss(cx.listener(
-                    |_this, _, _window, cx| {
-                        cx.emit(UpdateVersionEvent::Dismissed);
-                    },
-                ))
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use auto_update::VersionCheckType;
