@@ -80,9 +80,8 @@ impl EditorBlock {
         let editor = editor.upgrade().context("editor is not open")?;
         let workspace = editor.read(cx).workspace().context("workspace dropped")?;
 
-        let execution_view = cx.new(|cx| {
-            ExecutionView::new(status, workspace.downgrade(), widget_store, cx)
-        });
+        let execution_view =
+            cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), widget_store, cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -255,10 +254,12 @@ impl Session {
             .ok();
 
         let widget_store = cx.new(|_| WidgetStore::new());
-        let widget_subscription =
-            cx.subscribe(&widget_store, |session, _store, event: &WidgetCommMessage, cx| {
+        let widget_subscription = cx.subscribe(
+            &widget_store,
+            |session, _store, event: &WidgetCommMessage, cx| {
                 session.send(event.0.clone(), cx).log_err();
-            });
+            },
+        );
 
         let mut session = Self {
             fs,

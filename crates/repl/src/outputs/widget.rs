@@ -1,9 +1,10 @@
 use collections::HashMap;
-use gpui::{AnyElement, App, Context, Entity, EventEmitter, Window};
+use editor::{Editor, EditorEvent};
+use gpui::{AnyElement, App, Context, Corner, Entity, EventEmitter, Subscription, Window};
 use runtimelib::{CommId, CommMsg, JupyterMessage, MimeBundle, MimeType};
 use theme::ActiveTheme;
 use ui::prelude::*;
-use ui::{Checkbox, ProgressBar, ToggleState};
+use ui::{Checkbox, ContextMenu, PopoverMenu, ProgressBar, ToggleState};
 
 struct WidgetModel {
     comm_id: String,
@@ -13,6 +14,8 @@ struct WidgetModel {
 
 pub struct WidgetStore {
     models: HashMap<String, WidgetModel>,
+    text_editors: HashMap<String, Entity<Editor>>,
+    _editor_subscriptions: Vec<Subscription>,
 }
 
 pub(crate) struct WidgetCommMessage(pub JupyterMessage);
@@ -23,6 +26,8 @@ impl WidgetStore {
     pub fn new() -> Self {
         Self {
             models: HashMap::default(),
+            text_editors: HashMap::default(),
+            _editor_subscriptions: Vec::new(),
         }
     }
 
@@ -43,15 +48,6 @@ impl WidgetStore {
             .unwrap_or("UnknownModel")
             .to_string();
 
-        let state_keys: Vec<&String> = state.keys().collect();
-        log::info!(
-            "widget create_model: comm_id={}, model_name={}, state_keys={:?}, data_keys={:?}",
-            comm_id,
-            model_name,
-            state_keys,
-            data.keys().collect::<Vec<_>>()
-        );
-
         self.models.insert(
             comm_id.to_string(),
             WidgetModel {
@@ -64,6 +60,65 @@ impl WidgetStore {
 
     pub fn close_model(&mut self, comm_id: &str) {
         self.models.remove(comm_id);
+        self.text_editors.remove(comm_id);
+    }
+
+    pub fn create_missing_text_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let needed: Vec<(String, String, bool)> = self
+            .models
+            .iter()
+            .filter(|(_, m)| m.model_name == "TextModel" || m.model_name == "TextareaModel")
+            .filter(|(id, _)| !self.text_editors.contains_key(*id))
+            .map(|(id, m)| {
+                let value = m
+                    .state
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_textarea = m.model_name == "TextareaModel";
+                (id.clone(), value, is_textarea)
+            })
+            .collect();
+
+        for (model_id, value, is_textarea) in needed {
+            let editor = cx.new(|cx| {
+                let mut editor = if is_textarea {
+                    Editor::auto_height(3, 10, window, cx)
+                } else {
+                    Editor::single_line(window, cx)
+                };
+                if !value.is_empty() {
+                    editor.set_text(value, window, cx);
+                }
+                editor
+            });
+
+            let subscription = cx.subscribe(&editor, {
+                let model_id = model_id.clone();
+                move |this: &mut Self, editor, event: &EditorEvent, cx| {
+                    if !matches!(event, EditorEvent::BufferEdited) {
+                        return;
+                    }
+                    let new_text = editor.read(cx).text(cx);
+                    let model_value = this
+                        .models
+                        .get(&model_id)
+                        .and_then(|m| m.state.get("value"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if new_text == model_value {
+                        return;
+                    }
+                    let mut state_patch = serde_json::Map::new();
+                    state_patch.insert("value".into(), serde_json::Value::String(new_text));
+                    this.send_update(&model_id, state_patch, cx);
+                }
+            });
+
+            self.text_editors.insert(model_id, editor);
+            self._editor_subscriptions.push(subscription);
+        }
     }
 
     pub fn update_model(
@@ -72,13 +127,6 @@ impl WidgetStore {
         data: &serde_json::Map<String, serde_json::Value>,
     ) {
         let method = data.get("method").and_then(|v| v.as_str());
-        log::info!(
-            "widget update_model: comm_id={}, method={:?}, data_keys={:?}",
-            comm_id,
-            method,
-            data.keys().collect::<Vec<_>>()
-        );
-
         if method != Some("update") {
             return;
         }
@@ -88,20 +136,15 @@ impl WidgetStore {
             None => return,
         };
 
-        let patch_keys: Vec<&String> = state_patch.keys().collect();
-        let found = self.models.contains_key(comm_id);
-        log::info!(
-            "widget update_model: comm_id={}, found_in_store={}, patch_keys={:?}",
-            comm_id,
-            found,
-            patch_keys
-        );
-
         if let Some(model) = self.models.get_mut(comm_id) {
             for (key, value) in state_patch {
                 model.state.insert(key.clone(), value.clone());
             }
         }
+    }
+
+    fn get_state(&self, model_id: &str) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.models.get(model_id).map(|m| &m.state)
     }
 
     pub fn send_update(
@@ -158,22 +201,10 @@ impl WidgetStore {
         let store_ref = store.read(cx);
         let model = match store_ref.models.get(model_id) {
             Some(m) => m,
-            None => {
-                log::warn!("widget render_widget: model_id={} NOT FOUND in store (store has {} models: {:?})",
-                    model_id,
-                    store_ref.models.len(),
-                    store_ref.models.keys().collect::<Vec<_>>()
-                );
-                return div().into_any_element();
-            }
+            None => return div().into_any_element(),
         };
 
-        log::info!(
-            "widget render_widget: model_id={}, model_name={}, state_keys={:?}",
-            model_id,
-            model.model_name,
-            model.state.keys().collect::<Vec<_>>()
-        );
+        let text_editor = store_ref.text_editors.get(model_id).cloned();
 
         match model.model_name.as_str() {
             "FloatProgressModel" | "IntProgressModel" => render_progress(model, window, cx),
@@ -184,13 +215,15 @@ impl WidgetStore {
             "ButtonModel" => render_button(store, model),
             "CheckboxModel" => render_checkbox(store, model),
             "DropdownModel" => render_dropdown(store, model),
-            "IntSliderModel" | "FloatSliderModel" => render_slider(model),
-            "TextModel" | "TextareaModel" => render_text(model),
+            "IntSliderModel" | "FloatSliderModel" => render_slider(store, model, window, cx),
+            "TextModel" | "TextareaModel" => render_text(model, text_editor, cx),
             "OutputModel" => render_output_widget(store, model, window, cx),
-            "LayoutModel" | "ProgressStyleModel" | "ButtonStyleModel"
-            | "SliderStyleModel" | "DescriptionStyleModel" | "StyleModel" => {
-                div().into_any_element()
-            }
+            "LayoutModel"
+            | "ProgressStyleModel"
+            | "ButtonStyleModel"
+            | "SliderStyleModel"
+            | "DescriptionStyleModel"
+            | "StyleModel" => div().into_any_element(),
             _ => render_unsupported(model),
         }
     }
@@ -337,13 +370,6 @@ fn render_hbox(
 ) -> AnyElement {
     let children = model.state.get("children").and_then(|v| v.as_array());
 
-    log::info!(
-        "widget render_hbox: comm_id={}, has_children={}, children_raw={:?}",
-        model.comm_id,
-        children.is_some(),
-        model.state.get("children")
-    );
-
     let mut flex = h_flex().gap_1().items_center();
 
     if let Some(children) = children {
@@ -352,10 +378,7 @@ fn render_hbox(
                 .as_str()
                 .and_then(|s| s.strip_prefix(IPY_MODEL_PREFIX))
             {
-                log::info!("widget render_hbox: rendering child_id={}", child_id);
                 flex = flex.child(WidgetStore::render_widget(store, child_id, window, cx));
-            } else {
-                log::warn!("widget render_hbox: child_ref not IPY_MODEL_: {:?}", child_ref);
             }
         }
     }
@@ -388,11 +411,6 @@ fn render_vbox(
 }
 
 fn render_button(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement {
-    log::info!(
-        "widget render_button: comm_id={}, state={:?}",
-        model.comm_id,
-        model.state
-    );
     let description = model
         .state
         .get("description")
@@ -415,8 +433,10 @@ fn render_button(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement
     .disabled(disabled)
     .on_click(move |_, _window, cx| {
         let model_id = model_id.clone();
+        let mut content = serde_json::Map::new();
+        content.insert("event".into(), "click".into());
         store.update(cx, |widget_store, cx| {
-            widget_store.send_custom(&model_id, serde_json::Map::new(), cx);
+            widget_store.send_custom(&model_id, content, cx);
         });
     })
     .into_any_element()
@@ -489,13 +509,14 @@ fn render_dropdown(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyEleme
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let options: Vec<String> = model
+    let options: Vec<(usize, String)> = model
         .state
         .get("_options_labels")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .enumerate()
+                .filter_map(|(i, v)| v.as_str().map(|s| (i, s.to_string())))
                 .collect()
         })
         .unwrap_or_default();
@@ -507,18 +528,15 @@ fn render_dropdown(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyEleme
         .unwrap_or(0) as usize;
 
     let current_label = options
-        .get(current_index)
-        .cloned()
+        .iter()
+        .find(|(i, _)| *i == current_index)
+        .map(|(_, label)| label.clone())
         .unwrap_or_else(|| "—".to_string());
 
-    let next_index = if options.is_empty() {
-        0
-    } else {
-        (current_index + 1) % options.len()
-    };
-
     let model_id = model.comm_id.clone();
-    let store = store.clone();
+    let store_for_menu = store.clone();
+    let model_id_for_menu = model_id.clone();
+    let has_options = !options.is_empty();
 
     h_flex()
         .gap_2()
@@ -531,27 +549,70 @@ fn render_dropdown(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyEleme
             )
         })
         .child(
-            Button::new(
-                SharedString::from(format!("widget-dd-{}", model_id)),
-                format!("{} ▾", current_label),
-            )
-            .disabled(disabled || options.is_empty())
-            .on_click(move |_, _window, cx| {
-                let mut state_patch = serde_json::Map::new();
-                state_patch.insert(
-                    "index".into(),
-                    serde_json::Value::Number(serde_json::Number::from(next_index as u64)),
-                );
-                let model_id = model_id.clone();
-                store.update(cx, |widget_store, cx| {
-                    widget_store.send_update(&model_id, state_patch, cx);
-                });
-            }),
+            PopoverMenu::new(SharedString::from(format!("widget-dd-pop-{}", model_id)))
+                .menu(move |window, cx| {
+                    let fresh_index = store_for_menu
+                        .read(cx)
+                        .get_state(&model_id_for_menu)
+                        .and_then(|s| s.get("index"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+
+                    Some(ContextMenu::build(window, cx, {
+                        let store = store_for_menu.clone();
+                        let model_id = model_id_for_menu.clone();
+                        let options = options.clone();
+                        move |mut menu, _, _| {
+                            for (index, label) in &options {
+                                let is_selected = *index == fresh_index;
+                                let store = store.clone();
+                                let model_id = model_id.clone();
+                                let new_index = *index;
+                                menu = menu.toggleable_entry(
+                                    label.clone(),
+                                    is_selected,
+                                    IconPosition::End,
+                                    None,
+                                    move |_window, cx| {
+                                        let mut state_patch = serde_json::Map::new();
+                                        state_patch.insert(
+                                            "index".into(),
+                                            serde_json::Value::Number(serde_json::Number::from(
+                                                new_index as u64,
+                                            )),
+                                        );
+                                        store.update(cx, |widget_store, cx| {
+                                            widget_store.send_update(&model_id, state_patch, cx);
+                                        });
+                                    },
+                                );
+                            }
+                            menu
+                        }
+                    }))
+                })
+                .trigger(
+                    Button::new(
+                        SharedString::from(format!("widget-dd-{}", model_id)),
+                        current_label,
+                    )
+                    .icon(IconName::ChevronUpDown)
+                    .icon_position(IconPosition::End)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .disabled(disabled || !has_options),
+                )
+                .attach(Corner::BottomLeft),
         )
         .into_any_element()
 }
 
-fn render_slider(model: &WidgetModel) -> AnyElement {
+fn render_slider(
+    store: &Entity<WidgetStore>,
+    model: &WidgetModel,
+    _window: &mut Window,
+    cx: &App,
+) -> AnyElement {
     let value = model
         .state
         .get("value")
@@ -567,17 +628,147 @@ fn render_slider(model: &WidgetModel) -> AnyElement {
         .get("max")
         .and_then(|v| v.as_f64())
         .unwrap_or(100.0);
+    let step = model
+        .state
+        .get("step")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
     let description = model
         .state
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let disabled = model
+        .state
+        .get("disabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let is_int = model.model_name == "IntSliderModel";
     let value_text = if is_int {
         format!("{}", value as i64)
     } else {
         format!("{:.2}", value)
+    };
+
+    let dec_value = (value - step).max(min);
+    let inc_value = (value + step).min(max);
+    let model_id = model.comm_id.clone();
+
+    let store_dec = store.clone();
+    let model_id_dec = model_id.clone();
+
+    let store_inc = store.clone();
+    let model_id_inc = model_id.clone();
+
+    h_flex()
+        .gap_2()
+        .items_center()
+        .when(!description.is_empty(), |el| {
+            el.child(
+                Label::new(description.to_string())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+        .child(
+            IconButton::new(
+                SharedString::from(format!("slider-dec-{}", model_id)),
+                IconName::Dash,
+            )
+            .size(ButtonSize::Compact)
+            .disabled(disabled || value <= min)
+            .on_click(move |_, _window, cx| {
+                let mut state_patch = serde_json::Map::new();
+                if is_int {
+                    state_patch.insert("value".into(), serde_json::Value::from(dec_value as i64));
+                } else {
+                    state_patch.insert(
+                        "value".into(),
+                        serde_json::Number::from_f64(dec_value)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::from(dec_value as i64)),
+                    );
+                }
+                store_dec.update(cx, |widget_store, cx| {
+                    widget_store.send_update(&model_id_dec, state_patch, cx);
+                });
+            }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .child(ProgressBar::new(
+                    format!("slider-bar-{}", model_id),
+                    (value - min) as f32,
+                    (max - min) as f32,
+                    cx,
+                ))
+                .min_w(px(80.0)),
+        )
+        .child(
+            IconButton::new(
+                SharedString::from(format!("slider-inc-{}", model_id)),
+                IconName::Plus,
+            )
+            .size(ButtonSize::Compact)
+            .disabled(disabled || value >= max)
+            .on_click(move |_, _window, cx| {
+                let mut state_patch = serde_json::Map::new();
+                if is_int {
+                    state_patch.insert("value".into(), serde_json::Value::from(inc_value as i64));
+                } else {
+                    state_patch.insert(
+                        "value".into(),
+                        serde_json::Number::from_f64(inc_value)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::from(inc_value as i64)),
+                    );
+                }
+                store_inc.update(cx, |widget_store, cx| {
+                    widget_store.send_update(&model_id_inc, state_patch, cx);
+                });
+            }),
+        )
+        .child(
+            Label::new(value_text)
+                .size(LabelSize::Small)
+                .color(Color::Default),
+        )
+        .into_any_element()
+}
+
+fn render_text(model: &WidgetModel, editor: Option<Entity<Editor>>, cx: &App) -> AnyElement {
+    let description = model
+        .state
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let content: AnyElement = if let Some(editor) = editor {
+        div().w(px(260.0)).child(editor).into_any_element()
+    } else {
+        let value = model
+            .state
+            .get("value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let is_textarea = model.model_name == "TextareaModel";
+        div()
+            .px_2()
+            .py_1()
+            .min_w(px(120.0))
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
+            .when(is_textarea, |el| el.min_h(px(60.0)))
+            .child(
+                Label::new(value.to_string())
+                    .size(LabelSize::Small)
+                    .color(Color::Default),
+            )
+            .into_any_element()
     };
 
     h_flex()
@@ -590,41 +781,7 @@ fn render_slider(model: &WidgetModel) -> AnyElement {
                     .color(Color::Muted),
             )
         })
-        .child(
-            Label::new(format!("{} [{}, {}]", value_text, min, max))
-                .size(LabelSize::Small)
-                .color(Color::Default),
-        )
-        .into_any_element()
-}
-
-fn render_text(model: &WidgetModel) -> AnyElement {
-    let value = model
-        .state
-        .get("value")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let description = model
-        .state
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    h_flex()
-        .gap_2()
-        .items_center()
-        .when(!description.is_empty(), |el| {
-            el.child(
-                Label::new(description.to_string())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-        })
-        .child(
-            Label::new(value.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Default),
-        )
+        .child(content)
         .into_any_element()
 }
 

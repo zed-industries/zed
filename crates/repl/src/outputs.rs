@@ -273,9 +273,9 @@ impl Output {
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
-            Self::Widget { store, model_id, .. } => {
-                Some(WidgetStore::render_widget(store, model_id, window, cx))
-            }
+            Self::Widget {
+                store, model_id, ..
+            } => Some(WidgetStore::render_widget(store, model_id, window, cx)),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         }
@@ -591,18 +591,12 @@ impl ExecutionView {
                     Output::Widget {
                         store: self.widget_store.clone(),
                         model_id,
-                        display_id: result
-                            .transient
-                            .as_ref()
-                            .and_then(|t| t.display_id.clone()),
+                        display_id: result.transient.as_ref().and_then(|t| t.display_id.clone()),
                     }
                 } else {
                     Output::new(
                         &result.data,
-                        result
-                            .transient
-                            .as_ref()
-                            .and_then(|t| t.display_id.clone()),
+                        result.transient.as_ref().and_then(|t| t.display_id.clone()),
                         window,
                         cx,
                     )
@@ -613,18 +607,12 @@ impl ExecutionView {
                     Output::Widget {
                         store: self.widget_store.clone(),
                         model_id,
-                        display_id: result
-                            .transient
-                            .as_ref()
-                            .and_then(|t| t.display_id.clone()),
+                        display_id: result.transient.as_ref().and_then(|t| t.display_id.clone()),
                     }
                 } else {
                     Output::new(
                         &result.data,
-                        result
-                            .transient
-                            .as_ref()
-                            .and_then(|t| t.display_id.clone()),
+                        result.transient.as_ref().and_then(|t| t.display_id.clone()),
                         window,
                         cx,
                     )
@@ -809,6 +797,10 @@ impl ExecutionView {
 
 impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.widget_store.update(cx, |store, cx| {
+            store.create_missing_text_editors(window, cx);
+        });
+
         let status = match &self.status {
             ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
                 .color(Color::Muted)
