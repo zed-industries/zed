@@ -1255,6 +1255,7 @@ impl Render for QuickSearch {
         }
 
         div()
+            .id("quick-search-backdrop")
             .absolute()
             .size_full()
             .inset_0()
@@ -1263,12 +1264,9 @@ impl Render for QuickSearch {
             .flex_col()
             .items_center()
             .pt_20()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                }),
-            )
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
             .child(v_flex()
             .when(self.layout_mode == LayoutMode::Stacked, |this| {
                 this.child(self.render_vertical_resize(ResizeSide::Start, window, cx))
