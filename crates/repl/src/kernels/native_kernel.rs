@@ -5,7 +5,7 @@ use futures::{
     io::BufReader,
     stream::FuturesUnordered,
 };
-use gpui::{App, AppContext as _, Entity, EntityId, Task, Window, WindowHandle};
+use gpui::{App, AppContext as _, ClipboardItem, Entity, EntityId, Task, Window, WindowHandle};
 use jupyter_protocol::{
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
@@ -187,12 +187,12 @@ impl NativeRunningKernel {
                                     .ok();
                             }
                             Err(
-                                RuntimeError::ParseError { .. } | RuntimeError::SerdeError(_),
+                                ref err @ (RuntimeError::ParseError { .. }
+                                | RuntimeError::SerdeError(_)),
                             ) => {
-                                let error_message = format!("{channel}: {result:?}");
-                                log::warn!(
-                                    "kernel: skipping unreadable message: {error_message}"
-                                );
+                                let error_detail =
+                                    format!("Kernel issue on {channel} channel\n\n{err}");
+                                log::warn!("kernel: {error_detail}");
                                 let workspace_window: Option<
                                     WindowHandle<workspace::Workspace>,
                                 > = session
@@ -210,9 +210,18 @@ impl NativeRunningKernel {
                                             workspace.show_toast(
                                                 workspace::Toast::new(
                                                     workspace::notifications::NotificationId::unique::<KernelReadError>(),
-                                                    format!("Kernel: skipped unreadable message on {channel}"),
+                                                    error_detail.clone(),
                                                 )
-                                                .autohide(),
+                                                .on_click(
+                                                    "Copy Error",
+                                                    move |_window, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                error_detail.clone(),
+                                                            ),
+                                                        );
+                                                    },
+                                                ),
                                                 cx,
                                             );
                                         })
