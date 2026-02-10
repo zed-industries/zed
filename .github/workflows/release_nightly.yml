@@ -35,7 +35,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -67,7 +67,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -94,7 +94,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         set -eu
@@ -143,7 +143,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         set -eu
@@ -197,7 +197,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         set -eu
@@ -251,7 +251,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         set -eu
@@ -309,7 +309,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         $ErrorActionPreference = "Stop"
@@ -365,7 +365,7 @@ jobs:
         clean: false
         fetch-depth: 0
     - name: steps::restore_mtime
-      uses: zed-industries/git-restore-mtime-action@6e8e17a95861687acc1ed39ef4231483d1402d73
+      uses: zed-industries/git-restore-mtime-action@72cefcf20b50bf4fcd74ea8a0d2927b0680e2114
     - name: run_bundling::set_release_channel_to_nightly
       run: |
         $ErrorActionPreference = "Stop"

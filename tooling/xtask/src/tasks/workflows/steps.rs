@@ -51,7 +51,7 @@ pub fn restore_mtime() -> Step<Use> {
     named::uses(
         "zed-industries",
         "git-restore-mtime-action",
-        "6e8e17a95861687acc1ed39ef4231483d1402d73",
+        "72cefcf20b50bf4fcd74ea8a0d2927b0680e2114",
     )
 }
 
