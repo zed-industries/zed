@@ -3796,6 +3796,10 @@ impl BufferSnapshot {
             .layers_for_range(range, &self.text, include_hidden)
     }
 
+    pub fn syntax_layers_languages(&self) -> impl Iterator<Item = &Arc<Language>> {
+        self.syntax.languages(&self, true)
+    }
+
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
         &self,
         range: Range<D>,

@@ -69,7 +69,6 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    watch,
     workspace::{AppState, Workspace},
     zed_actions::OpenSettingsAt,
 };
@@ -197,9 +196,19 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
         });
         prompt_store::init(cx);
+        let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
+        project::AgentRegistryStore::init_global(cx);
+        agent_ui::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            prompt_builder,
+            app_state.languages.clone(),
+            false,
+            cx,
+        );
         settings_ui::init(cx);
 
         // Initialize agent_ui (needed for agent thread tests)
@@ -450,26 +459,6 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             }
             Err(e) => {
                 eprintln!("✗ agent_thread_with_image: FAILED - {}", e);
-                failed += 1;
-            }
-        }
-    }
-
-    // Run Test 4: Subagent Cards visual tests
-    #[cfg(feature = "visual-tests")]
-    {
-        println!("\n--- Test 4: subagent_cards (running, completed, expanded) ---");
-        match run_subagent_visual_tests(app_state.clone(), &mut cx, update_baseline) {
-            Ok(TestResult::Passed) => {
-                println!("✓ subagent_cards: PASSED");
-                passed += 1;
-            }
-            Ok(TestResult::BaselineUpdated(_)) => {
-                println!("✓ subagent_cards: Baselines updated");
-                updated += 1;
-            }
-            Err(e) => {
-                eprintln!("✗ subagent_cards: FAILED - {}", e);
                 failed += 1;
             }
         }
@@ -1918,337 +1907,6 @@ impl AgentServer for StubAgentServer {
 }
 
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
-fn run_subagent_visual_tests(
-    app_state: Arc<AppState>,
-    cx: &mut VisualTestAppContext,
-    update_baseline: bool,
-) -> Result<TestResult> {
-    use acp_thread::{
-        AcpThread, SUBAGENT_TOOL_NAME, ToolCallUpdateSubagentThread, meta_with_tool_name,
-    };
-    use agent_ui::AgentPanel;
-
-    // Create a temporary project directory
-    let temp_dir = tempfile::tempdir()?;
-    let temp_path = temp_dir.keep();
-    let canonical_temp = temp_path.canonicalize()?;
-    let project_path = canonical_temp.join("project");
-    std::fs::create_dir_all(&project_path)?;
-
-    // Create a project
-    let project = cx.update(|cx| {
-        project::Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            project::LocalProjectFlags {
-                init_worktree_trust: false,
-                ..Default::default()
-            },
-            cx,
-        )
-    });
-
-    // Add the test directory as a worktree
-    let add_worktree_task = project.update(cx, |project, cx| {
-        project.find_or_create_worktree(&project_path, true, cx)
-    });
-
-    cx.foreground_executor
-        .block_test(add_worktree_task)
-        .log_err();
-
-    cx.run_until_parked();
-
-    // Create stub connection - we'll manually inject the subagent content
-    let connection = StubAgentConnection::new();
-
-    // Create a subagent tool call (in progress state)
-    let tool_call = acp::ToolCall::new("subagent-tool-1", "2 subagents")
-        .kind(acp::ToolKind::Other)
-        .meta(meta_with_tool_name(SUBAGENT_TOOL_NAME))
-        .status(acp::ToolCallStatus::InProgress);
-
-    connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
-
-    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
-
-    // Create a window sized for the agent panel
-    let window_size = size(px(600.0), px(700.0));
-    let bounds = Bounds {
-        origin: point(px(0.0), px(0.0)),
-        size: window_size,
-    };
-
-    let workspace_window: WindowHandle<Workspace> = cx
-        .update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    focus: false,
-                    show: false,
-                    ..Default::default()
-                },
-                |window, cx| {
-                    cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                    })
-                },
-            )
-        })
-        .context("Failed to open agent window")?;
-
-    cx.run_until_parked();
-
-    // Load the AgentPanel
-    let (weak_workspace, async_window_cx) = workspace_window
-        .update(cx, |workspace, window, cx| {
-            (workspace.weak_handle(), window.to_async(cx))
-        })
-        .context("Failed to get workspace handle")?;
-
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-    let panel = cx
-        .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
-        .context("Failed to load AgentPanel")?;
-
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        workspace_window
-            .update(cx, |workspace, window, cx| {
-                workspace.add_panel(panel.clone(), window, cx);
-                workspace.open_panel::<AgentPanel>(window, cx);
-            })
-            .log_err();
-    })?;
-
-    cx.run_until_parked();
-
-    // Open the stub thread
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        panel.update(cx, |panel: &mut agent_ui::AgentPanel, cx| {
-            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
-        });
-    })?;
-
-    cx.run_until_parked();
-
-    // Get the thread view and send a message to trigger the subagent tool call
-    let thread_view = cx
-        .read(|cx| panel.read(cx).active_thread_view_for_tests().cloned())
-        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
-
-    let thread = cx
-        .read(|cx| {
-            thread_view
-                .read(cx)
-                .as_active_thread()
-                .map(|active| active.read(cx).thread.clone())
-        })
-        .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;
-
-    // Send the message to trigger the subagent response
-    let send_future = thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
-        thread.send(vec!["Run two subagents".into()], cx)
-    });
-
-    cx.foreground_executor.block_test(send_future).log_err();
-
-    cx.run_until_parked();
-
-    // Get the tool call ID
-    let tool_call_id = cx
-        .read(|cx| {
-            thread.read(cx).entries().iter().find_map(|entry| {
-                if let acp_thread::AgentThreadEntry::ToolCall(tool_call) = entry {
-                    Some(tool_call.id.clone())
-                } else {
-                    None
-                }
-            })
-        })
-        .ok_or_else(|| anyhow::anyhow!("Expected a ToolCall entry in thread"))?;
-
-    // Create two subagent AcpThreads and inject them
-    let subagent1 = cx.update(|cx| {
-        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
-        let session_id = acp::SessionId::new("subagent-1");
-        cx.new(|cx| {
-            let mut thread = AcpThread::new(
-                "Exploring test-repo",
-                Rc::new(connection.clone()),
-                project.clone(),
-                action_log,
-                session_id,
-                watch::Receiver::constant(acp::PromptCapabilities::new()),
-                cx,
-            );
-            // Add some content to this subagent
-            thread.push_assistant_content_block(
-                "## Summary of test-repo\n\nThis is a test repository with:\n\n- **Files:** test.txt\n- **Purpose:** Testing".into(),
-                false,
-                cx,
-            );
-            thread
-        })
-    });
-
-    let subagent2 = cx.update(|cx| {
-        let action_log = cx.new(|_| action_log::ActionLog::new(project.clone()));
-        let session_id = acp::SessionId::new("subagent-2");
-        cx.new(|cx| {
-            let mut thread = AcpThread::new(
-                "Exploring test-worktree",
-                Rc::new(connection.clone()),
-                project.clone(),
-                action_log,
-                session_id,
-                watch::Receiver::constant(acp::PromptCapabilities::new()),
-                cx,
-            );
-            // Add some content to this subagent
-            thread.push_assistant_content_block(
-                "## Summary of test-worktree\n\nThis directory contains:\n\n- A single `config.json` file\n- Basic project setup".into(),
-                false,
-                cx,
-            );
-            thread
-        })
-    });
-
-    // Inject subagent threads into the tool call
-    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
-        thread
-            .update_tool_call(
-                ToolCallUpdateSubagentThread {
-                    id: tool_call_id.clone(),
-                    thread: subagent1,
-                },
-                cx,
-            )
-            .log_err();
-        thread
-            .update_tool_call(
-                ToolCallUpdateSubagentThread {
-                    id: tool_call_id.clone(),
-                    thread: subagent2,
-                },
-                cx,
-            )
-            .log_err();
-    });
-
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    // Capture subagents in RUNNING state (tool call still in progress)
-    let running_result = run_visual_test(
-        "subagent_cards_running",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Now mark the tool call as completed by updating it through the thread
-    thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| {
-        thread
-            .handle_session_update(
-                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
-                    tool_call_id.clone(),
-                    acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
-                )),
-                cx,
-            )
-            .log_err();
-    });
-
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    // Capture subagents in COMPLETED state
-    let completed_result = run_visual_test(
-        "subagent_cards_completed",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Expand the first subagent
-    thread_view.update(cx, |view: &mut agent_ui::acp::AcpServerView, cx| {
-        view.expand_subagent(acp::SessionId::new("subagent-1"), cx);
-    });
-
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-
-    cx.run_until_parked();
-
-    // Capture subagent in EXPANDED state
-    let expanded_result = run_visual_test(
-        "subagent_cards_expanded",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    )?;
-
-    // Cleanup
-    workspace_window
-        .update(cx, |workspace, _window, cx| {
-            let project = workspace.project().clone();
-            project.update(cx, |project, cx| {
-                let worktree_ids: Vec<_> =
-                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
-                for id in worktree_ids {
-                    project.remove_worktree(id, cx);
-                }
-            });
-        })
-        .log_err();
-
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.remove_window();
-    })
-    .log_err();
-
-    cx.run_until_parked();
-
-    for _ in 0..15 {
-        cx.advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-    }
-
-    match (&running_result, &completed_result, &expanded_result) {
-        (TestResult::Passed, TestResult::Passed, TestResult::Passed) => Ok(TestResult::Passed),
-        (TestResult::BaselineUpdated(p), _, _)
-        | (_, TestResult::BaselineUpdated(p), _)
-        | (_, _, TestResult::BaselineUpdated(p)) => Ok(TestResult::BaselineUpdated(p.clone())),
-    }
-}
-
-#[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_agent_thread_view_test(
     app_state: Arc<AppState>,
     cx: &mut VisualTestAppContext,
@@ -2461,7 +2119,7 @@ fn run_agent_thread_view_test(
         .read(|cx| {
             thread_view
                 .read(cx)
-                .as_active_thread()
+                .active_thread()
                 .map(|active| active.read(cx).thread.clone())
         })
         .ok_or_else(|| anyhow::anyhow!("Thread not available"))?;

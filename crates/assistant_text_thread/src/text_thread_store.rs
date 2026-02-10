@@ -888,29 +888,27 @@ impl TextThreadStore {
     fn handle_context_server_event(
         &mut self,
         context_server_store: Entity<ContextServerStore>,
-        event: &project::context_server_store::Event,
+        event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-                match status {
-                    ContextServerStatus::Running => {
-                        self.load_context_server_slash_commands(
-                            server_id.clone(),
-                            context_server_store,
-                            cx,
-                        );
-                    }
-                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        if let Some(slash_command_ids) =
-                            self.context_server_slash_command_ids.remove(server_id)
-                        {
-                            self.slash_commands.remove(&slash_command_ids);
-                        }
-                    }
-                    _ => {}
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Running => {
+                self.load_context_server_slash_commands(
+                    server_id.clone(),
+                    context_server_store,
+                    cx,
+                );
+            }
+            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                if let Some(slash_command_ids) =
+                    self.context_server_slash_command_ids.remove(server_id)
+                {
+                    self.slash_commands.remove(&slash_command_ids);
                 }
             }
+            _ => {}
         }
     }
 

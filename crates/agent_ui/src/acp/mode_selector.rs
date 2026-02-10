@@ -190,7 +190,7 @@ impl Render for ModeSelector {
                                 h_flex()
                                     .gap_2()
                                     .justify_between()
-                                    .child(Label::new("Toggle Mode Menu"))
+                                    .child(Label::new("Change Mode"))
                                     .child(KeyBinding::for_action_in(
                                         &ToggleProfileSelector,
                                         &focus_handle,

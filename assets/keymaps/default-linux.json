@@ -301,6 +301,12 @@
     },
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl--": "pane::GoBack",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -322,6 +328,8 @@
       "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {

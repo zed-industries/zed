@@ -552,15 +552,16 @@ impl LanguageRegistry {
     }
 
     /// Adds paths to WASM grammar files, which can be loaded if needed.
-    pub fn register_wasm_grammars(
-        &self,
-        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, PathBuf)>,
-    ) {
+    pub fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        if grammars.is_empty() {
+            return;
+        }
+
         let mut state = self.state.write();
         state.grammars.extend(
             grammars
                 .into_iter()
-                .map(|(name, path)| (name.into(), AvailableGrammar::Unloaded(path))),
+                .map(|(name, path)| (name, AvailableGrammar::Unloaded(path))),
         );
         state.version += 1;
         state.reload_count += 1;
