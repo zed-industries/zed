@@ -3115,14 +3115,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow"
@@ -3176,14 +3168,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow",
@@ -3219,14 +3203,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "confirm"
@@ -3341,14 +3317,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow"
@@ -3379,14 +3347,6 @@ mod tests {
                 &r#"
                 {
                     "linux": {
-                        "agent_servers": {
-                            "claude": {
-                                "default_mode": "bypassPermissions"
-                            },
-                            "codex": {
-                                "default_mode": "full-access"
-                            }
-                        },
                         "agent": {
                             "tool_permissions": {
                                 "default": "allow"
@@ -3422,14 +3382,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow"
@@ -3512,14 +3464,6 @@ mod tests {
                 &r#"
                 {
                     "macos": {
-                        "agent_servers": {
-                            "claude": {
-                                "default_mode": "bypassPermissions"
-                            },
-                            "codex": {
-                                "default_mode": "full-access"
-                            }
-                        },
                         "agent": {
                             "tool_permissions": {
                                 "default": "allow"
@@ -3561,14 +3505,6 @@ mod tests {
                 {
                     "profiles": {
                         "work": {
-                            "agent_servers": {
-                                "claude": {
-                                    "default_mode": "bypassPermissions"
-                                },
-                                "codex": {
-                                    "default_mode": "full-access"
-                                }
-                            },
                             "agent": {
                                 "tool_permissions": {
                                     "default": "allow"
@@ -3644,14 +3580,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow"
@@ -3730,14 +3658,6 @@ mod tests {
             Some(
                 &r#"
                 {
-                    "agent_servers": {
-                        "claude": {
-                            "default_mode": "bypassPermissions"
-                        },
-                        "codex": {
-                            "default_mode": "full-access"
-                        }
-                    },
                     "agent": {
                         "tool_permissions": {
                             "default": "allow",
@@ -3799,7 +3719,7 @@ mod tests {
             None,
         );
 
-        // Don't override existing agent_servers default_mode values
+        // Existing agent_servers are left untouched
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3842,7 +3762,7 @@ mod tests {
             ),
         );
 
-        // Only override agent_servers entries that don't already have default_mode
+        // Existing agent_servers are left untouched even with partial entries
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
@@ -3869,9 +3789,6 @@ mod tests {
                         }
                     },
                     "agent_servers": {
-                        "codex": {
-                            "default_mode": "full-access"
-                        },
                         "claude": {
                             "default_mode": "plan"
                         }
@@ -3882,7 +3799,7 @@ mod tests {
             ),
         );
 
-        // always_allow_tool_actions: false does NOT set agent_servers default_mode
+        // always_allow_tool_actions: false leaves agent_servers untouched
         assert_migrate_settings_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
