@@ -2856,7 +2856,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
-        .update(|cx| connection_rc.new_thread(project, cwd, cx))
+        .update(|cx| connection_rc.new_session(project, cwd, cx))
         .await
         .expect("new_thread should succeed");
 

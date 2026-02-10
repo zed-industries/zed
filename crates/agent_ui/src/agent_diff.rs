@@ -1762,7 +1762,7 @@ mod tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
@@ -1943,7 +1943,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();

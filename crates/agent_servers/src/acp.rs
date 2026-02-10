@@ -365,7 +365,7 @@ impl AgentConnection for AcpConnection {
         self.telemetry_id.clone()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,

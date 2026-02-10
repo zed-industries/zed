@@ -30,7 +30,7 @@ impl UserMessageId {
 pub trait AgentConnection {
     fn telemetry_id(&self) -> SharedString;
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -59,11 +59,7 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(
-        self: Rc<Self>,
-        _session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Task<Result<()>> {
+    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -612,7 +608,7 @@ mod test_support {
             Some(self.model_selector_impl())
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,

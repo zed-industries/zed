@@ -1235,7 +1235,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         "zed".into()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -1266,11 +1266,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         true
     }
 
-    fn close_session(
-        self: Rc<Self>,
-        session_id: &acp::SessionId,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
+    fn close_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
         self.0.update(cx, |agent, _cx| {
             agent.sessions.remove(session_id);
         });
@@ -1945,7 +1941,7 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2023,7 +2019,7 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2123,7 +2119,7 @@ mod internal_tests {
 
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2239,7 +2235,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new("/a"), cx)
+                    .new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2346,7 +2342,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new("/a"), cx)
+                    .new_session(project.clone(), Path::new("/a"), cx)
             })
             .await
             .unwrap();
@@ -2442,7 +2438,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(""), cx)
+                    .new_session(project.clone(), Path::new(""), cx)
             })
             .await
             .unwrap();

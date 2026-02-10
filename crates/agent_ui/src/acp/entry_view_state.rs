@@ -447,7 +447,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/project")), cx)
+                    .new_session(project.clone(), Path::new(path!("/project")), cx)
             })
             .await
             .unwrap();

@@ -477,7 +477,7 @@ impl AcpServerView {
                 cx.update(|_, cx| {
                     connection
                         .clone()
-                        .new_thread(project.clone(), fallback_cwd.as_ref(), cx)
+                        .new_session(project.clone(), fallback_cwd.as_ref(), cx)
                 })
                 .log_err()
             };
@@ -3069,7 +3069,7 @@ pub(crate) mod tests {
             "resume-only".into()
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -3164,7 +3164,7 @@ pub(crate) mod tests {
             "saboteur".into()
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -3229,7 +3229,7 @@ pub(crate) mod tests {
             "refusal".into()
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,

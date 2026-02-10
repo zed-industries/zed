@@ -2624,7 +2624,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2688,7 +2688,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2776,7 +2776,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project.clone(), Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project.clone(), Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2887,7 +2887,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2981,7 +2981,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3062,7 +3062,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3103,7 +3103,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3178,7 +3178,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3252,7 +3252,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3300,7 +3300,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3391,7 +3391,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3450,7 +3450,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3623,7 +3623,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3699,7 +3699,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3772,7 +3772,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3899,7 +3899,7 @@ mod tests {
             &self.auth_methods
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -4005,7 +4005,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -4071,7 +4071,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -4384,7 +4384,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
