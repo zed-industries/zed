@@ -3017,7 +3017,20 @@ impl MultiBuffer {
         if !diffs.is_empty() {
             let mut diffs_to_add = Vec::new();
             for (id, diff) in diffs {
-                if diff.is_inverted || buffer_diff.get(id).is_none() {
+                // For inverted diffs, we excerpt the diff base texts in the multibuffer
+                // and use the diff hunk base text ranges to compute diff transforms.
+                // Those base text ranges are usize, so make sure if the base text changed
+                // we also update the diff snapshot so that we don't use stale offsets
+                if buffer_diff.get(id).is_none_or(|existing_diff| {
+                    if !existing_diff.is_inverted {
+                        return false;
+                    }
+                    let base_text = diff.diff.read(cx).base_text_buffer().read(cx);
+                    base_text.remote_id() != existing_diff.base_text().remote_id()
+                        || base_text
+                            .version()
+                            .changed_since(existing_diff.base_text().version())
+                }) {
                     if diffs_to_add.capacity() == 0 {
                         // we'd rather overallocate than reallocate as buffer diffs are quite big
                         // meaning re-allocations will be fairly expensive

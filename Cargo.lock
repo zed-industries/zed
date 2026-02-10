@@ -107,7 +107,6 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
- "semver",
  "smallvec",
  "ui",
  "util",
@@ -4929,6 +4928,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 name = "dev_container"
 version = "0.1.0"
 dependencies = [
+ "fs",
  "futures 0.3.31",
  "gpui",
  "http 1.3.1",
@@ -4938,6 +4938,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "picker",
+ "project",
  "serde",
  "serde_json",
  "settings",
@@ -4945,6 +4946,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -17246,9 +17248,11 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "release_channel",
  "remote",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "settings",
  "smallvec",

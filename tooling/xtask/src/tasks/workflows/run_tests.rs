@@ -5,8 +5,6 @@ use gh_workflow::{
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix,
-    runners::Arch,
     steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
@@ -33,16 +31,11 @@ pub(crate) fn run_tests() -> Workflow {
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
-    let should_build_nix = PathCondition::new(
-        "run_nix",
-        r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
-    );
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
-        &should_build_nix,
         &should_run_tests,
     ]);
 
@@ -61,22 +54,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
-        should_build_nix.guard(build_nix(
-            Platform::Linux,
-            Arch::X86_64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
-        should_build_nix.guard(build_nix(
-            Platform::Mac,
-            Arch::AARCH64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
     ];
     let tests_pass = tests_pass(&jobs);
 
