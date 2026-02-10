@@ -1340,7 +1340,7 @@ impl Thread {
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T, allowed_tool_names: Option<&Vec<&str>>) {
-        if allowed_tool_names.is_some_and(|tool_names| tool_names.contains(&T::NAME)) {
+        if allowed_tool_names.is_some_and(|tool_names| !tool_names.contains(&T::NAME)) {
             return;
         }
 

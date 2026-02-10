@@ -1608,6 +1608,20 @@ impl NativeThreadEnvironment {
             ));
         }
 
+        let allowed_tools = match allowed_tools {
+            Some(tools) => {
+                let parent_tool_names: std::collections::HashSet<&str> =
+                    parent_thread.tools.keys().map(|s| s.as_str()).collect();
+                Some(
+                    tools
+                        .into_iter()
+                        .filter(|t| parent_tool_names.contains(t.as_str()))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            None => Some(parent_thread.tools.keys().map(|s| s.to_string()).collect()),
+        };
+
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
             thread.set_title(label.into(), cx);

@@ -4468,6 +4468,150 @@ async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceede
 }
 
 #[gpui::test]
+async fn test_subagent_inherits_parent_thread_tools(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(ListDirectoryTool::new(project.clone()), None);
+        thread.add_tool(GrepTool::new(project.clone()), None);
+        thread
+    });
+
+    let _subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(10)),
+                None,
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    cx.run_until_parked();
+
+    let tools = model
+        .pending_completions()
+        .last()
+        .unwrap()
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(tools.len(), 2);
+    assert!(tools.contains(&"grep".to_string()));
+    assert!(tools.contains(&"list_directory".to_string()));
+}
+
+#[gpui::test]
+async fn test_subagent_tool_restricts_tool_access(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(ListDirectoryTool::new(project.clone()), None);
+        thread.add_tool(GrepTool::new(project.clone()), None);
+        thread
+    });
+
+    let _subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(10)),
+                Some(vec!["grep".to_string()]),
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    cx.run_until_parked();
+
+    let tools = model
+        .pending_completions()
+        .last()
+        .unwrap()
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(tools, vec!["grep"]);
+}
+
+#[gpui::test]
 async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     init_test(cx);
 
