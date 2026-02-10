@@ -746,7 +746,7 @@ wax = "0.7"
 which = "6.0.0"
 wgpu = "28.0"
 windows-core = "0.61"
-yawc = "0.2.5"
+yawc = "0.3.2"
 zeroize = "1.8"
 zstd = "0.11"
 

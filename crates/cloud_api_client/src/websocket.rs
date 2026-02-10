@@ -4,30 +4,28 @@ use std::time::Duration;
 use anyhow::Result;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use futures::channel::mpsc::unbounded;
-use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt as _, SinkExt as _, Stream, StreamExt as _, TryStreamExt as _, pin_mut};
 use gpui::{App, BackgroundExecutor, Task};
-use yawc::WebSocket;
-use yawc::frame::{FrameView, OpCode};
+use tokio::net::TcpStream;
+use yawc::frame::{Frame, OpCode};
+use yawc::{MaybeTlsStream, WebSocket};
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type MessageStream = Pin<Box<dyn Stream<Item = Result<MessageToClient>>>>;
 
-pub struct Connection {
-    tx: SplitSink<WebSocket, FrameView>,
-    rx: SplitStream<WebSocket>,
-}
+/// Wrapper around a [`WebSocket`] which provides [`spawn`](Self::spawn) method.
+///
+/// This allows handling a [`tokio`] based websocket using a [`gpui::Task`].
+pub struct Connection(WebSocket<MaybeTlsStream<TcpStream>>);
 
 impl Connection {
-    pub fn new(ws: WebSocket) -> Self {
-        let (tx, rx) = ws.split();
-
-        Self { tx, rx }
+    pub fn new(ws: WebSocket<MaybeTlsStream<TcpStream>>) -> Self {
+        Self(ws)
     }
 
     pub fn spawn(self, cx: &App) -> (MessageStream, Task<()>) {
-        let (mut tx, rx) = (self.tx, self.rx);
+        let (mut tx, rx) = self.0.split();
 
         let (message_tx, message_rx) = unbounded();
 
@@ -42,7 +40,7 @@ impl Connection {
             loop {
                 futures::select_biased! {
                     _ = keepalive_timer => {
-                        let _ = tx.send(FrameView::ping(Vec::new())).await;
+                        let _ = tx.send(Frame::ping(Vec::new())).await;
 
                         keepalive_timer.set(executor.timer(KEEPALIVE_INTERVAL).fuse());
                     }
@@ -51,9 +49,9 @@ impl Connection {
                             break;
                         };
 
-                        match frame.opcode {
+                        match frame.opcode() {
                             OpCode::Binary => {
-                                let message_result = MessageToClient::deserialize(&frame.payload);
+                                let message_result = MessageToClient::deserialize(frame.payload());
                                 message_tx.unbounded_send(message_result).ok();
                             }
                             OpCode::Close => {

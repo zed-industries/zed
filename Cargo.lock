@@ -3035,6 +3035,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "tokio",
  "yawc",
 ]
 
@@ -15687,7 +15688,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "webpki-roots",
+ "webpki-roots 0.26.8",
 ]
 
 [[package]]
@@ -19337,6 +19338,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpki-roots"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "webrtc-sys"
 version = "0.3.7"
 source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
@@ -20921,23 +20931,25 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yawc"
-version = "0.2.5"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19a5d82922135b4ae73a079a4ffb5501e9aadb4d785b8c660eaa0a8b899028c5"
+checksum = "d25369b50bd99f0497f3e012fe8804b73ad83d1db66087e55983b1ec3971e9db"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.11.1",
  "flate2",
  "futures 0.3.31",
+ "getrandom 0.2.16",
  "http-body-util",
  "hyper 1.7.0",
  "hyper-util",
  "js-sys",
+ "log",
  "nom 8.0.0",
  "pin-project",
  "rand 0.8.5",
  "sha1",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-rustls 0.26.2",
  "tokio-util",
@@ -20945,7 +20957,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.6",
 ]
 
 [[package]]
