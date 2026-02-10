@@ -56,24 +56,21 @@ fn migrate_agent_tool_permissions(agent: &mut Value) -> Result<()> {
     if should_migrate_always_allow {
         let tool_permissions = agent_object
             .entry("tool_permissions")
-            .or_insert_with(|| Value::Object(Default::default()));
+            .or_insert(Value::Null);
 
-        let tool_permissions_object = match tool_permissions {
-            Value::Object(map) => map,
-            Value::Null => {
-                *tool_permissions = Value::Object(Default::default());
-                match tool_permissions {
-                    Value::Object(map) => map,
-                    _ => bail!(
-                        "agent.tool_permissions should be an object or null when migrating \
-                         always_allow_tool_actions"
-                    ),
-                }
-            }
+        let tool_permissions_map = match std::mem::take(tool_permissions) {
+            Value::Object(map) => Some(map),
+            Value::Null => None,
             _ => bail!(
                 "agent.tool_permissions should be an object or null when migrating \
                  always_allow_tool_actions"
             ),
+        }
+        .unwrap_or_default();
+
+        *tool_permissions = Value::Object(tool_permissions_map);
+        let Value::Object(tool_permissions_object) = tool_permissions else {
+            unreachable!("tool_permissions just set to an object");
         };
 
         if !tool_permissions_object.contains_key("default")
