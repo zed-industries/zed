@@ -4324,14 +4324,109 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppContext) {
-    assert!(false, "todo");
-}
-
-#[gpui::test]
 async fn test_subagent_tool_includes_context_low_prompt_when_timeout_is_exceeded(
     cx: &mut TestAppContext,
 ) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(100)),
+                None,
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    let summary_task = subagent_handle.wait_for_summary(
+        "summary prompt".to_string(),
+        "context low prompt".to_string(),
+        &cx.to_async(),
+    );
+
+    cx.run_until_parked();
+
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        // Ensure that model received a system prompt
+        assert_eq!(messages[0].role, Role::System);
+        // Ensure that model received a task prompt
+        assert_eq!(
+            messages[1].content,
+            vec![MessageContent::Text("task prompt".to_string())]
+        );
+    }
+
+    // Don't complete the initial model stream — let the timeout expire instead.
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    // After the timeout fires, the thread is cancelled and context_low_prompt is sent
+    // instead of the summary_prompt.
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        let last_user_message = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .unwrap();
+        assert_eq!(
+            last_user_message.content,
+            vec![MessageContent::Text("context low prompt".to_string())]
+        );
+    }
+
+    model.send_last_completion_stream_text_chunk("Some context low response...");
+    model.end_last_completion_stream();
+
+    let result = summary_task.await;
+    assert_eq!(result.unwrap(), "Some context low response...\n");
+}
+
+#[gpui::test]
+async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppContext) {
     assert!(false, "todo");
 }
 

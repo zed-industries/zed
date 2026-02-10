@@ -1632,17 +1632,20 @@ impl NativeThreadEnvironment {
 
         let task = acp_thread.update(cx, |agent, cx| agent.send(vec![initial_prompt.into()], cx));
 
-        let wait_for_prompt_to_complete = cx.background_spawn(async move {
-                if let Some(timeout) = timeout {
+        let timeout_timer = timeout.map(|d| cx.background_executor().timer(d));
+        let wait_for_prompt_to_complete = cx
+            .background_spawn(async move {
+                if let Some(timer) = timeout_timer {
                     futures::select! {
-                        _ = future::FutureExt::fuse(smol::Timer::after(timeout)) => SubagentInitialPromptResult::Timeout,
+                        _ = timer.fuse() => SubagentInitialPromptResult::Timeout,
                         _ = task.fuse() => SubagentInitialPromptResult::Completed,
                     }
                 } else {
                     task.await.log_err();
                     SubagentInitialPromptResult::Completed
                 }
-            }).shared();
+            })
+            .shared();
 
         let mut user_stop_rx: watch::Receiver<bool> =
             acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
