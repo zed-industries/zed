@@ -161,16 +161,7 @@ fn use_podman(cx: &mut AsyncWindowContext) -> bool {
 
 /// Finds all available devcontainer configurations in the project.
 ///
-/// Per the devcontainer spec, configurations are searched in this order of precedence:
-/// 1. `.devcontainer/devcontainer.json` (the default location)
-/// 2. `.devcontainer.json` in the project root (used as default when #1 is absent)
-/// 3. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
-///
-/// `.devcontainer/devcontainer.json` and `.devcontainer.json` both serve as the
-/// "default" config — only the higher-precedence one is included. Subfolder
-/// configs are always returned alongside whichever default is found.
-///
-/// Returns a list of found configurations, or an empty list if none are found.
+/// See [`find_configs_in_snapshot`] for the locations that are scanned.
 pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContainerConfig> {
     let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
         log::debug!("find_devcontainer_configs: No workspace found");
@@ -201,14 +192,12 @@ pub fn find_devcontainer_configs(cx: &mut AsyncWindowContext) -> Vec<DevContaine
 
 /// Scans a worktree snapshot for devcontainer configurations.
 ///
-/// Per the devcontainer spec, configurations are searched in this order of precedence:
+/// Scans for configurations in these locations:
 /// 1. `.devcontainer/devcontainer.json` (the default location)
-/// 2. `.devcontainer.json` in the project root (used as default when #1 is absent)
+/// 2. `.devcontainer.json` in the project root
 /// 3. `.devcontainer/<subfolder>/devcontainer.json` (named configurations)
 ///
-/// `.devcontainer/devcontainer.json` and `.devcontainer.json` both serve as the
-/// "default" config — only the higher-precedence one is included. Subfolder
-/// configs are always returned alongside whichever default is found.
+/// All found configurations are returned so the user can pick between them.
 pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> {
     let mut configs = Vec::new();
 
