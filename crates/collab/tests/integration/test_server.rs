@@ -585,8 +585,6 @@ impl TestServer {
                 blob_store_secret_key: None,
                 blob_store_bucket: None,
                 zed_client_checksum_seed: None,
-                auto_join_channel_id: None,
-                migrations_path: None,
                 seed_path: None,
                 kinesis_region: None,
                 kinesis_stream: None,

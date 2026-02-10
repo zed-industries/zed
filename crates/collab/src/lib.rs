@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use db::{ChannelId, Database};
+use db::Database;
 use executor::Executor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
@@ -115,7 +115,6 @@ impl std::error::Error for Error {}
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
-    pub migrations_path: Option<PathBuf>,
     pub seed_path: Option<PathBuf>,
     pub database_max_connections: u32,
     pub api_token: String,
@@ -135,7 +134,6 @@ pub struct Config {
     pub kinesis_secret_key: Option<String>,
     pub zed_environment: Arc<str>,
     pub zed_client_checksum_seed: Option<String>,
-    pub auto_join_channel_id: Option<ChannelId>,
 }
 
 impl Config {
@@ -171,8 +169,6 @@ impl Config {
             blob_store_secret_key: None,
             blob_store_bucket: None,
             zed_client_checksum_seed: None,
-            auto_join_channel_id: None,
-            migrations_path: None,
             seed_path: None,
             kinesis_region: None,
             kinesis_access_key: None,
