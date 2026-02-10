@@ -2773,8 +2773,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
@@ -2824,8 +2825,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
@@ -2875,8 +2877,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
