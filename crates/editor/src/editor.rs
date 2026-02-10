@@ -16051,8 +16051,7 @@ impl Editor {
                 // previous line so `*/` doesn't land on the next line.
                 if end_point.column == 0 && end_point.row > start_point.row {
                     end_point.row -= 1;
-                    end_point.column =
-                        snapshot.line_len(MultiBufferRow(end_point.row));
+                    end_point.column = snapshot.line_len(MultiBufferRow(end_point.row));
                 }
 
                 let language = if let Some(language) =
