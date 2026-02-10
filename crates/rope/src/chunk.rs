@@ -1184,17 +1184,11 @@ mod tests {
         let slice = chunk.as_slice();
 
         // Clipping on row 0 (row_offset_range.start == 0, so relative == absolute)
-        assert_eq!(
-            slice.point_utf16_to_offset(PointUtf16::new(0, 99), true),
-            3,
-        );
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(0, 99), true), 3,);
 
         // Clipping on row 1 — this is the case that was buggy.
         // Row 1 starts at byte offset 4 ("de" is bytes 4..6), so the
         // clipped result must be 6, not 2.
-        assert_eq!(
-            slice.point_utf16_to_offset(PointUtf16::new(1, 99), true),
-            6,
-        );
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(1, 99), true), 6,);
     }
 }
