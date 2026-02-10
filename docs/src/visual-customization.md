@@ -438,7 +438,16 @@ TBD: Centered layout related settings
 
 ## Project Panel
 
-Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
+Project panel can be shown/hidden with
+{#action project_panel::ToggleFocus}
+({#kb project_panel::ToggleFocus}) or with
+{#action pane::RevealInProjectPanel}
+({#kb pane::RevealInProjectPanel}).
+
+To force the project panel to re-scan all worktrees and
+pick up external file system changes, use
+{#action project_panel::RescanWorktrees}
+({#kb project_panel::RescanWorktrees}).
 
 ```json [settings]
   // Project Panel Settings

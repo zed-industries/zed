@@ -364,6 +364,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Forces a re-scan of all local worktrees and refreshes the project panel.
+        RescanWorktrees,
     ]
 );
 
@@ -479,6 +481,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, action: &Delete, window, cx| {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| panel.delete(action, window, cx));
+            }
+        });
+
+        workspace.register_action(|workspace, action: &RescanWorktrees, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.rescan_worktrees(action, window, cx);
+                });
             }
         });
 
@@ -1477,6 +1487,26 @@ impl ProjectPanel {
 
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
+    }
+
+    fn rescan_worktrees(
+        &mut self,
+        _: &RescanWorktrees,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let worktrees = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        for worktree in worktrees {
+            worktree.update(cx, |worktree, _cx| {
+                if let Some(local) = worktree.as_local() {
+                    local.refresh_entries_for_paths(vec![RelPath::empty().into()]);
+                }
+            });
+        }
     }
 
     fn toggle_expanded(
