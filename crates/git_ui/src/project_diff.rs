@@ -360,13 +360,16 @@ impl ProjectDiff {
         );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            let is_tree_view = GitPanelSettings::get_global(cx).tree_view;
             let is_collapse_untracked_diff =
                 GitPanelSettings::get_global(cx).collapse_untracked_diff;
             if is_sort_by_path != was_sort_by_path
+                || is_tree_view != was_tree_view
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
                 this._task = {
@@ -377,6 +380,7 @@ impl ProjectDiff {
                 }
             }
             was_sort_by_path = is_sort_by_path;
+            was_tree_view = is_tree_view;
             was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
@@ -414,11 +418,27 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.branch_diff.read(cx).repo() else {
+        let Some(git_repo) = self.branch_diff.read(cx).repo().cloned() else {
             return;
         };
+
+        let tree_order_map = if GitPanelSettings::get_global(cx).tree_view {
+            let buffers = self
+                .branch_diff
+                .update(cx, |branch_diff, cx| branch_diff.load_buffers(cx));
+            Some(build_tree_order_map(&buffers))
+        } else {
+            None
+        };
+
         let repo = git_repo.read(cx);
-        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let sort_prefix = sort_prefix(
+            repo,
+            &entry.repo_path,
+            entry.status,
+            tree_order_map.as_ref(),
+            cx,
+        );
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
@@ -430,7 +450,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.branch_diff.read(cx).repo() else {
+        let Some(git_repo) = self.branch_diff.read(cx).repo().cloned() else {
             return;
         };
         let Some(repo_path) = git_repo
@@ -444,7 +464,23 @@ impl ProjectDiff {
             .status_for_path(&repo_path)
             .map(|entry| entry.status)
             .unwrap_or(FileStatus::Untracked);
-        let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
+
+        let tree_order_map = if GitPanelSettings::get_global(cx).tree_view {
+            let buffers = self
+                .branch_diff
+                .update(cx, |branch_diff, cx| branch_diff.load_buffers(cx));
+            Some(build_tree_order_map(&buffers))
+        } else {
+            None
+        };
+
+        let sort_prefix = sort_prefix(
+            &git_repo.read(cx),
+            &repo_path,
+            status,
+            tree_order_map.as_ref(),
+            cx,
+        );
         let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
         self.move_to_path(path_key, window, cx)
     }
@@ -729,10 +765,21 @@ impl ProjectDiff {
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
+                let tree_order_map = if GitPanelSettings::get_global(cx).tree_view {
+                    Some(build_tree_order_map(&buffers_to_load))
+                } else {
+                    None
+                };
 
                 path_keys = Vec::with_capacity(buffers_to_load.len());
                 for entry in buffers_to_load.iter() {
-                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let sort_prefix = sort_prefix(
+                        &repo,
+                        &entry.repo_path,
+                        entry.file_status,
+                        tree_order_map.as_ref(),
+                        cx,
+                    );
                     let path_key =
                         PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
                     previous_paths.remove(&path_key);
@@ -812,10 +859,78 @@ impl ProjectDiff {
     }
 }
 
-fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+fn build_tree_order_map(
+    entries: &[project::git_store::branch_diff::DiffBuffer],
+) -> HashMap<Arc<RelPath>, u64> {
+    use collections::BTreeMap;
+    let mut sorted_entries: Vec<_> = entries.iter().collect();
+    sorted_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+    #[derive(Default)]
+    struct TreeNode {
+        children: BTreeMap<String, TreeNode>,
+        file_indices: Vec<Arc<RelPath>>,
+    }
+
+    let mut root = TreeNode::default();
+    for entry in sorted_entries.iter() {
+        let components: Vec<&str> = entry.repo_path.components().collect();
+        if components.is_empty() {
+            root.file_indices.push(entry.repo_path.as_ref().clone());
+            continue;
+        }
+
+        let mut current = &mut root;
+        for (i, component) in components.iter().enumerate() {
+            if i == components.len() - 1 {
+                current.file_indices.push(entry.repo_path.as_ref().clone());
+            } else {
+                current = current
+                    .children
+                    .entry(component.to_string())
+                    .or_insert_with(TreeNode::default);
+            }
+        }
+    }
+
+    let mut result = HashMap::default();
+    let mut counter = 0u64;
+
+    fn traverse(node: &TreeNode, result: &mut HashMap<Arc<RelPath>, u64>, counter: &mut u64) {
+        for child in node.children.values() {
+            traverse(child, result, counter);
+        }
+
+        for path in &node.file_indices {
+            result.insert(path.clone(), *counter);
+            *counter += 1;
+        }
+    }
+
+    traverse(&root, &mut result, &mut counter);
+    result
+}
+
+fn sort_prefix(
+    repo: &Repository,
+    repo_path: &RepoPath,
+    status: FileStatus,
+    tree_order_map: Option<&HashMap<Arc<RelPath>, u64>>,
+    cx: &App,
+) -> u64 {
     let settings = GitPanelSettings::get_global(cx);
 
-    if settings.sort_by_path && !settings.tree_view {
+    if settings.tree_view {
+        if let Some(map) = tree_order_map {
+            if let Some(&index) = map.get(repo_path.as_ref()) {
+                return index;
+            }
+        }
+
+        return u64::MAX;
+    }
+
+    if settings.sort_by_path {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX
