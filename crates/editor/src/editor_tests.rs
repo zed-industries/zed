@@ -24204,6 +24204,159 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_goto_definition_autoscroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Generate enough lines so the definition target is well off screen,
+    // with plenty of lines both above and below the target to avoid
+    // scroll clamping at the buffer edges.
+    let line_count: u32 = 200;
+    let target_line: u32 = 100;
+    let mut source = String::new();
+    source.push_str("fn ˇcaller() { callee(); }\n");
+    for i in 1..line_count - 1 {
+        if i == target_line {
+            source.push_str("fn callee() {}\n");
+        } else {
+            source.push_str(&format!("// line {i}\n"));
+        }
+    }
+    source.push_str("// end\n");
+    cx.set_state(&source);
+
+    // The LSP always returns the definition at the target line.
+    cx.lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(move |params, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                uri: params.text_document_position_params.text_document.uri,
+                range: lsp::Range::new(
+                    lsp::Position::new(target_line, 3),
+                    lsp::Position::new(target_line, 9),
+                ),
+            })))
+        });
+
+    // Size the window to show ~10 lines.
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let visible_lines = 10.0_f64;
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), visible_lines as f32 * line_height));
+
+    // Helper: reset cursor to line 0, navigate to definition, return scroll y.
+    async fn navigate_and_get_scroll(cx: &mut EditorLspTestContext) -> f64 {
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
+            });
+        });
+        cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+            .await
+            .expect("go_to_definition should succeed");
+        cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position().y)
+    }
+
+    // Collect scroll positions for each strategy.
+    let mut scroll_positions: Vec<(&str, f64)> = Vec::new();
+
+    let strategies = [
+        (
+            "top",
+            GoToDefinitionAutoscroll::Simple(GoToDefinitionAutoscrollStrategy::Top),
+        ),
+        (
+            "center",
+            GoToDefinitionAutoscroll::Simple(GoToDefinitionAutoscrollStrategy::Center),
+        ),
+        (
+            "bottom",
+            GoToDefinitionAutoscroll::Simple(GoToDefinitionAutoscrollStrategy::Bottom),
+        ),
+        (
+            "top_relative(3)",
+            GoToDefinitionAutoscroll::WithOffset {
+                strategy: "top_relative".to_string(),
+                offset: 3,
+            },
+        ),
+        (
+            "center_relative(-3)",
+            GoToDefinitionAutoscroll::WithOffset {
+                strategy: "center_relative".to_string(),
+                offset: -3,
+            },
+        ),
+        (
+            "center_relative(3)",
+            GoToDefinitionAutoscroll::WithOffset {
+                strategy: "center_relative".to_string(),
+                offset: 3,
+            },
+        ),
+    ];
+
+    for (name, autoscroll) in strategies {
+        cx.update_editor(|_, _, cx| {
+            let mut settings = EditorSettings::get_global(cx).clone();
+            settings.go_to_definition_autoscroll = autoscroll;
+            EditorSettings::override_global(settings, cx);
+        });
+        let scroll_y = navigate_and_get_scroll(&mut cx).await;
+        scroll_positions.push((name, scroll_y));
+    }
+
+    let get = |name: &str| -> f64 { scroll_positions.iter().find(|(n, _)| *n == name).unwrap().1 };
+
+    // "top" scrolls the most (target near row 0 of viewport).
+    // "bottom" scrolls the least (target near last row of viewport).
+    // "center" should be between top and bottom.
+    assert!(
+        get("top") > get("center"),
+        "top (scroll_y={}) should scroll more than center (scroll_y={})",
+        get("top"),
+        get("center"),
+    );
+    assert!(
+        get("center") > get("bottom"),
+        "center (scroll_y={}) should scroll more than bottom (scroll_y={})",
+        get("center"),
+        get("bottom"),
+    );
+
+    // "top_relative(3)" should place the target 3 lines from top,
+    // so it scrolls less than "top" (which places it at row 0).
+    assert!(
+        get("top") > get("top_relative(3)"),
+        "top (scroll_y={}) should scroll more than top_relative(3) (scroll_y={})",
+        get("top"),
+        get("top_relative(3)"),
+    );
+
+    // center_relative: negative offset places the target above center (higher scroll_y),
+    // positive offset places it below center (lower scroll_y).
+    assert!(
+        get("center_relative(-3)") > get("center_relative(3)"),
+        "center_relative(-3) (scroll_y={}) should scroll more than center_relative(3) (scroll_y={})",
+        get("center_relative(-3)"),
+        get("center_relative(3)"),
+    );
+}
+
+#[gpui::test]
 async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
