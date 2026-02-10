@@ -179,7 +179,7 @@ where
         source_buffer: &'a text::BufferSnapshot,
         target_buffer: &'a text::BufferSnapshot,
         buffer_point_range: Range<Point>,
-        source_context_range: Range<text::Anchor>,
+        source_context_range: Range<Point>,
     }
 
     let mut result = Vec::new();
@@ -213,7 +213,6 @@ where
                 target_snapshot,
                 excerpt.source_excerpt_id,
                 excerpt.target_excerpt_id,
-                excerpt.source_buffer,
                 excerpt.target_buffer,
                 excerpt.source_context_range,
                 &patch,
@@ -241,12 +240,14 @@ where
         }
 
         let buffer_point_range = buffer_offset_range.to_point(source_buffer);
-        let context_start = source_context_range.start.to_point(source_buffer);
-        let context_end = source_context_range.end.to_point(source_buffer);
+        let source_context_range = source_context_range.to_point(source_buffer);
 
-        union_context_start =
-            Some(union_context_start.map_or(context_start, |s| s.min(context_start)));
-        union_context_end = Some(union_context_end.map_or(context_end, |e| e.max(context_end)));
+        union_context_start = Some(union_context_start.map_or(source_context_range.start, |s| {
+            s.min(source_context_range.start)
+        }));
+        union_context_end = Some(union_context_end.map_or(source_context_range.end, |e| {
+            e.max(source_context_range.end)
+        }));
 
         pending_excerpts.push(PendingExcerpt {
             source_excerpt_id,
@@ -270,9 +271,8 @@ fn patch_for_excerpt(
     target_snapshot: &MultiBufferSnapshot,
     source_excerpt_id: ExcerptId,
     target_excerpt_id: ExcerptId,
-    source_buffer: &text::BufferSnapshot,
     target_buffer: &text::BufferSnapshot,
-    source_context_range: Range<text::Anchor>,
+    source_context_range: Range<Point>,
     patch: &Patch<Point>,
     source_edited_range: Range<Point>,
 ) -> CompanionExcerptPatch {
@@ -280,8 +280,8 @@ fn patch_for_excerpt(
         .range_for_excerpt(source_excerpt_id)
         .unwrap();
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
-    let source_excerpt_start_in_buffer = source_context_range.start.to_point(&source_buffer);
-    let source_excerpt_end_in_buffer = source_context_range.end.to_point(&source_buffer);
+    let source_excerpt_start_in_buffer = source_context_range.start;
+    let source_excerpt_end_in_buffer = source_context_range.end;
     let target_multibuffer_range = target_snapshot
         .range_for_excerpt(target_excerpt_id)
         .unwrap();
