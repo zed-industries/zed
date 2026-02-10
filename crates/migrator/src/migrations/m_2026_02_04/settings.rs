@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::Value;
 
 use crate::migrations::migrate_settings;
@@ -8,51 +8,11 @@ pub fn migrate_tool_permission_defaults(value: &mut Value) -> Result<()> {
 }
 
 fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
-    // Check if always_allow_tool_actions was true BEFORE the migration removes it.
-    // We need this to also set default modes for ACP agent servers (Claude Code, Codex)
-    // so that their auto-accept behavior is preserved.
-    let had_always_allow = obj
-        .get("agent")
-        .and_then(|a| a.get("always_allow_tool_actions"))
-        .and_then(|v| v.as_bool())
-        == Some(true);
-
     if let Some(agent) = obj.get_mut("agent") {
         migrate_agent_with_profiles(agent)?;
     }
 
-    if had_always_allow {
-        set_agent_server_default_mode(obj, "claude", "bypassPermissions");
-        set_agent_server_default_mode(obj, "codex", "full-access");
-    }
-
     Ok(())
-}
-
-fn set_agent_server_default_mode(
-    obj: &mut serde_json::Map<String, Value>,
-    server_name: &str,
-    mode: &str,
-) {
-    let agent_servers = obj
-        .entry("agent_servers")
-        .or_insert_with(|| Value::Object(Default::default()));
-
-    let Some(agent_servers_object) = agent_servers.as_object_mut() else {
-        return;
-    };
-
-    let server = agent_servers_object
-        .entry(server_name)
-        .or_insert_with(|| Value::Object(Default::default()));
-
-    let Some(server_object) = server.as_object_mut() else {
-        return;
-    };
-
-    if !server_object.contains_key("default_mode") {
-        server_object.insert("default_mode".to_string(), Value::String(mode.to_string()));
-    }
 }
 
 fn migrate_agent_with_profiles(agent: &mut Value) -> Result<()> {
@@ -97,14 +57,22 @@ fn migrate_agent_tool_permissions(agent: &mut Value) -> Result<()> {
             .entry("tool_permissions")
             .or_insert_with(|| Value::Object(Default::default()));
 
-        // If tool_permissions exists but isn't an object (e.g. null), replace it
-        // so we don't silently drop the user's always_allow preference.
-        if !tool_permissions.is_object() {
-            *tool_permissions = Value::Object(Default::default());
-        }
-
-        let Some(tool_permissions_object) = tool_permissions.as_object_mut() else {
-            return Ok(());
+        let tool_permissions_object = match tool_permissions {
+            Value::Object(map) => map,
+            Value::Null => {
+                *tool_permissions = Value::Object(Default::default());
+                match tool_permissions {
+                    Value::Object(map) => map,
+                    _ => bail!(
+                        "agent.tool_permissions should be an object or null when migrating \
+                         always_allow_tool_actions"
+                    ),
+                }
+            }
+            _ => bail!(
+                "agent.tool_permissions should be an object or null when migrating \
+                 always_allow_tool_actions"
+            ),
         };
 
         if !tool_permissions_object.contains_key("default")
