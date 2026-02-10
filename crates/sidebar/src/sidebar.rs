@@ -63,6 +63,7 @@ impl WorkspaceThreadEntry {
 
         let worktrees: Vec<_> = workspace_ref
             .worktrees(cx)
+            .filter(|worktree| worktree.read(cx).is_visible())
             .map(|worktree| worktree.read(cx).abs_path())
             .collect();
 
