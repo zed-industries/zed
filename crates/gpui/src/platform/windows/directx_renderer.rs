@@ -34,6 +34,7 @@ const PATH_MULTISAMPLE_COUNT: u32 = 4;
 pub(crate) struct FontInfo {
     pub gamma_ratios: [f32; 4],
     pub grayscale_enhanced_contrast: f32,
+    pub subpixel_enhanced_contrast: f32,
 }
 
 pub(crate) struct DirectXRenderer {
@@ -89,6 +90,7 @@ struct DirectXRenderPipelines {
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
+    subpixel_sprites: PipelineState<SubpixelSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
 }
 
@@ -181,7 +183,7 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    fn pre_draw(&self) -> Result<()> {
+    fn pre_draw(&self, clear_color: &[f32; 4]) -> Result<()> {
         let resources = self.resources.as_ref().expect("resources missing");
         let device_context = &self
             .devices
@@ -195,7 +197,7 @@ impl DirectXRenderer {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
                 grayscale_enhanced_contrast: self.font_info.grayscale_enhanced_contrast,
-                _pad: 0,
+                subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
             }],
         )?;
         unsafe {
@@ -204,7 +206,7 @@ impl DirectXRenderer {
                     .render_target_view
                     .as_ref()
                     .context("missing render target view")?,
-                &[0.0; 4],
+                clear_color,
             );
             device_context
                 .OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
@@ -299,40 +301,53 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+    pub(crate) fn draw(
+        &mut self,
+        scene: &Scene,
+        background_appearance: WindowBackgroundAppearance,
+    ) -> Result<()> {
         if self.skip_draws {
             // skip drawing this frame, we just recovered from a device lost event
             // and so likely do not have the textures anymore that are required for drawing
             return Ok(());
         }
-        self.pre_draw()?;
+        self.pre_draw(&match background_appearance {
+            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
+            _ => [0.0f32; 4],
+        })?;
+
+        self.upload_scene_buffers(scene)?;
+
         for batch in scene.batches() {
             match batch {
-                PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
-                PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
-                PrimitiveBatch::Paths(paths) => {
+                PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
+                PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                PrimitiveBatch::Paths(range) => {
+                    let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
                     self.draw_paths_from_intermediate(paths)
                 }
-                PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
-                PrimitiveBatch::MonochromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_monochrome_sprites(texture_id, sprites),
-                PrimitiveBatch::PolychromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_polychrome_sprites(texture_id, sprites),
-                PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(surfaces),
+                PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
+                PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                    self.draw_monochrome_sprites(texture_id, range.start, range.len())
+                }
+                PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                    self.draw_subpixel_sprites(texture_id, range.start, range.len())
+                }
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                    self.draw_polychrome_sprites(texture_id, range.start, range.len())
+                }
+                PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
             .context(format!(
                 "scene too large:\
-                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
                 scene.paths.len(),
                 scene.shadows.len(),
                 scene.quads.len(),
                 scene.underlines.len(),
                 scene.monochrome_sprites.len(),
+                scene.subpixel_sprites.len(),
                 scene.polychrome_sprites.len(),
                 scene.surfaces.len(),
             ))?;
@@ -384,17 +399,67 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
-        if shadows.is_empty() {
+    fn upload_scene_buffers(&mut self, scene: &Scene) -> Result<()> {
+        let devices = self.devices.as_ref().context("devices missing")?;
+
+        if !scene.shadows.is_empty() {
+            self.pipelines.shadow_pipeline.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.shadows,
+            )?;
+        }
+
+        if !scene.quads.is_empty() {
+            self.pipelines.quad_pipeline.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.quads,
+            )?;
+        }
+
+        if !scene.underlines.is_empty() {
+            self.pipelines.underline_pipeline.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.underlines,
+            )?;
+        }
+
+        if !scene.monochrome_sprites.is_empty() {
+            self.pipelines.mono_sprites.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.monochrome_sprites,
+            )?;
+        }
+
+        if !scene.subpixel_sprites.is_empty() {
+            self.pipelines.subpixel_sprites.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.subpixel_sprites,
+            )?;
+        }
+
+        if !scene.polychrome_sprites.is_empty() {
+            self.pipelines.poly_sprites.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.polychrome_sprites,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn draw_shadows(&mut self, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.shadow_pipeline.update_buffer(
+        self.pipelines.shadow_pipeline.draw_range(
             &devices.device,
-            &devices.device_context,
-            shadows,
-        )?;
-        self.pipelines.shadow_pipeline.draw(
             &devices.device_context,
             slice::from_ref(
                 &self
@@ -404,23 +469,19 @@ impl DirectXRenderer {
                     .viewport,
             ),
             slice::from_ref(&self.globals.global_params_buffer),
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
-            shadows.len() as u32,
+            start as u32,
+            len as u32,
         )
     }
 
-    fn draw_quads(&mut self, quads: &[Quad]) -> Result<()> {
-        if quads.is_empty() {
+    fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
-        self.pipelines.quad_pipeline.update_buffer(
+        self.pipelines.quad_pipeline.draw_range(
             &devices.device,
-            &devices.device_context,
-            quads,
-        )?;
-        self.pipelines.quad_pipeline.draw(
             &devices.device_context,
             slice::from_ref(
                 &self
@@ -430,9 +491,9 @@ impl DirectXRenderer {
                     .viewport,
             ),
             slice::from_ref(&self.globals.global_params_buffer),
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
-            quads.len() as u32,
+            start as u32,
+            len as u32,
         )
     }
 
@@ -547,77 +608,92 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_underlines(&mut self, underlines: &[Underline]) -> Result<()> {
-        if underlines.is_empty() {
+    fn draw_underlines(&mut self, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.underline_pipeline.update_buffer(
+        self.pipelines.underline_pipeline.draw_range(
             &devices.device,
-            &devices.device_context,
-            underlines,
-        )?;
-        self.pipelines.underline_pipeline.draw(
             &devices.device_context,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
             4,
-            underlines.len() as u32,
+            start as u32,
+            len as u32,
         )
     }
 
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
-        sprites: &[MonochromeSprite],
+        start: usize,
+        len: usize,
     ) -> Result<()> {
-        if sprites.is_empty() {
+        if len == 0 {
             return Ok(());
         }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.mono_sprites.update_buffer(
-            &devices.device,
-            &devices.device_context,
-            sprites,
-        )?;
         let texture_view = self.atlas.get_texture_view(texture_id);
-        self.pipelines.mono_sprites.draw_with_texture(
+        self.pipelines.mono_sprites.draw_range_with_texture(
+            &devices.device,
             &devices.device_context,
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
-            sprites.len() as u32,
+            start as u32,
+            len as u32,
+        )
+    }
+
+    fn draw_subpixel_sprites(
+        &mut self,
+        texture_id: AtlasTextureId,
+        start: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.subpixel_sprites.draw_range_with_texture(
+            &devices.device,
+            &devices.device_context,
+            &texture_view,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
+            start as u32,
+            len as u32,
         )
     }
 
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
-        sprites: &[PolychromeSprite],
+        start: usize,
+        len: usize,
     ) -> Result<()> {
-        if sprites.is_empty() {
+        if len == 0 {
             return Ok(());
         }
-
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
-        self.pipelines.poly_sprites.update_buffer(
-            &devices.device,
-            &devices.device_context,
-            sprites,
-        )?;
         let texture_view = self.atlas.get_texture_view(texture_id);
-        self.pipelines.poly_sprites.draw_with_texture(
+        self.pipelines.poly_sprites.draw_range_with_texture(
+            &devices.device,
             &devices.device_context,
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
-            sprites.len() as u32,
+            start as u32,
+            len as u32,
         )
     }
 
@@ -667,6 +743,7 @@ impl DirectXRenderer {
             FontInfo {
                 gamma_ratios: get_gamma_correction_ratios(render_params.GetGamma()),
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
+                subpixel_enhanced_contrast: render_params.GetEnhancedContrast(),
             }
         })
     }
@@ -789,6 +866,13 @@ impl DirectXRenderPipelines {
             512,
             create_blend_state(device)?,
         )?;
+        let subpixel_sprites = PipelineState::new(
+            device,
+            "subpixel_sprite_pipeline",
+            ShaderModule::SubpixelSprite,
+            512,
+            create_blend_state_for_subpixel_rendering(device)?,
+        )?;
         let poly_sprites = PipelineState::new(
             device,
             "polychrome_sprite_pipeline",
@@ -804,6 +888,7 @@ impl DirectXRenderPipelines {
             path_sprite_pipeline,
             underline_pipeline,
             mono_sprites,
+            subpixel_sprites,
             poly_sprites,
         })
     }
@@ -878,7 +963,7 @@ struct GlobalParams {
     gamma_ratios: [f32; 4],
     viewport_size: [f32; 2],
     grayscale_enhanced_contrast: f32,
-    _pad: u32,
+    subpixel_enhanced_contrast: f32,
 }
 
 struct PipelineState<T> {
@@ -995,6 +1080,64 @@ impl<T> PipelineState<T> {
             device_context.VSSetShaderResources(0, Some(texture));
             device_context.PSSetShaderResources(0, Some(texture));
 
+            device_context.DrawInstanced(4, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_range(
+        &self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        vertex_count: u32,
+        first_instance: u32,
+        instance_count: u32,
+    ) -> Result<()> {
+        let view = create_buffer_view_range(device, &self.buffer, first_instance, instance_count)?;
+        set_pipeline_state(
+            device_context,
+            slice::from_ref(&view),
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            viewport,
+            &self.vertex,
+            &self.fragment,
+            global_params,
+            &self.blend_state,
+        );
+        unsafe {
+            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_range_with_texture(
+        &self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        texture: &[Option<ID3D11ShaderResourceView>],
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        sampler: &[Option<ID3D11SamplerState>],
+        first_instance: u32,
+        instance_count: u32,
+    ) -> Result<()> {
+        let view = create_buffer_view_range(device, &self.buffer, first_instance, instance_count)?;
+        set_pipeline_state(
+            device_context,
+            slice::from_ref(&view),
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            viewport,
+            &self.vertex,
+            &self.fragment,
+            global_params,
+            &self.blend_state,
+        );
+        unsafe {
+            device_context.PSSetSamplers(0, Some(sampler));
+            device_context.VSSetShaderResources(0, Some(texture));
+            device_context.PSSetShaderResources(0, Some(texture));
             device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
@@ -1235,8 +1378,6 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
 // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
 #[inline]
 fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
-    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
-    // device performs the blend in linear space, which is ideal.
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0].BlendEnable = true.into();
     desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
@@ -1246,6 +1387,27 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+#[inline]
+fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC1_COLOR;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC1_COLOR;
+    // It does not make sense to draw transparent subpixel-rendered text, since it cannot be meaningfully alpha-blended onto anything else.
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    desc.RenderTarget[0].RenderTargetWriteMask =
+        D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8 & !D3D11_COLOR_WRITE_ENABLE_ALPHA.0 as u8;
+
     unsafe {
         let mut state = None;
         device.CreateBlendState(&desc, Some(&mut state))?;
@@ -1341,6 +1503,32 @@ fn create_buffer_view(
 }
 
 #[inline]
+fn create_buffer_view_range(
+    device: &ID3D11Device,
+    buffer: &ID3D11Buffer,
+    first_element: u32,
+    num_elements: u32,
+) -> Result<Option<ID3D11ShaderResourceView>> {
+    let desc = D3D11_SHADER_RESOURCE_VIEW_DESC {
+        Format: DXGI_FORMAT_UNKNOWN,
+        ViewDimension: D3D11_SRV_DIMENSION_BUFFER,
+        Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 {
+            Buffer: D3D11_BUFFER_SRV {
+                Anonymous1: D3D11_BUFFER_SRV_0 {
+                    FirstElement: first_element,
+                },
+                Anonymous2: D3D11_BUFFER_SRV_1 {
+                    NumElements: num_elements,
+                },
+            },
+        },
+    };
+    let mut view = None;
+    unsafe { device.CreateShaderResourceView(buffer, Some(&desc), Some(&mut view)) }?;
+    Ok(view)
+}
+
+#[inline]
 fn update_buffer<T>(
     device_context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
@@ -1410,6 +1598,7 @@ pub(crate) mod shader_resources {
         PathRasterization,
         PathSprite,
         MonochromeSprite,
+        SubpixelSprite,
         PolychromeSprite,
         EmojiRasterization,
     }
@@ -1476,6 +1665,10 @@ pub(crate) mod shader_resources {
                 ShaderModule::MonochromeSprite => match target {
                     ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => MONOCHROME_SPRITE_FRAGMENT_BYTES,
+                },
+                ShaderModule::SubpixelSprite => match target {
+                    ShaderTarget::Vertex => SUBPIXEL_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => SUBPIXEL_SPRITE_FRAGMENT_BYTES,
                 },
                 ShaderModule::PolychromeSprite => match target {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
@@ -1561,7 +1754,7 @@ pub(crate) mod shader_resources {
 
     #[cfg(debug_assertions)]
     impl ShaderModule {
-        pub fn as_str(&self) -> &str {
+        pub fn as_str(self) -> &'static str {
             match self {
                 ShaderModule::Quad => "quad",
                 ShaderModule::Shadow => "shadow",
@@ -1569,6 +1762,7 @@ pub(crate) mod shader_resources {
                 ShaderModule::PathRasterization => "path_rasterization",
                 ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
+                ShaderModule::SubpixelSprite => "subpixel_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
                 ShaderModule::EmojiRasterization => "emoji_rasterization",
             }

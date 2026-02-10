@@ -13,13 +13,13 @@ pub struct FontPickerDelegate {
     filtered_fonts: Vec<StringMatch>,
     selected_index: usize,
     current_font: SharedString,
-    on_font_changed: Arc<dyn Fn(SharedString, &mut App) + 'static>,
+    on_font_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
 }
 
 impl FontPickerDelegate {
     fn new(
         current_font: SharedString,
-        on_font_changed: impl Fn(SharedString, &mut App) + 'static,
+        on_font_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
         cx: &mut Context<FontPicker>,
     ) -> Self {
         let font_family_cache = FontFamilyCache::global(cx);
@@ -132,10 +132,10 @@ impl PickerDelegate for FontPickerDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<FontPicker>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<FontPicker>) {
         if let Some(font_match) = self.filtered_fonts.get(self.selected_index) {
             let font = font_match.string.clone();
-            (self.on_font_changed)(font.into(), cx);
+            (self.on_font_changed)(font.into(), window, cx);
         }
     }
 
@@ -168,7 +168,7 @@ impl PickerDelegate for FontPickerDelegate {
 
 pub fn font_picker(
     current_font: SharedString,
-    on_font_changed: impl Fn(SharedString, &mut App) + 'static,
+    on_font_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     window: &mut Window,
     cx: &mut Context<FontPicker>,
 ) -> FontPicker {

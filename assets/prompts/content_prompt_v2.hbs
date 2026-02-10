@@ -14,7 +14,6 @@ The section you'll need to rewrite is marked with <rewrite_this></rewrite_this> 
 The context around the relevant section has been truncated (possibly in the middle of a line) for brevity.
 {{/if}}
 
-{{#if rewrite_section}}
 And here's the section to rewrite based on that prompt again for reference:
 
 <rewrite_this>
@@ -33,12 +32,9 @@ Below are the diagnostic errors visible to the user.  If the user requests probl
 {{/each}}
 {{/if}}
 
-{{/if}}
-
 Only make changes that are necessary to fulfill the prompt, leave everything else as-is. All surrounding {{content_type}} will be preserved.
 
 Start at the indentation level in the original file in the rewritten {{content_type}}.
 
-You must use one of the provided tools to make the rewrite or to provide an explanation as to why the user's request cannot be fulfilled. It is an error if
-you simply send back unstructured text. If you need to make a statement or ask a question you must use one of the tools to do so.
+IMPORTANT: You MUST use one of the provided tools to make the rewrite or to provide an explanation as to why the user's request cannot be fulfilled. You MUST NOT send back unstructured text. If you need to make a statement or ask a question you MUST use one of the tools to do so.
 It is an error if you try to make a change that cannot be made simply by editing the rewrite_section.

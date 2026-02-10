@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use project::Project;
@@ -85,9 +86,7 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name() -> &'static str {
-        "find_path"
-    }
+    const NAME: &'static str = "find_path";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
@@ -114,7 +113,12 @@ impl AgentTool for FindPathTool {
         let search_paths_task = search_paths(&input.glob, self.project.clone(), cx);
 
         cx.background_spawn(async move {
-            let matches = search_paths_task.await?;
+            let matches = futures::select! {
+                result = search_paths_task.fuse() => result?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Path search cancelled by user");
+                }
+            };
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 

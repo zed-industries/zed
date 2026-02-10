@@ -29,6 +29,7 @@ pub struct Surface {
 }
 
 /// Create a new surface element.
+#[cfg(target_os = "macos")]
 pub fn surface(source: impl Into<SurfaceSource>) -> Surface {
     Surface {
         source: source.into(),

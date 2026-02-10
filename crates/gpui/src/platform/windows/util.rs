@@ -117,6 +117,8 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
     static HAND: OnceLock<SafeCursor> = OnceLock::new();
     static SIZEWE: OnceLock<SafeCursor> = OnceLock::new();
     static SIZENS: OnceLock<SafeCursor> = OnceLock::new();
+    static SIZENWSE: OnceLock<SafeCursor> = OnceLock::new();
+    static SIZENESW: OnceLock<SafeCursor> = OnceLock::new();
     static NO: OnceLock<SafeCursor> = OnceLock::new();
     let (lock, name) = match style {
         CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
@@ -130,6 +132,8 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
         | CursorStyle::ResizeDown
         | CursorStyle::ResizeUpDown
         | CursorStyle::ResizeRow => (&SIZENS, IDC_SIZENS),
+        CursorStyle::ResizeUpLeftDownRight => (&SIZENWSE, IDC_SIZENWSE),
+        CursorStyle::ResizeUpRightDownLeft => (&SIZENESW, IDC_SIZENESW),
         CursorStyle::OperationNotAllowed => (&NO, IDC_NO),
         CursorStyle::None => return None,
         _ => (&ARROW, IDC_ARROW),

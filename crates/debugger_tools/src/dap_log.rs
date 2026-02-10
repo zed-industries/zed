@@ -155,7 +155,7 @@ impl LogStore {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
                         this.add_debug_adapter_message(message, cx);
-                    })?;
+                    });
                 }
 
                 smol::future::yield_now().await;
@@ -170,7 +170,7 @@ impl LogStore {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
                         this.add_debug_adapter_log(message, cx);
-                    })?;
+                    });
                 }
 
                 smol::future::yield_now().await;
@@ -902,10 +902,10 @@ impl DapLogView {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
-                            })
+                            });
                         }
                     })
-                    .detach_and_log_err(cx);
+                    .detach();
                 });
 
             self.editor = editor;

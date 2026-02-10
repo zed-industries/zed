@@ -12,7 +12,7 @@ use futures::channel::oneshot;
 use gpui::AsyncApp;
 use serde_json::Value;
 
-use crate::client::Client;
+use crate::client::{Client, NotificationSubscription};
 use crate::types::{self, Notification, Request};
 
 pub struct ModelContextProtocol {
@@ -119,7 +119,7 @@ impl InitializedContextServerProtocol {
         &self,
         method: &'static str,
         f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
-    ) {
-        self.inner.on_notification(method, f);
+    ) -> NotificationSubscription {
+        self.inner.on_notification(method, f)
     }
 }

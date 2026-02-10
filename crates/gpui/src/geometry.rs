@@ -1112,7 +1112,10 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
     /// ```
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
-        let bottom_right = self.bottom_right().min(&other.bottom_right());
+        let bottom_right = self
+            .bottom_right()
+            .min(&other.bottom_right())
+            .max(&upper_left);
         Self::from_corners(upper_left, bottom_right)
     }
 
@@ -2645,6 +2648,18 @@ impl Display for Pixels {
 impl Debug for Pixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self, f)
+    }
+}
+
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Pixels> for Pixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + *b)
     }
 }
 

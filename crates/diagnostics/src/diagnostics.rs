@@ -45,8 +45,8 @@ pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
-    ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    ItemNavHistory, Workspace,
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -243,7 +243,7 @@ impl ProjectDiagnosticsEditor {
                 match event {
                     EditorEvent::Focused => {
                         if this.multibuffer.read(cx).is_empty() {
-                            window.focus(&this.focus_handle);
+                            window.focus(&this.focus_handle, cx);
                         }
                     }
                     EditorEvent::Blurred => this.close_diagnosticless_buffers(cx, false),
@@ -360,7 +360,7 @@ impl ProjectDiagnosticsEditor {
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
                     .await
                     .log_err()
                 {
@@ -434,7 +434,7 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
-            self.editor.focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window, cx)
         }
     }
 
@@ -650,7 +650,7 @@ impl ProjectDiagnosticsEditor {
                         })
                     });
                     if this.focus_handle.is_focused(window) {
-                        this.editor.read(cx).focus_handle(cx).focus(window);
+                        this.editor.read(cx).focus_handle(cx).focus(window, cx);
                     }
                 }
 
@@ -728,7 +728,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -892,14 +892,6 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
-    }
-
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
     }
 
     fn added_to_workspace(
@@ -1096,9 +1088,8 @@ async fn heuristic_syntactic_expand(
             return Some(node_row_range);
         } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
             // Expand to the nearest dedent or blank line for statements and declarations.
-            let tab_size = cx
-                .update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get())
-                .ok()?;
+            let tab_size =
+                cx.update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get());
             let indent_level = snapshot
                 .line_indent_for_row(node_range.start.row)
                 .len(tab_size);

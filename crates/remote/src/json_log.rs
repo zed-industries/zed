@@ -1,23 +1,25 @@
+use std::borrow::Cow;
+
 use log::{Level, Log, Record};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug, Serialize)]
 pub struct LogRecord<'a> {
     pub level: usize,
-    pub module_path: Option<&'a str>,
-    pub file: Option<&'a str>,
+    pub module_path: Option<Cow<'a, str>>,
+    pub file: Option<Cow<'a, str>>,
     pub line: Option<u32>,
-    pub message: String,
+    pub message: Cow<'a, str>,
 }
 
 impl<'a> LogRecord<'a> {
     pub fn new(record: &'a Record<'a>) -> Self {
         Self {
             level: serialize_level(record.level()),
-            module_path: record.module_path(),
-            file: record.file(),
+            module_path: record.module_path().map(Cow::Borrowed),
+            file: record.file().map(Cow::Borrowed),
             line: record.line(),
-            message: record.args().to_string(),
+            message: Cow::Owned(record.args().to_string()),
         }
     }
 
@@ -25,10 +27,10 @@ impl<'a> LogRecord<'a> {
         if let Some(level) = deserialize_level(self.level) {
             logger.log(
                 &log::Record::builder()
-                    .module_path(self.module_path)
+                    .module_path(self.module_path.as_deref())
                     .target("remote_server")
                     .args(format_args!("{}", self.message))
-                    .file(self.file)
+                    .file(self.file.as_deref())
                     .line(self.line)
                     .level(level)
                     .build(),

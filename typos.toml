@@ -24,6 +24,7 @@ extend-exclude = [
     # Editor and file finder rely on partial typing and custom in-string syntax.
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
+    "crates/editor/src/edit_prediction_tests.rs",
     # There are some names in the test data that are incorrectly flagged as typos.
     "crates/git/test_data/blame_incremental_complex",
     "crates/git/test_data/golden/blame_incremental_complex.json",
@@ -31,6 +32,9 @@ extend-exclude = [
     "crates/rpc/src/auth.rs",
     # glsl isn't recognized by this tool.
     "extensions/glsl/languages/glsl/",
+    # Protols is the name of the language server.
+    "extensions/proto/extension.toml",
+    "extensions/proto/src/language_servers/protols.rs",
     # Windows likes its abbreviations.
     "crates/gpui/src/platform/windows/directx_renderer.rs",
     "crates/gpui/src/platform/windows/events.rs",
@@ -54,10 +58,14 @@ extend-exclude = [
     "crates/multi_buffer/src/multi_buffer_tests.rs",
     # Macos apis
     "crates/gpui/src/platform/mac/dispatcher.rs",
+    # Tests contain partially incomplete words (by design)
+    "crates/edit_prediction_cli/src/split_commit.rs",
 ]
 
 [default]
 extend-ignore-re = [
+    # PNG is a file format, not a typo
+    "PNG",
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',
