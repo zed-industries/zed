@@ -5,7 +5,7 @@ use futures::{
     io::BufReader,
     stream::FuturesUnordered,
 };
-use gpui::{App, AppContext as _, ClipboardItem, Entity, EntityId, Task, Window, WindowHandle};
+use gpui::{App, AppContext as _, ClipboardItem, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
     connection_info::{ConnectionInfo, Transport},
@@ -193,9 +193,7 @@ impl NativeRunningKernel {
                                 let error_detail =
                                     format!("Kernel issue on {channel} channel\n\n{err}");
                                 log::warn!("kernel: {error_detail}");
-                                let workspace_window: Option<
-                                    WindowHandle<workspace::Workspace>,
-                                > = session
+                                let workspace_window = session
                                     .update_in(cx, |_, window, _cx| {
                                         window
                                             .window_handle()
