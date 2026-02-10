@@ -214,7 +214,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
             .terminal_handle
             .clone()
             .expect("Terminal handle not available on FakeThreadEnvironment");
-        Task::ready(Ok(handle.clone() as Rc<dyn crate::TerminalHandle>))
+        Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
 
     fn create_subagent(

@@ -5991,9 +5991,8 @@ impl AcpThreadView {
                                     .icon_size(IconSize::Small)
                                     .tooltip(Tooltip::text("Expand Subagent"))
                                     .visible_on_hover(card_header_id)
-                                    .on_click({
-                                        let session_id = session_id.clone();
-                                        cx.listener(move |this, _event, window, cx| {
+                                    .on_click(cx.listener(
+                                        move |this, _event, window, cx| {
                                             this.server_view
                                                 .update(cx, |this, cx| {
                                                     this.navigate_to_session(
@@ -6003,8 +6002,8 @@ impl AcpThreadView {
                                                     );
                                                 })
                                                 .ok();
-                                        })
-                                    }),
+                                        },
+                                    )),
                                 )
                                 .when(is_running, |buttons| {
                                     buttons.child(

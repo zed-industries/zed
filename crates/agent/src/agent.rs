@@ -347,7 +347,7 @@ impl NativeAgent {
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
-        let parent_session_id = thread.parent_thread_id().clone();
+        let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();

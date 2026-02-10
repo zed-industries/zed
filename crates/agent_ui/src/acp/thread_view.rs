@@ -1506,7 +1506,6 @@ impl AcpServerView {
             .project
             .read(cx)
             .worktrees(cx)
-            .into_iter()
             .filter_map(|worktree| {
                 if worktree.read(cx).is_single_file() {
                     Some(worktree.read(cx).abs_path().parent()?.into())
@@ -1515,9 +1514,7 @@ impl AcpServerView {
                 }
             })
             .next();
-        let cwd = root_dir
-            .clone()
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
+        let cwd = root_dir.unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let subagent_thread_task = connected.connection.clone().load_session(
             AgentSessionInfo::new(subagent_id.clone()),
