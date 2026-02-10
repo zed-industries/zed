@@ -162,6 +162,8 @@ Use the `agent_ui_font_size` setting to change the font size of rendered agent r
 
 ### Default Tool Permissions
 
+> **Note:** In Zed v0.224.0 and above, tool approval uses the `agent.tool_permissions` settings described below.
+
 The `agent.tool_permissions.default` setting controls the baseline tool approval behavior for Zed's native agent:
 
 - `"confirm"` (default) — Prompts for approval before running any tool action
@@ -268,6 +270,8 @@ MCP tools use the key format `mcp:<server_name>:<tool_name>` in the `tools` conf
 The `default` key on each MCP tool entry is the primary mechanism for controlling MCP tool permissions. Pattern-based rules (`always_allow`, `always_deny`, `always_confirm`) match against an empty string for MCP tools, so most patterns won't match — use the tool-level `default` instead.
 
 See the [Tool Permissions](./tool-permissions.md) documentation for more examples and complete details.
+
+> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and tool calls.
 
 ### Single-file Review
 

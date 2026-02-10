@@ -2,6 +2,10 @@
 
 Configure which agent actions run automatically and which require your approval.
 
+> **Note:** In Zed v0.224.0 and above, this page documents the granular `agent.tool_permissions` system.
+>
+> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation.
+
 ## Quick Start
 
 You can use Zed's Settings UI to configure tool permissions, or add rules directly to your `settings.json`:
