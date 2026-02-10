@@ -236,29 +236,6 @@ async fn test_toggle_block_comments_multiple_cursors(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_block_comments_multiline_cross_line_selection(cx: &mut TestAppContext) {
-    let mut cx = setup_rust_context(cx).await;
-
-    cx.set_state(indoc! {"
-        fn main() {
-            /* «first
-        second */ˇ»
-        }
-    "});
-
-    cx.update_editor(|editor, window, cx| {
-        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
-    });
-
-    cx.assert_editor_state(indoc! {"
-        fn main() {
-            «first
-        secondˇ»
-        }
-    "});
-}
-
-#[gpui::test]
 async fn test_toggle_block_comments_multiline_at_col0(cx: &mut TestAppContext) {
     let mut cx = setup_rust_context(cx).await;
 

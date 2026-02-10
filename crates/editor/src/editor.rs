@@ -16044,7 +16044,16 @@ impl Editor {
 
             for selection in &mut selections {
                 let start_point = selection.start;
-                let end_point = selection.end;
+                let mut end_point = selection.end;
+
+                // When the selection ends at column 0 of a subsequent line
+                // (e.g. visual line mode), move end back to the end of the
+                // previous line so `*/` doesn't land on the next line.
+                if end_point.column == 0 && end_point.row > start_point.row {
+                    end_point.row -= 1;
+                    end_point.column =
+                        snapshot.line_len(MultiBufferRow(end_point.row));
+                }
 
                 let language = if let Some(language) =
                     snapshot.language_scope_at(Point::new(start_point.row, start_point.column))
@@ -16123,7 +16132,75 @@ impl Editor {
                         }
                     }
 
-                    // Fallback: search for comment markers around the selection
+                    // Check if the selection contains comment markers within it,
+                    // e.g. selecting `  /* content */  ` where markers are inside the selection
+                    if !is_commented {
+                        let prefix_trimmed = full_comment_prefix.trim_end();
+                        let suffix_trimmed = full_comment_suffix.trim_start();
+                        let prefix_needle = prefix_trimmed.as_bytes();
+                        let suffix_needle = suffix_trimmed.as_bytes();
+
+                        let selected_bytes: Vec<u8> = snapshot
+                            .bytes_in_range(start_point..end_point)
+                            .flatten()
+                            .copied()
+                            .collect();
+
+                        if let Some(prefix_byte_pos) = selected_bytes
+                            .windows(prefix_needle.len())
+                            .position(|w| w == prefix_needle)
+                        {
+                            if selected_bytes[..prefix_byte_pos]
+                                .iter()
+                                .all(|&b| b.is_ascii_whitespace())
+                            {
+                                if let Some(suffix_byte_pos) = selected_bytes
+                                    .windows(suffix_needle.len())
+                                    .rposition(|w| w == suffix_needle)
+                                {
+                                    let after_suffix = suffix_byte_pos + suffix_needle.len();
+                                    if suffix_byte_pos > prefix_byte_pos
+                                        && selected_bytes[after_suffix..]
+                                            .iter()
+                                            .all(|&b| b.is_ascii_whitespace())
+                                    {
+                                        let mut prefix_start = start_point;
+                                        for &b in &selected_bytes[..prefix_byte_pos] {
+                                            if b == b'\n' {
+                                                prefix_start.row += 1;
+                                                prefix_start.column = 0;
+                                            } else {
+                                                prefix_start.column += 1;
+                                            }
+                                        }
+                                        let mut suffix_start = start_point;
+                                        for &b in &selected_bytes[..suffix_byte_pos] {
+                                            if b == b'\n' {
+                                                suffix_start.row += 1;
+                                                suffix_start.column = 0;
+                                            } else {
+                                                suffix_start.column += 1;
+                                            }
+                                        }
+
+                                        is_commented = true;
+                                        prefix_range = prefix_start
+                                            ..Point::new(
+                                                prefix_start.row,
+                                                prefix_start.column + prefix_needle.len() as u32,
+                                            );
+                                        suffix_range = suffix_start
+                                            ..Point::new(
+                                                suffix_start.row,
+                                                suffix_start.column + suffix_needle.len() as u32,
+                                            );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback: search for comment markers surrounding the selection
                     if !is_commented {
                         let prefix_trimmed = full_comment_prefix.trim_end();
                         let suffix_trimmed = full_comment_suffix.trim_start();
@@ -16142,10 +16219,7 @@ impl Editor {
                             .rposition(|w| w == prefix_needle)
                         {
                             let suffix_found = if start_point.row == end_point.row {
-                                let search_from = Point::new(
-                                    start_point.row,
-                                    prefix_col as u32 + prefix_needle.len() as u32,
-                                );
+                                let search_from = end_point;
                                 let line_end = Point::new(
                                     start_point.row,
                                     snapshot.line_len(MultiBufferRow(start_point.row)),
@@ -16160,20 +16234,20 @@ impl Editor {
                                     .position(|w| w == suffix_needle)
                                     .map(|pos| (start_point.row, search_from.column + pos as u32))
                             } else {
-                                let end_line_start = Point::new(end_point.row, 0);
+                                let search_from = end_point;
                                 let end_line_end = Point::new(
                                     end_point.row,
                                     snapshot.line_len(MultiBufferRow(end_point.row)),
                                 );
-                                let end_line_bytes: Vec<u8> = snapshot
-                                    .bytes_in_range(end_line_start..end_line_end)
+                                let bytes_after: Vec<u8> = snapshot
+                                    .bytes_in_range(search_from..end_line_end)
                                     .flatten()
                                     .copied()
                                     .collect();
-                                end_line_bytes
+                                bytes_after
                                     .windows(suffix_needle.len())
-                                    .rposition(|w| w == suffix_needle)
-                                    .map(|pos| (end_point.row, pos as u32))
+                                    .position(|w| w == suffix_needle)
+                                    .map(|pos| (end_point.row, search_from.column + pos as u32))
                             };
 
                             if let Some((suffix_row, suffix_col)) = suffix_found {
