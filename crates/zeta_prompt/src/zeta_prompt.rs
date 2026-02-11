@@ -9,8 +9,8 @@ use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
 
-/// Use up to this amount of editable region for prefill.
-/// Larger values may resul in more robust generation, but
+/// Use up to this amount of the editable region for prefill.
+/// Larger values may result in more robust generation, but
 /// this region becomes non-editable.
 pub const PREFILL_RATIO: f64 = 0.1; // 10%
 
@@ -538,10 +538,8 @@ pub mod v0211_prefill {
                 }
                 editable_region[..end].to_string()
             }
-            // No newline found (single long line). Fall back to splitting
-            // before the last space -- in a single line, spaces typically
-            // separate word-level tokens (e.g. ` let`, ` value`), so this
-            // is a reasonably safe boundary.
+            // No newline found. Fall back to splitting before the last space
+            // (word-level boundary)
             None => match prefill.rfind(' ') {
                 Some(pos) => prefill[..pos].to_string(),
                 None => prefill.to_string(),
