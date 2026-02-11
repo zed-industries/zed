@@ -526,6 +526,9 @@ impl SplittableEditor {
             editor.set_delegate_stage_and_restore(true);
             editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
+            editor.disable_lsp_data();
+            editor.disable_runnables();
+            editor.disable_diagnostics(cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
