@@ -3764,11 +3764,9 @@ dependencies = [
  "http_client",
  "log",
  "paths",
- "reqwest_client",
  "serde",
  "serde_json",
  "settings",
- "smol",
 ]
 
 [[package]]
