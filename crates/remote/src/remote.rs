@@ -14,6 +14,8 @@ pub use remote_client::{
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;
+#[cfg(target_os = "windows")]
+pub use transport::wsl::wsl_path_to_windows_path;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use transport::mock::{

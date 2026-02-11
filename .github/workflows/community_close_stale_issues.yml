@@ -16,7 +16,7 @@ on:
 jobs:
   stale:
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
       - uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10
         with:
@@ -32,7 +32,7 @@ jobs:
           days-before-stale: 60
           days-before-close: 14
           only-issue-types: "Bug,Crash"
-          operations-per-run: ${{ inputs.operations-per-run || 1000 }}
+          operations-per-run: ${{ inputs.operations-per-run || 2000 }}
           ascending: true
           enable-statistics: true
           debug-only: ${{ inputs.debug-only }}

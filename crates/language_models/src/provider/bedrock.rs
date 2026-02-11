@@ -146,6 +146,9 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -153,6 +156,7 @@ impl From<ModelMode> for BedrockModelMode {
         match value {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -162,6 +166,7 @@ impl From<BedrockModelMode> for ModelMode {
         match value {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -679,7 +684,6 @@ impl LanguageModel for BedrockModel {
         };
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
-        let bypass_rate_limit = request.bypass_rate_limit;
 
         let request = match into_bedrock(
             request,
@@ -694,19 +698,16 @@ impl LanguageModel for BedrockModel {
         };
 
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream_with_bypass(
-            async move {
-                let response = request.await.map_err(|err| anyhow!(err))?;
-                let events = map_to_language_model_completion_events(response);
+        let future = self.request_limiter.stream(async move {
+            let response = request.await.map_err(|err| anyhow!(err))?;
+            let events = map_to_language_model_completion_events(response);
 
-                if deny_tool_calls {
-                    Ok(deny_tool_use_events(events).boxed())
-                } else {
-                    Ok(events.boxed())
-                }
-            },
-            bypass_rate_limit,
-        );
+            if deny_tool_calls {
+                Ok(deny_tool_use_events(events).boxed())
+            } else {
+                Ok(events.boxed())
+            }
+        });
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -772,6 +773,12 @@ pub fn into_bedrock(
                             if model.contains(Model::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
+                                return None;
+                            }
+                            if signature.is_none() {
+                                // Thinking blocks without a signature are invalid
+                                // (e.g. from cancellation mid-think) and must be
+                                // stripped to avoid API errors.
                                 return None;
                             }
                             let thinking = BedrockThinkingTextBlock::builder()
@@ -854,6 +861,10 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if bedrock_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == bedrock_role
                 {
@@ -926,10 +937,16 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if request.thinking_allowed
-            && let BedrockModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                BedrockModelMode::Thinking { budget_tokens } => {
+                    Some(bedrock::Thinking::Enabled { budget_tokens })
+                }
+                BedrockModelMode::AdaptiveThinking { effort } => {
+                    Some(bedrock::Thinking::Adaptive { effort })
+                }
+                BedrockModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -1408,7 +1425,7 @@ impl Render for ConfigurationView {
                             .child(Label::new("Select the models you would like access to:"))
                             .child(ButtonLink::new(
                                 "Bedrock Model Catalog",
-                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess",
+                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog",
                             )),
                     ),
             )

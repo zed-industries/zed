@@ -9,8 +9,8 @@ mod extension_store_test;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::ExtensionProvides;
-use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
+use client::{Client, proto, telemetry::Telemetry};
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -1252,10 +1252,12 @@ impl ExtensionStore {
                     (path, icons_root_path)
                 },
             ));
-            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
-                let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
-                path
+            snippets_to_add.extend(extension.manifest.snippets.iter().flat_map(|snippets| {
+                snippets.paths().map(|snippets_path| {
+                    let mut path = self.installed_dir.clone();
+                    path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                    path
+                })
             }));
         }
 

@@ -453,6 +453,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
     "auto_fold_dirs": true,         // Fold dirs with single subdir
+    "bold_folder_labels": false,    // Show folder names with bold text
     "sticky_scroll": true,          // Stick parent directories at top of the project panel.
     "drag_and_drop": true,          // Whether drag and drop is enabled
     "scrollbar": {                  // Project panel scrollbar settings

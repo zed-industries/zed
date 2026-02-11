@@ -1,6 +1,6 @@
 use crate::{
-    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    BufferSearchBar, FocusSearch, HighlightKey, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
+    ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{
@@ -40,13 +40,19 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{
+    CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
+    utils::SearchInputWidth,
+};
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{
+        CollapseDirection, Direction, SearchEvent, SearchToken, SearchableItem,
+        SearchableItemHandle,
+    },
 };
 
 actions!(
@@ -725,10 +731,11 @@ impl ProjectSearchView {
         if let Some(query) = query {
             let query = query.with_replacement(self.replacement(cx));
 
-            // TODO: Do we need the clone here?
-            let mat = self.entity.read(cx).match_ranges[active_index].clone();
+            let mat = self.entity.read(cx).match_ranges.get(active_index).cloned();
             self.results_editor.update(cx, |editor, cx| {
-                editor.replace(&mat, &query, window, cx);
+                if let Some(mat) = mat.as_ref() {
+                    editor.replace(mat, &query, SearchToken::default(), window, cx);
+                }
             });
             self.select_match(Direction::Next, window, cx)
         }
@@ -757,7 +764,13 @@ impl ProjectSearchView {
         }
 
         self.results_editor.update(cx, |editor, cx| {
-            editor.replace_all(&mut match_ranges.iter(), &query, window, cx);
+            editor.replace_all(
+                &mut match_ranges.iter(),
+                &query,
+                SearchToken::default(),
+                window,
+                cx,
+            );
         });
 
         self.entity.update(cx, |model, _cx| {
@@ -1390,7 +1403,15 @@ impl ProjectSearchView {
             }
 
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, 1, window, cx)
+                editor.match_index_for_direction(
+                    &match_ranges,
+                    index,
+                    direction,
+                    1,
+                    SearchToken::default(),
+                    window,
+                    cx,
+                )
             });
 
             let range_to_select = match_ranges[new_index].clone();
@@ -1464,7 +1485,7 @@ impl ProjectSearchView {
         if match_ranges.is_empty() {
             self.active_match_index = None;
             self.results_editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx);
+                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
             });
         } else {
             self.active_match_index = Some(0);
@@ -1521,7 +1542,8 @@ impl ProjectSearchView {
         cx: &mut App,
     ) {
         self.results_editor.update(cx, |editor, cx| {
-            editor.highlight_background::<Self>(
+            editor.highlight_background(
+                HighlightKey::ProjectSearchView,
                 match_ranges,
                 move |index, theme| {
                     if active_index == Some(*index) {
@@ -2013,6 +2035,7 @@ impl Render for ProjectSearchBar {
         let theme_colors = cx.theme().colors();
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.limit_reached;
+        let is_search_underway = project_search.pending_search.is_some();
 
         let color_override = match (
             &project_search.pending_search,
@@ -2105,16 +2128,29 @@ impl Render for ProjectSearchBar {
                     .id("matches")
                     .ml_2()
                     .min_w(rems_from_px(40.))
-                    .child(Label::new(match_text).size(LabelSize::Small).color(
-                        if search.active_match_index.is_some() {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .when(limit_reached, |el| {
-                        el.tooltip(Tooltip::text(
-                            "Search limits reached.\nTry narrowing your search.",
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Label::new(match_text)
+                                    .size(LabelSize::Small)
+                                    .when(search.active_match_index.is_some(), |this| {
+                                        this.color(Color::Disabled)
+                                    }),
+                            )
+                            .when(is_search_underway, |this| {
+                                this.child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .color(Color::Accent)
+                                        .size(IconSize::Small)
+                                        .with_rotate_animation(2)
+                                        .into_any_element(),
+                                )
+                            }),
+                    )
+                    .when(limit_reached, |this| {
+                        this.tooltip(Tooltip::text(
+                            "Search Limits Reached\nTry narrowing your search",
                         ))
                     }),
             );

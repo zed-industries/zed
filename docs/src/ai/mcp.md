@@ -9,6 +9,8 @@ Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to inter
 Zed currently supports MCP's [Tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and [Prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) features.
 We welcome contributions that help advance Zed's MCP feature coverage (Discovery, Sampling, Elicitation, etc).
 
+Zed also handles the `notifications/tools/list_changed` notification from MCP servers. When a server adds, removes, or modifies its available tools at runtime, Zed automatically reloads the tool list without requiring a server restart.
+
 ## Installing MCP Servers
 
 ### As Extensions
@@ -16,14 +18,13 @@ We welcome contributions that help advance Zed's MCP feature coverage (Discovery
 One of the ways you can use MCP servers in Zed is by exposing them as an extension.
 Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to learn how to create your own.
 
-Thanks to our awesome community, many MCP servers have already been added as extensions.
-You can check which ones are available via any of these routes:
+Many MCP servers are available as extensions. Find them via:
 
 1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
 2. in the app, open the Command Palette and run the `zed: extensions` action
 3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
-In any case, here are some popular available servers:
+Popular servers:
 
 - [Context7](https://zed.dev/extensions/context7-mcp-server)
 - [GitHub](https://zed.dev/extensions/github-mcp-server)
@@ -63,7 +64,7 @@ From there, you can add it through the modal that appears when you click the "Ad
 
 ### Configuration Check
 
-Regardless of how you've installed MCP servers, whether as an extension or adding them directly, most servers out there still require some sort of configuration as part of the setup process.
+Most MCP servers require configuration after installation.
 
 In the case of extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
 For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
@@ -78,8 +79,7 @@ If not, other colors and tooltip messages will indicate what is happening.
 
 Once installation is complete, you can return to the Agent Panel and start prompting.
 
-Some models are better than others when it comes to picking up tools from MCP servers.
-Mentioning your server by name always helps the model to pick it up.
+Model support for MCP tools varies. Mentioning your server by name in prompts helps the model select the right tools.
 
 However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
@@ -130,9 +130,23 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 
 ### Tool Approval
 
-Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
+> **Note:** In Zed v0.224.0 and above, tool approval for the native Zed agent is controlled by `agent.tool_permissions.default`.
 
-You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior for the native Zed agent:
+
+- `"confirm"` (default) — Prompts for approval before running any tool action, including MCP tool calls
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
+
+You can change this in either your `settings.json` or through the Agent Panel settings.
+
+Even with `"default": "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, so you can auto-approve most actions while still blocking or gating sensitive ones.
+
+For granular control over specific MCP tools, you can configure per-tool permission rules. MCP tools use the key format `mcp:<server>:<tool_name>` — for example, `mcp:github:create_issue`. The `default` key on a per-tool entry is the primary mechanism for MCP tools, since pattern-based rules match against an empty string for MCP tools and most patterns won't match.
+
+See [Per-tool Permission Rules](./agent-settings.md#per-tool-permission-rules) and [Tool Permissions](./tool-permissions.md) for complete details.
+
+> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and MCP tool calls.
 
 ### External Agents
 

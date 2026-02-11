@@ -2301,12 +2301,15 @@ impl KeybindingEditorModal {
                 .context()
                 .and_then(KeybindContextString::local)
             {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text(context.clone(), window, cx);
-                });
+                input.set_text(&context, window, cx);
             }
 
-            let editor_entity = input.editor().clone();
+            let editor_entity = input.editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap()
+                .clone();
             let workspace = workspace.clone();
             cx.spawn(async move |_input_handle, cx| {
                 let contexts = cx
@@ -2350,7 +2353,12 @@ impl KeybindingEditorModal {
                     .label("Action")
                     .label_size(LabelSize::Default);
 
-                input.editor().update(cx, |editor, _cx| {
+                let editor_entity = input.editor();
+                let editor_entity = editor_entity
+                    .as_any()
+                    .downcast_ref::<Entity<Editor>>()
+                    .unwrap();
+                editor_entity.update(cx, |editor, _cx| {
                     editor.set_completion_provider(Some(std::rc::Rc::new(
                         ActionCompletionProvider::new(actions, humanized_names),
                     )));
@@ -2417,7 +2425,7 @@ impl KeybindingEditorModal {
             return;
         };
 
-        let action_name_str = action_editor.read(cx).editor.read(cx).text(cx);
+        let action_name_str = action_editor.read(cx).text(cx);
         let current_action = self.action_name_to_static.get(&action_name_str).copied();
 
         if current_action == self.selected_action_name {
@@ -2498,7 +2506,7 @@ impl KeybindingEditorModal {
 
     fn get_selected_action_name(&self, cx: &App) -> anyhow::Result<&'static str> {
         if let Some(selector) = self.action_editor.as_ref() {
-            let action_name_str = selector.read(cx).editor.read(cx).text(cx);
+            let action_name_str = selector.read(cx).text(cx);
 
             if action_name_str.is_empty() {
                 anyhow::bail!("Action name is required");
@@ -2544,7 +2552,7 @@ impl KeybindingEditorModal {
     fn validate_context(&self, cx: &App) -> anyhow::Result<Option<String>> {
         let new_context = self
             .context_editor
-            .read_with(cx, |input, cx| input.editor().read(cx).text(cx));
+            .read_with(cx, |input, cx| input.text(cx));
         let Some(context) = new_context.is_empty().not().then_some(new_context) else {
             return Ok(None);
         };
@@ -2717,10 +2725,18 @@ impl KeybindingEditorModal {
         self.action_editor.as_ref().is_some_and(|action_editor| {
             let focus_handle = action_editor.read(cx).focus_handle(cx);
             let editor_entity = action_editor.read(cx).editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap();
             is_editor_showing_completions(&focus_handle, editor_entity)
         }) || {
             let focus_handle = self.context_editor.read(cx).focus_handle(cx);
             let editor_entity = self.context_editor.read(cx).editor();
+            let editor_entity = editor_entity
+                .as_any()
+                .downcast_ref::<Entity<Editor>>()
+                .unwrap();
             is_editor_showing_completions(&focus_handle, editor_entity)
         } || self
             .action_arguments_editor

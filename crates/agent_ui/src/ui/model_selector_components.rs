@@ -1,5 +1,5 @@
 use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
-use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::CycleFavoriteModels;
@@ -50,6 +50,7 @@ pub struct ModelSelectorListItem {
     icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
+    is_latest: bool,
     is_favorite: bool,
     on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -62,6 +63,7 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
+            is_latest: false,
             is_favorite: false,
             on_toggle_favorite: None,
         }
@@ -84,6 +86,11 @@ impl ModelSelectorListItem {
 
     pub fn is_focused(mut self, is_focused: bool) -> Self {
         self.is_focused = is_focused;
+        self
+    }
+
+    pub fn is_latest(mut self, is_latest: bool) -> Self {
+        self.is_latest = is_latest;
         self
     }
 
@@ -129,7 +136,8 @@ impl RenderOnce for ModelSelectorListItem {
                             .size(IconSize::Small),
                         )
                     })
-                    .child(Label::new(self.title).truncate()),
+                    .child(Label::new(self.title).truncate())
+                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest"))),
             )
             .end_slot(div().pr_2().when(self.is_selected, |this| {
                 this.child(Icon::new(IconName::Check).color(Color::Accent))
@@ -196,14 +204,12 @@ impl RenderOnce for ModelSelectorFooter {
 
 #[derive(IntoElement)]
 pub struct ModelSelectorTooltip {
-    focus_handle: FocusHandle,
     show_cycle_row: bool,
 }
 
 impl ModelSelectorTooltip {
-    pub fn new(focus_handle: FocusHandle) -> Self {
+    pub fn new() -> Self {
         Self {
-            focus_handle,
             show_cycle_row: true,
         }
     }
@@ -223,11 +229,7 @@ impl RenderOnce for ModelSelectorTooltip {
                     .gap_2()
                     .justify_between()
                     .child(Label::new("Change Model"))
-                    .child(KeyBinding::for_action_in(
-                        &ToggleModelSelector,
-                        &self.focus_handle,
-                        cx,
-                    )),
+                    .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
             )
             .when(self.show_cycle_row, |this| {
                 this.child(
@@ -238,11 +240,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
                         .child(Label::new("Cycle Favorited Models"))
-                        .child(KeyBinding::for_action_in(
-                            &CycleFavoriteModels,
-                            &self.focus_handle,
-                            cx,
-                        )),
+                        .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })
     }

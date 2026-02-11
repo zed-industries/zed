@@ -563,18 +563,22 @@ impl FollowableItem for ChannelView {
         self.remote_id
     }
 
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let channel_buffer = self.channel_buffer.read(cx);
-        if !channel_buffer.is_connected() {
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let (is_connected, channel_id) = {
+            let channel_buffer = self.channel_buffer.read(cx);
+            (channel_buffer.is_connected(), channel_buffer.channel_id.0)
+        };
+        if !is_connected {
             return None;
         }
 
+        let editor_proto = self
+            .editor
+            .update(cx, |editor, cx| editor.to_state_proto(window, cx));
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel_buffer.channel_id.0,
-                editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(window, cx)
-                {
+                channel_id,
+                editor: if let Some(proto::view::Variant::Editor(proto)) = editor_proto {
                     Some(proto)
                 } else {
                     None
@@ -638,12 +642,12 @@ impl FollowableItem for ChannelView {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool {
-        self.editor
-            .read(cx)
-            .add_event_to_update_proto(event, update, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.add_event_to_update_proto(event, update, window, cx)
+        })
     }
 
     fn apply_update_proto(

@@ -124,7 +124,7 @@ impl AgentsPanel {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let thread_store = ThreadStore::global(cx);
         let history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
 
         let history_handle = history.clone();
@@ -151,7 +151,7 @@ impl AgentsPanel {
             };
 
             cx.update(|cx| {
-                if connection.supports_load_session(cx)
+                if connection.supports_session_history(cx)
                     && let Some(session_list) = connection.session_list(cx)
                 {
                     history_handle.update(cx, |history, cx| {

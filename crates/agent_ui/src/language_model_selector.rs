@@ -589,6 +589,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         })
                         .is_selected(is_selected)
                         .is_focused(selected)
+                        .is_latest(model_info.model.is_latest())
                         .is_favorite(is_favorite)
                         .on_toggle_favorite(handle_action_click)
                         .into_any_element(),

@@ -1,20 +1,25 @@
 use collections::HashMap;
 
-type Counts = HashMap<String, usize>;
+use crate::{
+    example::ActualCursor,
+    reorder_patch::{Patch, PatchLine},
+};
+
+pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
 
 /// Context characters needed on each side of a change to capture all affected n-grams
 const CONTEXT_CHARS: usize = CHR_F_CHAR_ORDER - 1;
 
 #[derive(Default, Debug, Clone)]
-struct ClassificationMetrics {
-    true_positives: usize,
-    false_positives: usize,
-    false_negatives: usize,
+pub struct ClassificationMetrics {
+    pub true_positives: usize,
+    pub false_positives: usize,
+    pub false_negatives: usize,
 }
 
 impl ClassificationMetrics {
-    fn from_counts(expected: &Counts, actual: &Counts) -> ClassificationMetrics {
+    pub fn from_counts(expected: &Counts, actual: &Counts) -> ClassificationMetrics {
         let mut true_positives = 0;
         let mut false_positives = 0;
         let mut false_negatives = 0;
@@ -42,7 +47,7 @@ impl ClassificationMetrics {
         }
     }
 
-    fn precision(&self) -> f64 {
+    pub fn precision(&self) -> f64 {
         if self.true_positives + self.false_positives == 0 {
             0.0
         } else {
@@ -50,11 +55,21 @@ impl ClassificationMetrics {
         }
     }
 
-    fn recall(&self) -> f64 {
+    pub fn recall(&self) -> f64 {
         if self.true_positives + self.false_negatives == 0 {
             0.0
         } else {
             self.true_positives as f64 / (self.true_positives + self.false_negatives) as f64
+        }
+    }
+
+    pub fn f1(&self) -> f64 {
+        let precision = self.precision();
+        let recall = self.recall();
+        if precision + recall == 0.0 {
+            0.0
+        } else {
+            2.0 * precision * recall / (precision + recall)
         }
     }
 }
@@ -335,6 +350,142 @@ pub fn braces_disbalance(text: &str) -> usize {
     disbalance as usize
 }
 
+/// Extracts changed lines from a unified diff string.
+/// Returns a bag (multiset) of lines that were added (+) or removed (-).
+/// The +/- prefix is included in the line to distinguish additions from deletions.
+pub fn extract_changed_lines_from_diff(diff: &str) -> Counts {
+    let mut counts = Counts::default();
+
+    for line in diff.lines() {
+        // Skip file headers (--- and +++)
+        if line.starts_with("---") || line.starts_with("+++") {
+            continue;
+        }
+        // Skip hunk headers (@@)
+        if line.starts_with("@@") {
+            continue;
+        }
+        // Skip diff header lines (diff --git, index, etc.)
+        if line.starts_with("diff ") || line.starts_with("index ") {
+            continue;
+        }
+        // Include added and removed lines (with their prefix)
+        if line.starts_with('+') || line.starts_with('-') {
+            *counts.entry(line.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    counts
+}
+
+/// Computes exact lines match metrics between expected and actual patches.
+/// Treats changed lines as a bag (multiset) - order is discarded but count matters.
+/// Returns ClassificationMetrics with TP/FP/FN counts.
+pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> ClassificationMetrics {
+    let expected_lines = extract_changed_lines_from_diff(expected_patch);
+    let actual_lines = extract_changed_lines_from_diff(actual_patch);
+    ClassificationMetrics::from_counts(&expected_lines, &actual_lines)
+}
+
+/// Returns whether the patch contains any isolated whitespace-only changes.
+///
+/// A whitespace-only change is an added or deleted line whose content is empty or
+/// contains only whitespace. It is "isolated" when it is not adjacent to any
+/// substantive (non-whitespace) change within the same contiguous change group.
+pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCursor>) -> bool {
+    let patch = Patch::parse_unified_diff(patch_str);
+
+    let cursor_new_file_line = cursor.as_ref().map(|c| (c.row + 1) as usize);
+
+    for hunk in &patch.hunks {
+        let lines = &hunk.lines;
+        let mut new_text_line = hunk.new_start as usize;
+
+        for (i, line) in lines.iter().enumerate() {
+            let content = match line {
+                PatchLine::Addition(s) => {
+                    let addition_line = new_text_line;
+                    new_text_line += 1;
+                    if s.trim().is_empty() && cursor_new_file_line == Some(addition_line) {
+                        continue;
+                    }
+                    s.as_str()
+                }
+                PatchLine::Deletion(s) => s.as_str(),
+                PatchLine::Context(_) => {
+                    new_text_line += 1;
+                    continue;
+                }
+                _ => continue,
+            };
+
+            if !content.trim().is_empty() {
+                continue;
+            }
+
+            if is_whitespace_change_isolated(lines, i) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_whitespace_change_isolated(lines: &[PatchLine], index: usize) -> bool {
+    // Look backward for a non-whitespace change before hitting a context line
+    for line in lines[..index].iter().rev() {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    // Look forward for a non-whitespace change before hitting a context line
+    for line in &lines[index + 1..] {
+        match line {
+            PatchLine::Addition(s) | PatchLine::Deletion(s) => {
+                if !s.trim().is_empty() {
+                    return false;
+                }
+            }
+            _ => break,
+        }
+    }
+
+    true
+}
+
+/// A simple proxy for whether the prediction respects editable region.
+pub fn is_editable_region_correct(actual_patch: &str) -> bool {
+    // A typical sign of a wrong editable region: a bunch of lines deletion
+    // at the beginning or end of the patch.
+    let patch = Patch::parse_unified_diff(actual_patch);
+    if patch.hunks.is_empty() {
+        return true;
+    }
+
+    let hunk = &patch.hunks[0];
+    let mut deletions_at_start = 0;
+
+    for line in hunk.lines.iter() {
+        match line {
+            PatchLine::Deletion(_) => deletions_at_start += 1,
+            _ => break,
+        }
+    }
+
+    if deletions_at_start >= 3 {
+        return false;
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod test_optimization {
     use super::*;
@@ -483,6 +634,18 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::example::ActualCursor;
+    use indoc::indoc;
+
+    fn cursor_on_line(one_based_line: u32) -> ActualCursor {
+        ActualCursor {
+            path: String::new(),
+            row: one_based_line - 1,
+            column: 0,
+            offset: 0,
+            editable_region_offset: None,
+        }
+    }
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -558,5 +721,260 @@ mod test {
 
         let text = "let x = { 1 + 2 )";
         assert_eq!(braces_disbalance(text), 2);
+    }
+
+    #[test]
+    fn test_extract_changed_lines_from_diff() {
+        let diff = r#"--- a/file.rs
++++ b/file.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    println!("hello");
++    println!("world");
+ }"#;
+
+        let counts = extract_changed_lines_from_diff(diff);
+        assert_eq!(counts.get("-    println!(\"hello\");"), Some(&1));
+        assert_eq!(counts.get("+    println!(\"world\");"), Some(&1));
+        assert_eq!(counts.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_changed_lines_skips_headers() {
+        let diff = r#"diff --git a/file.rs b/file.rs
+index abc123..def456 100644
+--- a/file.rs
++++ b/file.rs
+@@ -1,2 +1,2 @@
+-old line
++new line"#;
+
+        let counts = extract_changed_lines_from_diff(diff);
+        assert_eq!(counts.get("-old line"), Some(&1));
+        assert_eq!(counts.get("+new line"), Some(&1));
+        assert_eq!(counts.len(), 2);
+    }
+
+    #[test]
+    fn test_exact_lines_match_perfect() {
+        let expected = r#"--- a/file.rs
++++ b/file.rs
+@@ -1,3 +1,3 @@
+-old line 1
+-old line 2
++new line 1
++new line 2"#;
+
+        let actual = r#"--- a/file.rs
++++ b/file.rs
+@@ -1,3 +1,3 @@
+-old line 1
+-old line 2
++new line 1
++new line 2"#;
+
+        let metrics = exact_lines_match(expected, actual);
+        assert_eq!(metrics.true_positives, 4);
+        assert_eq!(metrics.false_positives, 0);
+        assert_eq!(metrics.false_negatives, 0);
+        assert!((metrics.precision() - 1.0).abs() < 1e-6);
+        assert!((metrics.recall() - 1.0).abs() < 1e-6);
+        assert!((metrics.f1() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_exact_lines_match_partial() {
+        let expected = r#"-old line 1
+-old line 2
++new line 1
++new line 2"#;
+
+        let actual = r#"-old line 1
++new line 1
++extra line"#;
+
+        let metrics = exact_lines_match(expected, actual);
+        // TP: "-old line 1" and "+new line 1" (2)
+        // FP: "+extra line" (1)
+        // FN: "-old line 2" and "+new line 2" (2)
+        assert_eq!(metrics.true_positives, 2);
+        assert_eq!(metrics.false_positives, 1);
+        assert_eq!(metrics.false_negatives, 2);
+    }
+
+    #[test]
+    fn test_exact_lines_match_no_overlap() {
+        let expected = r#"-line a
++line b"#;
+
+        let actual = r#"-line x
++line y"#;
+
+        let metrics = exact_lines_match(expected, actual);
+        assert_eq!(metrics.true_positives, 0);
+        assert_eq!(metrics.false_positives, 2);
+        assert_eq!(metrics.false_negatives, 2);
+        assert!((metrics.precision()).abs() < 1e-6);
+        assert!((metrics.recall()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_exact_lines_match_duplicate_lines() {
+        let expected = r#"+line a
++line a
++line a"#;
+
+        let actual = r#"+line a
++line a"#;
+
+        let metrics = exact_lines_match(expected, actual);
+        // Expected has 3 "+line a", actual has 2
+        // TP: 2, FN: 1, FP: 0
+        assert_eq!(metrics.true_positives, 2);
+        assert_eq!(metrics.false_positives, 0);
+        assert_eq!(metrics.false_negatives, 1);
+    }
+
+    #[test]
+    fn test_exact_lines_match_empty_patches() {
+        let metrics = exact_lines_match("", "");
+        assert_eq!(metrics.true_positives, 0);
+        assert_eq!(metrics.false_positives, 0);
+        assert_eq!(metrics.false_negatives, 0);
+    }
+
+    #[test]
+    fn test_is_editable_region_correct() {
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            -context
+            -removed
+            -from the beginning of the file
+            import sys
+            +sys.exit(0)
+
+            "};
+        assert!(!is_editable_region_correct(patch));
+
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            "};
+        assert!(is_editable_region_correct(patch));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_purely_whitespace_patch() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_adjacent_to_real_change() {
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+            +    let x = 1;
+                 println!(\"hello\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_no_whitespace_changes() {
+        let patch = indoc! {"
+            @@ -1,3 +1,3 @@
+             fn main() {
+            -    println!(\"hello\");
+            +    println!(\"world\");
+             }
+        "};
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion() {
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_mixed_groups() {
+        let patch = indoc! {"
+            @@ -1,7 +1,8 @@
+             fn main() {
+            +
+                 let x = 1;
+            -    let y = 2;
+            +    let y = 3;
+
+            +
+                 println!(\"hello\");
+             }
+        "};
+        assert!(has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_empty_patch() {
+        let patch = "";
+        assert!(!has_isolated_whitespace_changes(patch, None));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_skipped_on_cursor_line() {
+        // The addition of a blank line at new-file line 2 should be skipped
+        // because the cursor is on that line.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        // New-file line 2 is the added blank line
+        let cursor = cursor_on_line(2);
+        assert!(!has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_not_skipped_when_cursor_on_different_line() {
+        // The blank line is at new-file line 2, but the cursor is on line 1.
+        let patch = indoc! {"
+            @@ -1,3 +1,4 @@
+             fn main() {
+            +
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(1);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_isolated_whitespace_deletion_not_skipped_by_cursor() {
+        // Deletions don't have a new-file line, so cursor can't suppress them.
+        let patch = indoc! {"
+            @@ -1,4 +1,3 @@
+             fn main() {
+            -
+                 println!(\"hello\");
+             }
+        "};
+        let cursor = cursor_on_line(2);
+        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
     }
 }
