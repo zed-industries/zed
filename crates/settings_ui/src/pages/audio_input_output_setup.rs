@@ -1,7 +1,5 @@
-use cpal::{
-    DeviceDescription, DeviceId, default_host,
-    traits::{DeviceTrait, HostTrait},
-};
+use audio::{AudioDeviceInfo, AvailableAudioDevices};
+use cpal::DeviceId;
 use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use std::str::FromStr;
@@ -11,32 +9,6 @@ use util::ResultExt;
 use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
 
 pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
-
-#[derive(Clone, Debug)]
-pub(crate) struct AudioDeviceInfo {
-    pub id: DeviceId,
-    pub desc: DeviceDescription,
-}
-
-impl std::fmt::Display for AudioDeviceInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.desc.name(), self.id)
-    }
-}
-
-pub(crate) fn get_audio_devices() -> Vec<AudioDeviceInfo> {
-    let Some(devices) = default_host().devices().ok() else {
-        return Vec::new();
-    };
-
-    devices
-        .filter_map(|device| {
-            let id = device.id().ok()?;
-            let desc = device.description().ok()?;
-            Some(AudioDeviceInfo { id, desc })
-        })
-        .collect()
-}
 
 pub(crate) fn get_current_device(
     current_id: Option<&DeviceId>,
@@ -48,14 +20,7 @@ pub(crate) fn get_current_device(
     };
     devices
         .iter()
-        .find(|d| {
-            &d.id == current_id
-                && if is_input {
-                    d.desc.supports_input()
-                } else {
-                    d.desc.supports_output()
-                }
-        })
+        .find(|d| d.matches(current_id, is_input))
         .cloned()
 }
 
@@ -70,7 +35,9 @@ pub(crate) fn render_audio_device_dropdown<F>(
 where
     F: Fn(Option<DeviceId>, &mut Window, &mut App) + Clone + 'static,
 {
-    let devices = get_audio_devices();
+    let devices = cx.default_global::<AvailableAudioDevices>();
+    devices.populate();
+    let devices: Vec<_> = devices.0.clone();
     let current_device = get_current_device(current_device_id.as_ref(), is_input, &devices);
 
     let menu = ContextMenu::build(window, cx, {
@@ -90,10 +57,10 @@ where
                 },
             );
 
-            for device in &devices {
+            for device in devices.iter().filter(|d| d.matches_input(is_input)) {
                 let is_current = current_device
                     .as_ref()
-                    .map(|info| info.id == device.id)
+                    .map(|info| info.matches(&device.id, is_input))
                     .unwrap_or(false);
                 let device_id = device.id.clone();
 

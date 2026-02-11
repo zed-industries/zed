@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use cpal::{
-    DeviceId, default_host,
+    DeviceDescription, DeviceId, default_host,
     traits::{DeviceTrait, HostTrait},
 };
 use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
@@ -383,3 +383,45 @@ pub fn open_output_stream(device_id: Option<DeviceId>) -> anyhow::Result<MixerDe
     log::info!("Output stream: {:?}", output_handle);
     Ok(output_handle)
 }
+
+#[derive(Clone, Debug)]
+pub struct AudioDeviceInfo {
+    pub id: DeviceId,
+    pub desc: DeviceDescription,
+}
+
+impl AudioDeviceInfo {
+    pub fn matches_input(&self, is_input: bool) -> bool {
+        is_input == self.desc.supports_input()
+    }
+
+    pub fn matches(&self, id: &DeviceId, is_input: bool) -> bool {
+        &self.id == id && self.matches_input(is_input)
+    }
+}
+
+impl std::fmt::Display for AudioDeviceInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.desc.name(), self.id)
+    }
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct AvailableAudioDevices(pub Vec<AudioDeviceInfo>);
+
+impl AvailableAudioDevices {
+    pub fn populate(&mut self) {
+        let Some(devices) = default_host().devices().ok() else {
+            return;
+        };
+        self.0 = devices
+            .filter_map(|device| {
+                let id = device.id().ok()?;
+                let desc = device.description().ok()?;
+                Some(AudioDeviceInfo { id, desc })
+            })
+            .collect();
+    }
+}
+
+impl Global for AvailableAudioDevices {}
