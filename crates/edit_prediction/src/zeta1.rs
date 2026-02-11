@@ -142,6 +142,8 @@ pub(crate) fn request_prediction_with_zeta1(
                 ..(editable_offset_range.end - context_start_offset),
             cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot) - context_start_offset,
             excerpt_start_row: Some(context_start_row),
+            excerpt_ranges: None,
+            preferred_model: None,
         };
 
         if let Some(debug_tx) = &debug_tx {

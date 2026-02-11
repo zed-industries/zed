@@ -158,6 +158,8 @@ mod tests {
                 cursor_excerpt: "".into(),
                 editable_range_in_excerpt: 0..0,
                 excerpt_start_row: None,
+                excerpt_ranges: None,
+                preferred_model: None,
             },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),

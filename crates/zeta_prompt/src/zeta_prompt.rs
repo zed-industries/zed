@@ -18,6 +18,33 @@ fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
 
+/// The client's preferred edit prediction model. The server may override this.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditPredictionModelKind {
+    #[default]
+    Zeta1,
+    Zeta2,
+}
+
+/// Pre-computed byte offset ranges within `cursor_excerpt` for different
+/// editable and context token budgets. Allows the server to select the
+/// appropriate ranges for whichever model it uses.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExcerptRanges {
+    /// Editable region computed with a 150-token budget.
+    pub editable_150: Range<usize>,
+    /// Editable region computed with a 180-token budget.
+    pub editable_180: Range<usize>,
+    /// Editable region computed with a 350-token budget.
+    pub editable_350: Range<usize>,
+    /// Context boundary when using editable_150 with 350 tokens of additional context.
+    pub editable_150_context_350: Range<usize>,
+    /// Context boundary when using editable_180 with 350 tokens of additional context.
+    pub editable_180_context_350: Range<usize>,
+    /// Context boundary when using editable_350 with 150 tokens of additional context.
+    pub editable_350_context_150: Range<usize>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZetaPromptInput {
     pub cursor_path: Arc<Path>,
@@ -28,6 +55,15 @@ pub struct ZetaPromptInput {
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<Arc<Event>>,
     pub related_files: Vec<RelatedFile>,
+    /// When set, the excerpt was computed with a larger budget (~512 tokens)
+    /// and these ranges let the server select model-appropriate subsets.
+    /// When absent, the excerpt IS the context region and
+    /// `editable_range_in_excerpt` is the only editable range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt_ranges: Option<ExcerptRanges>,
+    /// Client's preferred model. The server may override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_model: Option<EditPredictionModelKind>,
 }
 
 #[derive(
@@ -747,6 +783,8 @@ mod tests {
             excerpt_start_row: None,
             events: events.into_iter().map(Arc::new).collect(),
             related_files,
+            excerpt_ranges: None,
+            preferred_model: None,
         }
     }
 

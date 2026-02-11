@@ -93,6 +93,8 @@ pub async fn run_format_prompt(
                 excerpt_start_row: prompt_inputs.excerpt_start_row,
                 events: prompt_inputs.edit_history.clone(),
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
+                excerpt_ranges: None,
+                preferred_model: None,
             };
             let prompt = format_zeta_prompt(&input, version);
             let prefill = zeta_prompt::get_prefill(&input, version);
