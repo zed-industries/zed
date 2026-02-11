@@ -9,7 +9,7 @@ use gpui::{
     StatefulInteractiveElement, Task, TextStyleRefinement, image_cache, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
@@ -19,7 +19,8 @@ use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{Output, plain::TerminalOutput, user_error::ErrorView},
+    outputs::{Output, plain, plain::TerminalOutput, user_error::ErrorView},
+    repl_settings::ReplSettings,
 };
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -322,8 +323,7 @@ pub struct MarkdownCell {
     image_cache: Entity<RetainAllImageCache>,
     source: String,
     editor: Entity<Editor>,
-    parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
-    markdown_parsing_task: Task<()>,
+    markdown: Entity<Markdown>,
     editing: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
@@ -381,23 +381,7 @@ impl MarkdownCell {
             editor
         });
 
-        let markdown_parsing_task = {
-            let languages = languages.clone();
-            let source = source.clone();
-
-            cx.spawn_in(window, async move |this, cx| {
-                let parsed_markdown = cx
-                    .background_spawn(async move {
-                        parse_markdown(&source, None, Some(languages)).await
-                    })
-                    .await;
-
-                this.update(cx, |cell: &mut MarkdownCell, _| {
-                    cell.parsed_markdown = Some(parsed_markdown);
-                })
-                .log_err();
-            })
-        };
+        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
 
         let cell_id = id.clone();
         let editor_subscription =
@@ -419,9 +403,8 @@ impl MarkdownCell {
             image_cache: RetainAllImageCache::new(cx),
             source,
             editor,
-            parsed_markdown: None,
-            markdown_parsing_task,
-            editing: start_editing, // Start in edit mode if empty
+            markdown,
+            editing: start_editing,
             selected: false,
             cell_position: None,
             languages,
@@ -477,18 +460,8 @@ impl MarkdownCell {
         self.source = source.clone();
         let languages = self.languages.clone();
 
-        self.markdown_parsing_task = cx.spawn(async move |this, cx| {
-            let parsed_markdown = cx
-                .background_spawn(
-                    async move { parse_markdown(&source, None, Some(languages)).await },
-                )
-                .await;
-
-            this.update(cx, |cell: &mut MarkdownCell, cx| {
-                cell.parsed_markdown = Some(parsed_markdown);
-                cx.notify();
-            })
-            .log_err();
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.reset(source.into(), cx);
         });
     }
 
@@ -581,42 +554,11 @@ impl Render for MarkdownCell {
         }
 
         // Preview mode - show rendered markdown
-        let Some(parsed) = self.parsed_markdown.as_ref() else {
-            // No parsed content yet, show placeholder that can be clicked to edit
-            let focus_handle = self.editor.focus_handle(cx);
-            return v_flex()
-                .size_full()
-                .children(self.cell_position_spacer(true, window, cx))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .pr_6()
-                        .rounded_xs()
-                        .items_start()
-                        .gap(DynamicSpacing::Base08.rems(cx))
-                        .bg(self.selected_bg_color(window, cx))
-                        .child(self.gutter(window, cx))
-                        .child(
-                            div()
-                                .id("markdown-placeholder")
-                                .flex_1()
-                                .p_3()
-                                .italic()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child("Click to edit markdown...")
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.editing = true;
-                                    window.focus(&this.editor.focus_handle(cx), cx);
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .children(self.cell_position_spacer(false, window, cx));
-        };
 
-        let mut markdown_render_context =
-            markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
+        let style = MarkdownStyle {
+            base_text_style: window.text_style(),
+            ..Default::default()
+        };
 
         v_flex()
             .size_full()
@@ -645,11 +587,7 @@ impl Render for MarkdownCell {
                                 window.focus(&this.editor.focus_handle(cx), cx);
                                 cx.notify();
                             }))
-                            .children(parsed.children.iter().map(|child| {
-                                div().relative().child(div().relative().child(
-                                    render_markdown_block(child, &mut markdown_render_context),
-                                ))
-                            })),
+                            .child(MarkdownElement::new(self.markdown.clone(), style)),
                     ),
             )
             .children(self.cell_position_spacer(false, window, cx))
@@ -732,6 +670,18 @@ impl CodeCell {
             execution_duration: None,
             is_executing: false,
         }
+    }
+
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                if let Some(buffer) = buffer.as_singleton() {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(language, cx);
+                    });
+                }
+            });
+        });
     }
 
     /// Load a code cell from notebook file data, including existing outputs and execution count
@@ -1099,6 +1049,17 @@ impl RunnableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let output_max_height = ReplSettings::get_global(cx).output_max_height_lines;
+        let output_max_height = if output_max_height > 0 {
+            Some(window.line_height() * output_max_height as f32)
+        } else {
+            None
+        };
+        let output_max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
         // get the language from the editor's buffer
         let language_name = self
             .editor
@@ -1157,6 +1118,70 @@ impl Render for CodeCell {
                     ),
             )
             // Output portion
+            .child(
+                h_flex()
+                    .w_full()
+                    .pr_6()
+                    .rounded_xs()
+                    .items_start()
+                    .gap(DynamicSpacing::Base08.rems(cx))
+                    .bg(self.selected_bg_color(window, cx))
+                    .child(self.gutter_output(window, cx))
+                    .child(
+                        div().py_1p5().w_full().child(
+                            div()
+                                .flex()
+                                .size_full()
+                                .flex_1()
+                                .py_3()
+                                .px_5()
+                                .rounded_lg()
+                                .border_1()
+                                .child(
+                                    div()
+                                        .id((ElementId::from(self.id.to_string()), "output-scroll"))
+                                        .w_full()
+                                        .when_some(output_max_width, |div, max_w| {
+                                            div.max_w(max_w).overflow_x_scroll()
+                                        })
+                                        .when_some(output_max_height, |div, max_h| {
+                                            div.max_h(max_h).overflow_y_scroll()
+                                        })
+                                        .children(self.outputs.iter().map(|output| {
+                                            let content = match output {
+                                                Output::Plain { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Markdown { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Stream { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Image { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Message(message) => Some(
+                                                    div().child(message.clone()).into_any_element(),
+                                                ),
+                                                Output::Table { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::Json { content, .. } => {
+                                                    Some(content.clone().into_any_element())
+                                                }
+                                                Output::ErrorOutput(error_view) => {
+                                                    error_view.render(window, cx)
+                                                }
+                                                Output::ClearOutputWaitMarker => None,
+                                            };
+
+                                            div().children(content)
+                                        })),
+                                ),
+                        ),
+                    ),
+            )
             .when(
                 self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
                 |this| {
@@ -1252,6 +1277,9 @@ impl Render for CodeCell {
                                                             .into_any_element(),
                                                     ),
                                                     Output::Table { content, .. } => {
+                                                        Some(content.clone().into_any_element())
+                                                    }
+                                                    Output::Json { content, .. } => {
                                                         Some(content.clone().into_any_element())
                                                     }
                                                     Output::ErrorOutput(error_view) => {

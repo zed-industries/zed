@@ -53,9 +53,9 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
-        /// Delete the selection and enter edit mode.
+        /// Select the next match for the current search query.
         HelixSelectNext,
-        /// Delete the selection and enter edit mode, without yanking the selection.
+        /// Select the previous match for the current search query.
         HelixSelectPrevious,
     ]
 );
@@ -128,7 +128,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 if let Motion::ZedSearchResult { new_selections, .. } = &motion {
                     s.select_anchor_ranges(new_selections.clone());
@@ -319,7 +319,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;
@@ -399,7 +399,7 @@ impl Vim {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We therefore need special handling for it.
                 self.update_editor(cx, |_, editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
+                    let text_layout_details = editor.text_layout_details(window, cx);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
@@ -583,6 +583,7 @@ impl Vim {
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
                         helix_select: true,
+                        _dismiss_subscription: None,
                     }
                 });
             }
@@ -713,7 +714,11 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+                let extra_line = if first_char == Some('\n') && selection.is_empty() {
+                    1
+                } else {
+                    0
+                };
 
                 let end_row = current_end_row + count as u32 + extra_line;
 
@@ -1334,7 +1339,9 @@ mod test {
             line one
             ˇ
             line three
-            line four"},
+            line four
+            line five
+            line six"},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
@@ -1343,7 +1350,22 @@ mod test {
             line one
             «
             line three
-            ˇ»line four"},
+            ˇ»line four
+            line five
+            line six"},
+            Mode::HelixNormal,
+        );
+
+        // Another x should only select the next line
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five
+            line six"},
             Mode::HelixNormal,
         );
 
@@ -1757,5 +1779,82 @@ mod test {
 
             assert_eq!(vim_mode, Some(Mode::HelixNormal));
         });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_with_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Start with a selection
+        cx.set_state(
+            indoc! {"
+            «lineˇ» one
+            line two
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+
+        // Scroll down, selection should collapse
+        cx.simulate_keystrokes("ctrl-d");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line fiveˇ"},
+            Mode::HelixNormal,
+        );
+
+        // Make a new selection
+        cx.simulate_keystroke("b");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line «ˇfive»"},
+            Mode::HelixNormal,
+        );
+
+        // And scroll up, once again collapsing the selection.
+        cx.simulate_keystroke("ctrl-u");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line ˇfour
+            line five"},
+            Mode::HelixNormal,
+        );
+
+        // Enter select mode
+        cx.simulate_keystroke("v");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line «fˇ»our
+            line five"},
+            Mode::HelixSelect,
+        );
+
+        // And now the selection should be kept/expanded.
+        cx.simulate_keystroke("ctrl-d");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line «four
+            line fiveˇ»"},
+            Mode::HelixSelect,
+        );
     }
 }

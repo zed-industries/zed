@@ -604,7 +604,7 @@ impl TerminalBuilder {
                 task,
                 terminal_type: TerminalType::Pty {
                     pty_tx: Notifier(pty_tx),
-                    info: pty_info,
+                    info: Arc::new(pty_info),
                 },
                 completion_tx,
                 term,
@@ -833,7 +833,7 @@ pub enum SelectionPhase {
 enum TerminalType {
     Pty {
         pty_tx: Notifier,
-        info: PtyProcessInfo,
+        info: Arc<PtyProcessInfo>,
     },
     DisplayOnly,
 }
@@ -975,10 +975,8 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
-                    if info.has_changed() {
-                        cx.emit(Event::TitleChanged);
-                    }
+                if let TerminalType::Pty { info, .. } = &self.terminal_type {
+                    info.emit_title_changed_if_changed(cx);
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -2101,9 +2099,11 @@ impl Terminal {
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
         match &self.terminal_type {
-            TerminalType::Pty { info, .. } => {
-                info.current.as_ref().map(|process| process.cwd.clone())
-            }
+            TerminalType::Pty { info, .. } => info
+                .current
+                .read()
+                .as_ref()
+                .map(|process| process.cwd.clone()),
             TerminalType::DisplayOnly => None,
         }
     }
@@ -2125,6 +2125,7 @@ impl Terminal {
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
                         .current
+                        .read()
                         .as_ref()
                         .map(|fpi| {
                             let process_file = fpi
@@ -2163,7 +2164,7 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+            if let TerminalType::Pty { info, .. } = &self.terminal_type {
                 // First kill the foreground process group (the command running in the shell)
                 info.kill_current_process();
                 // Then kill the shell itself so that the terminal exits properly
@@ -2385,7 +2386,7 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, mut info } =
+        if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();

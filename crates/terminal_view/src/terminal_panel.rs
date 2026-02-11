@@ -17,7 +17,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
-use search::{BufferSearchBar, buffer_search::DivRegistrar};
+
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
@@ -141,7 +141,14 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .map(|terminal_view| terminal_view.read(cx).focus_handle.clone());
-                if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
+                let has_focused_rename_editor = pane
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+                    .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
+                if !pane.has_focus(window, cx)
+                    && !pane.context_menu_focused(window, cx)
+                    && !has_focused_rename_editor
+                {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
@@ -1078,6 +1085,32 @@ impl TerminalPanel {
         self.assistant_enabled
     }
 
+    /// Returns all panes in the terminal panel.
+    pub fn panes(&self) -> Vec<&Entity<Pane>> {
+        self.center.panes()
+    }
+
+    /// Returns all non-empty terminal selections from all terminal views in all panes.
+    pub fn terminal_selections(&self, cx: &App) -> Vec<String> {
+        self.center
+            .panes()
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx).items().filter_map(|item| {
+                    let terminal_view = item.downcast::<crate::TerminalView>()?;
+                    terminal_view
+                        .read(cx)
+                        .terminal()
+                        .read(cx)
+                        .last_content
+                        .selection_text
+                        .clone()
+                        .filter(|text| !text.is_empty())
+                })
+            })
+            .collect()
+    }
+
     fn is_enabled(&self, cx: &App) -> bool {
         self.workspace
             .upgrade()
@@ -1205,12 +1238,13 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = cx.new(|cx| {
-            search::BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx)
-        });
+        let toolbar = pane.toolbar().clone();
+        if let Some(callbacks) = cx.try_global::<workspace::PaneSearchBarCallbacks>() {
+            let languages = Some(project.read(cx).languages().clone());
+            (callbacks.setup_search_bar)(languages, &toolbar, window, cx);
+        }
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
-        pane.toolbar().update(cx, |toolbar, cx| {
-            toolbar.add_item(buffer_search_bar, window, cx);
+        toolbar.update(cx, |toolbar, cx| {
             toolbar.add_item(breadcrumbs, window, cx);
         });
 
@@ -1450,19 +1484,12 @@ impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut registrar = DivRegistrar::new(
-            |panel, _, cx| {
-                panel
-                    .active_pane
-                    .read(cx)
-                    .toolbar()
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-            },
-            cx,
-        );
-        BufferSearchBar::register(&mut registrar);
-        let registrar = registrar.into_div();
+        let registrar = cx
+            .try_global::<workspace::PaneSearchBarCallbacks>()
+            .map(|callbacks| {
+                (callbacks.wrap_div_with_search_actions)(div(), self.active_pane.clone())
+            })
+            .unwrap_or_else(div);
         self.workspace
             .update(cx, |workspace, cx| {
                 registrar.size_full().child(self.center.render(
@@ -1929,7 +1956,7 @@ mod tests {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     settings.terminal.get_or_insert_default().project.shell =
-                        Some(settings::Shell::Program("asdf".to_owned()));
+                        Some(settings::Shell::Program("__nonexistent_shell__".to_owned()));
                 });
             });
         });

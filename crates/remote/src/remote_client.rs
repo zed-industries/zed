@@ -841,7 +841,7 @@ impl RemoteClient {
                                 })?;
                             }
                         }
-                    } else if exit_code > 0 {
+                    } else {
                         log::error!("proxy process terminated unexpectedly: {exit_code}");
                         this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
@@ -1132,7 +1132,7 @@ impl RemoteClient {
             .unwrap()
     }
 
-    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+    pub fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         self.state
             .as_ref()
             .and_then(|state| state.remote_connection())

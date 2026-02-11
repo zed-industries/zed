@@ -10,6 +10,7 @@ use collections::{HashMap, HashSet};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -203,6 +204,7 @@ pub struct ContextServerStore {
     state: ContextServerStoreState,
     context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
     servers: HashMap<ContextServerId, ContextServerState>,
+    server_ids: Vec<ContextServerId>,
     worktree_store: Entity<WorktreeStore>,
     project: Option<WeakEntity<Project>>,
     registry: Entity<ContextServerDescriptorRegistry>,
@@ -212,14 +214,12 @@ pub struct ContextServerStore {
     _subscriptions: Vec<Subscription>,
 }
 
-pub enum Event {
-    ServerStatusChanged {
-        server_id: ContextServerId,
-        status: ContextServerStatus,
-    },
+pub struct ServerStatusChangedEvent {
+    pub server_id: ContextServerId,
+    pub status: ContextServerStatus,
 }
 
-impl EventEmitter<Event> for ContextServerStore {}
+impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
 
 impl ContextServerStore {
     pub fn local(
@@ -394,6 +394,7 @@ impl ContextServerStore {
             registry,
             needs_server_update: false,
             servers: HashMap::default(),
+            server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
         };
@@ -426,8 +427,16 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
-    pub fn server_ids(&self, cx: &App) -> HashSet<ContextServerId> {
-        self.servers
+    /// Returns a sorted slice of available unique context server IDs. Within the
+    /// slice, context servers which have `mcp-server-` as a prefix in their ID will
+    /// appear after servers that do not have this prefix in their ID.
+    pub fn server_ids(&self) -> &[ContextServerId] {
+        self.server_ids.as_slice()
+    }
+
+    fn populate_server_ids(&mut self, cx: &App) {
+        self.server_ids = self
+            .servers
             .keys()
             .cloned()
             .chain(
@@ -437,7 +446,27 @@ impl ContextServerStore {
                     .into_iter()
                     .map(|(id, _)| ContextServerId(id)),
             )
-            .collect()
+            .chain(
+                self.context_server_settings
+                    .keys()
+                    .map(|id| ContextServerId(id.clone())),
+            )
+            .unique()
+            .sorted_unstable_by(
+                // Sort context servers: ones without mcp-server- prefix first, then prefixed ones
+                |a, b| {
+                    const MCP_PREFIX: &str = "mcp-server-";
+                    match (a.0.strip_prefix(MCP_PREFIX), b.0.strip_prefix(MCP_PREFIX)) {
+                        // If one has mcp-server- prefix and other doesn't, non-mcp comes first
+                        (Some(_), None) => std::cmp::Ordering::Greater,
+                        (None, Some(_)) => std::cmp::Ordering::Less,
+                        // If both have same prefix status, sort by appropriate key
+                        (Some(a), Some(b)) => a.cmp(b),
+                        (None, None) => a.0.cmp(&b.0),
+                    }
+                },
+            )
+            .collect();
     }
 
     pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
@@ -591,7 +620,7 @@ impl ContextServerStore {
             .remove(id)
             .context("Context server not found")?;
         drop(state);
-        cx.emit(Event::ServerStatusChanged {
+        cx.emit(ServerStatusChangedEvent {
             server_id: id.clone(),
             status: ContextServerStatus::Stopped,
         });
@@ -808,7 +837,7 @@ impl ContextServerStore {
     ) {
         let status = ContextServerStatus::from_state(&state);
         self.servers.insert(id.clone(), state);
-        cx.emit(Event::ServerStatusChanged {
+        cx.emit(ServerStatusChangedEvent {
             server_id: id,
             status,
         });
@@ -825,6 +854,7 @@ impl ContextServerStore {
                 }
 
                 this.update(cx, |this, cx| {
+                    this.populate_server_ids(cx);
                     this.update_servers_task.take();
                     if this.needs_server_update {
                         this.available_context_servers_changed(cx);

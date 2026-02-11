@@ -26,6 +26,7 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
+    current_line: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -143,6 +144,7 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
+            current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
@@ -210,7 +212,17 @@ impl GoToLine {
         snapshot: &MultiBufferSnapshot,
         cx: &Context<Editor>,
     ) -> Option<Anchor> {
-        let (query_row, query_char) = self.line_and_char_from_query(cx)?;
+        let (query_row, query_char) = if let Some(offset) = self.relative_line_from_query(cx) {
+            let target = if offset >= 0 {
+                self.current_line.saturating_add(offset as u32)
+            } else {
+                self.current_line.saturating_sub(offset.unsigned_abs())
+            };
+            (target, None)
+        } else {
+            self.line_and_char_from_query(cx)?
+        };
+
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
 
@@ -239,6 +251,41 @@ impl GoToLine {
             end_offset += offset_increment;
         }
         Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
+    }
+
+    fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
+        let input = self.line_editor.read(cx).text(cx);
+        let trimmed = input.trim();
+
+        let mut last_direction_char: Option<char> = None;
+        let mut number_start_index = 0;
+
+        for (i, c) in trimmed.char_indices() {
+            match c {
+                '+' | 'f' | 'F' | '-' | 'b' | 'B' => {
+                    last_direction_char = Some(c);
+                    number_start_index = i + c.len_utf8();
+                }
+                _ => break,
+            }
+        }
+
+        let direction = last_direction_char?;
+
+        let number_part = &trimmed[number_start_index..];
+        let line_part = number_part
+            .split(FILE_ROW_COLUMN_DELIMITER)
+            .next()
+            .unwrap_or(number_part)
+            .trim();
+
+        let value = line_part.parse::<u32>().ok()?;
+
+        match direction {
+            '+' | 'f' | 'F' => Some(value as i32),
+            '-' | 'b' | 'B' => Some(-(value as i32)),
+            _ => None,
+        }
     }
 
     fn line_and_char_from_query(&self, cx: &App) -> Option<(u32, Option<u32>)> {
@@ -279,12 +326,21 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let help_text = match self.line_and_char_from_query(cx) {
-            Some((line, Some(character))) => {
-                format!("Go to line {line}, character {character}").into()
+        let help_text = if let Some(offset) = self.relative_line_from_query(cx) {
+            let target_line = if offset >= 0 {
+                self.current_line.saturating_add(offset as u32)
+            } else {
+                self.current_line.saturating_sub(offset.unsigned_abs())
+            };
+            format!("Go to line {target_line} ({offset:+} from current)").into()
+        } else {
+            match self.line_and_char_from_query(cx) {
+                Some((line, Some(character))) => {
+                    format!("Go to line {line}, character {character}").into()
+                }
+                Some((line, None)) => format!("Go to line {line}").into(),
+                None => self.current_text.clone(),
             }
-            Some((line, None)) => format!("Go to line {line}").into(),
-            None => self.current_text.clone(),
         };
 
         v_flex()

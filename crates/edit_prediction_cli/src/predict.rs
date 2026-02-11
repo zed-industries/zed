@@ -1,16 +1,17 @@
 use crate::{
-    FormatPromptArgs, PredictArgs, PredictionProvider,
+    FormatPromptArgs, PredictArgs, PredictionProvider, TeacherBackend,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction, ExamplePrompt},
     format_prompt::{TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
+    openai_client::OpenAiClient,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
     progress::{ExampleProgress, InfoStyle, Step},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
-use edit_prediction::{DebugEvent, EditPredictionStore};
+use edit_prediction::{DebugEvent, EditPredictionStore, Zeta2RawConfig};
 use futures::{FutureExt as _, StreamExt as _, future::Shared};
 use gpui::{AppContext as _, AsyncApp, Task};
 use std::{
@@ -20,9 +21,10 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
-use zeta_prompt::ZetaVersion;
+use zeta_prompt::ZetaFormat;
 
 static ANTHROPIC_CLIENT: OnceLock<AnthropicClient> = OnceLock::new();
+static OPENAI_CLIENT: OnceLock<OpenAiClient> = OnceLock::new();
 
 pub async fn run_prediction(
     example: &mut Example,
@@ -53,7 +55,7 @@ pub async fn run_prediction(
 
     run_context_retrieval(example, app_state.clone(), example_progress, cx.clone()).await?;
 
-    if let PredictionProvider::Teacher(version) | PredictionProvider::TeacherNonBatching(version) =
+    if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
         provider
     {
         let _step_progress = example_progress.start(Step::Predict);
@@ -68,7 +70,7 @@ pub async fn run_prediction(
         .await?;
 
         let batched = matches!(provider, PredictionProvider::Teacher(..));
-        return predict_anthropic(example, repetition_count, version, batched).await;
+        return predict_teacher(example, backend, batched, repetition_count, args.cache_only).await;
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -102,16 +104,25 @@ pub async fn run_prediction(
     ep_store.update(&mut cx, |store, _cx| {
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta1,
-            PredictionProvider::Zeta2(version) => {
-                edit_prediction::EditPredictionModel::Zeta2 { version }
-            }
+            PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta2,
             PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
-            PredictionProvider::Teacher(..) | PredictionProvider::TeacherNonBatching(..) => {
+            PredictionProvider::Teacher(..)
+            | PredictionProvider::TeacherNonBatching(..)
+            | PredictionProvider::Repair => {
                 unreachable!()
             }
         };
         store.set_edit_prediction_model(model);
+
+        // If user specified a non-default Zeta2 version, configure raw endpoint.
+        // ZED_ZETA_MODEL env var is optional.
+        if let PredictionProvider::Zeta2(format) = provider {
+            if format != ZetaFormat::default() {
+                let model_id = std::env::var("ZED_ZETA_MODEL").ok();
+                store.set_zeta2_raw_config(Zeta2RawConfig { model_id, format });
+            }
+        }
     });
     step_progress.set_substatus("configuring model");
     let state = example.state.as_ref().context("state must be set")?;
@@ -146,6 +157,7 @@ pub async fn run_prediction(
                                 updated_example.prompt.get_or_insert(ExamplePrompt {
                                     input: prompt,
                                     expected_output: String::new(),
+                                    rejected_output: None,
                                     provider,
                                 });
                             }
@@ -197,6 +209,7 @@ pub async fn run_prediction(
             .push(ExamplePrediction {
                 actual_patch: None,
                 actual_output: String::new(),
+                actual_cursor: None,
                 error: None,
                 provider,
             });
@@ -253,13 +266,31 @@ pub async fn run_prediction(
     Ok(())
 }
 
+async fn predict_teacher(
+    example: &mut Example,
+    backend: TeacherBackend,
+    batched: bool,
+    repetition_count: usize,
+    cache_only: bool,
+) -> anyhow::Result<()> {
+    match backend {
+        TeacherBackend::Sonnet45 => {
+            predict_anthropic(example, backend, batched, repetition_count, cache_only).await
+        }
+        TeacherBackend::Gpt52 => {
+            predict_openai(example, backend, batched, repetition_count, cache_only).await
+        }
+    }
+}
+
 async fn predict_anthropic(
     example: &mut Example,
-    _repetition_count: usize,
-    version: ZetaVersion,
+    backend: TeacherBackend,
     batched: bool,
+    repetition_count: usize,
+    cache_only: bool,
 ) -> anyhow::Result<()> {
-    let llm_model_name = "claude-sonnet-4-5";
+    let llm_model_name = backend.model_name();
     let max_tokens = 16384;
     let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
         let client = if batched {
@@ -272,61 +303,150 @@ async fn predict_anthropic(
 
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
-    let messages = vec![anthropic::Message {
-        role: anthropic::Role::User,
-        content: vec![anthropic::RequestContent::Text {
-            text: prompt.input.clone(),
-            cache_control: None,
-        }],
-    }];
+    for ix in 0..repetition_count {
+        let messages = vec![anthropic::Message {
+            role: anthropic::Role::User,
+            content: vec![anthropic::RequestContent::Text {
+                text: prompt.input.clone(),
+                cache_control: None,
+            }],
+        }];
 
-    let Some(response) = llm_client
-        .generate(llm_model_name, max_tokens, messages)
-        .await?
-    else {
-        // Request stashed for batched processing
-        return Ok(());
-    };
+        let seed = if repetition_count > 1 { Some(ix) } else { None };
+        let Some(response) = llm_client
+            .generate(llm_model_name, max_tokens, messages, seed, cache_only)
+            .await?
+        else {
+            // Request stashed for batched processing
+            return Ok(());
+        };
 
-    let actual_output = response
-        .content
-        .into_iter()
-        .filter_map(|content| match content {
-            anthropic::ResponseContent::Text { text } => Some(text),
-            _ => None,
-        })
-        .collect::<Vec<String>>()
-        .join("\n");
+        let actual_output = response
+            .content
+            .into_iter()
+            .filter_map(|content| match content {
+                anthropic::ResponseContent::Text { text } => Some(text),
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
 
-    let actual_patch = TeacherPrompt::parse(&example, &actual_output)?;
+        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
 
-    let prediction = ExamplePrediction {
-        actual_patch: Some(actual_patch),
-        actual_output,
-        error: None,
-        provider: if batched {
-            PredictionProvider::Teacher(version)
+        let prediction = ExamplePrediction {
+            actual_patch: Some(actual_patch),
+            actual_output,
+            actual_cursor,
+            error: None,
+            provider: if batched {
+                PredictionProvider::Teacher(backend)
+            } else {
+                PredictionProvider::TeacherNonBatching(backend)
+            },
+        };
+
+        example.predictions.push(prediction);
+    }
+    Ok(())
+}
+
+async fn predict_openai(
+    example: &mut Example,
+    backend: TeacherBackend,
+    batched: bool,
+    repetition_count: usize,
+    cache_only: bool,
+) -> anyhow::Result<()> {
+    let llm_model_name = backend.model_name();
+    let max_tokens = 16384;
+    let llm_client = OPENAI_CLIENT.get_or_init(|| {
+        let client = if batched {
+            OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
         } else {
-            PredictionProvider::TeacherNonBatching(version)
-        },
-    };
+            OpenAiClient::plain()
+        };
+        client.expect("Failed to create OpenAI client")
+    });
 
-    example.predictions.push(prediction);
+    let prompt = example.prompt.as_ref().context("Prompt is required")?;
+
+    for ix in 0..repetition_count {
+        let messages = vec![open_ai::RequestMessage::User {
+            content: open_ai::MessageContent::Plain(prompt.input.clone()),
+        }];
+
+        let seed = if repetition_count > 1 { Some(ix) } else { None };
+        let Some(response) = llm_client
+            .generate(llm_model_name, max_tokens, messages, seed, cache_only)
+            .await?
+        else {
+            // Request stashed for batched processing
+            return Ok(());
+        };
+
+        let actual_output = response
+            .choices
+            .into_iter()
+            .filter_map(|choice| match choice.message {
+                open_ai::RequestMessage::Assistant { content, .. } => content.map(|c| match c {
+                    open_ai::MessageContent::Plain(text) => text,
+                    open_ai::MessageContent::Multipart(parts) => parts
+                        .into_iter()
+                        .filter_map(|p| match p {
+                            open_ai::MessagePart::Text { text } => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(""),
+                }),
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
+
+        let prediction = ExamplePrediction {
+            actual_patch: Some(actual_patch),
+            actual_output,
+            actual_cursor,
+            error: None,
+            provider: if batched {
+                PredictionProvider::Teacher(backend)
+            } else {
+                PredictionProvider::TeacherNonBatching(backend)
+            },
+        };
+
+        example.predictions.push(prediction);
+    }
     Ok(())
 }
 
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
-        Some(PredictionProvider::Teacher(..)) => {
-            let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
-                AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
-                    .expect("Failed to create Anthropic client")
-            });
-            llm_client
-                .sync_batches()
-                .await
-                .context("Failed to sync batches")?;
-        }
+        Some(PredictionProvider::Teacher(backend)) => match backend {
+            TeacherBackend::Sonnet45 => {
+                let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+                    AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+                        .expect("Failed to create Anthropic client")
+                });
+                llm_client
+                    .sync_batches()
+                    .await
+                    .context("Failed to sync Anthropic batches")?;
+            }
+            TeacherBackend::Gpt52 => {
+                let llm_client = OPENAI_CLIENT.get_or_init(|| {
+                    OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
+                        .expect("Failed to create OpenAI client")
+                });
+                llm_client
+                    .sync_batches()
+                    .await
+                    .context("Failed to sync OpenAI batches")?;
+            }
+        },
         _ => (),
     };
     Ok(())

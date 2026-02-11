@@ -73,6 +73,8 @@ pub fn init(cx: &mut App) {
             }
             cx.update_global::<SchemaStore, _>(|schema_store, cx| {
                 schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
+                schema_store
+                    .notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}project_settings"), cx);
             });
         })
         .detach();
@@ -207,7 +209,7 @@ async fn resolve_dynamic_schema(
 
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
-            let lsp_name = rest
+            let lsp_path = rest
                 .and_then(|r| {
                     r.strip_prefix(
                         LSP_SETTINGS_SCHEMA_URL_PREFIX
@@ -217,6 +219,26 @@ async fn resolve_dynamic_schema(
                     )
                 })
                 .context("Invalid LSP schema path")?;
+
+            // Parse the schema type from the path:
+            // - "rust-analyzer/initialization_options" → initialization_options_schema
+            // - "rust-analyzer/settings" → settings_schema
+            enum LspSchemaKind {
+                InitializationOptions,
+                Settings,
+            }
+            let (lsp_name, schema_kind) = if let Some(adapter_name) =
+                lsp_path.strip_suffix("/initialization_options")
+            {
+                (adapter_name, LspSchemaKind::InitializationOptions)
+            } else if let Some(adapter_name) = lsp_path.strip_suffix("/settings") {
+                (adapter_name, LspSchemaKind::Settings)
+            } else {
+                anyhow::bail!(
+                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    lsp_path
+                );
+            };
 
             let adapter = languages
                 .all_lsp_adapters()
@@ -244,15 +266,19 @@ async fn resolve_dynamic_schema(
                     "either LSP store is not in local mode or no worktree is available"
                 ))?;
 
-            adapter
-                .initialization_options_schema(&delegate, cx)
-                .await
-                .unwrap_or_else(|| {
-                    serde_json::json!({
-                        "type": "object",
-                        "additionalProperties": true
-                    })
+            let schema = match schema_kind {
+                LspSchemaKind::InitializationOptions => {
+                    adapter.initialization_options_schema(&delegate, cx).await
+                }
+                LspSchemaKind::Settings => adapter.settings_schema(&delegate, cx).await,
+            };
+
+            schema.unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": true
                 })
+            })
         }
         "settings" => {
             let lsp_adapter_names = languages
@@ -290,6 +316,34 @@ async fn resolve_dynamic_schema(
                         theme_names,
                         icon_theme_names,
                         lsp_adapter_names: &lsp_adapter_names,
+                    },
+                )
+            })
+        }
+        "project_settings" => {
+            let lsp_adapter_names = languages
+                .all_lsp_adapters()
+                .into_iter()
+                .map(|adapter| adapter.name().to_string())
+                .collect::<Vec<_>>();
+
+            cx.update(|cx| {
+                let language_names = &languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>();
+
+                cx.global::<settings::SettingsStore>().project_json_schema(
+                    &settings::SettingsJsonSchemaParams {
+                        language_names,
+                        lsp_adapter_names: &lsp_adapter_names,
+                        // These are not allowed in project-specific settings but
+                        // they're still fields required by the
+                        // `SettingsJsonSchemaParams` struct.
+                        font_names: &[],
+                        theme_names: &[],
+                        icon_theme_names: &[],
                     },
                 )
             })
@@ -344,9 +398,13 @@ pub fn all_schema_file_associations(
         {
             "fileMatch": [
                 schema_file_match(paths::settings_file()),
-                paths::local_settings_file_relative_path()
             ],
             "url": format!("{SCHEMA_URI_PREFIX}settings"),
+        },
+        {
+            "fileMatch": [
+            paths::local_settings_file_relative_path()],
+            "url": format!("{SCHEMA_URI_PREFIX}project_settings"),
         },
         {
             "fileMatch": [schema_file_match(paths::keymap_file())],

@@ -39,21 +39,33 @@ pub async fn stream_completion(
         .model_id(request.model.clone())
         .set_messages(request.messages.into());
 
-    if let Some(Thinking::Enabled {
-        budget_tokens: Some(budget_tokens),
-    }) = request.thinking
-    {
-        let thinking_config = HashMap::from([
-            ("type".to_string(), Document::String("enabled".to_string())),
-            (
-                "budget_tokens".to_string(),
-                Document::Number(AwsNumber::PosInt(budget_tokens)),
-            ),
-        ]);
-        response = response.additional_model_request_fields(Document::Object(HashMap::from([(
-            "thinking".to_string(),
-            Document::from(thinking_config),
-        )])));
+    match request.thinking {
+        Some(Thinking::Enabled {
+            budget_tokens: Some(budget_tokens),
+        }) => {
+            let thinking_config = HashMap::from([
+                ("type".to_string(), Document::String("enabled".to_string())),
+                (
+                    "budget_tokens".to_string(),
+                    Document::Number(AwsNumber::PosInt(budget_tokens)),
+                ),
+            ]);
+            response =
+                response.additional_model_request_fields(Document::Object(HashMap::from([(
+                    "thinking".to_string(),
+                    Document::from(thinking_config),
+                )])));
+        }
+        Some(Thinking::Adaptive { effort: _ }) => {
+            let thinking_config =
+                HashMap::from([("type".to_string(), Document::String("adaptive".to_string()))]);
+            response =
+                response.additional_model_request_fields(Document::Object(HashMap::from([(
+                    "thinking".to_string(),
+                    Document::from(thinking_config),
+                )])));
+        }
+        _ => {}
     }
 
     if request.tools.as_ref().is_some_and(|t| !t.tools.is_empty()) {
@@ -145,7 +157,12 @@ pub fn value_to_aws_document(value: &Value) -> Document {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Thinking {
-    Enabled { budget_tokens: Option<u64> },
+    Enabled {
+        budget_tokens: Option<u64>,
+    },
+    Adaptive {
+        effort: BedrockAdaptiveThinkingEffort,
+    },
 }
 
 #[derive(Debug)]

@@ -4245,7 +4245,7 @@ impl OutlinePanel {
         let buffer_search_matches = self
             .active_editor()
             .map(|active_editor| {
-                active_editor.update(cx, |editor, cx| editor.get_matches(window, cx))
+                active_editor.update(cx, |editor, cx| editor.get_matches(window, cx).0)
             })
             .unwrap_or_default();
 

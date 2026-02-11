@@ -7,7 +7,7 @@ on:
 
 jobs:
   update_top_ranking_issues:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     if: github.repository == 'zed-industries/zed'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
