@@ -5050,7 +5050,7 @@ mod tests {
             project::AgentRegistryStore::init_global(
                 cx,
                 app_state.fs.clone(),
-                app_state.http_client.clone(),
+                app_state.client.http_client().clone(),
             );
             agent_ui::init(
                 app_state.fs.clone(),
