@@ -8354,11 +8354,12 @@ pub async fn find_existing_workspace(
                             let project = workspace.project.read(cx);
                             let path_style = workspace.path_style(cx);
                             !abs_paths.iter().any(|path| {
+                                let path = util::paths::SanitizedPath::new(path);
                                 project.worktrees(cx).any(|worktree| {
                                     let worktree = worktree.read(cx);
                                     let abs_path = worktree.abs_path();
                                     path_style
-                                        .strip_prefix(path, abs_path.as_ref())
+                                        .strip_prefix(path.as_ref(), abs_path.as_ref())
                                         .and_then(|rel| worktree.entry_for_path(&rel))
                                         .is_some_and(|e| e.is_dir())
                                 })
