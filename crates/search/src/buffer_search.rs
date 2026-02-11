@@ -30,11 +30,15 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 
-use settings::Settings;
+use fs::Fs;
+use settings::{DiffViewStyle, Settings, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
-use ui::{BASE_REM_SIZE_IN_PX, IconButtonShape, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{
+    BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,
+    render_modifiers, utils::SearchInputWidth,
+};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -118,33 +122,90 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-stacked", IconName::DiffStacked)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
-                                .tooltip(|_, cx| {
-                                    Tooltip::for_action("Stacked", &ToggleDiffView, cx)
-                                })
-                                .when(is_split, |button| {
+                                .tooltip(Tooltip::element(move |_, cx| {
+                                    v_flex()
+                                        .gap_1()
+                                        .child(Label::new("Stacked"))
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .text_sm()
+                                                .text_color(Color::Muted.color(cx))
+                                                .children(render_modifiers(
+                                                    &gpui::Modifiers::secondary_key(),
+                                                    PlatformStyle::platform(),
+                                                    None,
+                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    false,
+                                                ))
+                                                .child("click to set as default"),
+                                        )
+                                        .into_any()
+                                }))
+                                .on_click({
                                     let focus_handle = focus_handle.clone();
-                                    button.on_click(move |_, window, cx| {
-                                        focus_handle.focus(window, cx);
-                                        window.dispatch_action(ToggleDiffView.boxed_clone(), cx);
-                                    })
+                                    move |_, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(
+                                                <dyn Fs>::global(cx),
+                                                cx,
+                                                |settings, _| {
+                                                    settings.editor.diff_view_style =
+                                                        Some(DiffViewStyle::Stacked);
+                                                },
+                                            );
+                                        }
+                                        if is_split {
+                                            focus_handle.focus(window, cx);
+                                            window
+                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
+                                        }
+                                    }
                                 }),
                         )
                         .child(
                             IconButton::new("diff-split", IconName::DiffSplit)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
-                                .tooltip(|_, cx| {
-                                    Tooltip::for_action("Side by Side", &ToggleDiffView, cx)
-                                })
-                                .when(!is_split, |button| {
-                                    button.on_click({
-                                        let focus_handle = focus_handle.clone();
-                                        move |_, window, cx| {
+                                .tooltip(Tooltip::element(move |_, cx| {
+                                    v_flex()
+                                        .gap_1()
+                                        .child(Label::new("Side by Side"))
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .text_sm()
+                                                .text_color(Color::Muted.color(cx))
+                                                .children(render_modifiers(
+                                                    &gpui::Modifiers::secondary_key(),
+                                                    PlatformStyle::platform(),
+                                                    None,
+                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    false,
+                                                ))
+                                                .child("click to set as default"),
+                                        )
+                                        .into_any()
+                                }))
+                                .on_click({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(
+                                                <dyn Fs>::global(cx),
+                                                cx,
+                                                |settings, _| {
+                                                    settings.editor.diff_view_style =
+                                                        Some(DiffViewStyle::SideBySide);
+                                                },
+                                            );
+                                        }
+                                        if !is_split {
                                             focus_handle.focus(window, cx);
                                             window
                                                 .dispatch_action(ToggleDiffView.boxed_clone(), cx);
                                         }
-                                    })
+                                    }
                                 }),
                         )
                 })
