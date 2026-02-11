@@ -1533,7 +1533,6 @@ pub struct QuickSearchDelegate {
     split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     history_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     search_history_cursor: SearchHistoryCursor,
-    current_query: String,
     match_count: usize,
     file_count: usize,
     unique_files: HashSet<ProjectPath>,
@@ -1567,7 +1566,6 @@ impl QuickSearchDelegate {
             last_confirm_time: None,
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
-            current_query: initial_query.clone().unwrap_or_default(),
             pending_initial_query: RefCell::new(initial_query),
             editor_configured: Cell::new(false),
             panels_with_errors: HashMap::default(),
@@ -2238,8 +2236,6 @@ impl PickerDelegate for QuickSearchDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        self.current_query = query.clone();
-
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
