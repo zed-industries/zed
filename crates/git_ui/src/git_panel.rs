@@ -4538,9 +4538,11 @@ impl GitPanel {
                                             cx,
                                         )
                                     })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.uncommit(window, cx)
-                                    })),
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.uncommit(window, cx)
+                                        }),
+                                    ),
                             ),
                     )
                 }),
