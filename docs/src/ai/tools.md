@@ -2,6 +2,8 @@
 
 Zed's built-in agent has access to these tools for reading, searching, and editing your codebase.
 
+You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
+
 ## Read & Search Tools
 
 ### `diagnostics`
@@ -64,18 +66,24 @@ Deletes a file or directory (including contents recursively) at the specified pa
 
 Edits files by replacing specific text with new content.
 
-### `restore_file_from_disk`
-
-Reloads a file from disk, discarding any unsaved changes in the buffer.
-
-### `save_file`
-
-Saves a buffer's current contents to disk, preserving unsaved changes before the agent modifies the file.
-
 ### `move_path`
 
 Moves or renames a file or directory in the project, performing a rename if only the filename differs.
 
+### `restore_file_from_disk`
+
+Discards unsaved changes in open buffers by reloading file contents from disk. Useful for resetting files to their on-disk state before retrying an edit.
+
+### `save_file`
+
+Saves files that have unsaved changes. Used when files need to be saved before further edits can be made.
+
 ### `terminal`
 
 Executes shell commands and returns the combined output, creating a new shell process for each invocation.
+
+## Other Tools
+
+### `subagent`
+
+Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.

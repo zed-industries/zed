@@ -487,6 +487,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
         .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
+        .add_basic_renderer::<settings::DiffViewStyle>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
@@ -538,6 +539,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -743,6 +745,7 @@ pub struct SettingsWindow {
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
     shown_errors: HashSet<String>,
+    pub(crate) regex_validation_error: Option<String>,
 }
 
 struct SearchIndex {
@@ -1144,7 +1147,7 @@ fn render_settings_item(
         .child(
             v_flex()
                 .relative()
-                .w_1_2()
+                .w_3_4()
                 .child(
                     h_flex()
                         .w_full()
@@ -1660,6 +1663,7 @@ impl SettingsWindow {
                 .tab_stop(false),
             search_index: None,
             shown_errors: HashSet::default(),
+            regex_validation_error: None,
             list_state,
         };
 
@@ -3511,6 +3515,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) {
+        self.regex_validation_error = None;
         let sub_page_link = SubPageLink {
             title: title.into(),
             r#type: SubPageType::default(),
@@ -3595,6 +3600,7 @@ impl SettingsWindow {
     }
 
     fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        self.regex_validation_error = None;
         self.sub_page_stack.pop();
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
         cx.notify();
@@ -4349,6 +4355,7 @@ pub mod test {
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
+                regex_validation_error: None,
             }
         }
     }
@@ -4473,6 +4480,7 @@ pub mod test {
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
+            regex_validation_error: None,
         };
 
         settings_window.build_filter_table();

@@ -421,7 +421,6 @@ pub fn initialize_workspace(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
-                app_state.client.clone(),
                 workspace.project().clone(),
                 cx,
             )
@@ -2414,7 +2413,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                         "aa": null,
@@ -2442,7 +2441,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
+                &[
+                    PathBuf::from(path!("/root/a")),
+                    PathBuf::from(path!("/root/b")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2454,7 +2456,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a")],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2483,7 +2485,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+                &[
+                    PathBuf::from(path!("/root/c")),
+                    PathBuf::from(path!("/root/d")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2499,7 +2504,7 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/e")],
+                &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
                     replace_window: Some(window),
@@ -2522,7 +2527,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new("/root/e").into()]
+                    &[Path::new(path!("/root/e")).into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
@@ -5068,6 +5073,16 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
+            cx.set_global(workspace::PaneSearchBarCallbacks {
+                setup_search_bar: |languages, toolbar, window, cx| {
+                    let search_bar =
+                        cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                    toolbar.update(cx, |toolbar, cx| {
+                        toolbar.add_item(search_bar, window, cx);
+                    });
+                },
+                wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+            });
             app_state
         })
     }
@@ -5276,7 +5291,7 @@ mod tests {
 
             cx.update(|cx| {
                 let open_options = OpenOptions {
-                    prefer_focused_window: true,
+                    wait: true,
                     ..Default::default()
                 };
 

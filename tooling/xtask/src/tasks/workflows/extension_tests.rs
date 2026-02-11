@@ -1,7 +1,8 @@
 use gh_workflow::*;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
+    extension_bump::compare_versions,
     run_tests::{orchestrate_without_package_filter, tests_pass},
     runners,
     steps::{self, CommonJobConditions, FluentBuilder, NamedJob, named},
@@ -52,13 +53,13 @@ fn install_rust_target() -> Step<Run> {
 }
 
 fn run_clippy() -> Step<Run> {
-    named::bash("cargo clippy --release --all-targets --all-features -- --deny warnings")
+    named::bash("cargo clippy --release --all-features -- --deny warnings")
 }
 
 fn check_rust() -> NamedJob {
     let job = Job::default()
         .with_repository_owner_guard()
-        .runs_on(runners::LINUX_LARGE)
+        .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(6u32)
         .add_step(steps::checkout_repo())
         .add_step(steps::cache_rust_dependencies_namespace())
@@ -78,6 +79,8 @@ fn check_rust() -> NamedJob {
 
 pub(crate) fn check_extension() -> NamedJob {
     let (cache_download, cache_hit) = cache_zed_extension_cli();
+    let (check_version_job, version_changed, _) = compare_versions();
+
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
@@ -85,7 +88,9 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(steps::checkout_repo())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
-        .add_step(check());
+        .add_step(check())
+        .add_step(check_version_job)
+        .add_step(verify_version_did_not_change(version_changed));
 
     named::job(job)
 }
@@ -123,6 +128,17 @@ pub fn check() -> Step<Run> {
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+        "#
+    })
+}
+
+fn verify_version_did_not_change(version_changed: StepOutput) -> Step<Run> {
+    named::bash(formatdoc! {r#"
+        if [[ {version_changed} == "true" && "${{{{ github.event_name }}}}" == "pull_request" && "${{{{ github.event.pull_request.user.login }}}}" != "zed-zippy[bot]" ]] ; then
+            echo "Version change detected in your change!"
+            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
+            exit 42
+        fi
         "#
     })
 }

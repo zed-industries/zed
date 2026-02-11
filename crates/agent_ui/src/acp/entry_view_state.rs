@@ -75,6 +75,7 @@ impl EntryViewState {
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
                 let has_id = message.id.is_some();
+                let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {
@@ -103,7 +104,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !has_id {
+                        if !has_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -446,7 +447,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/project")), cx)
+                    .new_session(project.clone(), Path::new(path!("/project")), cx)
             })
             .await
             .unwrap();

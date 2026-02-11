@@ -47,7 +47,8 @@ use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
 pub use devcontainer_api::{
-    DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
+    DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
+    start_dev_container_with_config,
 };
 
 #[derive(RegisterSetting)]
