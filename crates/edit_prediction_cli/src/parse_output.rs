@@ -55,7 +55,9 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
             ("<|fim_middle|>current\n", "<|fim_suffix|>")
         }
-        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => (
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill => (
             zeta_prompt::v0120_git_merge_markers::START_MARKER,
             zeta_prompt::v0120_git_merge_markers::SEPARATOR,
         ),
