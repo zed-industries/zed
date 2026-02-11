@@ -173,9 +173,10 @@ impl Render for PlatformTitleBar {
                     .when(!(tiling.top || tiling.right), |el| {
                         el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                     })
-                    .when(!(tiling.top || tiling.left), |el| {
-                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
+                    .when(
+                        !(tiling.top || tiling.left) && !is_multiworkspace_sidebar_open,
+                        |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .mb(px(-1.))

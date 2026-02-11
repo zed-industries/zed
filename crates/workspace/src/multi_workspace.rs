@@ -2,7 +2,8 @@ use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Window, actions, deferred, px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, actions, deferred,
+    px,
 };
 use project::Project;
 use std::path::PathBuf;
@@ -10,9 +11,7 @@ use ui::prelude::*;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
-use crate::{
-    DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
-};
+use crate::{DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations};
 
 actions!(
     multi_workspace,
@@ -188,12 +187,22 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = true;
+        for workspace in &self.workspaces {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_workspace_sidebar_open(true, cx);
+            });
+        }
         self.serialize(window, cx);
         cx.notify();
     }
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
+        for workspace in &self.workspaces {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_workspace_sidebar_open(false, cx);
+            });
+        }
         let pane = self.workspace().read(cx).active_pane().clone();
         let pane_focus = pane.read(cx).focus_handle(cx);
         window.focus(&pane_focus, cx);
@@ -238,6 +247,11 @@ impl MultiWorkspace {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
+            if self.sidebar_open {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.set_workspace_sidebar_open(true, cx);
+                });
+            }
             self.workspaces.push(workspace);
             cx.notify();
             self.workspaces.len() - 1
@@ -559,6 +573,10 @@ impl Render for MultiWorkspace {
                 ),
             window,
             cx,
+            Tiling {
+                left: multi_workspace_enabled && self.sidebar_open,
+                ..Tiling::default()
+            },
         )
     }
 }

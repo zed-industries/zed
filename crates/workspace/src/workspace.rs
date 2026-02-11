@@ -2031,6 +2031,12 @@ impl Workspace {
         &self.status_bar
     }
 
+    pub fn set_workspace_sidebar_open(&self, open: bool, cx: &mut App) {
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_workspace_sidebar_open(open, cx);
+        });
+    }
+
     pub fn status_bar_visible(&self, cx: &App) -> bool {
         StatusBarSettings::get_global(cx).show
     }
@@ -9137,14 +9143,28 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
-/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
+/// Add client-side decorations (rounded corners, shadows, resize handling) when
+/// appropriate.
+///
+/// The `border_radius_tiling` parameter allows overriding which corners get
+/// rounded, independently of the actual window tiling state. This is used
+/// specifically for the workspace switcher sidebar: when the sidebar is open,
+/// we want square corners on the left (so the sidebar appears flush with the
+/// window edge) but we still need the shadow padding for proper visual
+/// appearance. Unlike actual window tiling, this only affects border radius -
+/// not padding or shadows.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
     cx: &mut App,
+    border_radius_tiling: Tiling,
 ) -> Stateful<Div> {
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
+    let tiling = match decorations {
+        Decorations::Server => Tiling::default(),
+        Decorations::Client { tiling } => tiling,
+    };
 
     match decorations {
         Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
@@ -9159,17 +9179,17 @@ pub fn client_side_decorations(
         .bg(transparent_black())
         .map(|div| match decorations {
             Decorations::Server => div,
-            Decorations::Client { tiling, .. } => div
-                .when(!(tiling.top || tiling.right), |div| {
+            Decorations::Client { .. } => div
+                .when(!(tiling.top || tiling.right || border_radius_tiling.top || border_radius_tiling.right), |div| {
                     div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.top || tiling.left), |div| {
+                .when(!(tiling.top || tiling.left || border_radius_tiling.top || border_radius_tiling.left), |div| {
                     div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.bottom || tiling.right), |div| {
+                .when(!(tiling.bottom || tiling.right || border_radius_tiling.bottom || border_radius_tiling.right), |div| {
                     div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
-                .when(!(tiling.bottom || tiling.left), |div| {
+                .when(!(tiling.bottom || tiling.left || border_radius_tiling.bottom || border_radius_tiling.left), |div| {
                     div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                 })
                 .when(!tiling.top, |div| {
@@ -9224,18 +9244,18 @@ pub fn client_side_decorations(
                 .cursor(CursorStyle::Arrow)
                 .map(|div| match decorations {
                     Decorations::Server => div,
-                    Decorations::Client { tiling } => div
+                    Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .when(!(tiling.top || tiling.right), |div| {
+                        .when(!(tiling.top || tiling.right || border_radius_tiling.top || border_radius_tiling.right), |div| {
                             div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.top || tiling.left), |div| {
+                        .when(!(tiling.top || tiling.left || border_radius_tiling.top || border_radius_tiling.left), |div| {
                             div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.bottom || tiling.right), |div| {
+                        .when(!(tiling.bottom || tiling.right || border_radius_tiling.bottom || border_radius_tiling.right), |div| {
                             div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
-                        .when(!(tiling.bottom || tiling.left), |div| {
+                        .when(!(tiling.bottom || tiling.left || border_radius_tiling.bottom || border_radius_tiling.left), |div| {
                             div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
                         })
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
