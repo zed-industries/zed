@@ -1,7 +1,8 @@
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
+use super::thread_history::AcpThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_client_protocol::{self as acp, ToolCallId};
 use collections::HashMap;
 use editor::{Editor, EditorMode, MinimapVisibility, SizingBehavior};
@@ -22,8 +23,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
-    history_store: Entity<HistoryStore>,
+    project: WeakEntity<Project>,
+    thread_store: Option<Entity<ThreadStore>>,
+    history: WeakEntity<AcpThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
@@ -34,8 +36,9 @@ pub struct EntryViewState {
 impl EntryViewState {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
-        history_store: Entity<HistoryStore>,
+        project: WeakEntity<Project>,
+        thread_store: Option<Entity<ThreadStore>>,
+        history: WeakEntity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
@@ -44,7 +47,8 @@ impl EntryViewState {
         Self {
             workspace,
             project,
-            history_store,
+            thread_store,
+            history,
             prompt_store,
             entries: Vec::new(),
             prompt_capabilities,
@@ -71,6 +75,7 @@ impl EntryViewState {
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
                 let has_id = message.id.is_some();
+                let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
                     if !editor.focus_handle(cx).is_focused(window) {
@@ -85,7 +90,8 @@ impl EntryViewState {
                         let mut editor = MessageEditor::new(
                             self.workspace.clone(),
                             self.project.clone(),
-                            self.history_store.clone(),
+                            self.thread_store.clone(),
+                            self.history.clone(),
                             self.prompt_store.clone(),
                             self.prompt_capabilities.clone(),
                             self.available_commands.clone(),
@@ -98,7 +104,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !has_id {
+                        if !has_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -328,7 +334,7 @@ impl Entry {
 
 fn create_terminal(
     workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    project: WeakEntity<Project>,
     terminal: Entity<acp_thread::Terminal>,
     window: &mut Window,
     cx: &mut App,
@@ -336,9 +342,9 @@ fn create_terminal(
     cx.new(|cx| {
         let mut view = TerminalView::new(
             terminal.read(cx).inner().clone(),
-            workspace.clone(),
+            workspace,
             None,
-            project.downgrade(),
+            project,
             window,
             cx,
         );
@@ -396,16 +402,15 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, rc::Rc};
+    use std::path::Path;
+    use std::rc::Rc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent::HistoryStore;
     use agent_client_protocol as acp;
-    use assistant_text_thread::TextThreadStore;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
-    use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
 
     use crate::acp::entry_view_state::EntryViewState;
     use multi_buffer::MultiBufferRow;
@@ -432,30 +437,17 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let tool_call = acp::ToolCall {
-            id: acp::ToolCallId("tool".into()),
-            title: "Tool call".into(),
-            kind: acp::ToolKind::Other,
-            status: acp::ToolCallStatus::InProgress,
-            content: vec![acp::ToolCallContent::Diff {
-                diff: acp::Diff {
-                    path: "/project/hello.txt".into(),
-                    old_text: Some("hi world".into()),
-                    new_text: "hello world".into(),
-                    meta: None,
-                },
-            }],
-            locations: vec![],
-            raw_input: None,
-            raw_output: None,
-            meta: None,
-        };
+        let tool_call = acp::ToolCall::new("tool", "Tool call")
+            .status(acp::ToolCallStatus::InProgress)
+            .content(vec![acp::ToolCallContent::Diff(
+                acp::Diff::new("/project/hello.txt", "hello world").old_text("hi world"),
+            )]);
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/project")), cx)
+                    .new_session(project.clone(), Path::new(path!("/project")), cx)
             })
             .await
             .unwrap();
@@ -465,14 +457,16 @@ mod tests {
             connection.send_update(session_id, acp::SessionUpdate::ToolCall(tool_call), cx)
         });
 
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+        let thread_store = None;
+        let history = cx
+            .update(|window, cx| cx.new(|cx| crate::acp::AcpThreadHistory::new(None, window, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
-                project.clone(),
-                history_store,
+                project.downgrade(),
+                thread_store,
+                history.downgrade(),
                 None,
                 Default::default(),
                 Default::default(),
@@ -484,7 +478,7 @@ mod tests {
             view_state.sync_entry(0, &thread, window, cx)
         });
 
-        let diff = thread.read_with(cx, |thread, _cx| {
+        let diff = thread.read_with(cx, |thread, _| {
             thread
                 .entries()
                 .get(0)
@@ -539,7 +533,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
-            release_channel::init(SemanticVersion::default(), cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }
 }

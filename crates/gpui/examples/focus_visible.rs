@@ -29,7 +29,7 @@ impl Example {
         ];
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Self {
             focus_handle,
@@ -40,13 +40,13 @@ impl Example {
         }
     }
 
-    fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn on_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
         self.message = SharedString::from("Pressed Tab - focus-visible border should appear!");
     }
 
-    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_prev();
+    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
         self.message =
             SharedString::from("Pressed Shift-Tab - focus-visible border should appear!");
     }

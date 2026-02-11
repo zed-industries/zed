@@ -25,7 +25,7 @@ use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, Sele
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::project_settings::ProjectSettings;
 use prompt_store::PromptBuilder;
-use release_channel::AppVersion;
+use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::cell::RefCell;
@@ -150,7 +150,7 @@ fn main() {
                     registry.set_default_model(Some(agent_model.clone()), cx);
                 });
                 judge_model
-            })?;
+            });
 
             let mut examples = Vec::new();
 
@@ -210,7 +210,8 @@ fn main() {
 
             if examples.is_empty() {
                 eprintln!("Filter matched no examples");
-                return cx.update(|cx| cx.quit());
+                cx.update(|cx| cx.quit());
+                return anyhow::Ok(());
             }
 
             let mut repo_urls = HashSet::default();
@@ -294,7 +295,7 @@ fn main() {
                         let result = async {
                             example.setup().await?;
                             let run_output = cx
-                                .update(|cx| example.run(app_state.clone(), cx))?
+                                .update(|cx| example.run(app_state.clone(), cx))
                                 .await?;
                             let judge_output = judge_example(
                                 example.clone(),
@@ -328,7 +329,8 @@ fn main() {
 
             app_state.client.telemetry().flush_events().await;
 
-            cx.update(|cx| cx.quit())
+            cx.update(|cx| cx.quit());
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     });
@@ -347,8 +349,15 @@ pub struct AgentAppState {
 }
 
 pub fn init(cx: &mut App) -> Arc<AgentAppState> {
-    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
-    release_channel::init(app_version, cx);
+    let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
+
+    let app_version = AppVersion::load(
+        env!("ZED_PKG_VERSION"),
+        option_env!("ZED_BUILD_ID"),
+        app_commit_sha,
+    );
+
+    release_channel::init(app_version.clone(), cx);
     gpui_tokio::init(cx);
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());

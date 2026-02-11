@@ -1,4 +1,6 @@
-use crate::{Chip, DiffStat, Indicator, SpinnerLabel, prelude::*};
+use crate::{
+    Chip, DecoratedIcon, DiffStat, IconDecoration, IconDecorationKind, SpinnerLabel, prelude::*,
+};
 use gpui::{ClickEvent, SharedString};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -85,16 +87,29 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let icon_container = || h_flex().size_4().justify_center();
+        let agent_icon = Icon::new(self.icon)
+            .color(Color::Muted)
+            .size(IconSize::Small);
+
         let icon = if self.generation_done {
-            icon_container().child(Indicator::dot().color(Color::Accent))
-        } else if self.running {
-            icon_container().child(SpinnerLabel::new().color(Color::Accent))
-        } else {
-            icon_container().child(
-                Icon::new(self.icon)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
+            DecoratedIcon::new(
+                agent_icon,
+                Some(
+                    IconDecoration::new(
+                        IconDecorationKind::Dot,
+                        cx.theme().colors().surface_background,
+                        cx,
+                    )
+                    .color(cx.theme().colors().text_accent)
+                    .position(gpui::Point {
+                        x: px(-2.),
+                        y: px(-2.),
+                    }),
+                ),
             )
+            .into_any_element()
+        } else {
+            agent_icon.into_any_element()
         };
 
         let has_no_changes = self.added.is_none() && self.removed.is_none();
@@ -112,7 +127,10 @@ impl RenderOnce for ThreadItem {
                     .w_full()
                     .gap_1p5()
                     .child(icon)
-                    .child(Label::new(self.title).truncate()),
+                    .child(Label::new(self.title).truncate())
+                    .when(self.running, |this| {
+                        this.child(icon_container().child(SpinnerLabel::new().color(Color::Accent)))
+                    }),
             )
             .child(
                 h_flex()

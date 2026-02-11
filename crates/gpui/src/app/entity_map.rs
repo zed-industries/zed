@@ -431,11 +431,7 @@ impl<T: 'static> Entity<T> {
 
     /// Read the entity referenced by this handle with the given function.
     #[inline]
-    pub fn read_with<R, C: AppContext>(
-        &self,
-        cx: &C,
-        f: impl FnOnce(&T, &App) -> R,
-    ) -> C::Result<R> {
+    pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
@@ -445,18 +441,18 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> C::Result<R> {
+    ) -> R {
         cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
-    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> GpuiBorrow<'a, T> {
         cx.as_mut(self)
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) {
         self.update(cx, |entity, cx| {
             *entity = value;
             cx.notify();
@@ -465,7 +461,7 @@ impl<T: 'static> Entity<T> {
 
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
-    /// Returns an error if the entity has been released.
+    /// Returns an error if the window has been closed.
     #[inline]
     pub fn update_in<R, C: VisualContext>(
         &self,
@@ -584,7 +580,33 @@ impl AnyWeakEntity {
         })
     }
 
-    /// Assert that entity referenced by this weak handle has been released.
+    /// Asserts that the entity referenced by this weak handle has been fully released.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let entity = cx.new(|_| MyEntity::new());
+    /// let weak = entity.downgrade();
+    /// drop(entity);
+    ///
+    /// // Verify the entity was released
+    /// weak.assert_released();
+    /// ```
+    ///
+    /// # Debugging Leaks
+    ///
+    /// If this method panics due to leaked handles, set the `LEAK_BACKTRACE` environment
+    /// variable to see where the leaked handles were allocated:
+    ///
+    /// ```bash
+    /// LEAK_BACKTRACE=1 cargo test my_test
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// - Panics if any strong handles to the entity are still alive.
+    /// - Panics if the entity was recently dropped but cleanup hasn't completed yet
+    ///   (resources are retained until the end of the effect cycle).
     #[cfg(any(test, feature = "leak-detection"))]
     pub fn assert_released(&self) {
         self.entity_ref_counts
@@ -723,13 +745,9 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.update_entity(&this, update)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.update_entity(&entity, update))
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -742,14 +760,13 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: VisualContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().context("entity released")?;
+        let entity = self.upgrade().context("entity released")?;
 
-        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
-            this.update(cx, |entity, cx| update(entity, window, cx))
-        }))
+        window.update(cx, |_, window, cx| {
+            entity.update(cx, |entity, cx| update(entity, window, cx))
+        })
     }
 
     /// Reads the entity referenced by this handle with the given function if
@@ -758,13 +775,9 @@ impl<T: 'static> WeakEntity<T> {
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.read_entity(&this, read)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.read_entity(&entity, read))
     }
 
     /// Create a new weak entity that can never be upgraded.
@@ -814,16 +827,70 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
     }
 }
 
+/// Controls whether backtraces are captured when entity handles are created.
+///
+/// Set the `LEAK_BACKTRACE` environment variable to any non-empty value to enable
+/// backtrace capture. This helps identify where leaked handles were allocated.
 #[cfg(any(test, feature = "leak-detection"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
     std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
+/// Unique identifier for a specific entity handle instance.
+///
+/// This is distinct from `EntityId` - while multiple handles can point to the same
+/// entity (same `EntityId`), each handle has its own unique `HandleId`.
 #[cfg(any(test, feature = "leak-detection"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub(crate) struct HandleId {
-    id: u64, // id of the handle itself, not the pointed at object
+    id: u64,
 }
 
+/// Tracks entity handle allocations to detect leaks.
+///
+/// The leak detector is enabled in tests and when the `leak-detection` feature is active.
+/// It tracks every `Entity<T>` and `AnyEntity` handle that is created and released,
+/// allowing you to verify that all handles to an entity have been properly dropped.
+///
+/// # How do leaks happen?
+///
+/// Entities are reference-counted structures that can own other entities
+/// allowing to form cycles. If such a strong-reference counted cycle is
+/// created, all participating strong entities in this cycle will effectively
+/// leak as they cannot be released anymore.
+///
+/// # Usage
+///
+/// You can use `WeakEntity::assert_released` or `AnyWeakEntity::assert_released`
+/// to verify that an entity has been fully released:
+///
+/// ```ignore
+/// let entity = cx.new(|_| MyEntity::new());
+/// let weak = entity.downgrade();
+/// drop(entity);
+///
+/// // This will panic if any handles to the entity are still alive
+/// weak.assert_released();
+/// ```
+///
+/// # Debugging Leaks
+///
+/// When a leak is detected, the detector will panic with information about the leaked
+/// handles. To see where the leaked handles were allocated, set the `LEAK_BACKTRACE`
+/// environment variable:
+///
+/// ```bash
+/// LEAK_BACKTRACE=1 cargo test my_test
+/// ```
+///
+/// This will capture and display backtraces for each leaked handle, helping you
+/// identify where handles were created but not released.
+///
+/// # How It Works
+///
+/// - When an entity handle is created (via `Entity::new`, `Entity::clone`, or
+///   `WeakEntity::upgrade`), `handle_created` is called to register the handle.
+/// - When a handle is dropped, `handle_released` removes it from tracking.
+/// - `assert_released` verifies that no handles remain for a given entity.
 #[cfg(any(test, feature = "leak-detection"))]
 pub(crate) struct LeakDetector {
     next_handle_id: u64,
@@ -832,6 +899,11 @@ pub(crate) struct LeakDetector {
 
 #[cfg(any(test, feature = "leak-detection"))]
 impl LeakDetector {
+    /// Records that a new handle has been created for the given entity.
+    ///
+    /// Returns a unique `HandleId` that must be passed to `handle_released` when
+    /// the handle is dropped. If `LEAK_BACKTRACE` is set, captures a backtrace
+    /// at the allocation site.
     #[track_caller]
     pub fn handle_created(&mut self, entity_id: EntityId) -> HandleId {
         let id = util::post_inc(&mut self.next_handle_id);
@@ -844,23 +916,40 @@ impl LeakDetector {
         handle_id
     }
 
+    /// Records that a handle has been released (dropped).
+    ///
+    /// This removes the handle from tracking. The `handle_id` should be the same
+    /// one returned by `handle_created` when the handle was allocated.
     pub fn handle_released(&mut self, entity_id: EntityId, handle_id: HandleId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.remove(&handle_id);
     }
 
+    /// Asserts that all handles to the given entity have been released.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any handles to the entity are still alive. The panic message
+    /// includes backtraces for each leaked handle if `LEAK_BACKTRACE` is set,
+    /// otherwise it suggests setting the environment variable to get more info.
     pub fn assert_released(&mut self, entity_id: EntityId) {
+        use std::fmt::Write as _;
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
+            let mut out = String::new();
             for backtrace in handles.values_mut() {
                 if let Some(mut backtrace) = backtrace.take() {
                     backtrace.resolve();
-                    eprintln!("Leaked handle: {:#?}", backtrace);
+                    writeln!(out, "Leaked handle:\n{:?}", backtrace).unwrap();
                 } else {
-                    eprintln!("Leaked handle: export LEAK_BACKTRACE to find allocation site");
+                    writeln!(
+                        out,
+                        "Leaked handle: (export LEAK_BACKTRACE to find allocation site)"
+                    )
+                    .unwrap();
                 }
             }
-            panic!();
+            panic!("{out}");
         }
     }
 }

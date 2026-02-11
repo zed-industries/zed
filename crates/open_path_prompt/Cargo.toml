@@ -1,0 +1,33 @@
+[package]
+name = "open_path_prompt"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[dependencies]
+file_icons.workspace = true
+futures.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+picker.workspace = true
+project.workspace = true
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+editor = {workspace = true, features = ["test-support"]}
+gpui = {workspace = true, features = ["test-support"]}
+serde_json.workspace = true
+theme = {workspace = true, features = ["test-support"]}
+workspace = {workspace = true, features = ["test-support"]}
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/open_path_prompt.rs"

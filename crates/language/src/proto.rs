@@ -3,6 +3,7 @@
 use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
 use anyhow::{Context as _, Result};
 use clock::ReplicaId;
+use gpui::SharedString;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
 use serde_json::Value;
@@ -239,6 +240,11 @@ pub fn serialize_diagnostics<'a>(
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
             data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
+            registration_id: entry
+                .diagnostic
+                .registration_id
+                .as_ref()
+                .map(ToString::to_string),
         })
         .collect()
 }
@@ -457,6 +463,7 @@ pub fn deserialize_diagnostics(
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
                     underline: diagnostic.underline,
+                    registration_id: diagnostic.registration_id.map(SharedString::from),
                     source_kind: match proto::diagnostic::SourceKind::from_i32(
                         diagnostic.source_kind,
                     )? {

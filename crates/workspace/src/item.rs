@@ -15,6 +15,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
     SharedString, Task, WeakEntity, Window,
 };
+use language::Capability;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -30,7 +31,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::Theme;
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
@@ -64,15 +64,25 @@ pub struct ItemSettings {
 #[derive(RegisterSetting)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
+    pub enable_preview_from_project_panel: bool,
     pub enable_preview_from_file_finder: bool,
-    pub enable_preview_from_code_navigation: bool,
+    pub enable_preview_from_multibuffer: bool,
+    pub enable_preview_multibuffer_from_code_navigation: bool,
+    pub enable_preview_file_from_code_navigation: bool,
+    pub enable_keep_preview_on_code_navigation: bool,
 }
 
 impl Settings for ItemSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
-            git_status: tabs.git_status.unwrap(),
+            git_status: tabs.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             close_position: tabs.close_position.unwrap(),
             activate_on_close: tabs.activate_on_close.unwrap(),
             file_icons: tabs.file_icons.unwrap(),
@@ -87,9 +97,19 @@ impl Settings for PreviewTabsSettings {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_project_panel: preview_tabs
+                .enable_preview_from_project_panel
+                .unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
-            enable_preview_from_code_navigation: preview_tabs
-                .enable_preview_from_code_navigation
+            enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
+            enable_preview_multibuffer_from_code_navigation: preview_tabs
+                .enable_preview_multibuffer_from_code_navigation
+                .unwrap(),
+            enable_preview_file_from_code_navigation: preview_tabs
+                .enable_preview_file_from_code_navigation
+                .unwrap(),
+            enable_keep_preview_on_code_navigation: preview_tabs
+                .enable_keep_preview_on_code_navigation
                 .unwrap(),
         }
     }
@@ -104,6 +124,7 @@ pub enum ItemEvent {
 }
 
 // TODO: Combine this with existing HighlightedText struct?
+#[derive(Debug)]
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
@@ -195,9 +216,14 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
-    fn on_removed(&self, _cx: &App) {}
+    fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
-    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
+    fn navigate(
+        &mut self,
+        _: Arc<dyn Any + Send>,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> bool {
         false
     }
 
@@ -235,6 +261,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+    fn capability(&self, _: &App) -> Capability {
+        Capability::ReadWrite
+    }
+
+    fn toggle_read_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     fn has_deleted_file(&self, _: &App) -> bool {
         false
     }
@@ -287,7 +319,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -295,7 +327,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -330,6 +362,16 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn include_in_nav_history() -> bool {
         true
+    }
+
+    /// Returns additional actions to add to the tab's context menu.
+    /// Each entry is a label and an action to dispatch.
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        Vec::new()
     }
 }
 
@@ -450,12 +492,14 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn on_removed(&self, cx: &App);
+    fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
+    fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn capability(&self, cx: &App) -> Capability;
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
@@ -490,7 +534,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
@@ -499,6 +543,11 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)>;
     fn can_autosave(&self, cx: &App) -> bool {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
@@ -822,7 +871,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                                         close_item_task.await?;
                                         pane.update(cx, |pane, _cx| {
                                             pane.nav_history_mut().remove_item(item_id);
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -869,8 +919,18 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        // Only trigger autosave if focus has truly left the item.
+                        // If focus is still within the item's hierarchy (e.g., moved to a context menu),
+                        // don't trigger autosave to avoid unwanted formatting and cursor jumps.
+                        // Also skip autosave if focus moved to a modal (e.g., command palette),
+                        // since the user is still interacting with the workspace.
+                        let focus_handle = item.item_focus_handle(cx);
+                        if !focus_handle.contains_focused(window, cx)
+                            && !workspace.has_active_modal(window, cx)
+                        {
+                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                                .detach_and_log_err(cx);
+                        }
                     }
                 },
             )
@@ -895,15 +955,15 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| this.deactivated(window, cx));
     }
 
-    fn on_removed(&self, cx: &App) {
-        self.read(cx).on_removed(cx);
+    fn on_removed(&self, cx: &mut App) {
+        self.update(cx, |item, cx| item.on_removed(cx));
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool {
+    fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool {
         self.update(cx, |this, cx| this.navigate(data, window, cx))
     }
 
@@ -917,6 +977,16 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.read(cx).capability(cx)
+    }
+
+    fn toggle_read_only(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.toggle_read_only(window, cx);
+        })
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -981,15 +1051,15 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        self.read(cx).as_searchable(self)
+        self.read(cx).as_searchable(self, cx)
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.read(cx).breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.read(cx).breadcrumbs(cx)
     }
 
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement> {
@@ -1022,8 +1092,18 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| {
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
+        })
+    }
+
+    fn tab_extra_context_menu_actions(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        self.update(cx, |this, cx| {
+            this.tab_extra_context_menu_actions(window, cx)
         })
     }
 }
@@ -1109,7 +1189,7 @@ pub enum Dedup {
 
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant>;
     fn from_state_proto(
         project: Entity<Workspace>,
         id: ViewId,
@@ -1122,8 +1202,8 @@ pub trait FollowableItem: Item {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
@@ -1203,7 +1283,7 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
     }
 
     fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
-        self.read(cx).to_state_proto(window, cx)
+        self.update(cx, |this, cx| this.to_state_proto(window, cx))
     }
 
     fn add_event_to_update_proto(
@@ -1214,8 +1294,9 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
         cx: &mut App,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
-            self.read(cx)
-                .add_event_to_update_proto(event, update, window, cx)
+            self.update(cx, |this, cx| {
+                this.add_event_to_update_proto(event, update, window, cx)
+            })
         } else {
             false
         }
@@ -1280,7 +1361,7 @@ pub mod test {
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell};
+    use std::{any::Any, cell::Cell, sync::Arc};
     use util::rel_path::rel_path;
 
     pub struct TestProjectItem {
@@ -1513,14 +1594,18 @@ pub mod test {
 
         fn navigate(
             &mut self,
-            state: Box<dyn Any>,
+            state: Arc<dyn Any + Send>,
             _window: &mut Window,
             _: &mut Context<Self>,
         ) -> bool {
-            let state = *state.downcast::<String>().unwrap_or_default();
-            if state != self.state {
-                self.state = state;
-                true
+            if let Some(state) = state.downcast_ref::<Box<String>>() {
+                let state = *state.clone();
+                if state != self.state {
+                    false
+                } else {
+                    self.state = state;
+                    true
+                }
             } else {
                 false
             }

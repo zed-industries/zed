@@ -9,8 +9,7 @@ use text::Bias;
 use util::RandomCharIter;
 
 fn to_tab_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
-    let dispatcher = TestDispatcher::new(rng);
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {
@@ -45,7 +44,7 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
             &snapshot,
             |bench, snapshot| {
                 bench.iter(|| {
-                    snapshot.to_tab_point(fold_point);
+                    snapshot.fold_point_to_tab_point(fold_point);
                 });
             },
         );
@@ -55,8 +54,7 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
 }
 
 fn to_fold_point_benchmark(c: &mut Criterion) {
-    let rng = StdRng::seed_from_u64(1);
-    let dispatcher = TestDispatcher::new(rng);
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
 
     let create_tab_map = |length: usize| {
@@ -79,7 +77,7 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
         );
 
         let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(4).unwrap());
-        let tab_point = snapshot.to_tab_point(fold_point);
+        let tab_point = snapshot.fold_point_to_tab_point(fold_point);
 
         (length, snapshot, tab_point)
     };
@@ -94,7 +92,7 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
             &snapshot,
             |bench, snapshot| {
                 bench.iter(|| {
-                    snapshot.to_fold_point(tab_point, Bias::Left);
+                    snapshot.tab_point_to_fold_point(tab_point, Bias::Left);
                 });
             },
         );

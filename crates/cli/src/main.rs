@@ -12,14 +12,18 @@ use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
-    env, fs, io,
+    collections::{BTreeMap, BTreeSet},
+    env,
+    ffi::OsStr,
+    fs, io,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     thread::{self, JoinHandle},
 };
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
+use walkdir::WalkDir;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
@@ -30,7 +34,7 @@ struct Detect;
 
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
-    fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
+    fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()>;
     fn run_foreground(
         &self,
         ipc_url: String,
@@ -59,6 +63,8 @@ Examples:
 )]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
+    ///
+    /// When opening a directory, waits until the created window is closed.
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
@@ -113,6 +119,7 @@ struct Args {
     #[arg(long)]
     system_specs: bool,
     /// Pairs of file paths to diff. Can be specified multiple times.
+    /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
     /// Uninstall Zed from user system
@@ -129,37 +136,275 @@ struct Args {
     askpass: Option<String>,
 }
 
+/// Parses a path containing a position (e.g. `path:line:column`)
+/// and returns its canonicalized string representation.
+///
+/// If a part of path doesn't exist, it will canonicalize the
+/// existing part and append the non-existing part.
+///
+/// This method must return an absolute path, as many zed
+/// crates assume absolute paths.
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
-    let canonicalized = match Path::new(argument_str).canonicalize() {
-        Ok(existing_path) => PathWithPosition::from_path(existing_path),
-        Err(_) => {
-            let path = PathWithPosition::parse_str(argument_str);
+    match Path::new(argument_str).canonicalize() {
+        Ok(existing_path) => Ok(PathWithPosition::from_path(existing_path)),
+        Err(_) => PathWithPosition::parse_str(argument_str).map_path(|mut path| {
             let curdir = env::current_dir().context("retrieving current directory")?;
-            path.map_path(|path| match fs::canonicalize(&path) {
-                Ok(path) => Ok(path),
-                Err(e) => {
-                    if let Some(mut parent) = path.parent() {
-                        if parent == Path::new("") {
-                            parent = &curdir
-                        }
-                        match fs::canonicalize(parent) {
-                            Ok(parent) => Ok(parent.join(path.file_name().unwrap())),
-                            Err(_) => Err(e),
-                        }
-                    } else {
-                        Err(e)
-                    }
+            let mut children = Vec::new();
+            let root;
+            loop {
+                // canonicalize handles './', and '/'.
+                if let Ok(canonicalized) = fs::canonicalize(&path) {
+                    root = canonicalized;
+                    break;
                 }
-            })
+                // The comparison to `curdir` is just a shortcut
+                // since we know it is canonical. The other one
+                // is if `argument_str` is a string that starts
+                // with a name (e.g. "foo/bar").
+                if path == curdir || path == Path::new("") {
+                    root = curdir;
+                    break;
+                }
+                children.push(
+                    path.file_name()
+                        .with_context(|| format!("parsing as path with position {argument_str}"))?
+                        .to_owned(),
+                );
+                if !path.pop() {
+                    unreachable!("parsing as path with position {argument_str}");
+                }
+            }
+            Ok(children.iter().rev().fold(root, |mut path, child| {
+                path.push(child);
+                path
+            }))
+        }),
+    }
+    .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+}
+
+fn expand_directory_diff_pairs(
+    diff_pairs: Vec<[String; 2]>,
+) -> anyhow::Result<(Vec<[String; 2]>, Vec<TempDir>)> {
+    let mut expanded = Vec::new();
+    let mut temp_dirs = Vec::new();
+
+    for pair in diff_pairs {
+        let left = PathBuf::from(&pair[0]);
+        let right = PathBuf::from(&pair[1]);
+
+        if left.is_dir() && right.is_dir() {
+            let (mut pairs, temp_dir) = expand_directory_pair(&left, &right)?;
+            expanded.append(&mut pairs);
+            if let Some(temp_dir) = temp_dir {
+                temp_dirs.push(temp_dir);
+            }
+        } else {
+            expanded.push(pair);
         }
-        .with_context(|| format!("parsing as path with position {argument_str}"))?,
-    };
-    Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
+    }
+
+    Ok((expanded, temp_dirs))
+}
+
+fn expand_directory_pair(
+    left: &Path,
+    right: &Path,
+) -> anyhow::Result<(Vec<[String; 2]>, Option<TempDir>)> {
+    let left_files = collect_files(left)?;
+    let right_files = collect_files(right)?;
+
+    let mut rel_paths = BTreeSet::new();
+    rel_paths.extend(left_files.keys().cloned());
+    rel_paths.extend(right_files.keys().cloned());
+
+    let mut temp_dir = TempDir::new()?;
+    let mut temp_dir_used = false;
+    let mut pairs = Vec::new();
+
+    for rel in rel_paths {
+        match (left_files.get(&rel), right_files.get(&rel)) {
+            (Some(left_path), Some(right_path)) => {
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+            }
+            (Some(left_path), None) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    left_path.to_string_lossy().into_owned(),
+                    stub.to_string_lossy().into_owned(),
+                ]);
+            }
+            (None, Some(right_path)) => {
+                let stub = create_empty_stub(&mut temp_dir, &rel)?;
+                temp_dir_used = true;
+                pairs.push([
+                    stub.to_string_lossy().into_owned(),
+                    right_path.to_string_lossy().into_owned(),
+                ]);
+            }
+            (None, None) => {}
+        }
+    }
+
+    let temp_dir = if temp_dir_used { Some(temp_dir) } else { None };
+    Ok((pairs, temp_dir))
+}
+
+fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
+    let mut files = BTreeMap::new();
+
+    for entry in WalkDir::new(root) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let rel = entry
+                .path()
+                .strip_prefix(root)
+                .context("stripping directory prefix")?
+                .to_path_buf();
+            files.insert(rel, entry.into_path());
+        }
+    }
+
+    Ok(files)
+}
+
+fn create_empty_stub(temp_dir: &mut TempDir, rel: &Path) -> anyhow::Result<PathBuf> {
+    let stub_path = temp_dir.path().join(rel);
+    if let Some(parent) = stub_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::File::create(&stub_path)?;
+    Ok(stub_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use util::path;
+    use util::paths::SanitizedPath;
+    use util::test::TempTree;
+
+    macro_rules! assert_path_eq {
+        ($left:expr, $right:expr) => {
+            assert_eq!(
+                SanitizedPath::new(Path::new(&$left)),
+                SanitizedPath::new(Path::new(&$right))
+            )
+        };
+    }
+
+    fn cwd() -> PathBuf {
+        env::current_dir().unwrap()
+    }
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_cwd<T>(path: &Path, f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+        let _lock = CWD_LOCK.lock();
+        let old_cwd = cwd();
+        env::set_current_dir(path)?;
+        let result = f();
+        env::set_current_dir(old_cwd)?;
+        result
+    }
+
+    #[test]
+    fn test_parse_non_existing_path() {
+        // Absolute path
+        let result = parse_path_with_position(path!("/non/existing/path.txt")).unwrap();
+        assert_path_eq!(result, path!("/non/existing/path.txt"));
+
+        // Absolute path in cwd
+        let path = cwd().join(path!("non/existing/path.txt"));
+        let expected = path.to_string_lossy().to_string();
+        let result = parse_path_with_position(&expected).unwrap();
+        assert_path_eq!(result, expected);
+
+        // Relative path
+        let result = parse_path_with_position(path!("non/existing/path.txt")).unwrap();
+        assert_path_eq!(result, expected)
+    }
+
+    #[test]
+    fn test_parse_existing_path() {
+        let temp_tree = TempTree::new(json!({
+            "file.txt": "",
+        }));
+        let file_path = temp_tree.path().join("file.txt");
+        let expected = file_path.to_string_lossy().to_string();
+
+        // Absolute path
+        let result = parse_path_with_position(file_path.to_str().unwrap()).unwrap();
+        assert_path_eq!(result, expected);
+
+        // Relative path
+        let result = with_cwd(temp_tree.path(), || parse_path_with_position("file.txt")).unwrap();
+        assert_path_eq!(result, expected);
+    }
+
+    // NOTE:
+    // While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
+    // we assume that they are not supported out of the box.
+    #[cfg(not(windows))]
+    #[test]
+    fn test_parse_symlink_file() {
+        let temp_tree = TempTree::new(json!({
+            "target.txt": "",
+        }));
+        let target_path = temp_tree.path().join("target.txt");
+        let symlink_path = temp_tree.path().join("symlink.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).unwrap();
+
+        // Absolute path
+        let result = parse_path_with_position(symlink_path.to_str().unwrap()).unwrap();
+        assert_eq!(result, target_path.to_string_lossy());
+
+        // Relative path
+        let result =
+            with_cwd(temp_tree.path(), || parse_path_with_position("symlink.txt")).unwrap();
+        assert_eq!(result, target_path.to_string_lossy());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_parse_symlink_dir() {
+        let temp_tree = TempTree::new(json!({
+            "some": {
+                "dir": { // symlink target
+                    "ec": {
+                        "tory": {
+                            "file.txt": "",
+        }}}}}));
+
+        let target_file_path = temp_tree.path().join("some/dir/ec/tory/file.txt");
+        let expected = target_file_path.to_string_lossy();
+
+        let dir_path = temp_tree.path().join("some/dir");
+        let symlink_path = temp_tree.path().join("symlink");
+        std::os::unix::fs::symlink(&dir_path, &symlink_path).unwrap();
+
+        // Absolute path
+        let result =
+            parse_path_with_position(symlink_path.join("ec/tory/file.txt").to_str().unwrap())
+                .unwrap();
+        assert_eq!(result, expected);
+
+        // Relative path
+        let result = with_cwd(temp_tree.path(), || {
+            parse_path_with_position("symlink/ec/tory/file.txt")
+        })
+        .unwrap();
+        assert_eq!(result, expected);
+    }
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let mut source = PathWithPosition::parse_str(source);
-    let mut command = util::command::new_std_command("wsl.exe");
 
     let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
         if user.is_empty() {
@@ -170,22 +415,35 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         (None, wsl)
     };
 
+    let mut args = vec!["--distribution", distro_name];
     if let Some(user) = user {
-        command.arg("--user").arg(user);
+        args.push("--user");
+        args.push(user);
     }
 
-    let output = command
-        .arg("--distribution")
-        .arg(distro_name)
-        .arg("--exec")
-        .arg("wslpath")
-        .arg("-m")
-        .arg(&source.path)
-        .output()?;
+    let command = [
+        OsStr::new("realpath"),
+        OsStr::new("-s"),
+        source.path.as_ref(),
+    ];
 
-    let result = String::from_utf8_lossy(&output.stdout);
-    let prefix = format!("//wsl.localhost/{}", distro_name);
-    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
+    let output = util::command::new_std_command("wsl.exe")
+        .args(&args)
+        .arg("--exec")
+        .args(&command)
+        .output()?;
+    let result = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+        let fallback = util::command::new_std_command("wsl.exe")
+            .args(&args)
+            .arg("--")
+            .args(&command)
+            .output()?;
+        String::from_utf8_lossy(&fallback.stdout).to_string()
+    };
+
+    source.path = Path::new(result.trim()).to_owned();
 
     Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
 }
@@ -319,11 +577,27 @@ fn main() -> Result<()> {
     let mut stdin_tmp_file: Option<fs::File> = None;
     let mut anonymous_fd_tmp_files = vec![];
 
+    // Check if any diff paths are directories to determine diff_all mode
+    let diff_all_mode = args
+        .diff
+        .chunks(2)
+        .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
     for path in args.diff.chunks(2) {
         diff_paths.push([
             parse_path_with_position(&path[0])?,
             parse_path_with_position(&path[1])?,
         ]);
+    }
+
+    let (expanded_diff_paths, temp_dirs) = expand_directory_diff_pairs(diff_paths)?;
+    diff_paths = expanded_diff_paths;
+    // Prevent automatic cleanup of temp directories containing empty stub files
+    // for directory diffs. The CLI process may exit before Zed has read these
+    // files (e.g., when RPC-ing into an already-running instance). The files
+    // live in the OS temp directory and will be cleaned up on reboot.
+    for temp_dir in temp_dirs {
+        let _ = temp_dir.keep();
     }
 
     #[cfg(target_os = "windows")]
@@ -348,6 +622,14 @@ fn main() -> Result<()> {
             urls.push(format!("file://{}", parse_path_in_wsl(path, wsl)?));
         } else {
             paths.push(parse_path_with_position(path)?);
+        }
+    }
+
+    // When only diff paths are provided (no regular paths), add the current
+    // working directory so the workspace opens with the right context.
+    if paths.is_empty() && urls.is_empty() && !diff_paths.is_empty() {
+        if let Ok(cwd) = env::current_dir() {
+            paths.push(cwd.to_string_lossy().into_owned());
         }
     }
 
@@ -381,6 +663,7 @@ fn main() -> Result<()> {
                     paths,
                     urls,
                     diff_paths,
+                    diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
                     open_new_workspace,
@@ -433,7 +716,7 @@ fn main() -> Result<()> {
     if args.foreground {
         app.run_foreground(url, user_data_dir.as_deref())?;
     } else {
-        app.launch(url)?;
+        app.launch(url, user_data_dir.as_deref())?;
         sender.join().unwrap()?;
         if let Some(handle) = stdin_pipe_handle {
             handle.join().unwrap()?;
@@ -554,14 +837,18 @@ mod linux {
             )
         }
 
-        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::data_dir().join(format!(
+        fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
+            let data_dir = user_data_dir
+                .map(PathBuf::from)
+                .unwrap_or_else(|| paths::data_dir().clone());
+
+            let sock_path = data_dir.join(format!(
                 "zed-{}.sock",
                 *release_channel::RELEASE_CHANNEL_NAME
             ));
             let sock = UnixDatagram::unbound()?;
             if sock.connect(&sock_path).is_err() {
-                self.boot_background(ipc_url)?;
+                self.boot_background(ipc_url, user_data_dir)?;
             } else {
                 sock.send(ipc_url.as_bytes())?;
             }
@@ -587,7 +874,11 @@ mod linux {
     }
 
     impl App {
-        fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
+        fn boot_background(
+            &self,
+            ipc_url: String,
+            user_data_dir: Option<&str>,
+        ) -> anyhow::Result<()> {
             let path = &self.0;
 
             match fork::fork() {
@@ -601,8 +892,13 @@ mod linux {
                     if fork::close_fd().is_err() {
                         eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
                     }
-                    let error =
-                        exec::execvp(path.clone(), &[path.as_os_str(), &OsString::from(ipc_url)]);
+                    let mut args: Vec<OsString> =
+                        vec![path.as_os_str().to_owned(), OsString::from(ipc_url)];
+                    if let Some(dir) = user_data_dir {
+                        args.push(OsString::from("--user-data-dir"));
+                        args.push(OsString::from(dir));
+                    }
+                    let error = exec::execvp(path.clone(), &args);
                     // if exec succeeded, we never get here.
                     eprintln!("failed to exec {:?}: {}", path, error);
                     process::exit(1)
@@ -788,11 +1084,14 @@ mod windows {
             )
         }
 
-        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+        fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
             if check_single_instance() {
-                std::process::Command::new(self.0.clone())
-                    .arg(ipc_url)
-                    .spawn()?;
+                let mut cmd = std::process::Command::new(self.0.clone());
+                cmd.arg(ipc_url);
+                if let Some(dir) = user_data_dir {
+                    cmd.arg("--user-data-dir").arg(dir);
+                }
+                cmd.spawn()?;
             } else {
                 unsafe {
                     let pipe = CreateFileW(
@@ -941,7 +1240,7 @@ mod mac_os {
             format!("Zed {} – {}", self.version(), self.path().display(),)
         }
 
-        fn launch(&self, url: String) -> anyhow::Result<()> {
+        fn launch(&self, url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
             match self {
                 Self::App { app_bundle, .. } => {
                     let app_path = app_bundle;
@@ -991,8 +1290,11 @@ mod mac_os {
                             format!("Cloning descriptor for file {subprocess_stdout_file:?}")
                         })?;
                     let mut command = std::process::Command::new(executable);
-                    let command = command
-                        .env(FORCE_CLI_MODE_ENV_VAR_NAME, "")
+                    command.env(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    if let Some(dir) = user_data_dir {
+                        command.arg("--user-data-dir").arg(dir);
+                    }
+                    command
                         .stderr(subprocess_stdout_file)
                         .stdout(subprocess_stdin_file)
                         .arg(url);

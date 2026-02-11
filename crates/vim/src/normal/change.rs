@@ -35,7 +35,7 @@ impl Vim {
             None
         };
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);
@@ -121,7 +121,11 @@ impl Vim {
                     });
                 });
                 if objects_found {
-                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                    let kind = match object.target_visual_mode(vim.mode, around) {
+                        Mode::VisualLine => MotionKind::Linewise,
+                        _ => MotionKind::Exclusive,
+                    };
+                    vim.copy_selections_content(editor, kind, window, cx);
                     editor.insert("", window, cx);
                     editor.refresh_edit_prediction(true, false, window, cx);
                 }

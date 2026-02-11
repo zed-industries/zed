@@ -1,8 +1,31 @@
 <!DOCTYPE HTML>
-<html lang="{{ language }}" data-theme="{{ default_theme }}" data-color-scheme="{{ default_theme }}" dir="{{ text_direction }}">
+<html lang="{{ language }}" dir="{{ text_direction }}">
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
+        <style>
+            @view-transition {
+                navigation: auto;
+            }
+            ::view-transition-old(root),
+            ::view-transition-new(root) {
+                animation-duration: 0.05s;
+            }
+        </style>
+        <!-- Theme initialization - must run before any CSS loads to prevent flicker -->
+        <script>
+            (function() {
+                var theme;
+                try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+                if (theme === null || theme === undefined) {
+                    theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+                }
+                var html = document.documentElement;
+                html.setAttribute('data-theme', theme);
+                html.setAttribute('data-color-scheme', theme);
+                html.className = theme;
+            })();
+        </script>
         <title>{{ title }}</title>
         {{#if is_print }}
         <meta name="robots" content="noindex">
@@ -48,161 +71,227 @@
         <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
         {{/if}}
     </head>
-    <body class="sidebar-visible no-js">
+    <body class="no-js">
     <div id="body-container">
+        <div class="noise-pattern" style="background-image: url('https://cdn.zed.dev/images/noise.png');"></div>
+
         <!-- Provide site root to javascript -->
         <script>
             var path_to_root = "{{ path_to_root }}";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "{{ preferred_dark_theme }}" : "{{ default_theme }}";
+            // Mark as JS-enabled
+            document.body.classList.remove('no-js');
+            document.body.classList.add('js');
         </script>
 
-        <!-- Support dark mode -->
-        <script>
-            var theme;
-            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
-            if (theme === null || theme === undefined) {
-                theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-            }
-            var html = document.querySelector('html');
-            html.classList.remove('light', 'dark')
-            html.classList.add(theme);
-            var body = document.querySelector('body');
-            body.classList.remove('no-js')
-            body.classList.add('js');
-        </script>
-
-        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
-
-        <!-- Hide / unhide sidebar before it is displayed -->
-        <script>
-            var body = document.querySelector('body');
-            var sidebar = null;
-            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
-            if (document.body.clientWidth >= 1080) {
-                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
-                sidebar = sidebar || 'visible';
-            } else {
-                sidebar = 'hidden';
-            }
-            sidebar_toggle.checked = sidebar === 'visible';
-            body.classList.remove('sidebar-visible');
-            body.classList.add("sidebar-" + sidebar);
-        </script>
-
-        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
-            <div class="sidebar-scrollbox">
-                {{#toc}}{{/toc}}
+        <header class="header-bar">
+            <div class="left-container">
+                <a href="/" class="logo-nav">
+                    <img src="https://zed.dev/logo_icon.webp" class="icon-logo-img" alt="Zed Industries" style="height: 26px;">
+                </a>
+                <button id="sidebar-toggle" class="icon-button ib-hidden-desktop" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar" aria-expanded="false">
+                    <i class="fa fa-bars"></i>
+                </button>
             </div>
-            <div style="display: none;" id="sidebar-resize-handle" class="sidebar-resize-handle">
-                <div class="sidebar-resize-indicator"></div>
-            </div>
-        </nav>
+            {{#if search_enabled}}
+            <button id="search-toggle" class="search-button" type="button" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                <i class="icon fa fa-search"></i>
+                <span class="search-content-desktop">
+                    <span class="placeholder">Search docs…</span>
+                    <kbd>S</kbd>
+                </span>
+                <span class="search-content-mobile">
+                    <span class="placeholder">Search…</span>
+                </span>
+            </button>
+            {{/if}}
+            <div class="right-container">
+                <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                    <i class="fa fa-paint-brush"></i>
+                </button>
 
-        <!-- Track and set sidebar scroll position -->
-        <script>
-            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
-            sidebarScrollbox.addEventListener('click', function(e) {
-                if (e.target.tagName === 'A') {
-                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
-                }
-            }, { passive: true });
-            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
-            sessionStorage.removeItem('sidebar-scroll');
-            if (sidebarScrollTop) {
-                // preserve sidebar scroll position when navigating via links within sidebar
-                sidebarScrollbox.scrollTop = sidebarScrollTop;
-            } else {
-                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
-                var activeSection = document.querySelector('#sidebar .active');
-                if (activeSection) {
-                    activeSection.scrollIntoView({ block: 'center' });
-                }
-            }
-        </script>
+                <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                    <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                    <li role="none"><button role="menuitem" class="theme" id="dark">Dark</button></li>
+                </ul>
+
+                <button id="copy-markdown-toggle" class="icon-button ib-hidden-mobile" type="button" title="Copy Page as Markdown" aria-label="Copy page as markdown">
+                    <i class="fa fa-copy"></i>
+                </button>
+
+                <a class="download-button" href="https://zed.dev/download" title="Download Zed" aria-label="Download Zed">
+                    Download
+                </a>
+                {{#if git_repository_url}}
+                <a href="{{git_repository_url}}" title="Git repository" aria-label="Git repository">
+                    <i id="git-repository-button" class="fa {{git_repository_icon}}"></i>
+                </a>
+                {{/if}}
+                {{#if git_repository_edit_url}}
+                <a href="{{git_repository_edit_url}}" title="Suggest an edit" aria-label="Suggest an edit">
+                    <i id="git-edit-button" class="fa fa-edit"></i>
+                </a>
+                {{/if}}
+            </div>
+        </header>
 
         <div id="page-wrapper" class="page-wrapper">
-            <div class="page">
-                {{> header}}
-                <div id="menu-bar-hover-placeholder"></div>
-                <div id="menu-bar" class="menu-bar sticky">
-                    <div class="left-buttons">
 
-                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
-                            <i class="fa fa-bars"></i>
-                        </label>
-
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
-                            <i class="fa fa-paint-brush"></i>
-                        </button>
-                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
-                            <li role="none"><button role="menuitem" class="theme" id="dark">Dark</button></li>
-                        </ul>
-
-                        <button id="copy-markdown-toggle" class="icon-button ib-hidden-mobile" type="button" title="Copy Page as Markdown" aria-label="Copy page as markdown">
-                            <i class="fa fa-copy"></i>
-                        </button>
-
-                        {{#if search_enabled}}
-                        <button id="search-toggle" class="icon-button" type="button" title="Search (s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
-                            <i class="fa fa-search"></i>
-                        </button>
-                        {{/if}}
-                    </div>
-
-                    <header class="menu-title">
-                        <a href="/">
-                            <img src="https://zed.dev/logo_wordmark_1500.webp" class="large-logo-img" alt="Zed Industries" style="height: 28px;">
-                            <img src="https://zed.dev/logo_icon.webp" class="icon-logo-img" alt="Zed Industries" style="height: 28px;">
-                        </a>
-                    </header>
-
-                    <div class="right-buttons">
-                        <a class="download-button" href="https://zed.dev/download" title="Download Zed" aria-label="Download Zed">
-                            Download
-                        </a>
-                        {{#if git_repository_url}}
-                        <a href="{{git_repository_url}}" title="Git repository" aria-label="Git repository">
-                            <i id="git-repository-button" class="fa {{git_repository_icon}}"></i>
-                        </a>
-                        {{/if}}
-                        {{#if git_repository_edit_url}}
-                        <a href="{{git_repository_edit_url}}" title="Suggest an edit" aria-label="Suggest an edit">
-                            <i id="git-edit-button" class="fa fa-edit"></i>
-                        </a>
-                        {{/if}}
-                    </div>
-                </div>
-
-                {{#if search_enabled}}
-                <div id="search-wrapper" class="hidden">
+            {{#if search_enabled}}
+            <div class="search-container">
+                <div id="search-wrapper" class="search-modal hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search…" aria-controls="searchresults-outer" aria-describedby="searchresults-header">
                     </form>
-                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                    <div id="searchresults-outer" class="searchresults-outer">
                         <div id="searchresults-header" class="searchresults-header"></div>
                         <ul id="searchresults">
                         </ul>
                     </div>
                 </div>
-                {{/if}}
+            </div>
+            {{/if}}
 
-                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
-                <script>
-                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
-                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
-                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
-                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+            <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+                <div class="sidebar-scrollbox">
+                    {{#toc}}{{/toc}}
+                </div>
+                <div style="display: none;" id="sidebar-resize-handle" class="sidebar-resize-handle">
+                    <div class="sidebar-resize-indicator"></div>
+                </div>
+            </nav>
+
+            <!-- Mobile sidebar toggle -->
+            <script>
+                (function() {
+                    var sidebarToggle = document.getElementById('sidebar-toggle');
+                    var sidebar = document.getElementById('sidebar');
+
+                    sidebarToggle.addEventListener('click', function() {
+                        var isOpen = document.body.classList.toggle('sidebar-open');
+                        sidebarToggle.setAttribute('aria-expanded', isOpen);
+                        sidebar.setAttribute('aria-hidden', !isOpen);
                     });
-                </script>
 
+                    // Close sidebar when clicking a link inside it (on mobile)
+                    sidebar.addEventListener('click', function(e) {
+                        if (e.target.tagName === 'A' && window.innerWidth < 620) {
+                            document.body.classList.remove('sidebar-open');
+                            sidebarToggle.setAttribute('aria-expanded', 'false');
+                            sidebar.setAttribute('aria-hidden', 'true');
+                        }
+                    });
+                })();
+            </script>
+
+            <!-- Search backdrop handlers -->
+            <script>
+                (function() {
+                    var searchWrapper = document.getElementById('search-wrapper');
+                    var searchContainer = document.querySelector('.search-container');
+                    var searchResults = document.getElementById('searchresults');
+
+                    if (!searchWrapper || !searchContainer) return;
+
+                    searchContainer.addEventListener('click', function(e) {
+                        if (e.target === searchContainer) {
+                            searchWrapper.classList.add('hidden');
+                        }
+                    });
+
+                    if (searchResults) {
+                        searchResults.addEventListener('click', function(e) {
+                            if (e.target.tagName === 'A' || e.target.closest('a')) {
+                                searchWrapper.classList.add('hidden');
+                            }
+                        });
+                    }
+                })();
+            </script>
+
+            <!-- Insert section spacers and apply collapsed state before scroll restoration to prevent layout shift/flicker -->
+            <script>
+                (function() {
+                    var chapterList = document.querySelector('#sidebar ol.chapter');
+                    if (!chapterList) return;
+
+                    var collapsedSections = [];
+                    try {
+                        var stored = sessionStorage.getItem('sidebar-collapsed-sections');
+                        if (stored) {
+                            collapsedSections = JSON.parse(stored);
+                        }
+                    } catch (e) {}
+
+                    var partTitles = chapterList.querySelectorAll('li.part-title');
+                    var previousPartTitle = null;
+
+                    partTitles.forEach(function(partTitle, index) {
+                        partTitle._sectionName = partTitle.textContent.trim();
+
+                        // Insert a spacer before this part-title (except for the first one)
+                        if (index > 0) {
+                            var spacer = document.createElement('li');
+                            spacer.className = 'section-spacer';
+                            partTitle.parentNode.insertBefore(spacer, partTitle);
+
+                            if (previousPartTitle) {
+                                previousPartTitle._spacerAfter = spacer;
+                            }
+                        }
+
+                        var isCollapsed = collapsedSections.includes(partTitle._sectionName);
+                        if (isCollapsed) {
+                            // Hide all siblings until next part-title
+                            var sibling = partTitle.nextElementSibling;
+                            while (sibling && !sibling.classList.contains('part-title')) {
+                                sibling.classList.add('section-hidden');
+                                sibling = sibling.nextElementSibling;
+                            }
+                            // Hide the spacer after this section (will be set on next iteration)
+                            partTitle._isCollapsed = true;
+                        }
+
+                        // If previous section was collapsed, hide its spacer
+                        if (previousPartTitle && previousPartTitle._isCollapsed && previousPartTitle._spacerAfter) {
+                            previousPartTitle._spacerAfter.classList.add('section-hidden');
+                        }
+
+                        previousPartTitle = partTitle;
+                    });
+
+                    // Handle the last section's spacer if it was collapsed
+                    if (previousPartTitle && previousPartTitle._isCollapsed && previousPartTitle._spacerAfter) {
+                        previousPartTitle._spacerAfter.classList.add('section-hidden');
+                    }
+                })();
+            </script>
+
+            <!-- Track and set sidebar scroll position -->
+            <script>
+                var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+                sidebarScrollbox.addEventListener('click', function(e) {
+                    if (e.target.tagName === 'A') {
+                        sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                    }
+                }, { passive: true });
+                var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+                sessionStorage.removeItem('sidebar-scroll');
+                if (sidebarScrollTop) {
+                    // preserve sidebar scroll position when navigating via links within sidebar
+                    sidebarScrollbox.scrollTop = sidebarScrollTop;
+                } else {
+                    // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                    var activeSection = document.querySelector('#sidebar .active');
+                    if (activeSection) {
+                        activeSection.scrollIntoView({ block: 'center' });
+                    }
+                }
+            </script>
+
+            <div class="page">
                 <div id="content" class="content">
                     <main>
-                      <div class="sidetoc">
-                          <nav class="pagetoc">
-                            <p class="toc-title">On this page</p>
-                          </nav>
-                      </div>
                       {{{ content }}}
                         <div class="footer-buttons">
                             {{#previous}}
@@ -219,6 +308,29 @@
                             {{/next}}
                         </div>
                     </main>
+                    <div class="toc-container">
+                        <nav class="pagetoc"></nav>
+                    </div>
+                    <!-- Immediately detect if page has headins that are not h1 to prevent flicker -->
+                    <script>
+                        (function() {
+                            var tocContainer = document.querySelector('.toc-container');
+                            var headers = document.querySelectorAll('.header');
+                            var hasNonH1Headers = false;
+                            for (var i = 0; i < headers.length; i++) {
+                                var parent = headers[i].parentElement;
+                                if (parent && !parent.tagName.toLowerCase().startsWith('h1')) {
+                                    hasNonH1Headers = true;
+                                    break;
+                                }
+                            }
+                            if (hasNonH1Headers) {
+                                tocContainer.classList.add('has-toc');
+                            } else {
+                                tocContainer.classList.add('no-toc');
+                            }
+                        })();
+                    </script>
                 </div>
             </div>
         </div>
@@ -294,23 +406,6 @@
         </script>
         {{/if}}
         {{/if}}
-
-        <script>
-          (function() {
-            var theme = localStorage.getItem('mdbook-theme');
-            var html = document.querySelector('html');
-            if (theme) {
-              html.setAttribute('data-theme', theme);
-              html.setAttribute('data-color-scheme', theme);
-              html.className = theme;
-            } else {
-              var systemPreference = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-              html.setAttribute('data-theme', systemPreference);
-              html.setAttribute('data-color-scheme', systemPreference);
-              html.className = systemPreference;
-            }
-          })();
-        </script>
 
         <!-- Amplitude Analytics -->
         <script>

@@ -1,11 +1,5 @@
 use crate::FeatureFlag;
 
-pub struct PredictEditsRateCompletionsFeatureFlag;
-
-impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
-    const NAME: &'static str = "predict-edits-rate-completions";
-}
-
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {
@@ -16,4 +10,54 @@ pub struct PanicFeatureFlag;
 
 impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
+}
+
+pub struct AgentV2FeatureFlag;
+
+impl FeatureFlag for AgentV2FeatureFlag {
+    const NAME: &'static str = "agent-v2";
+}
+
+pub struct AcpBetaFeatureFlag;
+
+impl FeatureFlag for AcpBetaFeatureFlag {
+    const NAME: &'static str = "acp-beta";
+}
+
+pub struct AgentSharingFeatureFlag;
+
+impl FeatureFlag for AgentSharingFeatureFlag {
+    const NAME: &'static str = "agent-sharing";
+}
+
+pub struct SubagentsFeatureFlag;
+
+impl FeatureFlag for SubagentsFeatureFlag {
+    const NAME: &'static str = "subagents";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+pub struct DiffReviewFeatureFlag;
+
+impl FeatureFlag for DiffReviewFeatureFlag {
+    const NAME: &'static str = "diff-review";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+/// Controls whether we show the new thinking and effort level controls in the Agent Panel when using applicable models
+/// through the Zed provider (Cloud).
+pub struct CloudThinkingEffortFeatureFlag;
+
+impl FeatureFlag for CloudThinkingEffortFeatureFlag {
+    const NAME: &'static str = "cloud-thinking-effort";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
 }

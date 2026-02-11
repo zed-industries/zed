@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
     canvas, point,
 };
-use gpui::{App, Task, Window, actions};
+use gpui::{App, Task, Window};
 use project::WorktreeSettings;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
@@ -22,19 +22,7 @@ use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
 
-actions!(
-    collab,
-    [
-        /// Toggles screen sharing on or off.
-        ToggleScreenSharing,
-        /// Toggles microphone mute.
-        ToggleMute,
-        /// Toggles deafen mode (mute both microphone and speakers).
-        ToggleDeafen
-    ]
-);
-
-fn toggle_screen_sharing(
+pub fn toggle_screen_sharing(
     screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
     window: &mut Window,
     cx: &mut App,
@@ -90,7 +78,7 @@ fn toggle_screen_sharing(
     toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
 }
 
-fn toggle_mute(_: &ToggleMute, cx: &mut App) {
+pub fn toggle_mute(cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         room.update(cx, |room, cx| {
@@ -110,7 +98,7 @@ fn toggle_mute(_: &ToggleMute, cx: &mut App) {
     }
 }
 
-fn toggle_deafen(_: &ToggleDeafen, cx: &mut App) {
+pub fn toggle_deafen(cx: &mut App) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
         room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
@@ -182,7 +170,9 @@ impl TitleBar {
 
                     this.children(current_user_face_pile.map(|face_pile| {
                         v_flex()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.prevent_default()
+                            })
                             .child(face_pile)
                             .child(render_color_ribbon(player_colors.local().cursor))
                     }))
@@ -217,6 +207,9 @@ impl TitleBar {
                                 .child(facepile)
                                 .child(render_color_ribbon(player_color.cursor))
                                 .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                    window.prevent_default()
+                                })
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
@@ -453,9 +446,7 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Error))
-                .on_click(move |_, _window, cx| {
-                    toggle_mute(&Default::default(), cx);
-                })
+                .on_click(move |_, _window, cx| toggle_mute(cx))
                 .into_any_element(),
             );
         }
@@ -492,7 +483,7 @@ impl TitleBar {
                     }
                 }
             })
-            .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
+            .on_click(move |_, _, cx| toggle_deafen(cx))
             .into_any_element(),
         );
 

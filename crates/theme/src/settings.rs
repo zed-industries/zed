@@ -5,14 +5,13 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, Subscription, Window,
-    px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -138,14 +137,11 @@ pub struct ThemeSettings {
     pub unnecessary_code_fade: f32,
 }
 
-pub(crate) const DEFAULT_LIGHT_THEME: &'static str = "One Light";
-pub(crate) const DEFAULT_DARK_THEME: &'static str = "One Dark";
-
 /// Returns the name of the default theme for the given [`Appearance`].
 pub fn default_theme(appearance: Appearance) -> &'static str {
     match appearance {
-        Appearance::Light => DEFAULT_LIGHT_THEME,
-        Appearance::Dark => DEFAULT_DARK_THEME,
+        Appearance::Light => settings::DEFAULT_LIGHT_THEME,
+        Appearance::Dark => settings::DEFAULT_DARK_THEME,
     }
 }
 
@@ -304,31 +300,50 @@ impl IconThemeSelection {
     }
 }
 
-// impl ThemeSettingsContent {
 /// Sets the theme for the given appearance to the theme with the specified name.
+///
+/// The caller should make sure that the [`Appearance`] matches the theme associated with the name.
+///
+/// If the current [`ThemeAppearanceMode`] is set to [`System`] and the user's system [`Appearance`]
+/// is different than the new theme's [`Appearance`], this function will update the
+/// [`ThemeAppearanceMode`] to the new theme's appearance in order to display the new theme.
+///
+/// [`System`]: ThemeAppearanceMode::System
 pub fn set_theme(
     current: &mut SettingsContent,
     theme_name: impl Into<Arc<str>>,
-    appearance: Appearance,
+    theme_appearance: Appearance,
+    system_appearance: Appearance,
 ) {
-    if let Some(selection) = current.theme.theme.as_mut() {
-        let theme_to_update = match selection {
-            settings::ThemeSelection::Static(theme) => theme,
-            settings::ThemeSelection::Dynamic { mode, light, dark } => match mode {
-                ThemeAppearanceMode::Light => light,
-                ThemeAppearanceMode::Dark => dark,
-                ThemeAppearanceMode::System => match appearance {
-                    Appearance::Light => light,
-                    Appearance::Dark => dark,
-                },
-            },
-        };
+    let theme_name = ThemeName(theme_name.into());
 
-        *theme_to_update = ThemeName(theme_name.into());
-    } else {
-        current.theme.theme = Some(settings::ThemeSelection::Static(ThemeName(
-            theme_name.into(),
-        )));
+    let Some(selection) = current.theme.theme.as_mut() else {
+        current.theme.theme = Some(settings::ThemeSelection::Static(theme_name));
+        return;
+    };
+
+    match selection {
+        settings::ThemeSelection::Static(theme) => {
+            *theme = theme_name;
+        }
+        settings::ThemeSelection::Dynamic { mode, light, dark } => {
+            // Update the appropriate theme slot based on appearance.
+            match theme_appearance {
+                Appearance::Light => *light = theme_name,
+                Appearance::Dark => *dark = theme_name,
+            }
+
+            // Don't update the theme mode if it is set to system and the new theme has the same
+            // appearance.
+            let should_update_mode =
+                !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance);
+
+            if should_update_mode {
+                // Update the mode to the specified appearance (otherwise we might set the theme and
+                // nothing gets updated because the system specified the other mode appearance).
+                *mode = ThemeAppearanceMode::from(theme_appearance);
+            }
+        }
     }
 }
 
@@ -381,8 +396,8 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     } else {
         theme.theme = Some(settings::ThemeSelection::Dynamic {
             mode,
-            light: ThemeName(DEFAULT_LIGHT_THEME.into()),
-            dark: ThemeName(DEFAULT_DARK_THEME.into()),
+            light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(settings::DEFAULT_DARK_THEME.into()),
         });
     }
 
@@ -541,7 +556,8 @@ impl ThemeSettings {
 
     fn modify_theme(base_theme: &mut Theme, theme_overrides: &settings::ThemeStyleContent) {
         if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
-            base_theme.styles.window_background_appearance = window_background_appearance.into();
+            base_theme.styles.window_background_appearance =
+                window_background_appearance.into_gpui();
         }
         let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
@@ -670,12 +686,7 @@ pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 
-fn clamp_font_weight(weight: f32) -> FontWeight {
-    FontWeight(weight.clamp(100., 950.))
-}
-
-/// font fallback from settings
-pub fn font_fallbacks_from_settings(
+fn font_fallbacks_from_settings(
     fallbacks: Option<Vec<settings::FontFamilyName>>,
 ) -> Option<FontFallbacks> {
     fallbacks.map(|fallbacks| {
@@ -694,12 +705,12 @@ impl settings::Settings for ThemeSettings {
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
         Self {
-            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into()),
+            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
             ui_font: Font {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
-                features: content.ui_font_features.clone().unwrap(),
+                features: content.ui_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.ui_font_weight.unwrap().0),
+                weight: content.ui_font_weight.unwrap().into_gpui(),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -710,15 +721,15 @@ impl settings::Settings for ThemeSettings {
                     .0
                     .clone()
                     .into(),
-                features: content.buffer_font_features.clone().unwrap(),
+                features: content.buffer_font_features.clone().unwrap().into_gpui(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.buffer_font_weight.unwrap().0),
+                weight: content.buffer_font_weight.unwrap().into_gpui(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
+            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_ui_font_size: content.agent_ui_font_size.map(Into::into),
-            agent_buffer_font_size: content.agent_buffer_font_size.map(Into::into),
+            agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
+            agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),

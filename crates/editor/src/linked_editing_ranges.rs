@@ -49,7 +49,7 @@ pub(super) fn refresh_linked_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
-    if editor.ignore_lsp_data() || editor.pending_rename.is_some() {
+    if !editor.mode().is_full() || editor.pending_rename.is_some() {
         return None;
     }
     let project = editor.project()?.downgrade();
@@ -70,8 +70,8 @@ pub(super) fn refresh_linked_ranges(
                     let cursor_position = selection.head();
                     let start_position = snapshot.anchor_before(cursor_position);
                     let end_position = snapshot.anchor_after(selection.tail());
-                    if start_position.buffer_id != end_position.buffer_id
-                        || end_position.buffer_id.is_none()
+                    if start_position.text_anchor.buffer_id != end_position.text_anchor.buffer_id
+                        || end_position.text_anchor.buffer_id.is_none()
                     {
                         // Throw away selections spanning multiple buffers.
                         continue;
@@ -99,9 +99,7 @@ pub(super) fn refresh_linked_ranges(
                     let cx = cx.to_async();
                     let highlights = async move {
                         let edits = linked_edits_task.await.log_err()?;
-                        let snapshot = cx
-                            .read_entity(&buffer, |buffer, _| buffer.snapshot())
-                            .ok()?;
+                        let snapshot = cx.read_entity(&buffer, |buffer, _| buffer.snapshot());
                         let buffer_id = snapshot.remote_id();
 
                         // Find the range containing our current selection.

@@ -1,10 +1,53 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::{runners::Platform, vars};
+use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
-pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+const SCCACHE_R2_BUCKET: &str = "sccache-zed";
+
+const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
+
+pub(crate) struct Nextest(Step<Run>);
+
+pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
+    Nextest(named::run(
+        platform,
+        "cargo nextest run --workspace --no-fail-fast",
+    ))
+}
+
+impl Nextest {
+    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(r#" --target "{target}""#));
+        }
+        self.into()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(r#" -E "{filter_expr}""#));
+        }
+        self
+    }
+
+    pub(crate) fn with_changed_packages_filter(mut self, orchestrate_job: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(
+                r#"${{{{ needs.{orchestrate_job}.outputs.changed_packages && format(' -E "{{0}}"', needs.{orchestrate_job}.outputs.changed_packages) || '' }}}}"#
+            ));
+        }
+        self
+    }
+}
+
+impl From<Nextest> for Step<Run> {
+    fn from(value: Nextest) -> Self {
+        value.0
+    }
+}
 
 pub fn checkout_repo() -> Step<Use> {
     named::uses(
@@ -15,6 +58,16 @@ pub fn checkout_repo() -> Step<Use> {
     // prevent checkout action from running `git clean -ffdx` which
     // would delete the target directory
     .add_with(("clean", false))
+}
+
+pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
+    named::uses(
+        "actions",
+        "checkout",
+        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+    )
+    .add_with(("clean", false))
+    .add_with(("token", token.to_string()))
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -44,19 +97,16 @@ pub fn setup_sentry() -> Step<Use> {
     .add_with(("token", vars::SENTRY_AUTH_TOKEN))
 }
 
+pub fn prettier() -> Step<Run> {
+    named::bash("./script/prettier")
+}
+
 pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
     named::uses("taiki-e", "install-action", "nextest")
-}
-
-pub fn cargo_nextest(platform: Platform) -> Step<Run> {
-    named::run(
-        platform,
-        "cargo nextest run --workspace --no-fail-fast --failure-output immediate-final",
-    )
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
@@ -102,7 +152,38 @@ pub fn clippy(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "rust"))
+    named::uses("namespacelabs", "nscloud-cache-action", "v1")
+        .add_with(("cache", "rust"))
+        .add_with(("path", "~/.rustup"))
+}
+
+pub fn setup_sccache(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh("./script/setup-sccache.ps1"),
+        Platform::Linux | Platform::Mac => named::bash("./script/setup-sccache"),
+    };
+    step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
+        .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
+        .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
+        .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
+}
+
+pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("sccache --show-stats; exit 0"),
+        Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
+    }
+}
+
+pub fn cache_nix_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "nix"))
+}
+
+pub fn cache_nix_store_macos() -> Step<Use> {
+    // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
+    // cannot mount or symlink there. Instead we cache a user-writable directory and
+    // use nix-store --import/--export in separate steps to transfer store paths.
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
 }
 
 pub fn setup_linux() -> Step<Run> {
@@ -127,13 +208,13 @@ pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
         Step::new(name).run(name).shell(PWSH_SHELL)
     } else {
-        Step::new(name).run(name).shell(BASH_SHELL)
+        Step::new(name).run(name)
     }
 }
 
-pub struct NamedJob {
+pub struct NamedJob<J: JobType = RunJob> {
     pub name: String,
-    pub job: Job,
+    pub job: Job<J>,
 }
 
 // impl NamedJob {
@@ -145,9 +226,13 @@ pub struct NamedJob {
 //     }
 // }
 
+pub(crate) const DEFAULT_REPOSITORY_OWNER_GUARD: &str =
+    "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')";
+
 pub fn repository_owner_guard_expression(trigger_always: bool) -> Expression {
     Expression::new(format!(
-        "(github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions'){}",
+        "{}{}",
+        DEFAULT_REPOSITORY_OWNER_GUARD,
         trigger_always.then_some(" && always()").unwrap_or_default()
     ))
 }
@@ -179,6 +264,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
+impl FluentBuilder for Input {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -251,8 +337,8 @@ pub mod named {
     /// Returns a bash-script step with the same name as the enclosing function.
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
-    pub fn bash(script: &str) -> Step<Run> {
-        Step::new(function_name(1)).run(script).shell(BASH_SHELL)
+    pub fn bash(script: impl AsRef<str>) -> Step<Run> {
+        Step::new(function_name(1)).run(script.as_ref())
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
@@ -268,26 +354,31 @@ pub mod named {
     pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
-            Platform::Linux | Platform::Mac => {
-                Step::new(function_name(1)).run(script).shell(BASH_SHELL)
-            }
+            Platform::Linux | Platform::Mac => Step::new(function_name(1)).run(script),
         }
     }
 
-    /// Returns a Workflow with the same name as the enclosing module.
+    /// Returns a Workflow with the same name as the enclosing module with default
+    /// set for the running shell.
     pub fn workflow() -> Workflow {
-        Workflow::default().name(
-            named::function_name(1)
-                .split("::")
-                .next()
-                .unwrap()
-                .to_owned(),
-        )
+        Workflow::default()
+            .name(
+                named::function_name(1)
+                    .split("::")
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .skip(1)
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            )
+            .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 
     /// Returns a Job with the same name as the enclosing function.
     /// (note job names may not contain `::`)
-    pub fn job(job: Job) -> NamedJob {
+    pub fn job<J: JobType>(job: Job<J>) -> NamedJob<J> {
         NamedJob {
             name: function_name(1).split("::").last().unwrap().to_owned(),
             job,
@@ -325,4 +416,17 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(&format!(
         "git fetch origin {ref_name} && git checkout {ref_name}"
     ))
+}
+
+pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
+    let step = named::uses(
+        "actions",
+        "create-github-app-token",
+        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
+    )
+    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
+    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .id("get-app-token");
+    let output = StepOutput::new(&step, "token");
+    (step, output)
 }

@@ -145,7 +145,13 @@ impl Replayer {
         lock.ix += 1;
         drop(lock);
         let Some(action) = action else {
-            Vim::globals(cx).replayer.take();
+            // The `globals.dot_replaying = false` is a fail-safe to ensure that
+            // this value is always reset, in the case that the focus is moved
+            // away from the editor, effectively preventing the `EndRepeat`
+            // action from being handled.
+            let globals = Vim::globals(cx);
+            globals.replayer.take();
+            globals.dot_replaying = false;
             return;
         };
         match action {
@@ -230,8 +236,19 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = Vim::take_count(cx);
+        if self.active_operator().is_some() {
+            Vim::update_globals(cx, |globals, _| {
+                globals.recording_actions.clear();
+                globals.recording_count = None;
+                globals.dot_recording = false;
+                globals.stop_recording_after_next_action = false;
+            });
+            self.clear_operator(window, cx);
+            return;
+        }
+
         Vim::take_forced_motion(cx);
+        let count = Vim::take_count(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
@@ -385,6 +402,7 @@ mod test {
     use gpui::EntityInputHandler;
 
     use crate::{
+        VimGlobals,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -729,6 +747,48 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_repeat_after_blur_resets_dot_replaying(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Bind `ctrl-f` to the `buffer_search::Deploy` action so that this can
+        // be triggered while in Insert mode, ensuring that an action which
+        // moves the focus away from the editor, gets recorded.
+        cx.update(|_, cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-f",
+                search::buffer_search::Deploy::find(),
+                None,
+            )])
+        });
+
+        cx.set_state("ˇhello", Mode::Normal);
+
+        // We're going to enter insert mode, which will start recording, type a
+        // character and then immediately use `ctrl-f` to trigger the buffer
+        // search. Triggering the buffer search will move focus away from the
+        // editor, effectively stopping the recording immediately after
+        // `buffer_search::Deploy` is recorded. The first `escape` is used to
+        // dismiss the search bar, while the second is used to move from Insert
+        // to Normal mode.
+        cx.simulate_keystrokes("i x ctrl-f escape escape");
+        cx.run_until_parked();
+
+        // Using the `.` key will dispatch the `vim::Repeat` action, repeating
+        // the set of recorded actions. This will eventually focus on the search
+        // bar, preventing the `EndRepeat` action from being correctly handled.
+        cx.simulate_keystrokes(".");
+        cx.run_until_parked();
+
+        // After replay finishes, even though the `EndRepeat` action wasn't
+        // handled, seeing as the editor lost focus during replay, the
+        // `dot_replaying` value should be set back to `false`.
+        assert!(
+            !cx.update(|_, cx| cx.global::<VimGlobals>().dot_replaying),
+            "dot_replaying should be false after repeat completes"
+        );
+    }
+
+    #[gpui::test]
     async fn test_undo_repeated_insert(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -809,5 +869,92 @@ mod test {
         cx.shared_state().await.assert_eq("aaaaaaabˇrld");
         cx.simulate_shared_keystrokes("@ b").await;
         cx.shared_state().await.assert_eq("aaaaaaabbbˇd");
+    }
+
+    #[gpui::test]
+    async fn test_repeat_clear(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Check that, when repeat is preceded by something other than a number,
+        // the current operator is cleared, in order to prevent infinite loops.
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("d .");
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_repeat_clear_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("d . .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog"
+        });
+    }
+
+    #[gpui::test]
+    async fn test_repeat_clear_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("2 d .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog"
+        });
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("2 d d").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes("5 d .").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇthe lazy dog
+            the quick brown
+            fox jumps over
+            the lazy dog"
+        });
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇfox jumps over
+            the lazy dog"
+        });
     }
 }

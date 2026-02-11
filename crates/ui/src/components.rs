@@ -1,8 +1,10 @@
+mod ai;
 mod avatar;
 mod banner;
 mod button;
 mod callout;
 mod chip;
+mod collab;
 mod content_group;
 mod context_menu;
 mod data_table;
@@ -43,11 +45,13 @@ mod tree_view_item;
 #[cfg(feature = "stories")]
 mod stories;
 
+pub use ai::*;
 pub use avatar::*;
 pub use banner::*;
 pub use button::*;
 pub use callout::*;
 pub use chip::*;
+pub use collab::*;
 pub use content_group::*;
 pub use context_menu::*;
 pub use data_table::*;

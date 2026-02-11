@@ -9,6 +9,7 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
+use settings::{DocumentFoldingRanges, IntoGpui, SemanticTokens};
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
@@ -51,7 +52,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +106,11 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
+    /// Controls how semantic tokens from language servers are used for syntax highlighting.
+    pub semantic_tokens: SemanticTokens,
+    /// Controls whether folding ranges from language servers are used instead of
+    /// tree-sitter and indent-based folding.
+    pub document_folding_ranges: DocumentFoldingRanges,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -122,6 +128,10 @@ pub struct LanguageSettings {
     pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Whether to continue markdown lists when pressing enter.
+    pub extend_list_on_newline: bool,
+    /// Whether to indent list items when pressing tab after a list marker.
+    pub indent_list_on_tab: bool,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -153,6 +163,13 @@ pub struct LanguageSettings {
     pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+    /// Whether to enable word diff highlighting in the editor.
+    ///
+    /// When enabled, changed words within modified lines are highlighted
+    /// to show exactly what changed.
+    ///
+    /// Default: `true`
+    pub word_diff_enabled: bool,
     /// Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor.
     pub colorize_brackets: bool,
 }
@@ -376,9 +393,14 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
+    /// Settings specific to Sweep.
+    pub sweep: SweepSettings,
+    /// Settings specific to Ollama.
+    pub ollama: OllamaSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
+    pub examples_dir: Option<Arc<Path>>,
 }
 
 impl EditPredictionSettings {
@@ -409,6 +431,8 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+    /// Whether the Copilot Next Edit Suggestions feature is enabled.
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -419,6 +443,25 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SweepSettings {
+    /// When enabled, Sweep will not store edit prediction inputs or outputs.
+    /// When disabled, Sweep may collect data including buffer contents,
+    /// diagnostics, file paths, repository names, and generated predictions
+    /// to improve the service.
+    pub privacy_mode: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OllamaSettings {
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_output_tokens: u32,
+    /// Custom API URL to use for Ollama.
+    pub api_url: Arc<str>,
 }
 
 impl AllLanguageSettings {
@@ -435,7 +478,9 @@ impl AllLanguageSettings {
 
         let editorconfig_properties = location.and_then(|location| {
             cx.global::<SettingsStore>()
-                .editorconfig_properties(location.worktree_id, location.path)
+                .editorconfig_store
+                .read(cx)
+                .properties(location.worktree_id, location.path)
         });
         if let Some(editorconfig_properties) = editorconfig_properties {
             let mut settings = settings.clone();
@@ -549,6 +594,8 @@ impl settings::Settings for AllLanguageSettings {
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
                 language_servers: settings.language_servers.unwrap(),
+                semantic_tokens: settings.semantic_tokens.unwrap(),
+                document_folding_ranges: settings.document_folding_ranges.unwrap(),
                 allow_rewrap: settings.allow_rewrap.unwrap(),
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
@@ -558,6 +605,8 @@ impl settings::Settings for AllLanguageSettings {
                     tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                extend_list_on_newline: settings.extend_list_on_newline.unwrap(),
+                indent_list_on_tab: settings.indent_list_on_tab.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
                     show_value_hints: inlay_hints.show_value_hints.unwrap(),
@@ -567,7 +616,9 @@ impl settings::Settings for AllLanguageSettings {
                     show_background: inlay_hints.show_background.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                    toggle_on_modifiers_press: inlay_hints
+                        .toggle_on_modifiers_press
+                        .map(|m| m.into_gpui()),
                 },
                 use_autoclose: settings.use_autoclose.unwrap(),
                 use_auto_surround: settings.use_auto_surround.unwrap(),
@@ -595,6 +646,7 @@ impl settings::Settings for AllLanguageSettings {
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
                 },
                 debuggers: settings.debuggers.unwrap(),
+                word_diff_enabled: settings.word_diff_enabled.unwrap(),
             }
         }
 
@@ -605,15 +657,15 @@ impl settings::Settings for AllLanguageSettings {
             let mut language_settings = all_languages.defaults.clone();
             settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
-                LanguageName(language_name.clone()),
+                LanguageName(language_name.clone().into()),
                 load_from_content(language_settings),
             );
         }
 
         let edit_prediction_provider = all_languages
-            .features
+            .edit_predictions
             .as_ref()
-            .and_then(|f| f.edit_prediction_provider);
+            .and_then(|ep| ep.provider);
 
         let edit_predictions = all_languages.edit_predictions.clone().unwrap();
         let edit_predictions_mode = edit_predictions.mode.unwrap();
@@ -630,6 +682,7 @@ impl settings::Settings for AllLanguageSettings {
             proxy: copilot.proxy,
             proxy_no_verify: copilot.proxy_no_verify,
             enterprise_uri: copilot.enterprise_uri,
+            enable_next_edit_suggestions: copilot.enable_next_edit_suggestions,
         };
 
         let codestral = edit_predictions.codestral.unwrap();
@@ -639,9 +692,20 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
+        let sweep = edit_predictions.sweep.unwrap();
+        let sweep_settings = SweepSettings {
+            privacy_mode: sweep.privacy_mode.unwrap(),
+        };
+        let ollama = edit_predictions.ollama.unwrap();
+        let ollama_settings = OllamaSettings {
+            model: ollama.model.map(|m| m.0),
+            max_output_tokens: ollama.max_output_tokens.unwrap(),
+            api_url: ollama.api_url.unwrap().into(),
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
             let mut builder = GlobSetBuilder::new();
@@ -650,7 +714,10 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().unwrap());
+            file_types.insert(
+                language.clone(),
+                (builder.build().unwrap(), patterns.0.clone()),
+            );
         }
 
         Self {
@@ -673,7 +740,10 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
+                sweep: sweep_settings,
+                ollama: ollama_settings,
                 enabled_in_text_threads,
+                examples_dir: edit_predictions.examples_dir,
             },
             defaults: default_language_settings,
             languages,

@@ -115,6 +115,8 @@ impl Component for Vector {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        let size = rems_from_px(60.);
+
         Some(
             v_flex()
                 .gap_6()
@@ -124,11 +126,18 @@ impl Component for Vector {
                         vec![
                             single_example(
                                 "Default",
-                                Vector::square(VectorName::ZedLogo, rems(8.)).into_any_element(),
+                                Vector::square(VectorName::ZedLogo, size).into_any_element(),
                             ),
                             single_example(
                                 "Custom Size",
-                                Vector::new(VectorName::ZedLogo, rems(12.), rems(6.))
+                                h_flex()
+                                    .h(rems_from_px(120.))
+                                    .justify_center()
+                                    .child(Vector::new(
+                                        VectorName::ZedLogo,
+                                        rems_from_px(120.),
+                                        rems_from_px(200.),
+                                    ))
                                     .into_any_element(),
                             ),
                         ],
@@ -138,13 +147,13 @@ impl Component for Vector {
                         vec![
                             single_example(
                                 "Accent Color",
-                                Vector::square(VectorName::ZedLogo, rems(8.))
+                                Vector::square(VectorName::ZedLogo, size)
                                     .color(Color::Accent)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Error Color",
-                                Vector::square(VectorName::ZedLogo, rems(8.))
+                                Vector::square(VectorName::ZedLogo, size)
                                     .color(Color::Error)
                                     .into_any_element(),
                             ),
@@ -152,17 +161,11 @@ impl Component for Vector {
                     ),
                     example_group_with_title(
                         "Different Vectors",
-                        vec![
-                            single_example(
-                                "Zed Logo",
-                                Vector::square(VectorName::ZedLogo, rems(8.)).into_any_element(),
-                            ),
-                            single_example(
-                                "Zed X Copilot",
-                                Vector::square(VectorName::ZedXCopilot, rems(8.))
-                                    .into_any_element(),
-                            ),
-                        ],
+                        vec![single_example(
+                            "Zed X Copilot",
+                            Vector::square(VectorName::ZedXCopilot, rems_from_px(100.))
+                                .into_any_element(),
+                        )],
                     ),
                 ])
                 .into_any_element(),

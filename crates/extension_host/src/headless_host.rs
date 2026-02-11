@@ -96,7 +96,7 @@ impl HeadlessExtensionStore {
 
             for extension in to_load {
                 if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
-                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                    log::info!("failed to load extension: {}, {:#}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
                     missing.push(extension)
@@ -245,8 +245,7 @@ impl HeadlessExtensionStore {
                         cx,
                     ));
                 }
-            })
-            .ok();
+            });
             let _ = join_all(removal_tasks).await;
 
             fs.remove_dir(
@@ -304,7 +303,7 @@ impl HeadlessExtensionStore {
         let missing_extensions = extension_store
             .update(&mut cx, |extension_store, cx| {
                 extension_store.sync_extensions(requested_extensions.collect(), cx)
-            })?
+            })
             .await?;
 
         Ok(proto::SyncExtensionsResponse {
@@ -343,7 +342,7 @@ impl HeadlessExtensionStore {
                     PathBuf::from(envelope.payload.tmp_dir),
                     cx,
                 )
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})

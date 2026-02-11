@@ -2,7 +2,7 @@
 
 Zed's hosted models are offered via subscription to Zed Pro or Zed Business.
 
-> Using [your own API keys](./llm-providers.md), and [external agents](./external-agents.md), is _free_ — you do not need to subscribe to a Zed plan to use AI features.
+> You can use [your own API keys](./llm-providers.md) or [external agents](./external-agents.md) without a Zed subscription.
 
 See the following pages for specific aspects of our subscription offering:
 

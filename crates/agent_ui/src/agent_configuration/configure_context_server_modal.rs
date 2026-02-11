@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -175,6 +172,7 @@ impl ConfigurationSource {
                                 enabled: true,
                                 url,
                                 headers: auth,
+                                timeout: None,
                             },
                         )
                     })
@@ -182,8 +180,9 @@ impl ConfigurationSource {
                     parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                         (
                             id,
-                            ContextServerSettings::Custom {
+                            ContextServerSettings::Stdio {
                                 enabled: true,
+                                remote: false,
                                 command,
                             },
                         )
@@ -211,6 +210,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
+                        remote: false,
                         settings,
                     },
                 ))
@@ -224,11 +224,12 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
+            let cmd_path = serde_json::to_string(&cmd.path).unwrap();
+            (id.0.to_string(), cmd_path, args, env)
         }
         None => (
             "some-mcp-server".to_string(),
-            PathBuf::new(),
+            "".to_string(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -239,14 +240,13 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
-    "command": "{}",
+    "command": {command},
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
     "env": {env}
   }}
-}}"#,
-        command.display()
+}}"#
     )
 }
 
@@ -403,9 +403,10 @@ impl ConfigureContextServerModal {
 
         window.spawn(cx, async move |cx| {
             let target = match settings {
-                ContextServerSettings::Custom {
+                ContextServerSettings::Stdio {
                     enabled: _,
                     command,
+                    ..
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
@@ -414,6 +415,8 @@ impl ConfigureContextServerModal {
                     enabled: _,
                     url,
                     headers,
+                    timeout: _,
+                    ..
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
@@ -635,7 +638,6 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
-        // All variants now use single editor approach
         let editor = match &self.source {
             ConfigurationSource::New { editor, .. } => editor,
             ConfigurationSource::Existing { editor, .. } => editor,
@@ -712,12 +714,12 @@ impl ConfigureContextServerModal {
                     )
                 } else if let ConfigurationSource::New { is_http, .. } = &self.source {
                     let label = if *is_http {
-                        "Run command"
+                        "Configure Local"
                     } else {
-                        "Connect via HTTP"
+                        "Configure Remote"
                     };
                     let tooltip = if *is_http {
-                        "Configure an MCP serevr that runs on stdin/stdout."
+                        "Configure an MCP server that runs on stdin/stdout."
                     } else {
                         "Configure an MCP server that you connect to over HTTP"
                     };
@@ -822,7 +824,6 @@ impl ConfigureContextServerModal {
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let scroll_handle = self.scroll_handle.clone();
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -836,7 +837,7 @@ impl Render for ConfigureContextServerModal {
                 }),
             )
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .child(
                 Modal::new("configure-context-server", None)
@@ -850,7 +851,7 @@ impl Render for ConfigureContextServerModal {
                                         .id("modal-content")
                                         .max_h(vh(0.7, window))
                                         .overflow_y_scroll()
-                                        .track_scroll(&scroll_handle)
+                                        .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
@@ -863,7 +864,7 @@ impl Render for ConfigureContextServerModal {
                                             }
                                         }),
                                 )
-                                .vertical_scrollbar_for(scroll_handle, window, cx),
+                                .vertical_scrollbar_for(&self.scroll_handle, window, cx),
                         ),
                     )
                     .footer(self.render_modal_footer(cx)),
@@ -879,32 +880,32 @@ fn wait_for_context_server(
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
-    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
-        project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-            match status {
-                ContextServerStatus::Running => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Ok(()));
-                    }
+    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| {
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Running => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Ok(()));
                 }
-                ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err("Context server stopped running".into()));
-                    }
-                }
-                ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err(error.clone()));
-                    }
-                }
-                _ => {}
             }
+            ContextServerStatus::Stopped => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Err("Context server stopped running".into()));
+                }
+            }
+            ContextServerStatus::Error(error) => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Err(error.clone()));
+                }
+            }
+            _ => {}
         }
     });
 

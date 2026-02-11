@@ -3,12 +3,12 @@ use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use fs::Fs;
-use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
 use settings::Settings as _;
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    Button, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 use crate::{CycleModeSelector, ToggleProfileSelector, ui::HoldForDefault};
@@ -17,7 +17,6 @@ pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
     agent_server: Rc<dyn AgentServer>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
-    focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     setting_mode: bool,
 }
@@ -27,7 +26,6 @@ impl ModeSelector {
         session_modes: Rc<dyn AgentSessionModes>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
-        focus_handle: FocusHandle,
     ) -> Self {
         Self {
             connection: session_modes,
@@ -35,7 +33,6 @@ impl ModeSelector {
             menu_handle: PopoverMenuHandle::default(),
             fs,
             setting_mode: false,
-            focus_handle,
         }
     }
 
@@ -105,7 +102,7 @@ impl ModeSelector {
                     .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
-                    entry.documentation_aside(side, DocumentationEdge::Bottom, {
+                    entry.documentation_aside(side, {
                         let description = description.clone();
 
                         move |_| {
@@ -161,7 +158,7 @@ impl Render for ModeSelector {
             .map(|mode| mode.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let this = cx.entity();
+        let this = cx.weak_entity();
 
         let icon = if self.menu_handle.is_deployed() {
             IconName::ChevronUp
@@ -182,34 +179,25 @@ impl Render for ModeSelector {
             .trigger_with_tooltip(
                 trigger_button,
                 Tooltip::element({
-                    let focus_handle = self.focus_handle.clone();
                     move |_window, cx| {
                         v_flex()
                             .gap_1()
                             .child(
                                 h_flex()
-                                    .pb_1()
                                     .gap_2()
                                     .justify_between()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant)
-                                    .child(Label::new("Cycle Through Modes"))
-                                    .child(KeyBinding::for_action_in(
-                                        &CycleModeSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
+                                    .child(Label::new("Change Mode"))
+                                    .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
                             )
                             .child(
                                 h_flex()
+                                    .pt_1()
                                     .gap_2()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
                                     .justify_between()
-                                    .child(Label::new("Toggle Mode Menu"))
-                                    .child(KeyBinding::for_action_in(
-                                        &ToggleProfileSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
+                                    .child(Label::new("Cycle Through Modes"))
+                                    .child(KeyBinding::for_action(&CycleModeSelector, cx)),
                             )
                             .into_any()
                     }
@@ -222,7 +210,8 @@ impl Render for ModeSelector {
                 y: px(-2.0),
             })
             .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                this.update(cx, |this, cx| this.build_context_menu(window, cx))
+                    .ok()
             })
     }
 }

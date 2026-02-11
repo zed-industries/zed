@@ -29,6 +29,7 @@ mod stack_trace_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
+// Let's see the diff-test in action.
 actions!(
     debugger,
     [
@@ -90,11 +91,10 @@ actions!(
     ]
 );
 
-/// Extends selection down by a specified number of lines.
+/// Set a data breakpoint on the selected variable or memory region.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = debugger)]
 #[serde(deny_unknown_fields)]
-/// Set a data breakpoint on the selected variable or memory region.
 pub struct ToggleDataBreakpoint {
     /// The type of data breakpoint
     /// Read & Write
@@ -387,7 +387,7 @@ pub fn init(cx: &mut App) {
                     window.on_action(
                         TypeId::of::<editor::actions::EvaluateSelectedText>(),
                         move |_, _, window, cx| {
-                            maybe!({
+                            let status = maybe!({
                                 let text = editor
                                     .update(cx, |editor, cx| {
                                         let range = editor
@@ -411,7 +411,13 @@ pub fn init(cx: &mut App) {
 
                                         state.session().update(cx, |session, cx| {
                                             session
-                                                .evaluate(text, None, stack_id, None, cx)
+                                                .evaluate(
+                                                    text,
+                                                    Some(dap::EvaluateArgumentsContext::Repl),
+                                                    stack_id,
+                                                    None,
+                                                    cx,
+                                                )
                                                 .detach();
                                         });
                                     });
@@ -419,6 +425,9 @@ pub fn init(cx: &mut App) {
 
                                 Some(())
                             });
+                            if status.is_some() {
+                                cx.stop_propagation();
+                            }
                         },
                     );
                 })

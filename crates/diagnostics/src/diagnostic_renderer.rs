@@ -284,7 +284,7 @@ impl DiagnosticBlock {
                     if range.context.overlaps(&diagnostic.range, &snapshot) {
                         Self::jump_to(
                             editor,
-                            Anchor::range_in_buffer(excerpt_id, buffer_id, diagnostic.range),
+                            Anchor::range_in_buffer(excerpt_id, diagnostic.range),
                             window,
                             cx,
                         );
@@ -315,6 +315,6 @@ impl DiagnosticBlock {
         editor.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range.start..range.start]);
         });
-        window.focus(&editor.focus_handle(cx));
+        window.focus(&editor.focus_handle(cx), cx);
     }
 }

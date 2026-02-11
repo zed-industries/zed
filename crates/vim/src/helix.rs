@@ -3,6 +3,7 @@ mod duplicate;
 mod object;
 mod paste;
 mod select;
+mod surround;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
@@ -19,9 +20,9 @@ use workspace::searchable::FilteredSearchRange;
 use workspace::searchable::{self, Direction};
 
 use crate::motion::{self, MotionKind};
-use crate::state::SearchState;
+use crate::state::{Operator, SearchState};
 use crate::{
-    Vim,
+    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
     state::Mode,
 };
@@ -52,9 +53,9 @@ actions!(
         HelixSubstitute,
         /// Delete the selection and enter edit mode, without yanking the selection.
         HelixSubstituteNoYank,
-        /// Delete the selection and enter edit mode.
+        /// Select the next match for the current search query.
         HelixSelectNext,
-        /// Delete the selection and enter edit mode, without yanking the selection.
+        /// Select the previous match for the current search query.
         HelixSelectPrevious,
     ]
 );
@@ -80,6 +81,32 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_substitute_no_yank);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, |vim, _: &PushHelixSurroundAdd, window, cx| {
+        vim.clear_operator(window, cx);
+        vim.push_operator(Operator::HelixSurroundAdd, window, cx);
+    });
+    Vim::action(
+        editor,
+        cx,
+        |vim, _: &PushHelixSurroundReplace, window, cx| {
+            vim.clear_operator(window, cx);
+            vim.push_operator(
+                Operator::HelixSurroundReplace {
+                    replaced_char: None,
+                },
+                window,
+                cx,
+            );
+        },
+    );
+    Vim::action(
+        editor,
+        cx,
+        |vim, _: &PushHelixSurroundDelete, window, cx| {
+            vim.clear_operator(window, cx);
+            vim.push_operator(Operator::HelixSurroundDelete, window, cx);
+        },
+    );
 }
 
 impl Vim {
@@ -101,7 +128,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 if let Motion::ZedSearchResult { new_selections, .. } = &motion {
                     s.select_anchor_ranges(new_selections.clone());
@@ -109,19 +136,76 @@ impl Vim {
                 };
 
                 s.move_with(|map, selection| {
-                    let current_head = selection.head();
+                    let was_reversed = selection.reversed;
+                    let mut current_head = selection.head();
 
-                    let Some((new_head, goal)) = motion.move_point(
-                        map,
-                        current_head,
-                        selection.goal,
-                        times,
-                        &text_layout_details,
-                    ) else {
-                        return;
+                    // our motions assume the current character is after the cursor,
+                    // but in (forward) visual mode the current character is just
+                    // before the end of the selection.
+
+                    // If the file ends with a newline (which is common) we don't do this.
+                    // so that if you go to the end of such a file you can use "up" to go
+                    // to the previous line and have it work somewhat as expected.
+                    if !selection.reversed
+                        && !selection.is_empty()
+                        && !(selection.end.column() == 0 && selection.end == map.max_point())
+                    {
+                        current_head = movement::left(map, selection.end)
+                    }
+
+                    let (new_head, goal) = match motion {
+                        // Going to next word start is special cased
+                        // since Vim differs from Helix in that motion
+                        // Vim: `w` goes to the first character of a word
+                        // Helix: `w` goes to the character before a word
+                        Motion::NextWordStart { ignore_punctuation } => {
+                            let mut head = movement::right(map, current_head);
+                            let classifier =
+                                map.buffer_snapshot().char_classifier_at(head.to_point(map));
+                            for _ in 0..times.unwrap_or(1) {
+                                let (_, new_head) =
+                                    movement::find_boundary_trail(map, head, |left, right| {
+                                        Self::is_boundary_right(ignore_punctuation)(
+                                            left,
+                                            right,
+                                            &classifier,
+                                        )
+                                    });
+                                head = new_head;
+                            }
+                            head = movement::left(map, head);
+                            (head, SelectionGoal::None)
+                        }
+                        _ => motion
+                            .move_point(
+                                map,
+                                current_head,
+                                selection.goal,
+                                times,
+                                &text_layout_details,
+                            )
+                            .unwrap_or((current_head, selection.goal)),
                     };
 
                     selection.set_head(new_head, goal);
+
+                    // ensure the current character is included in the selection.
+                    if !selection.reversed {
+                        let next_point = movement::right(map, selection.end);
+
+                        if !(next_point.column() == 0 && next_point == map.max_point()) {
+                            selection.end = next_point;
+                        }
+                    }
+
+                    // vim always ensures the anchor character stays selected.
+                    // if our selection has reversed, we need to move the opposite end
+                    // to ensure the anchor is still selected.
+                    if was_reversed && !selection.reversed {
+                        selection.start = movement::left(map, selection.start);
+                    } else if !was_reversed && selection.reversed {
+                        selection.end = movement::right(map, selection.end);
+                    }
                 })
             });
         });
@@ -235,7 +319,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;
@@ -255,6 +339,30 @@ impl Vim {
         });
     }
 
+    fn is_boundary_right(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
+        }
+    }
+
+    fn is_boundary_left(
+        ignore_punctuation: bool,
+    ) -> impl FnMut(char, char, &CharClassifier) -> bool {
+        move |left, right, classifier| {
+            let left_kind = classifier.kind_with(left, ignore_punctuation);
+            let right_kind = classifier.kind_with(right, ignore_punctuation);
+            let at_newline = (left == '\n') ^ (right == '\n');
+
+            (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
+        }
+    }
+
     pub fn helix_move_cursor(
         &mut self,
         motion: Motion,
@@ -263,41 +371,54 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
-            Motion::NextWordStart { ignore_punctuation } => {
-                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
+            Motion::NextWordStart { ignore_punctuation } => self.helix_find_range_forward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_right(ignore_punctuation),
+            ),
+            Motion::NextWordEnd { ignore_punctuation } => self.helix_find_range_forward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_left(ignore_punctuation),
+            ),
+            Motion::PreviousWordStart { ignore_punctuation } => self.helix_find_range_backward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_left(ignore_punctuation),
+            ),
+            Motion::PreviousWordEnd { ignore_punctuation } => self.helix_find_range_backward(
+                times,
+                window,
+                cx,
+                Self::is_boundary_right(ignore_punctuation),
+            ),
+            Motion::EndOfLine { .. } => {
+                // In Helix mode, EndOfLine should position cursor ON the last character,
+                // not after it. We therefore need special handling for it.
+                self.update_editor(cx, |_, editor, cx| {
+                    let text_layout_details = editor.text_layout_details(window, cx);
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let goal = selection.goal;
+                            let cursor = if selection.is_empty() || selection.reversed {
+                                selection.head()
+                            } else {
+                                movement::left(map, selection.head())
+                            };
 
-                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::NextWordEnd { ignore_punctuation } => {
-                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
+                            let (point, _goal) = motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal));
 
-                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::PreviousWordStart { ignore_punctuation } => {
-                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && left_kind != CharKind::Whitespace) || at_newline
-                })
-            }
-            Motion::PreviousWordEnd { ignore_punctuation } => {
-                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
-                    let left_kind = classifier.kind_with(left, ignore_punctuation);
-                    let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = (left == '\n') ^ (right == '\n');
-
-                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline
-                })
+                            // Move left by one character to position on the last character
+                            let adjusted_point = movement::saturating_left(map, point);
+                            selection.collapse_to(adjusted_point, SelectionGoal::None)
+                        })
+                    });
+                });
             }
             Motion::FindForward {
                 before,
@@ -462,6 +583,7 @@ impl Vim {
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
                         helix_select: true,
+                        _dismiss_subscription: None,
                     }
                 });
             }
@@ -592,7 +714,11 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+                let extra_line = if first_char == Some('\n') && selection.is_empty() {
+                    1
+                } else {
+                    0
+                };
 
                 let end_row = current_end_row + count as u32 + extra_line;
 
@@ -741,9 +867,16 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use gpui::{UpdateGlobal, VisualTestContext};
     use indoc::indoc;
+    use project::FakeFs;
+    use search::{ProjectSearchView, project_search};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::DeploySearch;
 
-    use crate::{state::Mode, test::VimTestContext};
+    use crate::{VimAddon, state::Mode, test::VimTestContext};
 
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
@@ -1206,7 +1339,9 @@ mod test {
             line one
             ˇ
             line three
-            line four"},
+            line four
+            line five
+            line six"},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
@@ -1215,7 +1350,22 @@ mod test {
             line one
             «
             line three
-            ˇ»line four"},
+            ˇ»line four
+            line five
+            line six"},
+            Mode::HelixNormal,
+        );
+
+        // Another x should only select the next line
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five
+            line six"},
             Mode::HelixNormal,
         );
 
@@ -1295,11 +1445,12 @@ mod test {
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
+        // Adjacent line selections stay separate (not merged)
         cx.assert_state(
             indoc! {"
             «line one
             line two
-            line three
+            ˇ»«line three
             line four
             ˇ»line five"},
             Mode::HelixNormal,
@@ -1367,6 +1518,30 @@ mod test {
         cx.assert_state("«one ˇ»two", Mode::HelixSelect);
         cx.simulate_keystrokes("escape");
         cx.assert_state("«one ˇ»two", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("«ˇ»one two three", Mode::HelixSelect);
+        cx.simulate_keystrokes("w");
+        cx.assert_state("«one ˇ»two three", Mode::HelixSelect);
+
+        cx.set_state("«ˇ»one two three", Mode::HelixSelect);
+        cx.simulate_keystrokes("e");
+        cx.assert_state("«oneˇ» two three", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_full_cursor_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("ˇone two three", Mode::HelixNormal);
+        cx.simulate_keystrokes("l l v h h h");
+        cx.assert_state("«ˇone» two three", Mode::HelixSelect);
     }
 
     #[gpui::test]
@@ -1491,6 +1666,195 @@ mod test {
             ˇ
             "},
             Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_g_l_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test g l moves to last character, not after it
+        cx.set_state("hello ˇworld!", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("hello worldˇ!", Mode::HelixNormal);
+
+        // Test with Chinese characters, test if work with UTF-8?
+        cx.set_state("ˇ你好世界", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("你好世ˇ界", Mode::HelixNormal);
+
+        // Test with end of line
+        cx.set_state("endˇ", Mode::HelixNormal);
+        cx.simulate_keystrokes("g l");
+        cx.assert_state("enˇd", Mode::HelixNormal);
+
+        // Test with empty line
+        cx.set_state(
+            indoc! {"
+                hello
+                ˇ
+                world"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g l");
+        cx.assert_state(
+            indoc! {"
+                hello
+                ˇ
+                world"},
+            Mode::HelixNormal,
+        );
+
+        // Test with multiple lines
+        cx.set_state(
+            indoc! {"
+                ˇfirst line
+                second line
+                third line"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("g l");
+        cx.assert_state(
+            indoc! {"
+                first linˇe
+                second line
+                third line"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file_a.rs": "// File A.",
+                "file_b.rs": "// File B.",
+            }),
+        )
+        .await;
+
+        let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+
+        cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |store| store.helix_mode = Some(true));
+            })
+        });
+
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+            })
+            .unwrap();
+
+        let search_view = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view should be active")
+            })
+            .unwrap();
+
+        project_search::perform_project_search(&search_view, "File A", cx);
+
+        search_view.update(cx, |search_view, cx| {
+            let vim_mode = search_view
+                .results_editor()
+                .read(cx)
+                .addon::<VimAddon>()
+                .map(|addon| addon.entity.read(cx).mode);
+
+            assert_eq!(vim_mode, Some(Mode::HelixNormal));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_scroll_with_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Start with a selection
+        cx.set_state(
+            indoc! {"
+            «lineˇ» one
+            line two
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+
+        // Scroll down, selection should collapse
+        cx.simulate_keystrokes("ctrl-d");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line fiveˇ"},
+            Mode::HelixNormal,
+        );
+
+        // Make a new selection
+        cx.simulate_keystroke("b");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line four
+            line «ˇfive»"},
+            Mode::HelixNormal,
+        );
+
+        // And scroll up, once again collapsing the selection.
+        cx.simulate_keystroke("ctrl-u");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line ˇfour
+            line five"},
+            Mode::HelixNormal,
+        );
+
+        // Enter select mode
+        cx.simulate_keystroke("v");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line «fˇ»our
+            line five"},
+            Mode::HelixSelect,
+        );
+
+        // And now the selection should be kept/expanded.
+        cx.simulate_keystroke("ctrl-d");
+        cx.assert_state(
+            indoc! {"
+            line one
+            line two
+            line three
+            line «four
+            line fiveˇ»"},
+            Mode::HelixSelect,
         );
     }
 }

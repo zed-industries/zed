@@ -86,8 +86,8 @@ impl DivInspector {
                 // Create Rust style buffer without adding it to the project / buffer_store, so that
                 // Rust Analyzer doesn't get started for it.
                 let rust_language_result = languages.language_for_name("Rust").await;
-                let rust_style_buffer = rust_language_result.and_then(|rust_language| {
-                    cx.new(|cx| Buffer::local("", cx).with_language(rust_language, cx))
+                let rust_style_buffer = rust_language_result.map(|rust_language| {
+                    cx.new(|cx| Buffer::local("", cx).with_language_async(rust_language, cx))
                 });
 
                 match json_style_buffer.and_then(|json_style_buffer| {
@@ -462,16 +462,16 @@ impl DivInspector {
         cx: &mut AsyncWindowContext,
     ) -> Result<Entity<Buffer>> {
         let worktree = project
-            .update(cx, |project, cx| project.create_worktree(path, false, cx))?
+            .update(cx, |project, cx| project.create_worktree(path, false, cx))
             .await?;
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
             path: RelPath::empty().into(),
-        })?;
+        });
 
         let buffer = project
-            .update(cx, |project, cx| project.open_path(project_path, cx))?
+            .update(cx, |project, cx| project.open_path(project_path, cx))
             .await?
             .1;
 
@@ -686,7 +686,6 @@ impl CompletionProvider for RustStyleCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()

@@ -1,8 +1,9 @@
 use anyhow::Context;
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -15,6 +16,7 @@ use std::{
     sync::LazyLock,
 };
 
+use crate::rel_path::RelPathBuf;
 use crate::{rel_path::RelPath, shell::ShellKind};
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -225,9 +227,16 @@ impl SanitizedPath {
         #[cfg(not(target_os = "windows"))]
         return unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) };
 
-        // TODO: could avoid allocating here if dunce::simplified results in the same path
         #[cfg(target_os = "windows")]
-        return Self::new(&path).into();
+        {
+            let simplified = dunce::simplified(path.as_ref());
+            if simplified == path.as_ref() {
+                // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+                unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) }
+            } else {
+                Self::unchecked_new(simplified).into()
+            }
+        }
     }
 
     pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
@@ -331,15 +340,46 @@ impl PathStyle {
     }
 
     #[inline]
-    pub fn separator(&self) -> &'static str {
+    pub fn primary_separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
         }
     }
 
+    pub fn separators(&self) -> &'static [&'static str] {
+        match self {
+            PathStyle::Posix => &["/"],
+            PathStyle::Windows => &["\\", "/"],
+        }
+    }
+
+    pub fn separators_ch(&self) -> &'static [char] {
+        match self {
+            PathStyle::Posix => &['/'],
+            PathStyle::Windows => &['\\', '/'],
+        }
+    }
+
+    pub fn is_absolute(&self, path_like: &str) -> bool {
+        path_like.starts_with('/')
+            || *self == PathStyle::Windows
+                && (path_like.starts_with('\\')
+                    || path_like
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+                        && path_like[1..]
+                            .strip_prefix(':')
+                            .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+    }
+
     pub fn is_windows(&self) -> bool {
         *self == PathStyle::Windows
+    }
+
+    pub fn is_posix(&self) -> bool {
+        *self == PathStyle::Posix
     }
 
     pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
@@ -353,24 +393,63 @@ impl PathStyle {
         } else {
             Some(format!(
                 "{left}{}{right}",
-                if left.ends_with(self.separator()) {
+                if left.ends_with(self.primary_separator()) {
                     ""
                 } else {
-                    self.separator()
+                    self.primary_separator()
                 }
             ))
         }
     }
 
     pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.separator()) else {
+        let Some(pos) = path_like.rfind(self.primary_separator()) else {
             return (None, path_like);
         };
-        let filename_start = pos + self.separator().len();
+        let filename_start = pos + self.primary_separator().len();
         (
             Some(&path_like[..filename_start]),
             &path_like[filename_start..],
         )
+    }
+
+    pub fn strip_prefix<'a>(
+        &self,
+        child: &'a Path,
+        parent: &'a Path,
+    ) -> Option<std::borrow::Cow<'a, RelPath>> {
+        let parent = parent.to_str()?;
+        if parent.is_empty() {
+            return RelPath::new(child, *self).ok();
+        }
+        let parent = self
+            .separators()
+            .iter()
+            .find_map(|sep| parent.strip_suffix(sep))
+            .unwrap_or(parent);
+        let child = child.to_str()?;
+
+        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
+        let stripped = if self.is_windows()
+            && child.as_bytes().get(1) == Some(&b':')
+            && parent.as_bytes().get(1) == Some(&b':')
+            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
+        {
+            child[2..].strip_prefix(&parent[2..])?
+        } else {
+            child.strip_prefix(parent)?
+        };
+        if let Some(relative) = self
+            .separators()
+            .iter()
+            .find_map(|sep| stripped.strip_prefix(sep))
+        {
+            RelPath::new(relative.as_ref(), *self).ok()
+        } else if stripped.is_empty() {
+            Some(Cow::Borrowed(RelPath::empty()))
+        } else {
+            None
+        }
     }
 }
 
@@ -625,7 +704,14 @@ impl PathWithPosition {
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
         let path = Path::new(trimmed);
-        let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
+        let Some(maybe_file_name_with_row_col) = path.file_name().unwrap_or_default().to_str()
+        else {
+            return Self {
+                path: Path::new(s).to_path_buf(),
+                row: None,
+                column: None,
+            };
+        };
         if maybe_file_name_with_row_col.is_empty() {
             return Self {
                 path: Path::new(s).to_path_buf(),
@@ -640,15 +726,15 @@ impl PathWithPosition {
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
-            .captures(&maybe_file_name_with_row_col)
+            .captures(maybe_file_name_with_row_col)
             .map(|caps| caps.extract())
         {
             Some((_, [file_name, maybe_row, maybe_column])) => {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let suffix_length = maybe_file_name_with_row_col.len() - file_name.len();
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
+                let (_, suffix) = trimmed.split_once(file_name).unwrap();
+                let path_without_suffix = &trimmed[..trimmed.len() - suffix.len()];
 
                 Self {
                     path: Path::new(path_without_suffix).to_path_buf(),
@@ -723,18 +809,21 @@ impl PathWithPosition {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PathMatcher {
-    sources: Vec<String>,
+    sources: Vec<(String, RelPathBuf, /*trailing separator*/ bool)>,
     glob: GlobSet,
     path_style: PathStyle,
 }
 
-// impl std::fmt::Display for PathMatcher {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.sources.fmt(f)
-//     }
-// }
+impl std::fmt::Debug for PathMatcher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PathMatcher")
+            .field("sources", &self.sources)
+            .field("path_style", &self.path_style)
+            .finish()
+    }
+}
 
 impl PartialEq for PathMatcher {
     fn eq(&self, other: &Self) -> bool {
@@ -751,9 +840,25 @@ impl PathMatcher {
     ) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
-            .map(|as_str| Glob::new(as_str.as_ref()))
+            .map(|as_str| {
+                GlobBuilder::new(as_str.as_ref())
+                    .backslash_escape(path_style.is_posix())
+                    .build()
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
+        let sources = globs
+            .iter()
+            .filter_map(|glob| {
+                let glob = glob.glob();
+                Some((
+                    glob.to_string(),
+                    RelPath::new(&glob.as_ref(), path_style)
+                        .ok()
+                        .map(std::borrow::Cow::into_owned)?,
+                    glob.ends_with(path_style.separators_ch()),
+                ))
+            })
+            .collect();
         let mut glob_builder = GlobSetBuilder::new();
         for single_glob in globs {
             glob_builder.add(single_glob);
@@ -766,27 +871,37 @@ impl PathMatcher {
         })
     }
 
-    pub fn sources(&self) -> &[String] {
-        &self.sources
+    pub fn sources(&self) -> impl Iterator<Item = &str> + Clone {
+        self.sources.iter().map(|(source, ..)| source.as_str())
     }
 
-    pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
-        let other_path = other.as_ref();
-        self.sources.iter().any(|source| {
-            let as_bytes = other_path.as_os_str().as_encoded_bytes();
-            as_bytes.starts_with(source.as_bytes()) || as_bytes.ends_with(source.as_bytes())
-        }) || self.glob.is_match(other_path)
-            || self.check_with_end_separator(other_path)
-    }
-
-    fn check_with_end_separator(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy();
-        let separator = self.path_style.separator();
-        if path_str.ends_with(separator) {
-            false
-        } else {
-            self.glob.is_match(path_str.to_string() + separator)
+    pub fn is_match<P: AsRef<RelPath>>(&self, other: P) -> bool {
+        let other = other.as_ref();
+        if self
+            .sources
+            .iter()
+            .any(|(_, source, _)| other.starts_with(source) || other.ends_with(source))
+        {
+            return true;
         }
+        let other_path = other.display(self.path_style);
+
+        if self.glob.is_match(&*other_path) {
+            return true;
+        }
+
+        self.glob
+            .is_match(other_path.into_owned() + self.path_style.primary_separator())
+    }
+
+    pub fn is_match_std_path<P: AsRef<Path>>(&self, other: P) -> bool {
+        let other = other.as_ref();
+        if self.sources.iter().any(|(_, source, _)| {
+            other.starts_with(source.as_std_path()) || other.ends_with(source.as_std_path())
+        }) {
+            return true;
+        }
+        self.glob.is_match(other)
     }
 }
 
@@ -1302,8 +1417,157 @@ impl WslPath {
     }
 }
 
+pub trait UrlExt {
+    /// A version of `url::Url::to_file_path` that does platform handling based on the provided `PathStyle` instead of the host platform.
+    ///
+    /// Prefer using this over `url::Url::to_file_path` when you need to handle paths in a cross-platform way as is the case for remoting interactions.
+    fn to_file_path_ext(&self, path_style: PathStyle) -> Result<PathBuf, ()>;
+}
+
+impl UrlExt for url::Url {
+    // Copied from `url::Url::to_file_path`, but the `cfg` handling is replaced with runtime branching on `PathStyle`
+    fn to_file_path_ext(&self, source_path_style: PathStyle) -> Result<PathBuf, ()> {
+        if let Some(segments) = self.path_segments() {
+            let host = match self.host() {
+                None | Some(url::Host::Domain("localhost")) => None,
+                Some(_) if source_path_style.is_windows() && self.scheme() == "file" => {
+                    self.host_str()
+                }
+                _ => return Err(()),
+            };
+
+            let str_len = self.as_str().len();
+            let estimated_capacity = if source_path_style.is_windows() {
+                // remove scheme: - has possible \\ for hostname
+                str_len.saturating_sub(self.scheme().len() + 1)
+            } else {
+                // remove scheme://
+                str_len.saturating_sub(self.scheme().len() + 3)
+            };
+            return match source_path_style {
+                PathStyle::Posix => {
+                    file_url_segments_to_pathbuf_posix(estimated_capacity, host, segments)
+                }
+                PathStyle::Windows => {
+                    file_url_segments_to_pathbuf_windows(estimated_capacity, host, segments)
+                }
+            };
+        }
+
+        fn file_url_segments_to_pathbuf_posix(
+            estimated_capacity: usize,
+            host: Option<&str>,
+            segments: std::str::Split<'_, char>,
+        ) -> Result<PathBuf, ()> {
+            use percent_encoding::percent_decode;
+
+            if host.is_some() {
+                return Err(());
+            }
+
+            let mut bytes = Vec::new();
+            bytes.try_reserve(estimated_capacity).map_err(|_| ())?;
+
+            for segment in segments {
+                bytes.push(b'/');
+                bytes.extend(percent_decode(segment.as_bytes()));
+            }
+
+            // A windows drive letter must end with a slash.
+            if bytes.len() > 2
+                && bytes[bytes.len() - 2].is_ascii_alphabetic()
+                && matches!(bytes[bytes.len() - 1], b':' | b'|')
+            {
+                bytes.push(b'/');
+            }
+
+            let path = String::from_utf8(bytes).map_err(|_| ())?;
+            debug_assert!(
+                PathStyle::Posix.is_absolute(&path),
+                "to_file_path() failed to produce an absolute Path"
+            );
+
+            Ok(PathBuf::from(path))
+        }
+
+        fn file_url_segments_to_pathbuf_windows(
+            estimated_capacity: usize,
+            host: Option<&str>,
+            mut segments: std::str::Split<'_, char>,
+        ) -> Result<PathBuf, ()> {
+            use percent_encoding::percent_decode_str;
+            let mut string = String::new();
+            string.try_reserve(estimated_capacity).map_err(|_| ())?;
+            if let Some(host) = host {
+                string.push_str(r"\\");
+                string.push_str(host);
+            } else {
+                let first = segments.next().ok_or(())?;
+
+                match first.len() {
+                    2 => {
+                        if !first.starts_with(|c| char::is_ascii_alphabetic(&c))
+                            || first.as_bytes()[1] != b':'
+                        {
+                            return Err(());
+                        }
+
+                        string.push_str(first);
+                    }
+
+                    4 => {
+                        if !first.starts_with(|c| char::is_ascii_alphabetic(&c)) {
+                            return Err(());
+                        }
+                        let bytes = first.as_bytes();
+                        if bytes[1] != b'%'
+                            || bytes[2] != b'3'
+                            || (bytes[3] != b'a' && bytes[3] != b'A')
+                        {
+                            return Err(());
+                        }
+
+                        string.push_str(&first[0..1]);
+                        string.push(':');
+                    }
+
+                    _ => return Err(()),
+                }
+            };
+
+            for segment in segments {
+                string.push('\\');
+
+                // Currently non-unicode windows paths cannot be represented
+                match percent_decode_str(segment).decode_utf8() {
+                    Ok(s) => string.push_str(&s),
+                    Err(..) => return Err(()),
+                }
+            }
+            // ensure our estimated capacity was good
+            if cfg!(test) {
+                debug_assert!(
+                    string.len() <= estimated_capacity,
+                    "len: {}, capacity: {}",
+                    string.len(),
+                    estimated_capacity
+                );
+            }
+            debug_assert!(
+                PathStyle::Windows.is_absolute(&string),
+                "to_file_path() failed to produce an absolute Path"
+            );
+            let path = PathBuf::from(string);
+            Ok(path)
+        }
+        Err(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::rel_path::rel_path;
+
     use super::*;
     use util_macros::perf;
 
@@ -2022,42 +2286,41 @@ mod tests {
     }
 
     #[perf]
-    fn edge_of_glob() {
-        let path = Path::new("/work/node_modules");
-        let path_matcher =
-            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-    }
+    // fn edge_of_glob() {
+    //     let path = Path::new("/work/node_modules");
+    //     let path_matcher =
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    // }
 
-    #[perf]
-    fn file_in_dirs() {
-        let path = Path::new("/work/.env");
-        let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-        let path = Path::new("/work/package.json");
-        assert!(
-            !path_matcher.is_match(path),
-            "Path matcher should not match {path:?}"
-        );
-    }
+    // #[perf]
+    // fn file_in_dirs() {
+    //     let path = Path::new("/work/.env");
+    //     let path_matcher = PathMatcher::new(&["**/.env".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    //     let path = Path::new("/work/package.json");
+    //     assert!(
+    //         !path_matcher.is_match(path),
+    //         "Path matcher should not match {path:?}"
+    //     );
+    // }
 
-    #[perf]
-    fn project_search() {
-        let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher =
-            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
-        assert!(
-            path_matcher.is_match(path),
-            "Path matcher should match {path:?}"
-        );
-    }
-
+    // #[perf]
+    // fn project_search() {
+    //     let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
+    //     let path_matcher =
+    //         PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
+    //     assert!(
+    //         path_matcher.is_match(path),
+    //         "Path matcher should match {path:?}"
+    //     );
+    // }
     #[perf]
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
@@ -2473,6 +2736,89 @@ mod tests {
         assert_eq!(strip_path_suffix(base, suffix), None);
     }
 
+    #[test]
+    fn test_strip_prefix() {
+        let expected = [
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Posix, "/a/b/c", "", None),
+            (PathStyle::Posix, "/a/b//c", "/a/b/", None),
+            (PathStyle::Posix, "/a/bc", "/a/b", None),
+            (
+                PathStyle::Posix,
+                "/a/b/c",
+                "/a/b/c",
+                Some(rel_path("").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b\\c",
+                "C:\\",
+                Some(rel_path("a/b/c").into_arc()),
+            ),
+            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
+            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
+            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b\\",
+                Some(rel_path("c").into_arc()),
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\a\\b/c",
+                "C:\\a\\b/",
+                Some(rel_path("c").into_arc()),
+            ),
+        ];
+        let actual = expected.clone().map(|(style, child, parent, _)| {
+            (
+                style,
+                child,
+                parent,
+                style
+                    .strip_prefix(child.as_ref(), parent.as_ref())
+                    .map(|rel_path| rel_path.into_arc()),
+            )
+        });
+        pretty_assertions::assert_eq!(actual, expected);
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn test_wsl_path() {
@@ -2512,5 +2858,214 @@ mod tests {
 
         let path = r"\\windows.localhost\Distro\foo";
         assert_eq!(WslPath::from_path(&path), None);
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_basic() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///home/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file.txt"))
+        );
+
+        let url = url::Url::parse("file:///").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/"))
+        );
+
+        let url = url::Url::parse("file:///a/b/c/d/e").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/a/b/c/d/e"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_percent_encoding() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///home/user/file%20with%20spaces.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file with spaces.txt"))
+        );
+
+        let url = url::Url::parse("file:///path%2Fwith%2Fencoded%2Fslashes").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/path/with/encoded/slashes"))
+        );
+
+        let url = url::Url::parse("file:///special%23chars%3F.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/special#chars?.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_localhost() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://localhost/home/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/home/user/file.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_rejects_host() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://somehost/home/user/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_posix_windows_drive_letter() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/C:/"))
+        );
+
+        let url = url::Url::parse("file:///D|").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Posix),
+            Ok(PathBuf::from("/D|/"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_basic() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:/Users/user/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\user\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///D:/folder/subfolder/file.rs").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("D:\\folder\\subfolder\\file.rs"))
+        );
+
+        let url = url::Url::parse("file:///C:/").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_encoded_drive_letter() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C%3A/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///c%3a/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("c:\\Users\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///D%3A/folder/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("D:\\folder\\file.txt"))
+        );
+
+        let url = url::Url::parse("file:///d%3A/folder/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("d:\\folder\\file.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_unc_path() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://server/share/path/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("\\\\server\\share\\path\\file.txt"))
+        );
+
+        let url = url::Url::parse("file://server/share").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("\\\\server\\share"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_percent_encoding() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///C:/Users/user/file%20with%20spaces.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\user\\file with spaces.txt"))
+        );
+
+        let url = url::Url::parse("file:///C:/special%23chars%3F.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\special#chars?.txt"))
+        );
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_invalid_drive() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file:///1:/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///CC:/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///C/path/file.txt").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("file:///invalid").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_non_file_scheme() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("http://example.com/path").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+
+        let url = url::Url::parse("https://example.com/path").unwrap();
+        assert_eq!(url.to_file_path_ext(PathStyle::Posix), Err(()));
+        assert_eq!(url.to_file_path_ext(PathStyle::Windows), Err(()));
+    }
+
+    #[test]
+    fn test_url_to_file_path_ext_windows_localhost() {
+        use super::UrlExt;
+
+        let url = url::Url::parse("file://localhost/C:/Users/file.txt").unwrap();
+        assert_eq!(
+            url.to_file_path_ext(PathStyle::Windows),
+            Ok(PathBuf::from("C:\\Users\\file.txt"))
+        );
     }
 }

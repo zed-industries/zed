@@ -21,9 +21,7 @@ impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "thinking"
-    }
+    const NAME: &'static str = "thinking";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Think
@@ -43,10 +41,8 @@ impl AgentTool for ThinkingTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        event_stream.update_fields(acp::ToolCallUpdateFields {
-            content: Some(vec![input.content.into()]),
-            ..Default::default()
-        });
+        event_stream
+            .update_fields(acp::ToolCallUpdateFields::new().content(vec![input.content.into()]));
         Task::ready(Ok("Finished thinking.".to_string()))
     }
 }

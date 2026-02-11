@@ -78,6 +78,7 @@ You can pass any number of arguments to clangd. To see a full set of available o
 By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
 ---
 BasedOnStyle: LLVM
 IndentWidth: 4
@@ -106,7 +107,8 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 
 In the root of your project, it is generally common to create a `.clangd` file to set extra configuration.
 
-```text
+```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add:
     - "--include-directory=/path/to/include"
@@ -155,4 +157,27 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
     "adapter": "CodeLLDB"
   }
 ]
+```
+
+## Protocol Extensions
+
+Zed currently implements the following `clangd` [extensions](https://clangd.llvm.org/extensions):
+
+### Inactive Regions
+
+Automatically dims inactive sections of code due to preprocessor directives, such as `#if`, `#ifdef`, or `#ifndef` blocks that evaluate to false.
+
+### Switch Between Source and Header Files
+
+Allows switching between corresponding C++ source files (e.g., `.cpp`) and header files (e.g., `.h`).
+by running the command {#action editor::SwitchSourceHeader} from the command palette or by setting
+a keybinding for the `editor::SwitchSourceHeader` action.
+
+```json [settings]
+{
+  "context": "Editor",
+  "bindings": {
+    "alt-enter": "editor::SwitchSourceHeader"
+  }
+}
 ```
