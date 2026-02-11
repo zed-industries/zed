@@ -214,24 +214,83 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
     }
 }
 
+fn resolve_cursor_region<'a>(
+    input: &'a ZetaPromptInput,
+    format: ZetaFormat,
+) -> (&'a str, Range<usize>, usize) {
+    let Some(ranges) = &input.excerpt_ranges else {
+        return (
+            &input.cursor_excerpt,
+            input.editable_range_in_excerpt.clone(),
+            input.cursor_offset_in_excerpt,
+        );
+    };
+
+    let (editable_range, context_range) = match format {
+        ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => (
+            ranges.editable_150.clone(),
+            ranges.editable_150_context_350.clone(),
+        ),
+        ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix => (
+            ranges.editable_180.clone(),
+            ranges.editable_180_context_350.clone(),
+        ),
+    };
+
+    let context_start = context_range.start;
+    let context_text = &input.cursor_excerpt[context_range];
+    let adjusted_editable =
+        (editable_range.start - context_start)..(editable_range.end - context_start);
+    let adjusted_cursor = input.cursor_offset_in_excerpt - context_start;
+
+    (context_text, adjusted_editable, adjusted_cursor)
+}
+
 fn format_zeta_prompt_with_budget(
     input: &ZetaPromptInput,
     format: ZetaFormat,
     max_tokens: usize,
 ) -> String {
+    let (context, editable_range, cursor_offset) = resolve_cursor_region(input, format);
+    let path = &*input.cursor_path;
+
     let mut cursor_section = String::new();
     match format {
         ZetaFormat::V0112MiddleAtEnd => {
-            v0112_middle_at_end::write_cursor_excerpt_section(&mut cursor_section, input);
+            v0112_middle_at_end::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            );
         }
         ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
-            v0113_ordered::write_cursor_excerpt_section(&mut cursor_section, input)
+            v0113_ordered::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            )
         }
-        ZetaFormat::V0120GitMergeMarkers => {
-            v0120_git_merge_markers::write_cursor_excerpt_section(&mut cursor_section, input)
-        }
+        ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::write_cursor_excerpt_section(
+            &mut cursor_section,
+            path,
+            context,
+            &editable_range,
+            cursor_offset,
+        ),
         ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
-            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(&mut cursor_section, input)
+            v0131_git_merge_markers_prefix::write_cursor_excerpt_section(
+                &mut cursor_section,
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+            )
         }
         ZetaFormat::V0211SeedCoder => {
             return seed_coder::format_prompt_with_budget(input, max_tokens);
@@ -393,29 +452,29 @@ pub fn write_related_files(
 mod v0112_middle_at_end {
     use super::*;
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>\n");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
 
         prompt.push_str("<|fim_suffix|>\n");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>current\n");
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -427,32 +486,32 @@ mod v0112_middle_at_end {
 mod v0113_ordered {
     use super::*;
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>\n");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>current\n");
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_suffix|>\n");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -491,30 +550,30 @@ pub mod v0120_git_merge_markers {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
 
         prompt.push_str("<|fim_suffix|>");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
 
         prompt.push_str("<|fim_middle|>");
         prompt.push_str(START_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
@@ -552,29 +611,29 @@ pub mod v0131_git_merge_markers_prefix {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn write_cursor_excerpt_section(prompt: &mut String, input: &ZetaPromptInput) {
-        let path_str = input.cursor_path.to_string_lossy();
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) {
+        let path_str = path.to_string_lossy();
         write!(prompt, "<|file_sep|>{}\n", path_str).ok();
 
         prompt.push_str("<|fim_prefix|>");
-        prompt.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        prompt.push_str(&context[..editable_range.start]);
         prompt.push_str(START_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        prompt.push_str(&context[editable_range.start..cursor_offset]);
         prompt.push_str(CURSOR_MARKER);
-        prompt.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        prompt.push_str(&context[cursor_offset..editable_range.end]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
         prompt.push_str(SEPARATOR);
 
         prompt.push_str("<|fim_suffix|>");
-        prompt.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        prompt.push_str(&context[editable_range.end..]);
         if !prompt.ends_with('\n') {
             prompt.push('\n');
         }
