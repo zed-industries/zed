@@ -42,6 +42,7 @@ pub fn request_prediction_with_zeta2(
         events,
         debug_tx,
         trigger,
+        project,
         ..
     }: EditPredictionModelInput,
     preferred_model: Option<EditPredictionModelKind>,
@@ -59,6 +60,12 @@ pub fn request_prediction_with_zeta2(
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
 
+    let is_open_source = snapshot
+        .file()
+        .map_or(false, |file| store.is_file_open_source(&project, file, cx))
+        && events.iter().all(|event| event.in_open_source_repo())
+        && related_files.iter().all(|file| file.in_open_source_repo);
+
     let request_task = cx.background_spawn({
         async move {
             let zeta_version = raw_config
@@ -75,6 +82,7 @@ pub fn request_prediction_with_zeta2(
                 cursor_offset,
                 zeta_version,
                 preferred_model,
+                is_open_source,
             );
 
             if let Some(debug_tx) = &debug_tx {
@@ -252,6 +260,7 @@ pub fn zeta2_prompt_input(
     cursor_offset: usize,
     zeta_format: ZetaFormat,
     preferred_model: Option<EditPredictionModelKind>,
+    is_open_source: bool,
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -295,6 +304,7 @@ pub fn zeta2_prompt_input(
         related_files,
         excerpt_ranges: Some(excerpt_ranges),
         preferred_model,
+        in_open_source_repo: is_open_source,
     };
     (editable_offset_range, prompt_input)
 }

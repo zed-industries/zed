@@ -19,9 +19,8 @@ fn estimate_tokens(bytes: usize) -> usize {
 }
 
 /// The client's preferred edit prediction model. The server may override this.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditPredictionModelKind {
-    #[default]
     Zeta1,
     Zeta2,
 }
@@ -64,6 +63,8 @@ pub struct ZetaPromptInput {
     /// Client's preferred model. The server may override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_model: Option<EditPredictionModelKind>,
+    #[serde(default)]
+    pub in_open_source_repo: bool,
 }
 
 #[derive(
@@ -139,6 +140,17 @@ pub enum Event {
     },
 }
 
+impl Event {
+    pub fn in_open_source_repo(&self) -> bool {
+        match self {
+            Event::BufferChange {
+                in_open_source_repo,
+                ..
+            } => *in_open_source_repo,
+        }
+    }
+}
+
 pub fn write_event(prompt: &mut String, event: &Event) {
     fn write_path_as_unix_str(prompt: &mut String, path: &Path) {
         for component in path.components() {
@@ -172,6 +184,8 @@ pub struct RelatedFile {
     pub path: Arc<Path>,
     pub max_row: u32,
     pub excerpts: Vec<RelatedExcerpt>,
+    #[serde(default)]
+    pub in_open_source_repo: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -948,6 +962,7 @@ mod tests {
             related_files,
             excerpt_ranges: None,
             preferred_model: None,
+            in_open_source_repo: false,
         }
     }
 
@@ -969,6 +984,7 @@ mod tests {
                 row_range: 0..content.lines().count() as u32,
                 text: content.into(),
             }],
+            in_open_source_repo: false,
         }
     }
 
@@ -1070,6 +1086,7 @@ mod tests {
             vec![RelatedFile {
                 path: Path::new("big.rs").into(),
                 max_row: 30,
+                in_open_source_repo: false,
                 excerpts: vec![
                     RelatedExcerpt {
                         row_range: 0..10,
@@ -1321,6 +1338,7 @@ mod tests {
             related_files: vec![],
             excerpt_ranges: None,
             preferred_model: None,
+            in_open_source_repo: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 15..41, 0..excerpt.len());
@@ -1374,6 +1392,7 @@ mod tests {
             related_files: vec![],
             excerpt_ranges: None,
             preferred_model: None,
+            in_open_source_repo: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 0..28, 0..28);
@@ -1422,6 +1441,7 @@ mod tests {
             related_files: vec![],
             excerpt_ranges: None,
             preferred_model: None,
+            in_open_source_repo: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, editable_range, context_range);

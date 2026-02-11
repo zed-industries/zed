@@ -156,6 +156,7 @@ pub fn capture_example(
                 excerpt_start_row: Some(0),
                 events: captured_events,
                 related_files: captured_related_files,
+                in_open_source_repo: false,
             }
         });
 

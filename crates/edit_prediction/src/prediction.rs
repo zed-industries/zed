@@ -160,6 +160,7 @@ mod tests {
                 excerpt_start_row: None,
                 excerpt_ranges: None,
                 preferred_model: None,
+                in_open_source_repo: false,
             },
             buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),

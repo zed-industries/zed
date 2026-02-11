@@ -144,6 +144,7 @@ pub(crate) fn request_prediction_with_zeta1(
             excerpt_start_row: Some(context_start_row),
             excerpt_ranges: None,
             preferred_model: None,
+            in_open_source_repo: body.can_collect_data,
         };
 
         if let Some(debug_tx) = &debug_tx {

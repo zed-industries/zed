@@ -733,10 +733,19 @@ impl EditPredictionStore {
     ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| {
-                project
-                    .context
-                    .update(cx, |context, cx| context.related_files(cx))
+            .map(|project_state| {
+                project_state.context.update(cx, |context, cx| {
+                    context
+                        .related_files_with_buffers(cx)
+                        .map(|(mut related_file, buffer)| {
+                            related_file.in_open_source_repo = buffer
+                                .read(cx)
+                                .file()
+                                .map_or(false, |file| self.is_file_open_source(&project, file, cx));
+                            related_file
+                        })
+                        .collect()
+                })
             })
             .unwrap_or_default()
     }
@@ -784,9 +793,9 @@ impl EditPredictionStore {
         self.projects
             .get(&project.entity_id())
             .map(|project| {
-                project
-                    .context
-                    .update(cx, |context, cx| context.related_files_with_buffers(cx))
+                project.context.update(cx, |context, cx| {
+                    context.related_files_with_buffers(cx).collect()
+                })
             })
             .unwrap_or_default()
     }
