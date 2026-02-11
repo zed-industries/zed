@@ -254,9 +254,7 @@ pub fn authorize_file_edit(
 
     let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
 
-    if explicitly_allowed
-        && (settings.always_allow_tool_actions || !is_sensitive_settings_path(path))
-    {
+    if explicitly_allowed && !is_sensitive_settings_path(path) {
         return Task::ready(Ok(()));
     }
 
@@ -264,7 +262,7 @@ pub fn authorize_file_edit(
         Some(SensitiveSettingsKind::Local) => {
             let context = crate::ToolPermissionContext {
                 tool_name: tool_name.to_string(),
-                input_value: path_str.to_string(),
+                input_values: vec![path_str.to_string()],
             };
             return event_stream.authorize(
                 format!("{} (local settings)", display_description),
@@ -275,7 +273,7 @@ pub fn authorize_file_edit(
         Some(SensitiveSettingsKind::Global) => {
             let context = crate::ToolPermissionContext {
                 tool_name: tool_name.to_string(),
-                input_value: path_str.to_string(),
+                input_values: vec![path_str.to_string()],
             };
             return event_stream.authorize(
                 format!("{} (settings)", display_description),
@@ -297,7 +295,7 @@ pub fn authorize_file_edit(
     } else {
         let context = crate::ToolPermissionContext {
             tool_name: tool_name.to_string(),
-            input_value: path_str.to_string(),
+            input_values: vec![path_str.to_string()],
         };
         event_stream.authorize(display_description, context, cx)
     }
@@ -540,7 +538,8 @@ impl AgentTool for EditFileTool {
                 }
             }
 
-            // If format_on_save is enabled, format the buffer
+            let edit_agent_output = output.await?;
+
             let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                 let settings = language_settings::language_settings(
                     buffer.language().map(|l| l.name()),
@@ -549,8 +548,6 @@ impl AgentTool for EditFileTool {
                 );
                 settings.format_on_save != FormatOnSave::Off
             });
-
-            let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
@@ -1309,15 +1306,17 @@ mod tests {
             Some("test 4 (local settings)".into())
         );
 
-        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
+        // Test 5: When global default is allow, sensitive and outside-project
+        // paths still require confirmation
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
+        // 5.1: .zed/settings.json is a sensitive path — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
+        let _auth = cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.1".into(),
@@ -1327,11 +1326,14 @@ mod tests {
                 &stream_tx,
                 cx,
             )
-        })
-        .await
-        .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 5.1 (local settings)".into())
+        );
 
+        // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         cx.update(|cx| {
             tool.authorize(
@@ -1347,6 +1349,46 @@ mod tests {
         .await
         .unwrap();
         assert!(stream_rx.try_next().is_err());
+
+        // 5.3: Normal in-project path with allow — no confirmation needed
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.3".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert!(stream_rx.try_next().is_err());
+
+        // 5.4: With Confirm default, non-project paths still prompt
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.4".into(),
+                    path: "/etc/hosts".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(event.tool_call.fields.title, Some("test 5.4".into()));
     }
 
     #[gpui::test]

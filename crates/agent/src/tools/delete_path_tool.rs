@@ -81,7 +81,6 @@ impl AgentTool for DeletePathTool {
         let mut decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         if matches!(decision, ToolPermissionDecision::Allow)
-            && !settings.always_allow_tool_actions
             && is_sensitive_settings_path(Path::new(&path))
         {
             decision = ToolPermissionDecision::Confirm;
@@ -95,7 +94,7 @@ impl AgentTool for DeletePathTool {
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
                     tool_name: Self::NAME.to_string(),
-                    input_value: path.clone(),
+                    input_values: vec![path.clone()],
                 };
                 let title = format!("Delete {}", MarkdownInlineCode(&path));
                 let title = match sensitive_settings_kind(Path::new(&path)) {

@@ -130,9 +130,23 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 
 ### Tool Approval
 
-Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
+> **Note:** In Zed v0.224.0 and above, tool approval for the native Zed agent is controlled by `agent.tool_permissions.default`.
 
-You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior for the native Zed agent:
+
+- `"confirm"` (default) — Prompts for approval before running any tool action, including MCP tool calls
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
+
+You can change this in either your `settings.json` or through the Agent Panel settings.
+
+Even with `"default": "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, so you can auto-approve most actions while still blocking or gating sensitive ones.
+
+For granular control over specific MCP tools, you can configure per-tool permission rules. MCP tools use the key format `mcp:<server>:<tool_name>` — for example, `mcp:github:create_issue`. The `default` key on a per-tool entry is the primary mechanism for MCP tools, since pattern-based rules match against an empty string for MCP tools and most patterns won't match.
+
+See [Per-tool Permission Rules](./agent-settings.md#per-tool-permission-rules) and [Tool Permissions](./tool-permissions.md) for complete details.
+
+> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and MCP tool calls.
 
 ### External Agents
 
