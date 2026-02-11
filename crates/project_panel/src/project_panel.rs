@@ -1322,7 +1322,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_id = if let Some(selection) = &self.state.selection {
+        let entry_id = if let Some(selection) = &self.selection {
             selection.entry_id
         } else if let Some(entry_id) = self.state.last_worktree_root_id {
             entry_id
@@ -1340,12 +1340,12 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> (Point<Pixels>, Option<AnchoredForceSnap>) {
-        let entry_id = match self.state.selection.as_ref().map(|s| s.entry_id) {
+        let entry_id = match self.selection.as_ref().map(|s| s.entry_id) {
             Some(id) if id != ProjectEntryId::from_usize(0) => id,
             _ => return (event_position, None),
         };
 
-        if let Some(selection) = &self.state.selection {
+        if let Some(selection) = &self.selection {
             let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx).to_f64();
 
             let mut separators = 0;
