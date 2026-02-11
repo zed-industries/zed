@@ -4,19 +4,21 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future;
-
+use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
+use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
@@ -338,9 +340,21 @@ pub async fn open_paths_with_positions(
     WindowHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
+    let mut caret_positions = HashMap::default();
+
     let paths = path_positions
         .iter()
-        .map(|path_with_position| path_with_position.path.clone())
+        .map(|path_with_position| {
+            let path = path_with_position.path.clone();
+            if let Some(row) = path_with_position.row
+                && path.is_file()
+            {
+                let row = row.saturating_sub(1);
+                let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
+                caret_positions.insert(path.clone(), Point::new(row, col));
+            }
+            path
+        })
         .collect::<Vec<_>>();
 
     let (workspace, mut items) = cx
@@ -372,14 +386,24 @@ pub async fn open_paths_with_positions(
     for (item, path) in items.iter_mut().zip(&paths) {
         if let Some(Err(error)) = item {
             *error = anyhow!("error opening {path:?}: {error}");
+            continue;
+        }
+        let Some(Ok(item)) = item else {
+            continue;
+        };
+        let Some(point) = caret_positions.remove(path) else {
+            continue;
+        };
+        if let Some(active_editor) = item.downcast::<Editor>() {
+            workspace
+                .update(cx, |_, window, cx| {
+                    active_editor.update(cx, |editor, cx| {
+                        editor.go_to_singleton_buffer_point(point, window, cx);
+                    });
+                })
+                .log_err();
         }
     }
-
-    let items_for_navigation = items
-        .iter()
-        .map(|item| item.as_ref().and_then(|r| r.as_ref().ok()).cloned())
-        .collect::<Vec<_>>();
-    navigate_to_positions(&workspace, items_for_navigation, path_positions, cx);
 
     Ok((workspace, items))
 }
@@ -503,81 +527,63 @@ async fn open_workspaces(
                 .detach();
             });
         }
-        return Ok(());
-    }
-    // If there are paths to open, open a workspace for each grouping of paths
-    let mut errored = false;
+    } else {
+        // If there are paths to open, open a workspace for each grouping of paths
+        let mut errored = false;
 
-    for (location, workspace_paths) in grouped_locations {
-        // If reuse flag is passed, open a new workspace in an existing window.
-        let (open_new_workspace, replace_window) = if reuse {
-            (
-                Some(true),
-                cx.update(|cx| {
-                    workspace::workspace_windows_for_location(&location, cx)
-                        .into_iter()
-                        .next()
-                }),
-            )
-        } else {
-            (open_new_workspace, None)
-        };
-        let open_options = workspace::OpenOptions {
-            open_new_workspace,
-            replace_window,
-            wait,
-            env: env.clone(),
-            ..Default::default()
-        };
+        for (location, workspace_paths) in grouped_locations {
+            match location {
+                SerializedWorkspaceLocation::Local => {
+                    let workspace_paths = workspace_paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect();
 
-        match location {
-            SerializedWorkspaceLocation::Local => {
-                let workspace_paths = workspace_paths
-                    .paths()
-                    .iter()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .collect();
-
-                let workspace_failed_to_open = open_local_workspace(
-                    workspace_paths,
-                    diff_paths.clone(),
-                    diff_all,
-                    open_options,
-                    responses,
-                    &app_state,
-                    cx,
-                )
-                .await;
-
-                if workspace_failed_to_open {
-                    errored = true
-                }
-            }
-            SerializedWorkspaceLocation::Remote(mut connection) => {
-                let app_state = app_state.clone();
-                if let RemoteConnectionOptions::Ssh(options) = &mut connection {
-                    cx.update(|cx| {
-                        RemoteSettings::get_global(cx)
-                            .fill_connection_options_from_settings(options)
-                    });
-                }
-                cx.spawn(async move |cx| {
-                    open_remote_project(
-                        connection,
-                        workspace_paths.paths().to_vec(),
-                        app_state,
-                        open_options,
+                    let workspace_failed_to_open = open_local_workspace(
+                        workspace_paths,
+                        diff_paths.clone(),
+                        diff_all,
+                        open_new_workspace,
+                        reuse,
+                        wait,
+                        responses,
+                        env.as_ref(),
+                        &app_state,
                         cx,
                     )
-                    .await
-                    .log_err();
-                })
-                .detach();
+                    .await;
+
+                    if workspace_failed_to_open {
+                        errored = true
+                    }
+                }
+                SerializedWorkspaceLocation::Remote(mut connection) => {
+                    let app_state = app_state.clone();
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection {
+                        cx.update(|cx| {
+                            RemoteSettings::get_global(cx)
+                                .fill_connection_options_from_settings(options)
+                        });
+                    }
+                    cx.spawn(async move |cx| {
+                        open_remote_project(
+                            connection,
+                            workspace_paths.paths().to_vec(),
+                            app_state,
+                            OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
             }
         }
-    }
 
-    anyhow::ensure!(!errored, "failed to open a workspace");
+        anyhow::ensure!(!errored, "failed to open a workspace");
+    }
 
     Ok(())
 }
@@ -586,20 +592,39 @@ async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
-    open_options: workspace::OpenOptions,
+    open_new_workspace: Option<bool>,
+    reuse: bool,
+    wait: bool,
     responses: &IpcSender<CliResponse>,
+    env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
+    // If reuse flag is passed, open a new workspace in an existing window.
+    let (open_new_workspace, replace_window) = if reuse {
+        (
+            Some(true),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next()),
+        )
+    } else {
+        (open_new_workspace, None)
+    };
+
     let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
         diff_all,
         app_state.clone(),
-        open_options.clone(),
+        workspace::OpenOptions {
+            open_new_workspace,
+            replace_window,
+            prefer_focused_window: wait,
+            env: env.cloned(),
+            ..Default::default()
+        },
         cx,
     )
     .await
@@ -618,9 +643,10 @@ async fn open_local_workspace(
     let mut errored = false;
     let mut item_release_futures = Vec::new();
     let mut subscriptions = Vec::new();
+
     // If --wait flag is used with no paths, or a directory, then wait until
     // the entire workspace is closed.
-    if open_options.wait {
+    if wait {
         let mut wait_for_window_close = paths_with_position.is_empty() && diff_paths.is_empty();
         for path_with_position in &paths_with_position {
             if app_state.fs.is_dir(&path_with_position.path).await {
@@ -643,7 +669,7 @@ async fn open_local_workspace(
     for item in items {
         match item {
             Some(Ok(item)) => {
-                if open_options.wait {
+                if wait {
                     let (release_tx, release_rx) = oneshot::channel();
                     item_release_futures.push(release_rx);
                     subscriptions.push(Ok(cx.update(|cx| {
@@ -668,7 +694,7 @@ async fn open_local_workspace(
         }
     }
 
-    if open_options.wait {
+    if wait {
         let wait = async move {
             let _subscriptions = subscriptions;
             let _ = future::try_join_all(item_release_futures).await;
@@ -699,30 +725,17 @@ pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<PathWithPosition> {
-    let path_strings: Vec<_> = path_strings.into_iter().collect();
-    let mut result = Vec::with_capacity(path_strings.len());
-    for path_str in path_strings {
-        let original_path = Path::new(path_str.as_ref());
-        let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
-
-        // If a the unparsed path string actually points to a file, use that file instead of parsing out the line/col number.
-        // Note: The colon syntax is also used to open NTFS alternate data streams (e.g., `file.txt:stream`), which would cause issues.
-        // However, the colon is not valid in NTFS file names, so we can just skip this logic.
-        if !cfg!(windows)
-            && parsed.row.is_some()
-            && parsed.path != original_path
-            && fs.is_file(original_path).await
-        {
-            parsed = PathWithPosition::from_path(original_path.to_path_buf());
-        }
-
-        if let Ok(canonicalized) = fs.canonicalize(&parsed.path).await {
-            parsed.path = canonicalized;
-        }
-
-        result.push(parsed);
-    }
-    result
+    join_all(path_strings.into_iter().map(|path_str| async move {
+        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
+        (path_str, canonicalized)
+    }))
+    .await
+    .into_iter()
+    .map(|(original, canonicalized)| match canonicalized {
+        Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
+        Err(_) => PathWithPosition::parse_str(original.as_ref()),
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -742,7 +755,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, Workspace, find_existing_workspace};
+    use workspace::{AppState, Workspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -944,11 +957,11 @@ mod tests {
                     workspace_paths,
                     vec![],
                     false,
-                    workspace::OpenOptions {
-                        wait: true,
-                        ..Default::default()
-                    },
+                    None,
+                    false,
+                    true,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )
@@ -1036,11 +1049,11 @@ mod tests {
                     workspace_paths,
                     vec![],
                     false,
-                    OpenOptions {
-                        open_new_workspace,
-                        ..Default::default()
-                    },
+                    open_new_workspace,
+                    false,
+                    false,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )
@@ -1110,8 +1123,11 @@ mod tests {
                         workspace_paths,
                         vec![],
                         false,
-                        workspace::OpenOptions::default(),
+                        None,
+                        false,
+                        false,
                         &response_tx,
+                        None,
                         &app_state,
                         &mut cx,
                     )
@@ -1122,16 +1138,6 @@ mod tests {
 
         // Now test the reuse functionality - should replace the existing workspace
         let workspace_paths_reuse = vec![file1_path.to_string()];
-        let paths: Vec<PathBuf> = workspace_paths_reuse.iter().map(PathBuf::from).collect();
-        let window_to_replace = find_existing_workspace(
-            &paths,
-            &workspace::OpenOptions::default(),
-            &workspace::SerializedWorkspaceLocation::Local,
-            &mut cx.to_async(),
-        )
-        .await
-        .0
-        .unwrap();
 
         let errored_reuse = cx
             .spawn({
@@ -1142,11 +1148,11 @@ mod tests {
                         workspace_paths_reuse,
                         vec![],
                         false,
-                        workspace::OpenOptions {
-                            replace_window: Some(window_to_replace),
-                            ..Default::default()
-                        },
+                        None, // open_new_workspace will be overridden by reuse logic
+                        true, // reuse = true
+                        false,
                         &response_tx,
+                        None,
                         &app_state,
                         &mut cx,
                     )

@@ -2363,7 +2363,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                path!("/root"),
+                "/root",
                 json!({
                     "a": {
                         "aa": null,
@@ -2391,10 +2391,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    PathBuf::from(path!("/root/a")),
-                    PathBuf::from(path!("/root/b")),
-                ],
+                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2406,7 +2403,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/a"))],
+                &[PathBuf::from("/root/a")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2435,10 +2432,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    PathBuf::from(path!("/root/c")),
-                    PathBuf::from(path!("/root/d")),
-                ],
+                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2454,7 +2448,7 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/e"))],
+                &[PathBuf::from("/root/e")],
                 app_state,
                 workspace::OpenOptions {
                     replace_window: Some(window),
@@ -2477,7 +2471,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new(path!("/root/e")).into()]
+                    &[Path::new("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
@@ -5241,7 +5235,7 @@ mod tests {
 
             cx.update(|cx| {
                 let open_options = OpenOptions {
-                    wait: true,
+                    prefer_focused_window: true,
                     ..Default::default()
                 };
 
