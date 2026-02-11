@@ -1779,12 +1779,25 @@ impl Panel for AgentPanel {
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
-        let settings = AgentSettings::get_global(cx);
+        let viewport_size = window.viewport_size();
+
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or(settings.default_width)
+                if let Some(width) = self.width {
+                    width
+                } else {
+                    let percentage_width = viewport_size.width * 0.4;
+                    percentage_width.max(px(300.0)).min(px(800.0))
+                }
             }
-            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
+            DockPosition::Bottom => {
+                if let Some(height) = self.height {
+                    height
+                } else {
+                    let percentage_height = viewport_size.height * 0.3;
+                    percentage_height.max(px(200.0)).min(px(600.0))
+                }
+            }
         }
     }
 
