@@ -72,7 +72,7 @@ impl WidgetStore {
     }
 
     pub fn create_missing_text_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let needed: Vec<(String, String, bool)> = self
+        let needed: Vec<(String, String, bool, bool)> = self
             .models
             .iter()
             .filter(|(_, m)| {
@@ -90,11 +90,12 @@ impl WidgetStore {
                     .unwrap_or("")
                     .to_string();
                 let is_textarea = m.model_name == "TextareaModel";
-                (id.clone(), value, is_textarea)
+                let is_password = m.model_name == "PasswordModel";
+                (id.clone(), value, is_textarea, is_password)
             })
             .collect();
 
-        for (model_id, value, is_textarea) in needed {
+        for (model_id, value, is_textarea, is_password) in needed {
             let editor = cx.new(|cx| {
                 let mut editor = if is_textarea {
                     Editor::auto_height(3, 10, window, cx)
@@ -103,6 +104,9 @@ impl WidgetStore {
                 };
                 if !value.is_empty() {
                     editor.set_text(value, window, cx);
+                }
+                if is_password {
+                    editor.set_masked(true, cx);
                 }
                 editor
             });
@@ -552,6 +556,7 @@ fn render_button(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement
                 description,
             )
             .style(ButtonStyle::Outlined)
+            .size(ButtonSize::Medium)
             .disabled(disabled)
             .on_click(move |_, _window, cx| {
                 let model_id = model_id.clone();
