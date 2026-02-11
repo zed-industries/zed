@@ -493,11 +493,7 @@ impl AgentServerStore {
                     .map(|agent| (agent.id().to_string(), agent))
                     .collect::<HashMap<_, _>>()
             })
-            .unwrap_or_else(|| {
-                log::error!("was none");
-                Default::default()
-            });
-        log::error!("registry agents by id: {registry_agents_by_id:?}");
+            .unwrap_or_default();
 
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
@@ -880,10 +876,6 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::ExternalAgentsUpdated>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        log::error!(
-            "handle external agents updated {:?}",
-            envelope.payload.names
-        );
         this.update(&mut cx, |this, cx| {
             let AgentServerStoreState::Remote {
                 project_id,

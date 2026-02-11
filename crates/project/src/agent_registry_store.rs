@@ -134,13 +134,13 @@ impl AgentRegistryStore {
             .values()
             .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
 
-        // if has_registry_agents_in_settings {
-        store.update(cx, |store, cx| {
-            if store.agents.is_empty() {
-                store.refresh(cx);
-            }
-        });
-        // }
+        if has_registry_agents_in_settings {
+            store.update(cx, |store, cx| {
+                if store.agents.is_empty() {
+                    store.refresh(cx);
+                }
+            });
+        }
 
         store
     }
@@ -193,7 +193,7 @@ impl AgentRegistryStore {
                         .await
                 }
                 Err(error) => {
-                    log::error!("fetching index {error:?}");
+                    log::error!("AgentRegistryStore::refresh: fetch failed: {error:#}");
                     Err(error)
                 }
             };
@@ -257,7 +257,6 @@ impl AgentRegistryStore {
         cx.spawn(async move |this, cx| -> Result<()> {
             let cache_path = registry_cache_path();
             if !fs.is_file(&cache_path).await {
-                log::error!("registry cache not found {cache_path:?}");
                 return Ok(());
             }
 
@@ -271,7 +270,6 @@ impl AgentRegistryStore {
             let agents = build_registry_agents(fs, http_client, index, bytes, false).await?;
 
             this.update(cx, |this, cx| {
-                log::error!("NEW AGENTS LOADED: {:?}", &agents);
                 this.agents = agents;
                 cx.notify();
             })?;
@@ -339,8 +337,6 @@ async fn build_registry_agents(
 
     let mut agents = Vec::new();
     for entry in index.agents {
-        log::error!("entry: {:?}", entry.name);
-
         let icon_path = resolve_icon_path(
             &entry,
             &icons_dir,
