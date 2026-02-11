@@ -10,15 +10,7 @@ use language::LanguageRegistry;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    hash::{Hash, Hasher},
-    mem,
-    ops::Range,
-    path::PathBuf,
-    rc::Rc,
-    sync::Arc,
-    vec,
+    cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
 use ui::SharedString;
 
@@ -862,7 +854,8 @@ impl<'a> MarkdownParser<'a> {
             contents: ParsedMarkdownMermaidDiagramContents {
                 contents: code.into(),
                 scale,
-            },        })
+            },
+        })
     }
 
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {

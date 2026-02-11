@@ -369,6 +369,7 @@ impl Element for Img {
                             }
                         }
                         Some(_err) => {
+                            dbg!(_err.err());
                             if let Some(fallback) = self.style.fallback.as_ref() {
                                 let mut element = fallback();
                                 replacement_id = Some(element.request_layout(window, cx));

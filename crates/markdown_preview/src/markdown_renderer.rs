@@ -1,9 +1,12 @@
-use crate::markdown_elements::{
-    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
-    ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
-    ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+use crate::{
+    markdown_elements::{
+        HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+        ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
+        ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
+        ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents, ParsedMarkdownTable,
+        ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+    },
+    markdown_preview_view::MarkdownPreviewView,
 };
 use collections::HashMap;
 use fs::normalize_path;
@@ -44,22 +47,33 @@ pub(crate) type MermaidDiagramCache =
     HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
 pub(crate) struct CachedMermaidDiagram {
-    pub(crate) contents: Arc<OnceLock<anyhow::Result<Svg>>>,
+    pub(crate) svg_contents: Arc<OnceLock<anyhow::Result<String>>>,
     _task: Task<()>,
 }
 
 impl CachedMermaidDiagram {
     pub(crate) fn new(
         contents: ParsedMarkdownMermaidDiagramContents,
-        cx: &BackgroundExecutor,
+        cx: &mut Context<MarkdownPreviewView>,
     ) -> Self {
-        let contents = Arc::new(OnceLock::<anyhow::Result<Svg>>::new());
-        let _contents = contents.clone();
-        let _task = cx.spawn(async move {
-            _contents.set(Err(anyhow::anyhow!("no")));
+        let result = Arc::new(OnceLock::<anyhow::Result<String>>::new());
+        let _contents = result.clone();
+        let _task = cx.spawn(async move |this, cx| {
+            let value = cx
+                .background_spawn(async move { mermaid_rs_renderer::render(&contents.contents) })
+                .await;
+            dbg!(value.is_err());
+            _contents.set(value);
+            this.update(cx, |_, cx| {
+                cx.notify();
+            })
+            .ok();
         });
 
-        Self { contents, _task }
+        Self {
+            svg_contents: result,
+            _task,
+        }
     }
 }
 #[derive(Clone)]
@@ -349,7 +363,7 @@ struct MarkdownCheckbox {
     style: ui::ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
     label: Option<SharedString>,
-    render_cx: RenderContext,
+    base_rem: Rems,
 }
 
 impl MarkdownCheckbox {
@@ -365,7 +379,7 @@ impl MarkdownCheckbox {
             tooltip: None,
             label: None,
             placeholder: false,
-            render_cx,
+            base_rem: render_cx.scaled_rems(1.0),
         }
     }
 
@@ -408,7 +422,7 @@ impl gpui::RenderOnce for MarkdownCheckbox {
         } else {
             Color::Selected
         };
-        let icon_size_small = IconSize::Custom(self.render_cx.scaled_rems(14. / 16.)); // was IconSize::Small
+        let icon_size_small = IconSize::Custom(self.base_rem.mul(14. / 16.)); // was IconSize::Small
         let icon = match self.toggle_state {
             ToggleState::Selected => {
                 if self.placeholder {
@@ -433,7 +447,7 @@ impl gpui::RenderOnce for MarkdownCheckbox {
         let border_color = self.border_color(cx);
         let hover_border_color = border_color.alpha(0.7);
 
-        let size = self.render_cx.scaled_rems(1.25); // was Self::container_size(); (20px)
+        let size = self.base_rem.mul(1.25); // was Self::container_size(); (20px)
 
         let checkbox = h_flex()
             .id(self.id.clone())
@@ -447,9 +461,9 @@ impl gpui::RenderOnce for MarkdownCheckbox {
                     .flex_none()
                     .justify_center()
                     .items_center()
-                    .m(self.render_cx.scaled_rems(0.25)) // was .m_1
-                    .size(self.render_cx.scaled_rems(1.0)) // was .size_4
-                    .rounded(self.render_cx.scaled_rems(0.125)) // was .rounded_xs
+                    .m(self.base_rem.mul(0.25)) // was .m_1
+                    .size(self.base_rem.mul(1.0)) // was .size_4
+                    .rounded(self.base_rem.mul(0.125)) // was .rounded_xs
                     .border_1()
                     .bg(bg_color)
                     .border_color(border_color)
@@ -466,7 +480,7 @@ impl gpui::RenderOnce for MarkdownCheckbox {
                                 .flex_none()
                                 .rounded_full()
                                 .bg(color.color(cx).alpha(0.5))
-                                .size(self.render_cx.scaled_rems(0.25)), // was .size_1
+                                .size(self.base_rem.mul(0.25)), // was .size_1
                         )
                     })
                     .children(icon),
@@ -684,38 +698,47 @@ fn render_mermaid_diagram(
     parsed: &ParsedMarkdownMermaidDiagram,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    if let Some(error) = &parsed.error {
-        cx.with_common_p(div())
-            .px_3()
-            .py_3()
-            .bg(gpui::red())
-            .rounded_sm()
-            .child(
-                div()
-                    .child(Label::new("Mermaid rendering error:").color(Color::Error))
-                    .child(div().mt_2().child(StyledText::new(error.clone()))),
-            )
-            .into_any()
-    } else if let Some(image_path) = &parsed.image_path {
-        let image_resource = Resource::Path(Arc::from(image_path.as_path()));
-
-        cx.with_common_p(div())
-            .px_3()
-            .py_3()
-            .bg(cx.code_block_background_color)
-            .rounded_sm()
-            .child(
-                div().w_full().child(
-                    img(ImageSource::Resource(image_resource))
+    if let Some(cached) = cx
+        .mermaid_diagram_cache
+        .get(&parsed.contents)
+        .and_then(|v| v.svg_contents.get())
+    {
+        dbg!(cached.is_ok());
+        match cached {
+            Ok(svg_contents) => cx
+                .with_common_p(div())
+                .px_3()
+                .py_3()
+                .bg(cx.code_block_background_color)
+                .rounded_sm()
+                .child(
+                    div().w_full().child(
+                        img(ImageSource::Image(Arc::new(gpui::Image::from_bytes(
+                            gpui::ImageFormat::Svg,
+                            dbg!(&svg_contents).as_bytes().to_owned(),
+                        ))))
                         .max_w_full()
                         .with_fallback(|| {
                             div()
                                 .child(Label::new("Failed to load mermaid diagram"))
                                 .into_any_element()
                         }),
-                ),
-            )
-            .into_any()
+                    ),
+                )
+                .into_any(),
+            Err(error) => cx
+                .with_common_p(div())
+                .px_3()
+                .py_3()
+                .bg(gpui::red())
+                .rounded_sm()
+                .child(
+                    div()
+                        .child(Label::new("Mermaid rendering error:").color(Color::Error))
+                        .child(div().mt_2().child(StyledText::new(error.to_string()))),
+                )
+                .into_any(),
+        }
     } else {
         cx.with_common_p(div())
             .px_3()
@@ -725,7 +748,11 @@ fn render_mermaid_diagram(
             .child(
                 div()
                     .child(Label::new("Rendering mermaid diagram..."))
-                    .child(div().mt_2().child(StyledText::new(parsed.contents.clone()))),
+                    .child(
+                        div()
+                            .mt_2()
+                            .child(StyledText::new(parsed.contents.contents.clone())),
+                    ),
             )
             .into_any()
     }

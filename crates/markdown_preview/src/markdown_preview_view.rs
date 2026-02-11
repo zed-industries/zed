@@ -1,7 +1,6 @@
 use std::cmp::min;
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::sync::{Arc, OnceLock};
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
@@ -349,14 +348,10 @@ impl MarkdownPreviewView {
             let parsing_task = cx.background_spawn(async move {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
-            let mut contents = parsing_task.await;
+            let contents = parsing_task.await;
 
             view.update(cx, |this, cx| {
-                MarkdownPreviewView::render_mermaid_diagrams(
-                    &contents,
-                    &mut this.mermaid_cache,
-                    &cx,
-                )
+                MarkdownPreviewView::render_mermaid_diagrams(&contents, &mut this.mermaid_cache, cx)
             })
             .ok();
 
@@ -435,16 +430,20 @@ impl MarkdownPreviewView {
         block_index.unwrap_or_default()
     }
 
-    fn render_mermaid_diagrams(parsed: &ParsedMarkdown, cache: &mut MermaidDiagramCache, cx: &App) {
+    fn render_mermaid_diagrams(
+        parsed: &ParsedMarkdown,
+        cache: &mut MermaidDiagramCache,
+        cx: &mut Context<Self>,
+    ) {
         use crate::markdown_elements::ParsedMarkdownElement;
 
         let mut referenced_keys = HashSet::new();
         for element in parsed.children.iter() {
             if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
                 referenced_keys.insert(mermaid.contents.clone());
-                cache.entry(mermaid.contents.clone()).or_insert_with(|| {
-                    CachedMermaidDiagram::new(mermaid.contents.clone(), cx.background_executor())
-                });
+                cache
+                    .entry(mermaid.contents.clone())
+                    .or_insert_with(|| CachedMermaidDiagram::new(mermaid.contents.clone(), cx));
             }
         }
         cache.retain(|k, _| referenced_keys.contains(k));
@@ -639,6 +638,8 @@ impl Render for MarkdownPreviewView {
                                 contents.children.get(ix + 1),
                             );
 
+                            let selected_block = this.selected_block;
+                            let scaled_rems = render_cx.scaled_rems(1.0);
                             div()
                                 .id(ix)
                                 .when(should_apply_padding, |this| {
@@ -669,11 +670,11 @@ impl Render for MarkdownPreviewView {
                                     let indicator = div()
                                         .h_full()
                                         .w(px(4.0))
-                                        .when(ix == this.selected_block, |this| {
+                                        .when(ix == selected_block, |this| {
                                             this.bg(cx.theme().colors().border)
                                         })
                                         .group_hover("markdown-block", |s| {
-                                            if ix == this.selected_block {
+                                            if ix == selected_block {
                                                 s
                                             } else {
                                                 s.bg(cx.theme().colors().border_variant)
@@ -684,11 +685,7 @@ impl Render for MarkdownPreviewView {
                                     container.child(
                                         div()
                                             .relative()
-                                            .child(
-                                                div()
-                                                    .pl(render_cx.scaled_rems(1.0))
-                                                    .child(rendered_block),
-                                            )
+                                            .child(div().pl(scaled_rems).child(rendered_block))
                                             .child(indicator.absolute().left_0().top_0()),
                                     )
                                 })
