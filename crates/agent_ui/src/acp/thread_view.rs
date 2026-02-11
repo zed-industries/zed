@@ -707,10 +707,7 @@ impl AcpServerView {
                 .session_modes(&session_id, cx)
                 .map(|session_modes| {
                     let fs = self.project.read(cx).fs().clone();
-                    let focus_handle = self.focus_handle(cx);
-                    cx.new(|_cx| {
-                        ModeSelector::new(session_modes, self.agent.clone(), fs, focus_handle)
-                    })
+                    cx.new(|_cx| ModeSelector::new(session_modes, self.agent.clone(), fs))
                 });
         }
 

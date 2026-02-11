@@ -2252,8 +2252,6 @@ impl TextThreadEditor {
             .map(|p| p.icon())
             .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
-        let focus_handle = self.editor().focus_handle(cx);
-
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
@@ -2276,7 +2274,7 @@ impl TextThreadEditor {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }

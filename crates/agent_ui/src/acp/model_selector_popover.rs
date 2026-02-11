@@ -13,7 +13,6 @@ use crate::ui::ModelSelectorTooltip;
 pub struct AcpModelSelectorPopover {
     selector: Entity<AcpModelSelector>,
     menu_handle: PopoverMenuHandle<AcpModelSelector>,
-    focus_handle: FocusHandle,
 }
 
 impl AcpModelSelectorPopover {
@@ -39,7 +38,6 @@ impl AcpModelSelectorPopover {
                 )
             }),
             menu_handle,
-            focus_handle,
         }
     }
 
@@ -69,8 +67,6 @@ impl Render for AcpModelSelectorPopover {
 
         let model_icon = model.as_ref().and_then(|model| model.icon.clone());
 
-        let focus_handle = self.focus_handle.clone();
-
         let (color, icon) = if self.menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
@@ -81,7 +77,7 @@ impl Render for AcpModelSelectorPopover {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }

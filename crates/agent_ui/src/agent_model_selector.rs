@@ -14,7 +14,6 @@ use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
 pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-    focus_handle: FocusHandle,
 }
 
 impl AgentModelSelector {
@@ -70,7 +69,6 @@ impl AgentModelSelector {
                 )
             }),
             menu_handle,
-            focus_handle,
         }
     }
 
@@ -106,11 +104,9 @@ impl Render for AgentModelSelector {
 
         let show_cycle_row = self.selector.read(cx).delegate.favorites_count() > 1;
 
-        let focus_handle = self.focus_handle.clone();
-
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
