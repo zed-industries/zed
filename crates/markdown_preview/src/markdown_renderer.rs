@@ -11,10 +11,10 @@ use crate::{
 use collections::HashMap;
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, BackgroundExecutor, Context, Div, Element,
-    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
-    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, Svg, Task,
-    TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    ParentElement, Render, Resource, SharedString, Styled, StyledText, Task, TextStyle, WeakEntity,
+    Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -62,8 +62,7 @@ impl CachedMermaidDiagram {
             let value = cx
                 .background_spawn(async move { mermaid_rs_renderer::render(&contents.contents) })
                 .await;
-            dbg!(value.is_err());
-            _contents.set(value);
+            let _ = _contents.set(value);
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -100,7 +99,7 @@ pub struct RenderContext<'a> {
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn new(
+    pub(crate) fn new(
         workspace: Option<WeakEntity<Workspace>>,
         mermaid_diagram_cache: &'a MermaidDiagramCache,
         window: &mut Window,
@@ -703,7 +702,6 @@ fn render_mermaid_diagram(
         .get(&parsed.contents)
         .and_then(|v| v.svg_contents.get())
     {
-        dbg!(cached.is_ok());
         match cached {
             Ok(svg_contents) => cx
                 .with_common_p(div())
@@ -715,7 +713,7 @@ fn render_mermaid_diagram(
                     div().w_full().child(
                         img(ImageSource::Image(Arc::new(gpui::Image::from_bytes(
                             gpui::ImageFormat::Svg,
-                            dbg!(&svg_contents).as_bytes().to_owned(),
+                            svg_contents.as_bytes().to_owned(),
                         ))))
                         .max_w_full()
                         .with_fallback(|| {

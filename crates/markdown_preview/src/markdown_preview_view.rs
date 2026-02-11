@@ -10,7 +10,7 @@ use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Svg, Task, WeakEntity, Window, list,
+    Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -30,7 +30,6 @@ use crate::{
 use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
-const MAX_MERMAID_CACHE_SIZE: usize = 50;
 
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
