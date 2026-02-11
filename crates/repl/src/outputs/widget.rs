@@ -7,6 +7,7 @@ use gpui::{AnyElement, App, Context, Corner, Entity, EventEmitter, Subscription,
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown as html_md};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use runtimelib::{CommId, CommMsg, JupyterMessage, MimeBundle, MimeType};
+use theme::ActiveTheme;
 use ui::prelude::*;
 use ui::{Checkbox, ContextMenu, PopoverMenu, ProgressBar, ToggleState};
 
@@ -470,20 +471,23 @@ fn render_button(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement
     let model_id = model.comm_id.clone();
     let store = store.clone();
 
-    Button::new(
-        SharedString::from(format!("widget-btn-{}", model_id)),
-        description,
-    )
-    .disabled(disabled)
-    .on_click(move |_, _window, cx| {
-        let model_id = model_id.clone();
-        let mut content = serde_json::Map::new();
-        content.insert("event".into(), "click".into());
-        store.update(cx, |widget_store, cx| {
-            widget_store.send_custom(&model_id, content, cx);
-        });
-    })
-    .into_any_element()
+    h_flex()
+        .child(
+            Button::new(
+                SharedString::from(format!("widget-btn-{}", model_id)),
+                description,
+            )
+            .disabled(disabled)
+            .on_click(move |_, _window, cx| {
+                let model_id = model_id.clone();
+                let mut content = serde_json::Map::new();
+                content.insert("event".into(), "click".into());
+                store.update(cx, |widget_store, cx| {
+                    widget_store.send_custom(&model_id, content, cx);
+                });
+            }),
+        )
+        .into_any_element()
 }
 
 fn render_checkbox(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement {
@@ -788,24 +792,36 @@ fn render_text(model: &WidgetModel, editor: Option<Entity<Editor>>, cx: &App) ->
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let is_textarea = model.model_name == "TextareaModel";
+    let theme_colors = cx.theme().colors();
 
     let content: AnyElement = if let Some(editor) = editor {
-        div().w(px(260.0)).child(editor).into_any_element()
+        h_flex()
+            .py_1()
+            .px_2()
+            .when(is_textarea, |el| el.min_h(px(80.0)))
+            .when(!is_textarea, |el| el.h_8())
+            .min_w_64()
+            .rounded_md()
+            .border_1()
+            .border_color(theme_colors.border)
+            .bg(theme_colors.editor_background)
+            .child(editor)
+            .into_any_element()
     } else {
         let value = model
             .state
             .get("value")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let is_textarea = model.model_name == "TextareaModel";
         div()
             .px_2()
             .py_1()
             .min_w(px(120.0))
             .rounded_md()
             .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
+            .border_color(theme_colors.border)
+            .bg(theme_colors.editor_background)
             .when(is_textarea, |el| el.min_h(px(60.0)))
             .child(
                 Label::new(value.to_string())
