@@ -2206,6 +2206,7 @@ impl EditPredictionStore {
         self.rated_predictions.insert(prediction.id.clone());
         telemetry::event!(
             "Edit Prediction Rated",
+            request_id = prediction.id.to_string(),
             rating,
             inputs = prediction.inputs,
             output = prediction

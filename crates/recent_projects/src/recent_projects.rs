@@ -11,7 +11,7 @@ mod wsl_picker;
 
 use remote::RemoteConnectionOptions;
 pub use remote_connection::{RemoteConnectionModal, connect};
-pub use remote_connections::open_remote_project;
+pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};

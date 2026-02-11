@@ -108,6 +108,7 @@ pub struct AutoUpdater {
     client: Arc<Client>,
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
+    update_check_type: UpdateCheckType,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -318,9 +319,16 @@ impl InstallerDir {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UpdateCheckType {
     Automatic,
     Manual,
+}
+
+impl UpdateCheckType {
+    pub fn is_manual(self) -> bool {
+        self == Self::Manual
+    }
 }
 
 impl AutoUpdater {
@@ -352,6 +360,7 @@ impl AutoUpdater {
             client,
             pending_poll: None,
             quit_subscription,
+            update_check_type: UpdateCheckType::Automatic,
         }
     }
 
@@ -373,10 +382,15 @@ impl AutoUpdater {
         })
     }
 
+    pub fn update_check_type(&self) -> UpdateCheckType {
+        self.update_check_type
+    }
+
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() {
             return;
         }
+        self.update_check_type = check_type;
 
         cx.notify();
 

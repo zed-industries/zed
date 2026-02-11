@@ -3,7 +3,7 @@ use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::AgentSettings;
 use fs::Fs;
-use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
+use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
 use settings::Settings as _;
 use std::{rc::Rc, sync::Arc};
 use ui::{
@@ -17,7 +17,6 @@ pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
     agent_server: Rc<dyn AgentServer>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
-    focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     setting_mode: bool,
 }
@@ -27,7 +26,6 @@ impl ModeSelector {
         session_modes: Rc<dyn AgentSessionModes>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
-        focus_handle: FocusHandle,
     ) -> Self {
         Self {
             connection: session_modes,
@@ -35,7 +33,6 @@ impl ModeSelector {
             menu_handle: PopoverMenuHandle::default(),
             fs,
             setting_mode: false,
-            focus_handle,
         }
     }
 
@@ -182,7 +179,6 @@ impl Render for ModeSelector {
             .trigger_with_tooltip(
                 trigger_button,
                 Tooltip::element({
-                    let focus_handle = self.focus_handle.clone();
                     move |_window, cx| {
                         v_flex()
                             .gap_1()
@@ -191,25 +187,17 @@ impl Render for ModeSelector {
                                     .gap_2()
                                     .justify_between()
                                     .child(Label::new("Change Mode"))
-                                    .child(KeyBinding::for_action_in(
-                                        &ToggleProfileSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
+                                    .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
                             )
                             .child(
                                 h_flex()
-                                    .pb_1()
+                                    .pt_1()
                                     .gap_2()
-                                    .justify_between()
-                                    .border_b_1()
+                                    .border_t_1()
                                     .border_color(cx.theme().colors().border_variant)
+                                    .justify_between()
                                     .child(Label::new("Cycle Through Modes"))
-                                    .child(KeyBinding::for_action_in(
-                                        &CycleModeSelector,
-                                        &focus_handle,
-                                        cx,
-                                    )),
+                                    .child(KeyBinding::for_action(&CycleModeSelector, cx)),
                             )
                             .into_any()
                     }

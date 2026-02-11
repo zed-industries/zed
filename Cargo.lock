@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
@@ -108,7 +107,6 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
- "semver",
  "smallvec",
  "ui",
  "util",
@@ -3762,7 +3760,6 @@ name = "copilot_chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "collections",
  "dirs 4.0.0",
  "fs",
@@ -4930,6 +4927,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 name = "dev_container"
 version = "0.1.0"
 dependencies = [
+ "fs",
  "futures 0.3.31",
  "gpui",
  "http 1.3.1",
@@ -4939,6 +4937,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "picker",
+ "project",
  "serde",
  "serde_json",
  "settings",
@@ -4946,6 +4945,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]
@@ -14867,7 +14867,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
- "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -17247,9 +17247,11 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "release_channel",
  "remote",
  "rpc",
  "schemars",
+ "semver",
  "serde",
  "settings",
  "smallvec",
