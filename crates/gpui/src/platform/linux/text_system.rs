@@ -241,7 +241,7 @@ impl CosmicTextSystemState {
         for (font_id, postscript_name) in families {
             let font = self
                 .font_system
-                .get_font(font_id)
+                .get_font(font_id, cosmic_text::Weight::NORMAL)
                 .context("Could not load font")?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
@@ -380,7 +380,10 @@ impl CosmicTextSystemState {
         {
             FontId(ix)
         } else {
-            let font = self.font_system.get_font(id).unwrap();
+            let font = self
+                .font_system
+                .get_font(id, cosmic_text::Weight::NORMAL)
+                .unwrap();
             let face = self.font_system.db().face(id).unwrap();
 
             let font_id = FontId(self.loaded_fonts.len());
@@ -431,6 +434,7 @@ impl CosmicTextSystemState {
             None,
             &mut layout_lines,
             None,
+            cosmic_text::Hinting::Disabled,
         );
         let layout = layout_lines.first().unwrap();
 

@@ -5,6 +5,7 @@ Report issues to: [https://github.com/zed-extensions/kotlin/issues](https://gith
 
 - Tree-sitter: [fwcd/tree-sitter-kotlin](https://github.com/fwcd/tree-sitter-kotlin)
 - Language Server: [fwcd/kotlin-language-server](https://github.com/fwcd/kotlin-language-server)
+- Alternate Language Server: [kotlin/kotlin-lsp](https://github.com/kotlin/kotlin-lsp)
 
 ## Configuration
 

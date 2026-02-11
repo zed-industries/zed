@@ -11,6 +11,7 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
+use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
@@ -44,6 +45,10 @@ impl SweepAi {
         inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let privacy_mode_enabled = all_language_settings(None, cx)
+            .edit_predictions
+            .sweep
+            .privacy_mode;
         let debug_info = self.debug_info.clone();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
@@ -197,8 +202,7 @@ impl SweepAi {
                 retrieval_chunks,
                 recent_user_actions,
                 use_bytes: true,
-                // TODO
-                privacy_mode_enabled: false,
+                privacy_mode_enabled,
             };
 
             let mut buf: Vec<u8> = Vec::new();

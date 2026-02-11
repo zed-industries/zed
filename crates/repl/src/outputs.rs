@@ -255,6 +255,11 @@ impl Output {
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
+        let max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -272,7 +277,8 @@ impl Output {
         h_flex()
             .id("output-content")
             .w_full()
-            .when(needs_horizontal_scroll, |el| el.overflow_x_scroll())
+            .when_some(max_width, |this, max_w| this.max_w(max_w))
+            .overflow_x_scroll()
             .items_start()
             .child(
                 div()
@@ -383,16 +389,13 @@ impl Output {
         cx: &mut App,
     ) -> Self {
         match data.richest(rank_mime_type) {
-            Some(MimeType::Json(json_object)) => {
-                let json_value = serde_json::Value::Object(json_object.clone());
-                match JsonView::from_value(json_value) {
-                    Ok(json_view) => Output::Json {
-                        content: cx.new(|_| json_view),
-                        display_id,
-                    },
-                    Err(_) => Output::Message("Failed to parse JSON".to_string()),
-                }
-            }
+            Some(MimeType::Json(json_value)) => match JsonView::from_value(json_value.clone()) {
+                Ok(json_view) => Output::Json {
+                    content: cx.new(|_| json_view),
+                    display_id,
+                },
+                Err(_) => Output::Message("Failed to parse JSON".to_string()),
+            },
             Some(MimeType::Plain(text)) => Output::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,

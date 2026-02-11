@@ -958,8 +958,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input);
-            let handled = !result.propagate || result.default_prevented;
+            let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));
 
             if handled {

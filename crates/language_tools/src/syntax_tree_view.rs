@@ -1,5 +1,8 @@
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
+use editor::{
+    Anchor, Editor, ExcerptId, HighlightKey, MultiBufferOffset, SelectionEffects,
+    scroll::Autoscroll,
+};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -218,9 +221,8 @@ impl SyntaxTreeView {
             if state.editor == editor {
                 return;
             }
-            editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx)
-            });
+            let key = HighlightKey::SyntaxTreeView(cx.entity_id().as_u64() as usize);
+            editor.update(cx, |editor, cx| editor.clear_background_highlights(key, cx));
         }
 
         let subscription = cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
@@ -482,8 +484,8 @@ impl SyntaxTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background_key::<Self>(
-            key,
+        editor.highlight_background_key(
+            HighlightKey::SyntaxTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,
             cx,
@@ -491,9 +493,9 @@ impl SyntaxTreeView {
     }
 
     fn clear_editor_highlights(editor: &Entity<Editor>, cx: &mut Context<Self>) {
-        let highlight_key = cx.entity_id().as_u64() as usize;
+        let highlight_key = HighlightKey::SyntaxTreeView(cx.entity_id().as_u64() as usize);
         editor.update(cx, |editor, cx| {
-            editor.clear_background_highlights_key::<Self>(highlight_key, cx);
+            editor.clear_background_highlights(highlight_key, cx);
         });
     }
 }

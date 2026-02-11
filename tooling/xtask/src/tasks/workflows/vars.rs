@@ -46,6 +46,9 @@ secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
 secret!(VERCEL_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
+secret!(R2_ACCOUNT_ID);
+secret!(R2_ACCESS_KEY_ID);
+secret!(R2_SECRET_ACCESS_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);

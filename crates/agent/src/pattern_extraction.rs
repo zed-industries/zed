@@ -1,5 +1,11 @@
-use crate::shell_parser::extract_commands;
+use shell_command_parser::extract_commands;
+use std::path::{Path, PathBuf};
 use url::Url;
+
+/// Normalize path separators to forward slashes for consistent cross-platform patterns.
+fn normalize_separators(path_str: &str) -> String {
+    path_str.replace('\\', "/")
+}
 
 /// Extracts the command name from a shell command using the shell parser.
 ///
@@ -41,21 +47,62 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
 }
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
-    let parent = std::path::Path::new(path).parent()?;
-    let parent_str = parent.to_str()?;
+    let parent = Path::new(path).parent()?;
+    let parent_str = normalize_separators(parent.to_str()?);
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
-    Some(format!("^{}/", regex::escape(parent_str)))
+    Some(format!("^{}/", regex::escape(&parent_str)))
 }
 
 pub fn extract_path_pattern_display(path: &str) -> Option<String> {
-    let parent = std::path::Path::new(path).parent()?;
-    let parent_str = parent.to_str()?;
+    let parent = Path::new(path).parent()?;
+    let parent_str = normalize_separators(parent.to_str()?);
     if parent_str.is_empty() || parent_str == "/" {
         return None;
     }
     Some(format!("{}/", parent_str))
+}
+
+fn common_parent_dir(path_a: &str, path_b: &str) -> Option<PathBuf> {
+    let parent_a = Path::new(path_a).parent()?;
+    let parent_b = Path::new(path_b).parent()?;
+
+    let components_a: Vec<_> = parent_a.components().collect();
+    let components_b: Vec<_> = parent_b.components().collect();
+
+    let common_count = components_a
+        .iter()
+        .zip(components_b.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    if common_count == 0 {
+        return None;
+    }
+
+    let common: PathBuf = components_a[..common_count].iter().collect();
+    Some(common)
+}
+
+pub fn extract_copy_move_pattern(input: &str) -> Option<String> {
+    let (source, dest) = input.split_once('\n')?;
+    let common = common_parent_dir(source, dest)?;
+    let common_str = normalize_separators(common.to_str()?);
+    if common_str.is_empty() || common_str == "/" {
+        return None;
+    }
+    Some(format!("^{}/", regex::escape(&common_str)))
+}
+
+pub fn extract_copy_move_pattern_display(input: &str) -> Option<String> {
+    let (source, dest) = input.split_once('\n')?;
+    let common = common_parent_dir(source, dest)?;
+    let common_str = normalize_separators(common.to_str()?);
+    if common_str.is_empty() || common_str == "/" {
+        return None;
+    }
+    Some(format!("{}/", common_str))
 }
 
 pub fn extract_url_pattern(url: &str) -> Option<String> {
@@ -169,5 +216,57 @@ mod tests {
             extract_url_pattern("https://test.example.com/path"),
             Some("^https?://test\\.example\\.com".to_string())
         );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_same_directory() {
+        assert_eq!(
+            extract_copy_move_pattern(
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/src/new.rs"
+            ),
+            Some("^/Users/alice/project/src/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_sibling_directories() {
+        assert_eq!(
+            extract_copy_move_pattern(
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/dst/new.rs"
+            ),
+            Some("^/Users/alice/project/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_no_common_prefix() {
+        assert_eq!(
+            extract_copy_move_pattern("/home/file.txt\n/tmp/file.txt"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_relative_paths() {
+        assert_eq!(
+            extract_copy_move_pattern("src/old.rs\nsrc/new.rs"),
+            Some("^src/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_display() {
+        assert_eq!(
+            extract_copy_move_pattern_display(
+                "/Users/alice/project/src/old.rs\n/Users/alice/project/dst/new.rs"
+            ),
+            Some("/Users/alice/project/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_copy_move_pattern_no_arrow() {
+        assert_eq!(extract_copy_move_pattern("just/a/path.rs"), None);
+        assert_eq!(extract_copy_move_pattern_display("just/a/path.rs"), None);
     }
 }

@@ -209,7 +209,7 @@ async fn resolve_dynamic_schema(
 
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
-            let lsp_name = rest
+            let lsp_path = rest
                 .and_then(|r| {
                     r.strip_prefix(
                         LSP_SETTINGS_SCHEMA_URL_PREFIX
@@ -219,6 +219,26 @@ async fn resolve_dynamic_schema(
                     )
                 })
                 .context("Invalid LSP schema path")?;
+
+            // Parse the schema type from the path:
+            // - "rust-analyzer/initialization_options" → initialization_options_schema
+            // - "rust-analyzer/settings" → settings_schema
+            enum LspSchemaKind {
+                InitializationOptions,
+                Settings,
+            }
+            let (lsp_name, schema_kind) = if let Some(adapter_name) =
+                lsp_path.strip_suffix("/initialization_options")
+            {
+                (adapter_name, LspSchemaKind::InitializationOptions)
+            } else if let Some(adapter_name) = lsp_path.strip_suffix("/settings") {
+                (adapter_name, LspSchemaKind::Settings)
+            } else {
+                anyhow::bail!(
+                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    lsp_path
+                );
+            };
 
             let adapter = languages
                 .all_lsp_adapters()
@@ -246,15 +266,19 @@ async fn resolve_dynamic_schema(
                     "either LSP store is not in local mode or no worktree is available"
                 ))?;
 
-            adapter
-                .initialization_options_schema(&delegate, cx)
-                .await
-                .unwrap_or_else(|| {
-                    serde_json::json!({
-                        "type": "object",
-                        "additionalProperties": true
-                    })
+            let schema = match schema_kind {
+                LspSchemaKind::InitializationOptions => {
+                    adapter.initialization_options_schema(&delegate, cx).await
+                }
+                LspSchemaKind::Settings => adapter.settings_schema(&delegate, cx).await,
+            };
+
+            schema.unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "object",
+                    "additionalProperties": true
                 })
+            })
         }
         "settings" => {
             let lsp_adapter_names = languages

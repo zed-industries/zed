@@ -93,8 +93,8 @@ async fn test_current_state(cx: &mut TestAppContext) {
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
 
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
 
     // Prediction for diagnostic in another file
@@ -1125,16 +1125,18 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            cx,
         );
     });
 
@@ -1164,12 +1166,13 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     );
 
     // Reaching batch size limit sends without debounce
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         for i in 0..70 {
             ep_store.reject_prediction(
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                cx,
             );
         }
     });
@@ -1195,11 +1198,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     assert_eq!(reject_request.rejections[19].request_id, "batch-69");
 
     // Request failure
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 
@@ -1213,11 +1217,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     drop(_respond_tx);
 
     // Add another rejection
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 
@@ -1338,7 +1343,7 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
 }
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
-    zeta_prompt::format_zeta_prompt(&request.input, request.prompt_version)
+    zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
 }
 
 struct RequestChannels {
@@ -1375,7 +1380,8 @@ fn init_test_with_fake_client(
                         "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
-                            let req = serde_json::from_slice(&buf).unwrap();
+                            let decompressed = zstd::decode_all(&buf[..]).unwrap();
+                            let req = serde_json::from_slice(&decompressed).unwrap();
 
                             let (res_tx, res_rx) = oneshot::channel();
                             predict_req_tx.unbounded_send((req, res_tx)).unwrap();
@@ -2068,6 +2074,20 @@ async fn make_test_ep_store(
                             )
                             .unwrap())
                     }
+                    (&Method::POST, "/predict_edits/v3") => {
+                        next_request_id += 1;
+                        Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(
+                                serde_json::to_string(&PredictEditsV3Response {
+                                    request_id: format!("request-{next_request_id}"),
+                                    output: "hello world".to_string(),
+                                })
+                                .unwrap()
+                                .into(),
+                            )
+                            .unwrap())
+                    }
                     _ => Ok(http_client::Response::builder()
                         .status(404)
                         .body("Not Found".into())
@@ -2192,116 +2212,6 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     assert!(
         result.is_err(),
         "Without authentication and without custom URL, prediction should fail"
-    );
-}
-
-#[gpui::test]
-async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/project",
-        serde_json::json!({
-            "main.rs": "fn main() {\n    \n}\n"
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-
-    let predict_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let predict_called_clone = predict_called.clone();
-
-    let http_client = FakeHttpClient::create({
-        move |req| {
-            let uri = req.uri().path().to_string();
-            let predict_called = predict_called_clone.clone();
-            async move {
-                if uri.contains("predict") {
-                    predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
-                    Ok(gpui::http_client::Response::builder()
-                        .body(
-                            serde_json::to_string(&open_ai::Response {
-                                id: "test-123".to_string(),
-                                object: "chat.completion".to_string(),
-                                created: 0,
-                                model: "test".to_string(),
-                                usage: open_ai::Usage {
-                                    prompt_tokens: 0,
-                                    completion_tokens: 0,
-                                    total_tokens: 0,
-                                },
-                                choices: vec![open_ai::Choice {
-                                    index: 0,
-                                    message: open_ai::RequestMessage::Assistant {
-                                        content: Some(open_ai::MessageContent::Plain(
-                                            indoc! {"
-                                                ```main.rs
-                                                <|start_of_file|>
-                                                <|editable_region_start|>
-                                                fn main() {
-                                                    println!(\"Hello, world!\");
-                                                }
-                                                <|editable_region_end|>
-                                                ```
-                                            "}
-                                            .to_string(),
-                                        )),
-                                        tool_calls: vec![],
-                                    },
-                                    finish_reason: Some("stop".to_string()),
-                                }],
-                            })
-                            .unwrap()
-                            .into(),
-                        )
-                        .unwrap())
-                } else {
-                    Ok(gpui::http_client::Response::builder()
-                        .status(401)
-                        .body("Unauthorized".into())
-                        .unwrap())
-                }
-            }
-        }
-    });
-
-    let client =
-        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
-    cx.update(|cx| {
-        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
-    });
-
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            let path = project
-                .find_project_path(path!("/project/main.rs"), cx)
-                .unwrap();
-            project.open_buffer(path, cx)
-        })
-        .await
-        .unwrap();
-
-    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_buffer(&buffer, &project, cx)
-    });
-    cx.background_executor.run_until_parked();
-
-    let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
-        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
-    });
-
-    let _ = completion_task.await;
-
-    assert!(
-        predict_called.load(std::sync::atomic::Ordering::SeqCst),
-        "With custom URL, predict endpoint should be called even without authentication"
     );
 }
 
