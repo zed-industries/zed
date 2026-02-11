@@ -102,6 +102,8 @@ pub(crate) fn bundle_mac(
             .add_step(steps::setup_node())
             .add_step(steps::setup_sentry())
             .add_step(steps::clear_target_dir_if_large(runners::Platform::Mac))
+            .add_step(steps::install_cargo_mtime(Platform::Mac))
+            .add_step(steps::run_cargo_mtime(Platform::Mac))
             .add_step(bundle_mac(arch))
             .add_step(upload_artifact(&format!(
                 "target/{arch}-apple-darwin/release/{artifact_name}"
@@ -152,6 +154,8 @@ pub(crate) fn bundle_linux(
             })
             .add_step(steps::setup_sentry())
             .map(steps::install_linux_dependencies)
+            .add_step(steps::install_cargo_mtime_for_arch(Platform::Linux, arch))
+            .add_step(steps::run_cargo_mtime(Platform::Linux))
             .add_step(steps::script("./script/bundle-linux"))
             .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
             .add_step(upload_artifact(&format!(
@@ -191,6 +195,8 @@ pub(crate) fn bundle_windows(
                 job.add_step(set_release_channel(platform, release_channel))
             })
             .add_step(steps::setup_sentry())
+            .add_step(steps::install_cargo_mtime(Platform::Windows))
+            .add_step(steps::run_cargo_mtime(Platform::Windows))
             .add_step(bundle_windows(arch))
             .add_step(upload_artifact(&format!("target/{artifact_name}")))
             .add_step(upload_artifact(&format!(

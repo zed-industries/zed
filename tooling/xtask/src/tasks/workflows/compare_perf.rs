@@ -55,6 +55,8 @@ pub fn run_perf(
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(runners::Platform::Linux))
             .map(steps::install_linux_dependencies)
+            .add_step(steps::install_cargo_mtime(runners::Platform::Linux))
+            .add_step(steps::run_cargo_mtime(runners::Platform::Linux))
             .add_step(install_hyperfine())
             .add_step(steps::git_checkout(base))
             .add_step(cargo_perf_test(base, crate_name))

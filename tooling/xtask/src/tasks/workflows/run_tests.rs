@@ -374,6 +374,8 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_sccache(platform))
+            .add_step(steps::install_cargo_mtime(platform))
+            .add_step(steps::run_cargo_mtime(platform))
             .add_step(steps::clippy(platform))
             .add_step(steps::show_sccache_stats(platform)),
     }
@@ -428,6 +430,8 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 |job| job.add_step(steps::cargo_install_nextest()),
             )
             .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(steps::install_cargo_mtime(platform))
+            .add_step(steps::run_cargo_mtime(platform))
             .when(filter_packages, |job| {
                 job.add_step(
                     steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),

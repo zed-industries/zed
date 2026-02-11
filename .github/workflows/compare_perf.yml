@@ -34,6 +34,12 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: install_cargo_mtime
+      run: |-
+        mkdir -p target
+        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-unknown-linux-musl-v0.1.2.tar.gz" | tar xz -C target
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: compare_perf::run_perf::install_hyperfine
       uses: taiki-e/install-action@hyperfine
     - name: steps::git_checkout

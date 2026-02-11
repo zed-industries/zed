@@ -34,6 +34,12 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: install_cargo_mtime
+      run: |-
+        mkdir -p target
+        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-aarch64-unknown-linux-musl-v0.1.2.tar.gz" | tar xz -C target
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
     - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
@@ -73,6 +79,12 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: install_cargo_mtime
+      run: |-
+        mkdir -p target
+        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-unknown-linux-musl-v0.1.2.tar.gz" | tar xz -C target
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
     - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
@@ -117,6 +129,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
+    - name: install_cargo_mtime
+      run: |-
+        mkdir -p target
+        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-aarch64-apple-darwin-v0.1.2.tar.gz" | tar xz -C target
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
@@ -161,6 +179,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
+    - name: install_cargo_mtime
+      run: |-
+        mkdir -p target
+        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-aarch64-apple-darwin-v0.1.2.tar.gz" | tar xz -C target
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
@@ -203,6 +227,16 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: install_cargo_mtime
+      run: |-
+        New-Item -ItemType Directory -Path "target" -Force
+        Invoke-WebRequest -Uri "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-pc-windows-msvc-v0.1.2.tar.gz" -OutFile "target/cargo-mtime.tar.gz"
+        tar xzf target/cargo-mtime.tar.gz -C target
+        Remove-Item target/cargo-mtime.tar.gz
+      shell: pwsh
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime.exe . target/cargo-mtime.db
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
@@ -247,6 +281,16 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: install_cargo_mtime
+      run: |-
+        New-Item -ItemType Directory -Path "target" -Force
+        Invoke-WebRequest -Uri "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-pc-windows-msvc-v0.1.2.tar.gz" -OutFile "target/cargo-mtime.tar.gz"
+        tar xzf target/cargo-mtime.tar.gz -C target
+        Remove-Item target/cargo-mtime.tar.gz
+      shell: pwsh
+    - name: run_cargo_mtime
+      run: ./target/cargo-mtime.exe . target/cargo-mtime.db
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh
