@@ -21,8 +21,6 @@ pub struct PredictEditsV3Request {
     pub input: zeta_prompt::ZetaPromptInput,
     #[serde(default)]
     pub trigger: PredictEditsRequestTrigger,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefill: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

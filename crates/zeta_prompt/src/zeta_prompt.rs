@@ -198,13 +198,13 @@ fn format_zeta_prompt_with_budget(
     prompt
 }
 
-pub fn get_prefill(input: &ZetaPromptInput, version: ZetaVersion) -> String {
-    match version {
-        ZetaVersion::V0112MiddleAtEnd
-        | ZetaVersion::V0113Ordered
-        | ZetaVersion::V0114180EditableRegion
-        | ZetaVersion::V0120GitMergeMarkers
-        | ZetaVersion::V0131GitMergeMarkersPrefix => v0113_ordered::get_prefill(input),
+pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix => v0113_ordered::get_prefill(input),
     }
 }
 
