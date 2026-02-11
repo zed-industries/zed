@@ -66,7 +66,7 @@ impl AgentTool for OpenTool {
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
         let context = crate::ToolPermissionContext {
             tool_name: Self::NAME.to_string(),
-            input_value: input.path_or_url.clone(),
+            input_values: vec![input.path_or_url.clone()],
         };
         let authorize =
             event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);

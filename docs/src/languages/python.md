@@ -190,35 +190,60 @@ For most projects, Zed will automatically select the right Python toolchain. In 
 
 ## Code Formatting & Linting
 
-Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for Python code. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Both formatting and linting are enabled by default, including format-on-save.
+Zed uses [Ruff](https://github.com/astral-sh/ruff) for formatting and linting Python code. Specifically, it runs Ruff as an LSP server using the `ruff server` subcommand.
 
-### Configuring formatting
+### Configuring Formatting
 
-You can disable format-on-save for Python files in your `settings.json`:
+Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      }
+    }
+  }
+}
+```
+
+These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase:
+
+```json [settings]
+{
+  "languages": {
+    "Python": {
+      "code_actions_on_format": {
+        // Phase 1: Ruff still handles organize imports
+        "source.organizeImports.ruff": true
+      },
+      "formatter": {
+        // Phase 2: Black handles formatting
+        "external": {
+          "command": "black",
+          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
+        }
+      }
+    }
+  }
+}
+```
+
+To completely switch to another tool and prevent Ruff from modifying your code at all, you must explicitly set `source.organizeImports.ruff` to false in the `code_actions_on_format` section, in addition to changing the formatter.
+
+To prevent any formatting actions when you save, you can disable format-on-save for Python files in your `settings.json`:
 
 ```json [settings]
 {
   "languages": {
     "Python": {
       "format_on_save": "off"
-    }
-  }
-}
-```
-
-Alternatively, you can use the `black` command-line tool for Python formatting, while keeping Ruff enabled for linting:
-
-```json [settings]
-{
-  "languages": {
-    "Python": {
-      "formatter": {
-        "external": {
-          "command": "black",
-          "arguments": ["--stdin-filename", "{buffer_path}", "-"]
-        }
-      }
-      // Or use `"formatter": null` to disable formatting entirely.
     }
   }
 }

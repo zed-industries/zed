@@ -1158,6 +1158,7 @@ impl Buffer {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn build_snapshot(
         text: Rope,
         language: Option<Arc<Language>>,
@@ -1300,6 +1301,7 @@ impl Buffer {
         })
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn preview_edits(
         &self,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
@@ -3794,6 +3796,10 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
         self.syntax
             .layers_for_range(range, &self.text, include_hidden)
+    }
+
+    pub fn syntax_layers_languages(&self) -> impl Iterator<Item = &Arc<Language>> {
+        self.syntax.languages(&self, true)
     }
 
     pub fn smallest_syntax_layer_containing<D: ToOffset>(

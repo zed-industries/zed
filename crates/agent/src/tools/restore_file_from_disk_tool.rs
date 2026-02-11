@@ -1,4 +1,8 @@
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
+};
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::FxHashSet;
 use futures::FutureExt as _;
@@ -7,10 +11,12 @@ use language::Buffer;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use settings::Settings;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Discards unsaved changes in open buffers by reloading file contents from disk.
 ///
@@ -63,10 +69,73 @@ impl AgentTool for RestoreFileFromDiskTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
+        let settings = AgentSettings::get_global(cx);
+        let mut confirmation_paths: Vec<String> = Vec::new();
+
+        for path in &input.paths {
+            let path_str = path.to_string_lossy();
+            let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
+            match decision {
+                ToolPermissionDecision::Allow => {
+                    if is_sensitive_settings_path(Path::new(&*path_str)) {
+                        confirmation_paths.push(path_str.to_string());
+                    }
+                }
+                ToolPermissionDecision::Deny(reason) => {
+                    return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                }
+                ToolPermissionDecision::Confirm => {
+                    confirmation_paths.push(path_str.to_string());
+                }
+            }
+        }
+
+        let authorize = if !confirmation_paths.is_empty() {
+            let title = if confirmation_paths.len() == 1 {
+                format!(
+                    "Restore {} from disk",
+                    MarkdownInlineCode(&confirmation_paths[0])
+                )
+            } else {
+                let paths: Vec<_> = confirmation_paths
+                    .iter()
+                    .take(3)
+                    .map(|p| p.as_str())
+                    .collect();
+                if confirmation_paths.len() > 3 {
+                    format!(
+                        "Restore {}, and {} more from disk",
+                        paths.join(", "),
+                        confirmation_paths.len() - 3
+                    )
+                } else {
+                    format!("Restore {} from disk", paths.join(", "))
+                }
+            };
+            let sensitive_kind = confirmation_paths
+                .iter()
+                .find_map(|p| sensitive_settings_kind(Path::new(p)));
+            let title = match sensitive_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
+            };
+            let context = crate::ToolPermissionContext {
+                tool_name: Self::NAME.to_string(),
+                input_values: confirmation_paths,
+            };
+            Some(event_stream.authorize(title, context, cx))
+        } else {
+            None
+        };
+
         let project = self.project.clone();
         let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
             let mut buffers_to_reload: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
             let mut restored_paths: Vec<PathBuf> = Vec::new();
@@ -189,6 +258,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            AgentSettings::override_global(settings, cx);
         });
     }
 

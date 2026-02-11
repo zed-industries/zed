@@ -102,14 +102,12 @@ jobs:
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
-        check_pattern "run_nix" '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
     outputs:
       changed_packages: ${{ steps.filter.outputs.changed_packages }}
       run_action_checks: ${{ steps.filter.outputs.run_action_checks }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
-      run_nix: ${{ steps.filter.outputs.run_nix }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -156,8 +154,19 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats; exit 0
       shell: pwsh
     timeout-minutes: 60
   clippy_linux:
@@ -185,8 +194,17 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_mac:
     needs:
@@ -207,8 +225,17 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   run_tests_windows:
     needs:
@@ -225,6 +252,14 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -234,6 +269,9 @@ jobs:
       shell: pwsh
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -266,6 +304,13 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -276,6 +321,8 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -308,6 +355,13 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -318,6 +372,8 @@ jobs:
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -348,10 +404,19 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - id: run_doctests
       name: run_tests::doctests::run_doctests
       run: |
         cargo test --workspace --doc --no-fail-fast
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -382,10 +447,19 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: cargo build -p collab
       run: cargo build -p collab
     - name: cargo build --workspace --bins --examples
       run: cargo build --workspace --bins --examples
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
@@ -517,89 +591,6 @@ jobs:
           exit 1
         fi
     timeout-minutes: 60
-  build_nix_linux_x86_64:
-    needs:
-    - orchestrate
-    if: needs.orchestrate.outputs.run_nix == 'true'
-    runs-on: namespace-profile-32x64-ubuntu-2004
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
-      GIT_LFS_SKIP_SMUDGE: '1'
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        clean: false
-    - name: steps::cache_nix_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: nix
-    - name: nix_build::build_nix::install_nix
-      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-      with:
-        github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - name: nix_build::build_nix::cachix_action
-      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
-      with:
-        name: zed
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        cachixArgs: -v
-        pushFilter: -zed-editor-[0-9.]*-nightly
-    - name: nix_build::build_nix::build
-      run: nix build .#debug -L --accept-flake-config
-    timeout-minutes: 60
-    continue-on-error: true
-  build_nix_mac_aarch64:
-    needs:
-    - orchestrate
-    if: needs.orchestrate.outputs.run_nix == 'true'
-    runs-on: namespace-profile-mac-large
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
-      GIT_LFS_SKIP_SMUDGE: '1'
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      with:
-        clean: false
-    - name: steps::cache_nix_store_macos
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        path: ~/nix-cache
-    - name: nix_build::build_nix::install_nix
-      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
-      with:
-        github_access_token: ${{ secrets.GITHUB_TOKEN }}
-    - name: nix_build::build_nix::configure_local_nix_cache
-      run: |
-        mkdir -p ~/nix-cache
-        echo "extra-substituters = file://$HOME/nix-cache?priority=10" | sudo tee -a /etc/nix/nix.conf
-        echo "require-sigs = false" | sudo tee -a /etc/nix/nix.conf
-        sudo launchctl kickstart -k system/org.nixos.nix-daemon
-    - name: nix_build::build_nix::cachix_action
-      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
-      with:
-        name: zed
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        cachixArgs: -v
-        pushFilter: -zed-editor-[0-9.]*-nightly
-    - name: nix_build::build_nix::build
-      run: nix build .#debug -L --accept-flake-config
-    - name: nix_build::build_nix::export_to_local_nix_cache
-      if: always()
-      run: |
-        if [ -L result ]; then
-          echo "Copying build closure to local binary cache..."
-          nix copy --to "file://$HOME/nix-cache" ./result || echo "Warning: nix copy to local cache failed"
-        else
-          echo "No build result found, skipping cache export."
-        fi
-    timeout-minutes: 60
-    continue-on-error: true
   check_postgres_and_protobuf_migrations:
     needs:
     - orchestrate
@@ -654,8 +645,6 @@ jobs:
     - check_docs
     - check_licenses
     - check_scripts
-    - build_nix_linux_x86_64
-    - build_nix_mac_aarch64
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -683,8 +672,6 @@ jobs:
         check_result "check_docs" "${{ needs.check_docs.result }}"
         check_result "check_licenses" "${{ needs.check_licenses.result }}"
         check_result "check_scripts" "${{ needs.check_scripts.result }}"
-        check_result "build_nix_linux_x86_64" "${{ needs.build_nix_linux_x86_64.result }}"
-        check_result "build_nix_mac_aarch64" "${{ needs.build_nix_mac_aarch64.result }}"
 
         exit $EXIT_CODE
 concurrency:
