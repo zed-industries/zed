@@ -185,6 +185,7 @@ impl Render for TitleBar {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
                     title_bar
+                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
@@ -193,7 +194,6 @@ impl Render for TitleBar {
                                 title_bar.child(menu)
                             },
                         )
-                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .children(self.render_restricted_mode(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar

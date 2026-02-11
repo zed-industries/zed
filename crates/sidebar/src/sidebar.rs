@@ -1011,6 +1011,7 @@ impl Render for Sidebar {
                     .when(cfg!(target_os = "macos"), |this| {
                         this.pl(px(TRAFFIC_LIGHT_PADDING))
                     })
+                    .when(cfg!(not(target_os = "macos")), |this| this.pl_2())
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
