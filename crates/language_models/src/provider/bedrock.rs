@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -48,6 +47,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::util::parse_tool_arguments;
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -1099,12 +1099,8 @@ pub fn map_to_language_model_completion_events(
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
-                                let input = if tool_use.input_json.is_empty() {
-                                    Value::Null
-                                } else {
-                                    serde_json::Value::from_str(&tool_use.input_json)
-                                        .unwrap_or(Value::Null)
-                                };
+                                let input = parse_tool_arguments(&tool_use.input_json)
+                                    .unwrap_or_else(|_| Value::Object(Default::default()));
 
                                 Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {
