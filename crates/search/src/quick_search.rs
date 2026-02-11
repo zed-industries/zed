@@ -258,6 +258,29 @@ impl Focusable for QuickSearch {
 }
 
 impl QuickSearch {
+    fn subscribe_filter_editor_refresh(
+        editor: &Arc<dyn ErasedEditor>,
+        quick_search: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        editor.subscribe(
+            Box::new(move |event, window, cx| {
+                if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
+                    quick_search
+                        .update(cx, |quick_search, cx| {
+                            quick_search.picker.update(cx, |picker, cx| {
+                                picker.refresh(window, cx);
+                            });
+                        })
+                        .log_err();
+                }
+            }),
+            window,
+            cx,
+        )
+    }
+
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
@@ -335,42 +358,13 @@ impl QuickSearch {
                 this.save_history(cx);
                 cx.emit(DismissEvent);
             }),
-            included_files_editor.subscribe(
-                Box::new({
-                    let this_handle = this_handle.clone();
-                    move |event, window, cx| {
-                        if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
-                            this_handle
-                                .update(cx, |this, cx| {
-                                    this.picker.update(cx, |picker, cx| {
-                                        picker.refresh(window, cx);
-                                    });
-                                })
-                                .log_err();
-                        }
-                    }
-                }),
+            Self::subscribe_filter_editor_refresh(
+                &included_files_editor,
+                this_handle.clone(),
                 window,
                 cx,
             ),
-            excluded_files_editor.subscribe(
-                Box::new({
-                    let this_handle = this_handle;
-                    move |event, window, cx| {
-                        if matches!(event, ui_input::ErasedEditorEvent::BufferEdited) {
-                            this_handle
-                                .update(cx, |this, cx| {
-                                    this.picker.update(cx, |picker, cx| {
-                                        picker.refresh(window, cx);
-                                    });
-                                })
-                                .log_err();
-                        }
-                    }
-                }),
-                window,
-                cx,
-            ),
+            Self::subscribe_filter_editor_refresh(&excluded_files_editor, this_handle, window, cx),
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 if window.is_window_active() && !this.focus_handle.contains_focused(window, cx) {
                     this.save_history(cx);
@@ -1635,7 +1629,6 @@ impl QuickSearchDelegate {
 
             let multi_buffer_snapshot = multi_buffer.read(cx);
             if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
-                // Highlight the entire row (including gutter)
                 let row_anchor = editor::Anchor::in_buffer(excerpt_id, anchor_range.start);
                 editor.highlight_rows::<SearchMatchLineHighlight>(
                     row_anchor..row_anchor,
@@ -1644,7 +1637,6 @@ impl QuickSearchDelegate {
                     cx,
                 );
 
-                // Highlight the match itself
                 let highlight_range =
                     editor::Anchor::range_in_buffer(excerpt_id, anchor_range.clone());
 
@@ -1680,6 +1672,46 @@ impl QuickSearchDelegate {
         Ok(PathMatcher::new(&queries, path_style)?)
     }
 
+    fn clear_panel_error(&mut self, panel: InputPanel, cx: &mut Context<Picker<Self>>) {
+        if self.panels_with_errors.remove(&panel).is_some() {
+            cx.notify();
+        }
+    }
+
+    fn set_panel_error(
+        &mut self,
+        panel: InputPanel,
+        message: String,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if self.panels_with_errors.insert(panel, message).is_none() {
+            cx.notify();
+        }
+    }
+
+    fn path_matcher_for_panel(
+        &mut self,
+        panel: InputPanel,
+        editor: &Arc<dyn ErasedEditor>,
+        cx: &mut Context<Picker<Self>>,
+    ) -> PathMatcher {
+        if !self.filters_enabled {
+            self.clear_panel_error(panel, cx);
+            return PathMatcher::default();
+        }
+
+        match self.parse_path_matches(editor.text(cx), cx) {
+            Ok(path_matcher) => {
+                self.clear_panel_error(panel, cx);
+                path_matcher
+            }
+            Err(error) => {
+                self.set_panel_error(panel, error.to_string(), cx);
+                PathMatcher::default()
+            }
+        }
+    }
+
     fn build_search_query(
         &mut self,
         query: &str,
@@ -1691,63 +1723,12 @@ impl QuickSearchDelegate {
             return None;
         }
 
-        let files_to_include = if self.filters_enabled {
-            let include_text = self.included_files_editor.text(cx);
-            match self.parse_path_matches(include_text, cx) {
-                Ok(matcher) => {
-                    if self
-                        .panels_with_errors
-                        .remove(&InputPanel::Include)
-                        .is_some()
-                    {
-                        cx.notify();
-                    }
-                    matcher
-                }
-                Err(e) => {
-                    if self
-                        .panels_with_errors
-                        .insert(InputPanel::Include, e.to_string())
-                        .is_none()
-                    {
-                        cx.notify();
-                    }
-                    PathMatcher::default()
-                }
-            }
-        } else {
-            self.panels_with_errors.remove(&InputPanel::Include);
-            PathMatcher::default()
-        };
-
-        let files_to_exclude = if self.filters_enabled {
-            let exclude_text = self.excluded_files_editor.text(cx);
-            match self.parse_path_matches(exclude_text, cx) {
-                Ok(matcher) => {
-                    if self
-                        .panels_with_errors
-                        .remove(&InputPanel::Exclude)
-                        .is_some()
-                    {
-                        cx.notify();
-                    }
-                    matcher
-                }
-                Err(e) => {
-                    if self
-                        .panels_with_errors
-                        .insert(InputPanel::Exclude, e.to_string())
-                        .is_none()
-                    {
-                        cx.notify();
-                    }
-                    PathMatcher::default()
-                }
-            }
-        } else {
-            self.panels_with_errors.remove(&InputPanel::Exclude);
-            PathMatcher::default()
-        };
+        let included_files_editor = self.included_files_editor.clone();
+        let excluded_files_editor = self.excluded_files_editor.clone();
+        let files_to_include =
+            self.path_matcher_for_panel(InputPanel::Include, &included_files_editor, cx);
+        let files_to_exclude =
+            self.path_matcher_for_panel(InputPanel::Exclude, &excluded_files_editor, cx);
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
@@ -2445,7 +2426,6 @@ impl PickerDelegate for QuickSearchDelegate {
 
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
 
-        // Get syntax highlighting from the buffer
         {
             let line_start_abs = search_match.range.start - search_match.relative_range.start;
             let visible_start_abs = line_start_abs + trim_offset;
