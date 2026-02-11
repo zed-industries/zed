@@ -2355,7 +2355,7 @@ impl Vim {
             let start = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
                 .range(
                     &snapshot,

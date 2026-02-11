@@ -6,23 +6,26 @@ use crate::{
     cursor_excerpt::{editable_and_context_ranges_for_cursor_position, guess_token_count},
     prediction::EditPredictionResult,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use cloud_llm_client::{
     PredictEditsBody, PredictEditsGitInfo, PredictEditsRequestTrigger, PredictEditsResponse,
 };
+use edit_prediction_types::PredictedCursorPosition;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task};
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset, ToPoint as _, text_diff,
 };
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
+use text::Bias;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
-use zeta_prompt::{Event, ZetaPromptInput};
-
-const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
-const START_OF_FILE_MARKER: &str = "<|start_of_file|>";
-const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>";
-const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
+use zeta_prompt::{
+    Event, ZetaPromptInput,
+    zeta1::{
+        CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
+        START_OF_FILE_MARKER,
+    },
+};
 
 pub(crate) const MAX_CONTEXT_TOKENS: usize = 150;
 pub(crate) const MAX_REWRITE_TOKENS: usize = 350;
@@ -78,17 +81,12 @@ pub(crate) fn request_prediction_with_zeta1(
         cx,
     );
 
-    let (uri, require_auth) = match &store.custom_predict_edits_url {
-        Some(custom_url) => (custom_url.clone(), false),
-        None => {
-            match client
-                .http_client()
-                .build_zed_llm_url("/predict_edits/v2", &[])
-            {
-                Ok(url) => (url.into(), true),
-                Err(err) => return Task::ready(Err(err)),
-            }
-        }
+    let uri = match client
+        .http_client()
+        .build_zed_llm_url("/predict_edits/v2", &[])
+    {
+        Ok(url) => Arc::from(url),
+        Err(err) => return Task::ready(Err(err)),
     };
 
     cx.spawn(async move |this, cx| {
@@ -124,11 +122,12 @@ pub(crate) fn request_prediction_with_zeta1(
             client,
             llm_token,
             app_version,
-            require_auth,
+            true,
         )
         .await;
 
         let context_start_offset = context_range.start.to_offset(&snapshot);
+        let context_start_row = context_range.start.row;
         let editable_offset_range = editable_range.to_offset(&snapshot);
 
         let inputs = ZetaPromptInput {
@@ -142,6 +141,7 @@ pub(crate) fn request_prediction_with_zeta1(
             editable_range_in_excerpt: (editable_range.start - context_start_offset)
                 ..(editable_offset_range.end - context_start_offset),
             cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot) - context_start_offset,
+            excerpt_start_row: Some(context_start_row),
         };
 
         if let Some(debug_tx) = &debug_tx {
@@ -261,7 +261,7 @@ fn process_completion_response(
                 let output_excerpt = output_excerpt.clone();
                 let editable_range = editable_range.clone();
                 let snapshot = snapshot.clone();
-                async move { parse_edits(output_excerpt, editable_range, &snapshot) }
+                async move { parse_edits(output_excerpt.as_ref(), editable_range, &snapshot) }
             })
             .await?
             .into();
@@ -272,6 +272,7 @@ fn process_completion_response(
             &buffer,
             &snapshot,
             edits,
+            None,
             buffer_snapshotted_at,
             received_response_at,
             inputs,
@@ -281,8 +282,8 @@ fn process_completion_response(
     })
 }
 
-fn parse_edits(
-    output_excerpt: Arc<str>,
+pub(crate) fn parse_edits(
+    output_excerpt: &str,
     editable_range: Range<usize>,
     snapshot: &BufferSnapshot,
 ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
@@ -292,8 +293,8 @@ fn parse_edits(
         .match_indices(EDITABLE_REGION_START_MARKER)
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        start_markers.len() == 1,
-        "expected exactly one start marker, found {}",
+        start_markers.len() <= 1,
+        "expected at most one start marker, found {}",
         start_markers.len()
     );
 
@@ -301,8 +302,8 @@ fn parse_edits(
         .match_indices(EDITABLE_REGION_END_MARKER)
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        end_markers.len() == 1,
-        "expected exactly one end marker, found {}",
+        end_markers.len() <= 1,
+        "expected at most one end marker, found {}",
         end_markers.len()
     );
 
@@ -315,16 +316,17 @@ fn parse_edits(
         sof_markers.len()
     );
 
-    let codefence_start = start_markers[0].0;
-    let content = &content[codefence_start..];
+    let content_start = start_markers
+        .first()
+        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len() + 1) // +1 to skip \n after marker
+        .unwrap_or(0);
+    let content_end = end_markers
+        .first()
+        .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
+        .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
 
-    let newline_ix = content.find('\n').context("could not find newline")?;
-    let content = &content[newline_ix + 1..];
-
-    let codefence_end = content
-        .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-        .context("could not find end marker")?;
-    let new_text = &content[..codefence_end];
+    // if there is a single newline between markers, content_start will be 1 more than content_end. .min ensures empty slice in that case
+    let new_text = &content[content_start.min(content_end)..content_end];
 
     let old_text = snapshot
         .text_for_range(editable_range.clone())
@@ -344,9 +346,52 @@ pub fn compute_edits(
     offset: usize,
     snapshot: &BufferSnapshot,
 ) -> Vec<(Range<Anchor>, Arc<str>)> {
-    text_diff(&old_text, new_text)
-        .into_iter()
-        .map(|(mut old_range, new_text)| {
+    compute_edits_and_cursor_position(old_text, new_text, offset, None, snapshot).0
+}
+
+pub fn compute_edits_and_cursor_position(
+    old_text: String,
+    new_text: &str,
+    offset: usize,
+    cursor_offset_in_new_text: Option<usize>,
+    snapshot: &BufferSnapshot,
+) -> (
+    Vec<(Range<Anchor>, Arc<str>)>,
+    Option<PredictedCursorPosition>,
+) {
+    let diffs = text_diff(&old_text, new_text);
+
+    // Delta represents the cumulative change in byte count from all preceding edits.
+    // new_offset = old_offset + delta, so old_offset = new_offset - delta
+    let mut delta: isize = 0;
+    let mut cursor_position: Option<PredictedCursorPosition> = None;
+
+    let edits = diffs
+        .iter()
+        .map(|(raw_old_range, new_text)| {
+            // Compute cursor position if it falls within or before this edit.
+            if let (Some(cursor_offset), None) = (cursor_offset_in_new_text, cursor_position) {
+                let edit_start_in_new = (raw_old_range.start as isize + delta) as usize;
+                let edit_end_in_new = edit_start_in_new + new_text.len();
+
+                if cursor_offset < edit_start_in_new {
+                    let cursor_in_old = (cursor_offset as isize - delta) as usize;
+                    cursor_position = Some(PredictedCursorPosition::at_anchor(
+                        snapshot.anchor_after(offset + cursor_in_old),
+                    ));
+                } else if cursor_offset < edit_end_in_new {
+                    let offset_within_insertion = cursor_offset - edit_start_in_new;
+                    cursor_position = Some(PredictedCursorPosition::new(
+                        snapshot.anchor_before(offset + raw_old_range.start),
+                        offset_within_insertion,
+                    ));
+                }
+
+                delta += new_text.len() as isize - raw_old_range.len() as isize;
+            }
+
+            // Compute the edit with prefix/suffix trimming.
+            let mut old_range = raw_old_range.clone();
             let old_slice = &old_text[old_range.clone()];
 
             let prefix_len = common_prefix(old_slice.chars(), new_text.chars());
@@ -369,7 +414,17 @@ pub fn compute_edits(
             };
             (range, new_text)
         })
-        .collect()
+        .collect();
+
+    if let (Some(cursor_offset), None) = (cursor_offset_in_new_text, cursor_position) {
+        let cursor_in_old = (cursor_offset as isize - delta) as usize;
+        let buffer_offset = snapshot.clip_offset(offset + cursor_in_old, Bias::Right);
+        cursor_position = Some(PredictedCursorPosition::at_anchor(
+            snapshot.anchor_after(buffer_offset),
+        ));
+    }
+
+    (edits, cursor_position)
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -455,6 +510,10 @@ pub fn gather_context(
             })
         }
     })
+}
+
+pub(crate) fn prompt_for_events(events: &[Arc<Event>], max_tokens: usize) -> String {
+    prompt_for_events_impl(events, max_tokens).0
 }
 
 fn prompt_for_events_impl(events: &[Arc<Event>], mut remaining_tokens: usize) -> (String, usize) {
@@ -658,5 +717,20 @@ mod tests {
                 let mut rng = rand::thread_rng();
             ```"#}
         );
+    }
+
+    #[gpui::test]
+    fn test_parse_edits_empty_editable_region(cx: &mut App) {
+        let text = "fn foo() {\n    let x = 42;\n}\n";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let output = "<|editable_region_start|>\n<|editable_region_end|>";
+        let editable_range = 0..text.len();
+        let edits = parse_edits(output, editable_range, &snapshot).unwrap();
+        assert_eq!(edits.len(), 1);
+        let (range, new_text) = &edits[0];
+        assert_eq!(range.to_offset(&snapshot), 0..text.len(),);
+        assert_eq!(new_text.as_ref(), "");
     }
 }

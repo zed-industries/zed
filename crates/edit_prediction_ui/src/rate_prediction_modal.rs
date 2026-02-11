@@ -1,17 +1,24 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
-use editor::{Editor, ExcerptRange, MultiBuffer};
+use editor::{Editor, ExcerptRange, Inlay, MultiBuffer};
 use feature_flags::FeatureFlag;
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
 };
-use language::{LanguageRegistry, Point, language_settings};
+use language::{Buffer, CodeLabel, LanguageRegistry, Point, ToOffset, language_settings};
 use markdown::{Markdown, MarkdownStyle};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, InlayId,
+};
 use settings::Settings as _;
+use std::rc::Rc;
 use std::{fmt::Write, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
+    Tooltip, prelude::*,
+};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -47,6 +54,7 @@ pub struct RatePredictionsModal {
     focus_handle: FocusHandle,
     _subscription: gpui::Subscription,
     current_view: RatePredictionView,
+    failure_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 struct ActivePrediction {
@@ -106,6 +114,7 @@ impl RatePredictionsModal {
                 editor
             }),
             current_view: RatePredictionView::SuggestedEdits,
+            failure_mode_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -348,9 +357,9 @@ impl RatePredictionsModal {
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);
-                editor.buffer().update(cx, |multibuffer, cx| {
+                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    multibuffer.push_excerpts(
+                    let excerpt_ids = multibuffer.push_excerpts(
                         new_buffer,
                         vec![ExcerptRange {
                             context: start..end,
@@ -359,7 +368,33 @@ impl RatePredictionsModal {
                         cx,
                     );
                     multibuffer.add_diff(diff, cx);
+                    excerpt_ids.into_iter().next()
                 });
+
+                if let Some((excerpt_id, cursor_position)) =
+                    excerpt_id.zip(prediction.cursor_position.as_ref())
+                {
+                    let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                    if let Some(buffer_snapshot) =
+                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
+                    {
+                        let cursor_offset = prediction
+                            .edit_preview
+                            .anchor_to_offset_in_result(cursor_position.anchor)
+                            + cursor_position.offset;
+                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+
+                        if let Some(anchor) =
+                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
+                        {
+                            editor.splice_inlays(
+                                &[InlayId::EditPrediction(0)],
+                                vec![Inlay::edit_prediction(0, anchor, "▏")],
+                                cx,
+                            );
+                        }
+                    }
+                }
             });
 
             let mut formatted_inputs = String::new();
@@ -419,6 +454,7 @@ impl RatePredictionsModal {
                     editor.set_show_indent_guides(false, cx);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.set_placeholder_text("Add your feedback…", window, cx);
+                    editor.set_completion_provider(Some(Rc::new(FeedbackCompletionProvider)));
                     if focus {
                         cx.focus_self(window);
                     }
@@ -613,6 +649,40 @@ impl RatePredictionsModal {
                         ),
                 )
                 .when(!rated, |this| {
+                    let modal = cx.entity().downgrade();
+                    let failure_mode_menu =
+                        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                            FeedbackCompletionProvider::FAILURE_MODES
+                                .iter()
+                                .fold(menu, |menu, (key, description)| {
+                                    let key: SharedString = (*key).into();
+                                    let description: SharedString = (*description).into();
+                                    let modal = modal.clone();
+                                    menu.entry(
+                                        format!("{} {}", key, description),
+                                        None,
+                                        move |window, cx| {
+                                            if let Some(modal) = modal.upgrade() {
+                                                modal.update(cx, |this, cx| {
+                                                    if let Some(active) = &this.active_prediction {
+                                                        active.feedback_editor.update(
+                                                            cx,
+                                                            |editor, cx| {
+                                                                editor.set_text(
+                                                                    format!("{} {}", key, description),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    )
+                                })
+                        });
+
                     this.child(
                         h_flex()
                             .p_2()
@@ -620,19 +690,33 @@ impl RatePredictionsModal {
                             .border_y_1()
                             .border_color(border_color)
                             .child(
-                                Icon::new(IconName::Info)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
+                                DropdownMenu::new(
+                                        "failure-mode-dropdown",
+                                        "Issue",
+                                        failure_mode_menu,
+                                    )
+                                    .handle(self.failure_mode_menu_handle.clone())
+                                    .style(ui::DropdownStyle::Outlined)
+                                    .trigger_size(ButtonSize::Compact),
                             )
                             .child(
-                                div().w_full().pr_2().flex_wrap().child(
-                                    Label::new(concat!(
-                                        "Explain why this completion is good or bad. ",
-                                        "If it's negative, describe what you expected instead."
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                ),
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Info)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        div().flex_wrap().child(
+                                            Label::new(concat!(
+                                                "Explain why this completion is good or bad. ",
+                                                "If it's negative, describe what you expected instead."
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                    ),
                             ),
                     )
                 })
@@ -839,20 +923,21 @@ impl Render for RatePredictionsModal {
                     .border_color(border_color)
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .child(
+                    .child({
+                        let icons = self.ep_store.read(cx).icons();
                         h_flex()
                             .h_8()
                             .px_2()
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
-                            .child(Icon::new(IconName::ZedPredict).size(IconSize::Small))
+                            .child(Icon::new(icons.base).size(IconSize::Small))
                             .child(
                                 Label::new("From most recent to oldest")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
-                            ),
-                    )
+                            )
+                    })
                     .child(
                         div()
                             .id("completion_list")
@@ -879,7 +964,11 @@ impl Render for RatePredictionsModal {
                     ),
             )
             .children(self.render_active_completion(window, cx))
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.failure_mode_menu_handle.is_deployed() {
+                    cx.emit(DismissEvent);
+                }
+            }))
     }
 }
 
@@ -907,5 +996,111 @@ fn format_time_ago(elapsed: Duration) -> String {
         "1 day".to_string()
     } else {
         format!("{} days", seconds / 86400)
+    }
+}
+
+struct FeedbackCompletionProvider;
+
+impl FeedbackCompletionProvider {
+    const FAILURE_MODES: &'static [(&'static str, &'static str)] = &[
+        ("@location", "Unexpected location"),
+        ("@malformed", "Incomplete, cut off, or syntax error"),
+        (
+            "@deleted",
+            "Deleted code that should be kept (use `@reverted` if it undid a recent edit)",
+        ),
+        ("@style", "Wrong coding style or conventions"),
+        ("@repetitive", "Repeated existing code"),
+        ("@hallucinated", "Referenced non-existent symbols"),
+        ("@formatting", "Wrong indentation or structure"),
+        ("@aggressive", "Changed more than expected"),
+        ("@conservative", "Too cautious, changed too little"),
+        ("@context", "Ignored or misunderstood context"),
+        ("@reverted", "Undid recent edits"),
+        ("@cursor_position", "Cursor placed in unhelpful position"),
+        ("@whitespace", "Unwanted whitespace or newline changes"),
+    ];
+}
+
+impl editor::CompletionProvider for FeedbackCompletionProvider {
+    fn completions(
+        &self,
+        _excerpt_id: editor::ExcerptId,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> gpui::Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let buffer = buffer.read(cx);
+        let mut count_back = 0;
+
+        for char in buffer.reversed_chars_at(buffer_position) {
+            if char.is_ascii_alphanumeric() || char == '_' || char == '@' {
+                count_back += 1;
+            } else {
+                break;
+            }
+        }
+
+        let start_anchor = buffer.anchor_before(
+            buffer_position
+                .to_offset(&buffer)
+                .saturating_sub(count_back),
+        );
+
+        let replace_range = start_anchor..buffer_position;
+        let snapshot = buffer.text_snapshot();
+        let query: String = snapshot.text_for_range(replace_range.clone()).collect();
+
+        if !query.starts_with('@') {
+            return gpui::Task::ready(Ok(vec![CompletionResponse {
+                completions: vec![],
+                display_options: CompletionDisplayOptions {
+                    dynamic_width: true,
+                },
+                is_incomplete: false,
+            }]));
+        }
+
+        let query_lower = query.to_lowercase();
+
+        let completions: Vec<Completion> = Self::FAILURE_MODES
+            .iter()
+            .filter(|(key, _description)| key.starts_with(&query_lower))
+            .map(|(key, description)| Completion {
+                replace_range: replace_range.clone(),
+                new_text: format!("{} {}", key, description),
+                label: CodeLabel::plain(format!("{}: {}", key, description), None),
+                documentation: None,
+                source: CompletionSource::Custom,
+                icon_path: None,
+                match_start: None,
+                snippet_deduplication_key: None,
+                insert_text_mode: None,
+                confirm: None,
+            })
+            .collect();
+
+        gpui::Task::ready(Ok(vec![CompletionResponse {
+            completions,
+            display_options: CompletionDisplayOptions {
+                dynamic_width: true,
+            },
+            is_incomplete: false,
+        }]))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut Context<Editor>,
+    ) -> bool {
+        text.chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '@')
     }
 }

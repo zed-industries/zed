@@ -335,26 +335,21 @@ impl SearchQuery {
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
     ) -> Result<bool> {
         let query_str = self.as_str();
-        let needle_len = query_str.len();
-        if needle_len == 0 {
-            return Ok(false);
-        }
-        if self.as_str().is_empty() {
+        if query_str.is_empty() {
             return Ok(false);
         }
 
-        let mut text = String::new();
-        let mut bytes_read = 0;
         // Yield from this function every 20KB scanned.
         const YIELD_THRESHOLD: usize = 20 * 1024;
+
         match self {
             Self::Text { search, .. } => {
+                let mut text = String::new();
                 if query_str.contains('\n') {
                     reader.read_to_string(&mut text)?;
                     Ok(search.is_match(&text))
                 } else {
-                    // Yield from this function every 20KB scanned.
-                    const YIELD_THRESHOLD: usize = 20 * 1024;
+                    let mut bytes_read = 0;
                     while reader.read_line(&mut text)? > 0 {
                         if search.is_match(&text) {
                             return Ok(true);
@@ -372,13 +367,12 @@ impl SearchQuery {
             Self::Regex {
                 regex, multiline, ..
             } => {
+                let mut text = String::new();
                 if *multiline {
-                    if let Err(err) = reader.read_to_string(&mut text) {
-                        Err(err.into())
-                    } else {
-                        Ok(regex.is_match(&text)?)
-                    }
+                    reader.read_to_string(&mut text)?;
+                    Ok(regex.is_match(&text)?)
                 } else {
+                    let mut bytes_read = 0;
                     while reader.read_line(&mut text)? > 0 {
                         if regex.is_match(&text)? {
                             return Ok(true);

@@ -194,13 +194,16 @@ impl BatchingOpenAiClient {
         max_tokens: u64,
         messages: Vec<RequestMessage>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<OpenAiResponse>> {
         let response = self.lookup(model, max_tokens, &messages, seed)?;
         if let Some(response) = response {
             return Ok(Some(response));
         }
 
-        self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        if !cache_only {
+            self.mark_for_batch(model, max_tokens, &messages, seed)?;
+        }
 
         Ok(None)
     }
@@ -643,6 +646,7 @@ impl OpenAiClient {
         max_tokens: u64,
         messages: Vec<RequestMessage>,
         seed: Option<usize>,
+        cache_only: bool,
     ) -> Result<Option<OpenAiResponse>> {
         match self {
             OpenAiClient::Plain(plain_client) => plain_client
@@ -651,7 +655,7 @@ impl OpenAiClient {
                 .map(Some),
             OpenAiClient::Batch(batching_client) => {
                 batching_client
-                    .generate(model, max_tokens, messages, seed)
+                    .generate(model, max_tokens, messages, seed, cache_only)
                     .await
             }
             OpenAiClient::Dummy => panic!("Dummy OpenAI client is not expected to be used"),

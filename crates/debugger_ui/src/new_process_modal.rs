@@ -21,18 +21,14 @@ use gpui::{
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
-use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
+use task::{DebugScenario, RevealTarget, SharedTaskContext, VariableName, ZedDebugConfig};
 use ui::{
     ContextMenu, DropdownMenu, IconWithIndicator, Indicator, KeyBinding, ListItem, ListItemSpacing,
     Switch, SwitchLabelPosition, ToggleButtonGroup, ToggleButtonSimple, ToggleState, Tooltip,
     prelude::*,
 };
 use ui_input::InputField;
-use util::{
-    ResultExt, debug_panic,
-    rel_path::RelPath,
-    shell::{PosixShell, ShellKind},
-};
+use util::{ResultExt, debug_panic, rel_path::RelPath, shell::ShellKind};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{
@@ -375,7 +371,11 @@ impl NewProcessModal {
             return;
         };
 
-        let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+        let task_context = task_contexts
+            .active_context()
+            .cloned()
+            .unwrap_or_default()
+            .into();
         let worktree_id = task_contexts.worktree();
         let mode = self.mode;
         cx.spawn_in(window, async move |this, cx| {
@@ -874,8 +874,7 @@ impl ConfigureMode {
             };
         }
         let command = self.program.read(cx).text(cx);
-        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
-        let mut args = ShellKind::Posix(PosixShell::Sh)
+        let mut args = ShellKind::Posix
             .split(&command)
             .into_iter()
             .flatten()
@@ -1297,14 +1296,13 @@ impl PickerDelegate for DebugDelegate {
             .as_ref()
             .and_then(|task_contexts| {
                 Some((
-                    task_contexts.active_context().cloned()?,
+                    SharedTaskContext::from(task_contexts.active_context().cloned()?),
                     task_contexts.worktree(),
                 ))
             })
             .unwrap_or_default();
 
-        // TODO: Consider using the user's actual shell instead of hardcoding "sh"
-        let mut args = ShellKind::Posix(PosixShell::Sh)
+        let mut args = ShellKind::Posix
             .split(&text)
             .into_iter()
             .flatten()
@@ -1424,7 +1422,7 @@ impl PickerDelegate for DebugDelegate {
                 .as_ref()
                 .and_then(|task_contexts| {
                     Some(DebugScenarioContext {
-                        task_context: task_contexts.active_context().cloned()?,
+                        task_context: task_contexts.active_context().cloned()?.into(),
                         active_buffer: None,
                         worktree_id: task_contexts.worktree(),
                     })

@@ -1,8 +1,8 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor};
+use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::{panel_button, panel_editor_style};
+use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{

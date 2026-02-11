@@ -2,11 +2,11 @@ use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnostics
 use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
 use project::project_settings::DiagnosticSeverity;
-use search::buffer_search;
 use text::{Anchor, BufferId};
 use ui::{IconButtonShape, Tooltip, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
 use zed_actions::assistant::InlineAssist;
+use zed_actions::buffer_search;
 
 pub struct ToolbarControls {
     editor: Option<Box<dyn DiagnosticsToolbarEditor>>,

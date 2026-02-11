@@ -331,7 +331,7 @@ pub fn deploy_context_menu(
             cx,
         ),
         None => {
-            let character_size = editor.character_dimensions(window);
+            let character_size = editor.character_dimensions(window, cx);
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
                 offset: gpui::point(character_size.em_width, character_size.line_height),

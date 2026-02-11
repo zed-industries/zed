@@ -1,3 +1,4 @@
+mod extension;
 mod known_or_unknown;
 mod plan;
 mod timestamp;
@@ -5,6 +6,7 @@ pub mod websocket_protocol;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::extension::*;
 pub use crate::known_or_unknown::*;
 pub use crate::plan::*;
 pub use crate::timestamp::Timestamp;
