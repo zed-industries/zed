@@ -36,18 +36,11 @@ impl ThreadTaskTimings {
             .map(|(thread_id, timings)| {
                 let timings = timings.lock();
                 let thread_name = timings.thread_name.clone();
-                let timings = &timings.timings;
-
-                let mut vec = Vec::with_capacity(timings.len());
-
-                let (s1, s2) = timings.as_slices();
-                vec.extend_from_slice(s1);
-                vec.extend_from_slice(s2);
 
                 ThreadTaskTimings {
                     thread_name,
                     thread_id,
-                    timings: vec,
+                    timings: timings.timings.iter().cloned().collect(),
                 }
             })
             .collect()
