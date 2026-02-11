@@ -894,7 +894,7 @@ pub mod zeta1 {
 
         let extracted = &content[content_start..content_end];
 
-        let cursor_offset = output.find(CURSOR_MARKER).and_then(|zeta1_cursor_pos| {
+        let cursor_offset = output.find(CURSOR_MARKER).map(|zeta1_cursor_pos| {
             let text_before_cursor = output[..zeta1_cursor_pos].replace(CURSOR_MARKER, "");
             let text_before_cursor = text_before_cursor
                 .find(EDITABLE_REGION_START_MARKER)
@@ -910,7 +910,7 @@ pub mod zeta1 {
             let offset_in_extracted = zeta1_cursor_pos
                 .saturating_sub(text_before_cursor)
                 .min(extracted.len());
-            Some(offset_in_extracted)
+            offset_in_extracted
         });
 
         let mut result = String::with_capacity(extracted.len() + super::CURSOR_MARKER.len());
