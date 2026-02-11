@@ -1002,11 +1002,11 @@ impl BufferSearchBar {
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let is_collapsed = self.is_collapsed;
         if let Some(item) = &self.active_searchable_item {
             if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
                 let editor = item.downcast::<Editor>().expect("Is an editor");
                 editor.update(cx, |editor, cx| {
+                    let is_collapsed = self.is_collapsed || editor.has_any_buffer_folded(cx);
                     if is_collapsed {
                         editor.unfold_all(&UnfoldAll, window, cx);
                     } else {
