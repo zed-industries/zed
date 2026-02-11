@@ -8,7 +8,10 @@ use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
-use workspace::{Workspace, notifications::NotificationId};
+use workspace::{
+    Workspace,
+    notifications::{NotificationId, NotificationSource},
+};
 
 use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
@@ -99,6 +102,7 @@ pub fn install_ipykernel_and_assign(
                     notification_id.clone(),
                     format!("Installing ipykernel in {}...", env_name),
                 ),
+                NotificationSource::Project,
                 cx,
             );
         });
@@ -137,6 +141,7 @@ pub fn install_ipykernel_and_assign(
                                     format!("ipykernel installed in {}", env_name),
                                 )
                                 .autohide(),
+                                NotificationSource::Project,
                                 cx,
                             );
                         })
@@ -167,6 +172,7 @@ pub fn install_ipykernel_and_assign(
                                         env_name, error
                                     ),
                                 ),
+                                NotificationSource::Project,
                                 cx,
                             );
                         })
