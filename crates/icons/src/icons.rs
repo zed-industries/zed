@@ -235,6 +235,7 @@ pub enum IconName {
     TextSnippet,
     TextThread,
     ThinkingMode,
+    ThinkingModeOff,
     Thread,
     ThreadFromSummary,
     ThumbsDown,
