@@ -188,7 +188,6 @@ impl Render for BufferSearchBar {
                                         .into_any()
                                 }))
                                 .on_click({
-                                    let focus_handle = focus_handle.clone();
                                     move |_, window, cx| {
                                         if window.modifiers().secondary() {
                                             update_settings_file(
