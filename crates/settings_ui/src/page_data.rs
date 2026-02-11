@@ -1263,6 +1263,7 @@ fn keymap_page() -> SettingsPage {
                         .ok();
                     window.remove_window();
                 }),
+                files: USER,
             }),
         ]
     }
@@ -6872,6 +6873,7 @@ fn collaboration_page() -> SettingsPage {
                 on_click: Arc::new(|_settings_window, window, cx| {
                     open_audio_test_window(window, cx);
                 }),
+                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Output Audio Device".into(),

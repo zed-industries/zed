@@ -1376,6 +1376,7 @@ struct ActionLink {
     description: Option<SharedString>,
     button_text: SharedString,
     on_click: Arc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) + Send + Sync>,
+    files: FileMask,
 }
 
 impl PartialEq for ActionLink {
@@ -1822,8 +1823,12 @@ impl SettingsWindow {
                             any_found_since_last_header = true;
                         }
                     }
-                    SettingsPageItem::ActionLink(_) => {
-                        any_found_since_last_header = true;
+                    SettingsPageItem::ActionLink(ActionLink { files, .. }) => {
+                        if !files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
                     }
                 }
             }
