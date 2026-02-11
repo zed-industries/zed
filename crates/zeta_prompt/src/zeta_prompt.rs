@@ -395,11 +395,29 @@ mod v0113_ordered {
         let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
         let prefill_len = editable_region.floor_char_boundary(prefill_len);
 
-        // Truncate at the last whitespace boundary to avoid splitting tokens
+        // Find a token boundary to avoid splitting tokens in the prefill.
+        // In Qwen2.5-Coder, \n is always the END of a token (e.g. `;\n`,
+        // ` {\n`), and \n\n / \n\n\n are single tokens, so we must include
+        // the \n and consume any consecutive \n characters after it.
         let prefill = &editable_region[..prefill_len];
-        match prefill.rfind([' ', '\n']) {
-            Some(pos) => prefill[..pos].to_string(),
-            None => prefill.to_string(),
+        match prefill.rfind('\n') {
+            Some(pos) => {
+                let mut end = pos + 1;
+                while end < editable_region.len()
+                    && editable_region.as_bytes().get(end) == Some(&b'\n')
+                {
+                    end += 1;
+                }
+                editable_region[..end].to_string()
+            }
+            // No newline found (single long line). Fall back to splitting
+            // before the last space -- in a single line, spaces typically
+            // separate word-level tokens (e.g. ` let`, ` value`), so this
+            // is a reasonably safe boundary.
+            None => match prefill.rfind(' ') {
+                Some(pos) => prefill[..pos].to_string(),
+                None => prefill.to_string(),
+            },
         }
     }
 }
