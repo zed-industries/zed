@@ -1908,6 +1908,11 @@ impl PickerDelegate for QuickSearchDelegate {
 
         if let Some(query) = self.pending_initial_query.borrow_mut().take() {
             editor.set_text(&query, window, cx);
+            if let Some(editor) = editor.as_any().downcast_ref::<Entity<Editor>>() {
+                editor.update(cx, |editor, cx| {
+                    editor.select_all(&editor::actions::SelectAll, window, cx);
+                });
+            }
         }
 
         v_flex()
