@@ -857,21 +857,12 @@ impl<'a> MarkdownParser<'a> {
 
         let scale = scale.unwrap_or(100).clamp(10, 500);
 
-        let content_hash = {
-            let mut hasher = collections::FxHasher::default();
-            code.hash(&mut hasher);
-            scale.hash(&mut hasher);
-            hasher.finish()
-        };
-
         Some(ParsedMarkdownMermaidDiagram {
             source_range,
-            contents: code.into(),
-            scale,
-            content_hash: Some(content_hash),
-            image_path: None,
-            error: None,
-        })
+            contents: ParsedMarkdownMermaidDiagramContents {
+                contents: code.into(),
+                scale,
+            },        })
     }
 
     async fn parse_html_block(&mut self) -> Vec<ParsedMarkdownElement> {

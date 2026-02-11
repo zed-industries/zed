@@ -2,20 +2,21 @@ use crate::markdown_elements::{
     HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
-    ParsedMarkdownMermaidDiagram, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
-    ParsedMarkdownTableRow,
+    ParsedMarkdownMermaidDiagram, ParsedMarkdownMermaidDiagramContents, ParsedMarkdownTable,
+    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
+use collections::HashMap;
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
-    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
-    ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
-    Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, BackgroundExecutor, Context, Div, Element,
+    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, Svg, Task,
+    TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
@@ -39,8 +40,30 @@ impl CheckboxClickedEvent {
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
 
+pub(crate) type MermaidDiagramCache =
+    HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
+
+pub(crate) struct CachedMermaidDiagram {
+    pub(crate) contents: Arc<OnceLock<anyhow::Result<Svg>>>,
+    _task: Task<()>,
+}
+
+impl CachedMermaidDiagram {
+    pub(crate) fn new(
+        contents: ParsedMarkdownMermaidDiagramContents,
+        cx: &BackgroundExecutor,
+    ) -> Self {
+        let contents = Arc::new(OnceLock::<anyhow::Result<Svg>>::new());
+        let _contents = contents.clone();
+        let _task = cx.spawn(async move {
+            _contents.set(Err(anyhow::anyhow!("no")));
+        });
+
+        Self { contents, _task }
+    }
+}
 #[derive(Clone)]
-pub struct RenderContext {
+pub struct RenderContext<'a> {
     workspace: Option<WeakEntity<Workspace>>,
     next_id: usize,
     buffer_font_family: SharedString,
@@ -59,14 +82,16 @@ pub struct RenderContext {
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
     is_last_child: bool,
+    mermaid_diagram_cache: &'a MermaidDiagramCache,
 }
 
-impl RenderContext {
+impl<'a> RenderContext<'a> {
     pub fn new(
         workspace: Option<WeakEntity<Workspace>>,
+        mermaid_diagram_cache: &'a MermaidDiagramCache,
         window: &mut Window,
         cx: &mut App,
-    ) -> RenderContext {
+    ) -> Self {
         let theme = cx.theme().clone();
 
         let settings = ThemeSettings::get_global(cx);
@@ -96,6 +121,7 @@ impl RenderContext {
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
             is_last_child: false,
+            mermaid_diagram_cache,
         }
     }
 
@@ -164,7 +190,8 @@ pub fn render_parsed_markdown(
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let mut cx = RenderContext::new(workspace, window, cx);
+    let cache = Default::default();
+    let mut cx = RenderContext::new(workspace, &cache, window, cx);
 
     v_flex().gap_3().children(
         parsed

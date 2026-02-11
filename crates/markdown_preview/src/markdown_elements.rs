@@ -92,11 +92,13 @@ pub struct ParsedMarkdownCodeBlock {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownMermaidDiagram {
     pub source_range: Range<usize>,
+    pub contents: ParsedMarkdownMermaidDiagramContents,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ParsedMarkdownMermaidDiagramContents {
     pub contents: SharedString,
     pub scale: u32,
-    pub content_hash: Option<u64>,
-    pub image_path: Option<PathBuf>,
-    pub error: Option<SharedString>,
 }
 
 #[derive(Debug)]

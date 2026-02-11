@@ -1,6 +1,7 @@
 use std::cmp::min;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
@@ -10,7 +11,7 @@ use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    Subscription, Svg, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -20,7 +21,7 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
-use crate::markdown_renderer::CheckboxClickedEvent;
+use crate::markdown_renderer::{CachedMermaidDiagram, CheckboxClickedEvent, MermaidDiagramCache};
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -41,8 +42,7 @@ pub struct MarkdownPreviewView {
     selected_block: usize,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
-    mermaid_cache: HashMap<u64, PathBuf>,
-    mermaid_cache_lru: VecDeque<u64>,
+    mermaid_cache: MermaidDiagramCache,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
 }
@@ -218,8 +218,7 @@ impl MarkdownPreviewView {
                 contents: None,
                 list_state,
                 language_registry,
-                mermaid_cache: HashMap::new(),
-                mermaid_cache_lru: VecDeque::new(),
+                mermaid_cache: Default::default(),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -333,7 +332,6 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let language_registry = self.language_registry.clone();
-        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |view, cx| {
             if wait_for_debounce {
@@ -353,42 +351,14 @@ impl MarkdownPreviewView {
             });
             let mut contents = parsing_task.await;
 
-            let node_runtime = workspace.upgrade().and_then(|workspace| {
-                cx.update(|_window, cx| {
-                    workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .node_runtime()
-                        .cloned()
-                        .map(Arc::new)
-                })
-                .ok()
-                .flatten()
-            });
-
-            if let Some(node_runtime) = node_runtime {
-                let cache = view
-                    .update(cx, |view, _cx| {
-                        (view.mermaid_cache.clone(), view.mermaid_cache_lru.clone())
-                    })
-                    .ok()
-                    .unwrap_or_default();
-
-                let (updated_cache, updated_lru) = MarkdownPreviewView::render_mermaid_diagrams(
-                    &mut contents,
-                    cache,
-                    node_runtime,
+            view.update(cx, |this, cx| {
+                MarkdownPreviewView::render_mermaid_diagrams(
+                    &contents,
+                    &mut this.mermaid_cache,
                     &cx,
                 )
-                .await;
-
-                view.update(cx, |view, _cx| {
-                    view.mermaid_cache = updated_cache;
-                    view.mermaid_cache_lru = updated_lru;
-                })
-                .ok();
-            }
+            })
+            .ok();
 
             view.update(cx, move |view, cx| {
                 let markdown_blocks_count = contents.children.len();
@@ -465,96 +435,19 @@ impl MarkdownPreviewView {
         block_index.unwrap_or_default()
     }
 
-    async fn render_mermaid_diagrams(
-        parsed: &mut ParsedMarkdown,
-        cache: (HashMap<u64, PathBuf>, VecDeque<u64>),
-        node_runtime: Arc<node_runtime::NodeRuntime>,
-        cx: &gpui::AsyncApp,
-    ) -> (HashMap<u64, PathBuf>, VecDeque<u64>) {
+    fn render_mermaid_diagrams(parsed: &ParsedMarkdown, cache: &mut MermaidDiagramCache, cx: &App) {
         use crate::markdown_elements::ParsedMarkdownElement;
 
-        let (mut mermaid_cache, mut cache_lru) = cache;
-        let mut render_tasks = Vec::new();
-
-        for element in parsed.children.iter_mut() {
+        let mut referenced_keys = HashSet::new();
+        for element in parsed.children.iter() {
             if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
-                let Some(content_hash) = mermaid.content_hash else {
-                    continue;
-                };
-
-                if let Some(cached_path) = mermaid_cache.get(&content_hash) {
-                    if cached_path.exists() {
-                        mermaid.image_path = Some(cached_path.clone());
-                        mermaid.error = None;
-
-                        if let Some(pos) = cache_lru.iter().position(|&h| h == content_hash) {
-                            cache_lru.remove(pos);
-                        }
-                        cache_lru.push_back(content_hash);
-                        continue;
-                    }
-                }
-
-                let contents = mermaid.contents.clone();
-                let scale = mermaid.scale;
-                let node_runtime = node_runtime.clone();
-
-                let task = cx.background_executor().spawn(async move {
-                    let result = crate::mermaid_renderer::render_mermaid_diagram(
-                        node_runtime,
-                        contents,
-                        content_hash,
-                        scale,
-                    )
-                    .await;
-                    (content_hash, result)
+                referenced_keys.insert(mermaid.contents.clone());
+                cache.entry(mermaid.contents.clone()).or_insert_with(|| {
+                    CachedMermaidDiagram::new(mermaid.contents.clone(), cx.background_executor())
                 });
-
-                render_tasks.push(task);
             }
         }
-
-        let render_results = futures::future::join_all(render_tasks).await;
-
-        for (content_hash, result) in render_results {
-            for element in parsed.children.iter_mut() {
-                if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
-                    if mermaid.content_hash == Some(content_hash) {
-                        match result {
-                            Ok(ref image_path) => {
-                                mermaid.image_path = Some(image_path.clone());
-                                mermaid.error = None;
-
-                                mermaid_cache.insert(content_hash, image_path.clone());
-
-                                if let Some(pos) = cache_lru.iter().position(|&h| h == content_hash)
-                                {
-                                    cache_lru.remove(pos);
-                                }
-                                cache_lru.push_back(content_hash);
-
-                                while cache_lru.len() > MAX_MERMAID_CACHE_SIZE {
-                                    if let Some(evicted_hash) = cache_lru.pop_front() {
-                                        if let Some(evicted_path) =
-                                            mermaid_cache.remove(&evicted_hash)
-                                        {
-                                            smol::fs::remove_file(evicted_path).await.ok();
-                                        }
-                                    }
-                                }
-                            }
-                            Err(ref err) => {
-                                mermaid.image_path = None;
-                                mermaid.error = Some(err.to_string().into());
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        (mermaid_cache, cache_lru)
+        cache.retain(|k, _| referenced_keys.contains(k));
     }
 
     fn should_apply_padding_between(
@@ -708,39 +601,35 @@ impl Render for MarkdownPreviewView {
                                 return div().into_any();
                             };
 
-                            let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
-                                    .with_checkbox_clicked_callback(cx.listener(
-                                        move |this, e: &CheckboxClickedEvent, window, cx| {
-                                            if let Some(editor) = this
-                                                .active_editor
-                                                .as_ref()
-                                                .map(|s| s.editor.clone())
-                                            {
-                                                editor.update(cx, |editor, cx| {
-                                                    let task_marker =
-                                                        if e.checked() { "[x]" } else { "[ ]" };
+                            let mut render_cx = RenderContext::new(
+                                Some(this.workspace.clone()),
+                                &this.mermaid_cache,
+                                window,
+                                cx,
+                            )
+                            .with_checkbox_clicked_callback(cx.listener(
+                                move |this, e: &CheckboxClickedEvent, window, cx| {
+                                    if let Some(editor) =
+                                        this.active_editor.as_ref().map(|s| s.editor.clone())
+                                    {
+                                        editor.update(cx, |editor, cx| {
+                                            let task_marker =
+                                                if e.checked() { "[x]" } else { "[ ]" };
 
-                                                    editor.edit(
-                                                        [(
-                                                            MultiBufferOffset(
-                                                                e.source_range().start,
-                                                            )
-                                                                ..MultiBufferOffset(
-                                                                    e.source_range().end,
-                                                                ),
-                                                            task_marker,
-                                                        )],
-                                                        cx,
-                                                    );
-                                                });
-                                                this.parse_markdown_from_active_editor(
-                                                    false, window, cx,
-                                                );
-                                                cx.notify();
-                                            }
-                                        },
-                                    ));
+                                            editor.edit(
+                                                [(
+                                                    MultiBufferOffset(e.source_range().start)
+                                                        ..MultiBufferOffset(e.source_range().end),
+                                                    task_marker,
+                                                )],
+                                                cx,
+                                            );
+                                        });
+                                        this.parse_markdown_from_active_editor(false, window, cx);
+                                        cx.notify();
+                                    }
+                                },
+                            ));
 
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
