@@ -876,6 +876,7 @@ impl AcpServerView {
                 _subscription: subscription,
             };
             if let Some(connected) = this.as_connected_mut() {
+                connected.auth_state = auth_state;
                 if let Some(view) = connected.active_view()
                     && view
                         .read(cx)

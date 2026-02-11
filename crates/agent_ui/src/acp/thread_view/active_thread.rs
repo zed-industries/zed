@@ -630,20 +630,11 @@ impl AcpThreadView {
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
+                let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
-                        let Some(connection) = server_view
-                            .update(cx, |view, _cx| {
-                                view.as_connected().map(|s| s.connection.clone())
-                            })
-                            .ok()
-                            .flatten()
-                        else {
-                            debug_panic!("This should not be possible");
-                            return;
-                        };
                         AcpServerView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
@@ -6727,18 +6718,8 @@ impl AcpThreadView {
                             editor.set_message(message, window, cx);
                         });
                     }
+                    let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
-                        let Some(connection) = server_view
-                            .update(cx, |view, _cx| {
-                                view.as_connected().map(|s| s.connection.clone())
-                            })
-                            .ok()
-                            .flatten()
-                        else {
-                            debug_panic!("This should not be possible");
-                            return;
-                        };
-
                         AcpServerView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
