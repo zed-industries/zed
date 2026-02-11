@@ -21581,7 +21581,6 @@ dependencies = [
  "tracing-subscriber",
  "tracing-tracy",
  "tracy-client",
- "tree-sitter",
  "zlog",
  "ztracing_macro",
 ]
