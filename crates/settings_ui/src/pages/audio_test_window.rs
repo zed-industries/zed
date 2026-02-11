@@ -209,6 +209,7 @@ impl Render for AudioTestWindow {
             .track_focus(&self.focus_handle)
             .size_full()
             .p_4()
+            .when(cfg!(target_os = "macos"), |this| this.pt_10())
             .gap_4()
             .bg(cx.theme().colors().editor_background)
             .child(
