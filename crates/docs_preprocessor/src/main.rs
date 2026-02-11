@@ -431,9 +431,17 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     &snippet_json_fixed,
                 )?;
             }
-            label => {
-                anyhow::bail!("Unexpected JSON code block tag: {}", label)
+            "semantic_token_rules" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<settings::SemanticTokenRules>(
+                    &snippet_json_fixed,
+                )?;
             }
+            label => anyhow::bail!("Unexpected JSON code block tag: {label}"),
         };
         Ok(())
     });

@@ -623,7 +623,7 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone())
     };
 
-    let copy_block_button = CopyButton::new(parsed.contents.clone())
+    let copy_block_button = CopyButton::new("copy-codeblock", parsed.contents.clone())
         .tooltip_label("Copy Codeblock")
         .visible_on_hover("markdown-block");
 

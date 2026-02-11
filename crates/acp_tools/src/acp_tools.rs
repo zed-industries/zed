@@ -571,7 +571,7 @@ impl Render for AcpToolsToolbarItemView {
                     .serialize_observed_messages()
                     .unwrap_or_default();
 
-                CopyButton::new(message)
+                CopyButton::new("copy-all-messages", message)
                     .tooltip_label("Copy All Messages")
                     .disabled(!has_messages)
             })

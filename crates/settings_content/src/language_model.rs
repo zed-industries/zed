@@ -2,6 +2,7 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
+use strum::EnumString;
 
 use std::sync::Arc;
 
@@ -212,13 +213,15 @@ pub struct OpenAiAvailableModel {
     pub capabilities: OpenAiModelCapabilities,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema, MergeFrom)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, EnumString, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum OpenAiReasoningEffort {
     Minimal,
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 #[with_fallible_options]

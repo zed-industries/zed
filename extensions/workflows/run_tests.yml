@@ -16,3 +16,6 @@ jobs:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}pr
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

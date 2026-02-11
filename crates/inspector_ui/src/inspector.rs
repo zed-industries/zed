@@ -1,7 +1,7 @@
 use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
+use platform_title_bar::PlatformTitleBar;
 use std::{cell::OnceCell, path::Path, sync::Arc};
-use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
 use workspace::AppState;
@@ -33,7 +33,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         app_state.languages.clone(),
         app_state.fs.clone(),
         None,
-        false,
+        project::LocalProjectFlags {
+            init_worktree_trust: false,
+            ..Default::default()
+        },
         cx,
     );
 

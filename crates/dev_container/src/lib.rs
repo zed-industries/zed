@@ -1,6 +1,7 @@
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
+use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use settings::RegisterSetting;
@@ -45,7 +46,10 @@ use devcontainer_api::read_devcontainer_configuration_for_project;
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
 
-pub use devcontainer_api::start_dev_container;
+pub use devcontainer_api::{
+    DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
+    start_dev_container_with_config,
+};
 
 #[derive(RegisterSetting)]
 struct DevContainerSettings {
@@ -279,7 +283,7 @@ impl PickerDelegate for TemplatePickerDelegate {
                     cx,
                 );
             })
-            .log_err();
+            .ok();
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
@@ -287,7 +291,7 @@ impl PickerDelegate for TemplatePickerDelegate {
             .update(cx, |modal, cx| {
                 modal.dismiss(&menu::Cancel, window, cx);
             })
-            .log_err();
+            .ok();
     }
 
     fn render_match(
@@ -444,7 +448,7 @@ impl PickerDelegate for FeaturePickerDelegate {
                 .update(cx, |modal, cx| {
                     (self.on_confirm)(self.template_entry.clone(), modal, window, cx)
                 })
-                .log_err();
+                .ok();
         } else {
             let current = &mut self.candidate_features[self.matching_indices[self.selected_index]];
             current.toggle_state = match current.toggle_state {
@@ -469,7 +473,7 @@ impl PickerDelegate for FeaturePickerDelegate {
             .update(cx, |modal, cx| {
                 modal.dismiss(&menu::Cancel, window, cx);
             })
-            .log_err();
+            .ok();
     }
 
     fn render_match(
@@ -994,7 +998,9 @@ impl StatefulModal for DevContainerModal {
         let new_state = match message {
             DevContainerMessage::SearchTemplates => {
                 cx.spawn_in(window, async move |this, cx| {
-                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Ok(client) = cx.update(|_, cx| cx.http_client()) else {
+                        return;
+                    };
                     match get_templates(client).await {
                         Ok(templates) => {
                             let message =
@@ -1002,14 +1008,14 @@ impl StatefulModal for DevContainerModal {
                             this.update_in(cx, |this, window, cx| {
                                 this.accept_message(message, window, cx);
                             })
-                            .log_err();
+                            .ok();
                         }
                         Err(e) => {
                             let message = DevContainerMessage::ErrorRetrievingTemplates(e);
                             this.update_in(cx, |this, window, cx| {
                                 this.accept_message(message, window, cx);
                             })
-                            .log_err();
+                            .ok();
                         }
                     }
                 })
@@ -1158,7 +1164,9 @@ impl StatefulModal for DevContainerModal {
             }
             DevContainerMessage::TemplateOptionsCompleted(template_entry) => {
                 cx.spawn_in(window, async move |this, cx| {
-                    let client = cx.update(|_, cx| cx.http_client()).unwrap();
+                    let Ok(client) = cx.update(|_, cx| cx.http_client()) else {
+                        return;
+                    };
                     let Some(features) = get_features(client).await.log_err() else {
                         return;
                     };
@@ -1166,7 +1174,7 @@ impl StatefulModal for DevContainerModal {
                     this.update_in(cx, |this, window, cx| {
                         this.accept_message(message, window, cx);
                     })
-                    .log_err();
+                    .ok();
                 })
                 .detach();
                 Some(DevContainerState::QueryingFeatures(template_entry))
@@ -1438,7 +1446,7 @@ fn dispatch_apply_templates(
                         cx,
                     );
                 })
-                .log_err();
+                .ok();
                 return;
             }
 
@@ -1460,7 +1468,7 @@ fn dispatch_apply_templates(
                             cx,
                         );
                     })
-                    .log_err();
+                    .ok();
                     return;
                 }
             };
@@ -1471,10 +1479,14 @@ fn dispatch_apply_templates(
             {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let path = RelPath::unix(".devcontainer/devcontainer.json").unwrap();
+                        let Ok(path) = RelPath::unix(".devcontainer/devcontainer.json") else {
+                            return Task::ready(Err(anyhow!(
+                                "Couldn't create path for .devcontainer/devcontainer.json"
+                            )));
+                        };
                         workspace.open_path((tree_id, path), None, true, window, cx)
                     })
-                    .log_err()
+                    .ok()
                 else {
                     return;
                 };
@@ -1484,7 +1496,7 @@ fn dispatch_apply_templates(
             this.update_in(cx, |this, window, cx| {
                 this.dismiss(&menu::Cancel, window, cx);
             })
-            .unwrap();
+            .ok();
         } else {
             return;
         }
@@ -1597,11 +1609,14 @@ async fn get_deserialized_response<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let request = Request::get(url)
+    let request = match Request::get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.oci.image.manifest.v1+json")
         .body(AsyncBody::default())
-        .unwrap();
+    {
+        Ok(request) => request,
+        Err(e) => return Err(format!("Failed to create request: {}", e)),
+    };
     let response = match client.send(request).await {
         Ok(response) => response,
         Err(e) => {

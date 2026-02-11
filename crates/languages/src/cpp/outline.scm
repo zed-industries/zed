@@ -51,13 +51,19 @@
         (type_qualifier)
     ]* @context
     type: (_) @context
-    declarator: (init_declarator
-      ; The declaration may define multiple variables, using @item on the
-      ; declarator so that they get distinct ranges.
-      declarator: (_) @item @name))
+    declarator: [
+        ; The declaration may define multiple variables, using @item on the
+        ; declarator so that they get distinct ranges.
+        (init_declarator
+            declarator: (_) @item @name)
+        (identifier) @item @name
+    ] @item)
 
 (function_definition
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_)? @context
     declarator: [
         (function_declarator
@@ -92,7 +98,10 @@
     (type_qualifier)? @context) @item
 
 (declaration
-    (type_qualifier)? @context
+    [
+        (storage_class_specifier)
+        (type_qualifier)
+    ]* @context
     type: (_)? @context
     declarator: [
         (field_identifier) @name

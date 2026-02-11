@@ -75,3 +75,4 @@ settings.workspace = true
 perf.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+search = { workspace = true, features = ["test-support"] }

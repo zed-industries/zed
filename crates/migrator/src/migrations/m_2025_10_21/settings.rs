@@ -1,8 +1,14 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::migrations::migrate_settings;
+
 pub fn make_relative_line_numbers_an_enum(value: &mut Value) -> Result<()> {
-    let Some(relative_line_numbers) = value.get_mut("relative_line_numbers") else {
+    migrate_settings(value, migrate_one)
+}
+
+fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {
+    let Some(relative_line_numbers) = obj.get_mut("relative_line_numbers") else {
         return Ok(());
     };
 

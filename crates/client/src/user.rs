@@ -2,10 +2,9 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
+use cloud_api_client::{GetAuthenticatedUserResponse, Plan, PlanInfo};
 use cloud_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, Plan,
-    UsageLimit,
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
 use derive_more::Deref;
@@ -669,12 +668,12 @@ impl UserStore {
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
-            use cloud_llm_client::PlanV2;
+            use cloud_api_client::Plan;
 
             return match plan.as_str() {
-                "free" => Some(Plan::V2(PlanV2::ZedFree)),
-                "trial" => Some(Plan::V2(PlanV2::ZedProTrial)),
-                "pro" => Some(Plan::V2(PlanV2::ZedPro)),
+                "free" => Some(Plan::ZedFree),
+                "trial" => Some(Plan::ZedProTrial),
+                "pro" => Some(Plan::ZedPro),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
