@@ -267,6 +267,41 @@ async fn test_toggle_block_comments_multiline_at_col0(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_block_comments_selection_ending_on_empty_line(cx: &mut TestAppContext) {
+    let mut cx = setup_rust_context(cx).await;
+
+    // Selection spanning from a non-empty line to an empty line
+    cx.set_state(indoc! {"
+        «fn main() {
+        ˇ»
+            let x = 1;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «/* fn main() {
+         */ˇ»
+            let x = 1;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        «fn main() {
+        ˇ»
+            let x = 1;
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_toggle_block_comments_empty_selection_roundtrip(cx: &mut TestAppContext) {
     let mut cx = setup_rust_context(cx).await;
 

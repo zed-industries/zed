@@ -16026,8 +16026,13 @@ impl Editor {
                 let start_point = selection.start;
                 let mut end_point = selection.end;
 
-                // Visual line mode: move end back to end of previous line
-                if end_point.column == 0 && end_point.row > start_point.row {
+                // Visual line mode: move end back to end of previous line.
+                // Only adjust when the line at end_point has content — column 0
+                // on an empty line is the actual end-of-line, not a trailing newline.
+                if end_point.column == 0
+                    && end_point.row > start_point.row
+                    && snapshot.line_len(MultiBufferRow(end_point.row)) > 0
+                {
                     end_point.row -= 1;
                     end_point.column = snapshot.line_len(MultiBufferRow(end_point.row));
                 }
