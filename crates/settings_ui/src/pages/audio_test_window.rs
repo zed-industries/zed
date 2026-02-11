@@ -10,7 +10,6 @@ use rodio::Source;
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, Settings};
 use std::{
     any::Any,
-    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -22,13 +21,13 @@ use ui::{Button, ButtonStyle, Label, prelude::*};
 use util::ResultExt;
 use workspace::client_side_decorations;
 
-use super::audio_input_output_setup::{AudioDeviceKind, render_audio_device_dropdown};
+use super::audio_input_output_setup::render_audio_device_dropdown;
 use crate::{SettingsUiFile, update_settings_file};
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    input_device_id: Option<String>,
-    output_device_id: Option<String>,
+    input_device_id: Option<DeviceId>,
+    output_device_id: Option<DeviceId>,
     focus_handle: FocusHandle,
     _stop_playback: Option<Box<dyn Any + Send>>,
 }
@@ -71,8 +70,8 @@ impl AudioTestWindow {
 }
 
 fn start_test_playback(
-    input_device_id: Option<String>,
-    output_device_id: Option<String>,
+    input_device_id: Option<DeviceId>,
+    output_device_id: Option<DeviceId>,
 ) -> anyhow::Result<Box<dyn Any + Send>> {
     let stop_signal = Arc::new(AtomicBool::new(false));
 
@@ -81,7 +80,6 @@ fn start_test_playback(
         .spawn({
             let stop_signal = stop_signal.clone();
             move || {
-                let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
                 let microphone = match open_test_microphone(input_device_id, stop_signal.clone()) {
                     Ok(mic) => mic,
                     Err(e) => {
@@ -90,7 +88,6 @@ fn start_test_playback(
                     }
                 };
 
-                let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
                 let Ok(output) = audio::open_output_stream(output_device_id) else {
                     log::error!("Could not open output device for audio test");
                     return;
@@ -152,8 +149,8 @@ impl Render for AudioTestWindow {
             let weak_entity = weak_entity.clone();
             render_audio_device_dropdown(
                 "audio-test-input-dropdown",
-                AudioDeviceKind::Input,
                 self.input_device_id.clone(),
+                true,
                 move |device_id, window, cx| {
                     weak_entity
                         .update(cx, |this, cx| {
@@ -162,7 +159,7 @@ impl Render for AudioTestWindow {
                         })
                         .log_err();
                     let value: Option<AudioInputDeviceName> =
-                        device_id.map(|id| AudioInputDeviceName(Some(id)));
+                        device_id.map(|id| AudioInputDeviceName(Some(id.to_string())));
                     update_settings_file(
                         SettingsUiFile::User,
                         Some("audio.experimental.input_audio_device"),
@@ -181,8 +178,8 @@ impl Render for AudioTestWindow {
 
         let output_dropdown = render_audio_device_dropdown(
             "audio-test-output-dropdown",
-            AudioDeviceKind::Output,
             self.output_device_id.clone(),
+            false,
             move |device_id, window, cx| {
                 weak_entity
                     .update(cx, |this, cx| {
@@ -191,7 +188,7 @@ impl Render for AudioTestWindow {
                     })
                     .log_err();
                 let value: Option<AudioOutputDeviceName> =
-                    device_id.map(|id| AudioOutputDeviceName(Some(id)));
+                    device_id.map(|id| AudioOutputDeviceName(Some(id.to_string())));
                 update_settings_file(
                     SettingsUiFile::User,
                     Some("audio.experimental.output_audio_device"),

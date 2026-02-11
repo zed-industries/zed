@@ -1,5 +1,9 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
+use cpal::DeviceId;
 use gpui::App;
 use settings::{RegisterSetting, Settings, SettingsStore};
 
@@ -41,11 +45,11 @@ pub struct AudioSettings {
     /// Requires 'rodio_audio: true'
     ///
     /// Select specific output audio device.
-    pub output_audio_device: Option<String>,
+    pub output_audio_device: Option<DeviceId>,
     /// Requires 'rodio_audio: true'
     ///
     /// Select specific input audio device.
-    pub input_audio_device: Option<String>,
+    pub input_audio_device: Option<DeviceId>,
 }
 
 /// Configuration of audio in Zed
@@ -58,8 +62,14 @@ impl Settings for AudioSettings {
             auto_speaker_volume: audio.auto_speaker_volume.unwrap(),
             denoise: audio.denoise.unwrap(),
             legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
-            output_audio_device: audio.output_audio_device.clone().and_then(|x| x.0),
-            input_audio_device: audio.input_audio_device.clone().and_then(|x| x.0),
+            output_audio_device: audio
+                .output_audio_device
+                .as_ref()
+                .and_then(|x| x.0.as_ref().and_then(|id| DeviceId::from_str(&id).ok())),
+            input_audio_device: audio
+                .input_audio_device
+                .as_ref()
+                .and_then(|x| x.0.as_ref().and_then(|id| DeviceId::from_str(&id).ok())),
         }
     }
 }

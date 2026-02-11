@@ -26,9 +26,7 @@ use rodio::{
     source::{AutomaticGainControlSettings, Buffered},
 };
 use settings::Settings;
-use std::{
-    io::Cursor, num::NonZero, path::PathBuf, str::FromStr, sync::atomic::Ordering, time::Duration,
-};
+use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
 use util::ResultExt;
 
 mod audio_settings;
@@ -250,10 +248,7 @@ impl Audio {
             })
             .replayable(REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer than 100ms");
-        let output_audio_device = AudioSettings::get_global(cx)
-            .output_audio_device
-            .as_ref()
-            .and_then(|id| DeviceId::from_str(id).ok());
+        let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
 
         cx.update_default_global(|this: &mut Self, _cx| {
             let output_mixer = this
@@ -268,10 +263,7 @@ impl Audio {
     }
 
     pub fn play_sound(sound: Sound, cx: &mut App) {
-        let output_audio_device = AudioSettings::get_global(cx)
-            .output_audio_device
-            .as_ref()
-            .and_then(|id| DeviceId::from_str(id).ok());
+        let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
         cx.update_default_global(|this: &mut Self, cx| {
             let source = this.sound_source(sound, cx).log_err()?;
             let output_mixer = this
@@ -330,8 +322,7 @@ impl VoipParts {
                 .unwrap_or(true);
         let input_audio_device =
             AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
-                .flatten()
-                .and_then(|id| DeviceId::from_str(&id).ok());
+                .flatten();
 
         Ok(Self {
             legacy_audio_compatible,
