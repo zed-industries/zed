@@ -915,10 +915,20 @@ impl AgentServerStore {
                         } else {
                             ExternalAgentSource::Custom
                         };
-                    let (icon, display_name, source) =
-                        metadata
-                            .remove(&agent_name)
-                            .unwrap_or((None, None, fallback_source));
+                    let (icon, display_name, source) = metadata
+                        .remove(&agent_name)
+                        .or_else(|| {
+                            AgentRegistryStore::try_global(cx)
+                                .and_then(|store| store.read(cx).agent(&agent_name.0))
+                                .map(|s| {
+                                    (
+                                        s.icon_path().cloned(),
+                                        Some(s.name().clone()),
+                                        ExternalAgentSource::Registry,
+                                    )
+                                })
+                        })
+                        .unwrap_or((None, None, fallback_source));
                     let source = if fallback_source == ExternalAgentSource::Builtin {
                         ExternalAgentSource::Builtin
                     } else {
