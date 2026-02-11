@@ -25,6 +25,7 @@ pub fn max_editable_tokens(format: ZetaFormat) -> usize {
         ZetaFormat::V0120GitMergeMarkers => 180,
         ZetaFormat::V0131GitMergeMarkersPrefix => 180,
         ZetaFormat::V0211Prefill => 180,
+        ZetaFormat::V0211SeedCoder => 180,
     }
 }
 

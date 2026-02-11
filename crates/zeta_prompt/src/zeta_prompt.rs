@@ -52,6 +52,7 @@ pub enum ZetaFormat {
     V0120GitMergeMarkers,
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
+    V0211SeedCoder,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -156,6 +157,9 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
         ZetaFormat::V0131GitMergeMarkersPrefix => output
             .strip_suffix(v0131_git_merge_markers_prefix::END_MARKER)
             .unwrap_or(output),
+        ZetaFormat::V0211SeedCoder => output
+            .strip_suffix(seed_coder::END_MARKER)
+            .unwrap_or(output),
         _ => output,
     }
 }
@@ -179,18 +183,28 @@ fn format_zeta_prompt_with_budget(
         ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
             v0131_git_merge_markers_prefix::write_cursor_excerpt_section(&mut cursor_section, input)
         }
+        ZetaFormat::V0211SeedCoder => {
+            return seed_coder::format_prompt_with_budget(input, max_tokens);
+        }
     }
 
     let cursor_tokens = estimate_tokens(cursor_section.len());
     let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
 
-    let edit_history_section =
-        format_edit_history_within_budget(&input.events, budget_after_cursor);
+    let edit_history_section = format_edit_history_within_budget(
+        &input.events,
+        "<|file_sep|>",
+        "edit history",
+        budget_after_cursor,
+    );
     let edit_history_tokens = estimate_tokens(edit_history_section.len());
     let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
 
-    let related_files_section =
-        format_related_files_within_budget(&input.related_files, budget_after_edit_history);
+    let related_files_section = format_related_files_within_budget(
+        &input.related_files,
+        "<|file_sep|>",
+        budget_after_edit_history,
+    );
 
     let mut prompt = String::new();
     prompt.push_str(&related_files_section);
@@ -205,13 +219,19 @@ pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
         | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix => String::new(),
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211SeedCoder => String::new(),
         ZetaFormat::V0211Prefill => v0211_prefill::get_prefill(input),
     }
 }
 
-fn format_edit_history_within_budget(events: &[Arc<Event>], max_tokens: usize) -> String {
-    let header = "<|file_sep|>edit history\n";
+fn format_edit_history_within_budget(
+    events: &[Arc<Event>],
+    file_marker: &str,
+    edit_history_name: &str,
+    max_tokens: usize,
+) -> String {
+    let header = format!("{}{}\n", file_marker, edit_history_name);
     let header_tokens = estimate_tokens(header.len());
     if header_tokens >= max_tokens {
         return String::new();
@@ -236,21 +256,25 @@ fn format_edit_history_within_budget(events: &[Arc<Event>], max_tokens: usize) -
         return String::new();
     }
 
-    let mut result = String::from(header);
+    let mut result = header;
     for event_str in event_strings.iter().rev() {
-        result.push_str(&event_str);
+        result.push_str(event_str);
     }
     result
 }
 
-fn format_related_files_within_budget(related_files: &[RelatedFile], max_tokens: usize) -> String {
+fn format_related_files_within_budget(
+    related_files: &[RelatedFile],
+    file_marker: &str,
+    max_tokens: usize,
+) -> String {
     let mut result = String::new();
     let mut total_tokens = 0;
 
     for file in related_files {
         let path_str = file.path.to_string_lossy();
-        let header_len = "<|file_sep|>".len() + path_str.len() + 1;
-        let header_tokens = estimate_tokens(header_len);
+        let header = format!("{}{}\n", file_marker, path_str);
+        let header_tokens = estimate_tokens(header.len());
 
         if total_tokens + header_tokens > max_tokens {
             break;
@@ -263,12 +287,8 @@ fn format_related_files_within_budget(related_files: &[RelatedFile], max_tokens:
             let needs_newline = !excerpt.text.ends_with('\n');
             let needs_ellipsis = excerpt.row_range.end < file.max_row;
             let excerpt_len = excerpt.text.len()
-                + if needs_newline { "\n".len() } else { "".len() }
-                + if needs_ellipsis {
-                    "...\n".len()
-                } else {
-                    "".len()
-                };
+                + if needs_newline { "\n".len() } else { 0 }
+                + if needs_ellipsis { "...\n".len() } else { 0 };
 
             let excerpt_tokens = estimate_tokens(excerpt_len);
             if total_tokens + file_tokens + excerpt_tokens > max_tokens {
@@ -280,7 +300,7 @@ fn format_related_files_within_budget(related_files: &[RelatedFile], max_tokens:
 
         if excerpts_to_include > 0 {
             total_tokens += file_tokens;
-            write!(result, "<|file_sep|>{}\n", path_str).ok();
+            result.push_str(&header);
             for excerpt in file.excerpts.iter().take(excerpts_to_include) {
                 result.push_str(&excerpt.text);
                 if !result.ends_with('\n') {
@@ -545,6 +565,130 @@ pub mod v0211_prefill {
                 None => prefill.to_string(),
             },
         }
+    }
+}
+
+pub mod seed_coder {
+    //! Seed-Coder prompt format using SPM (Suffix-Prefix-Middle) FIM mode.
+    //!
+    //! Seed-Coder uses different FIM tokens and order than Qwen:
+    //! - SPM order: suffix comes FIRST, then prefix, then middle
+    //! - Tokens: `<[fim-suffix]>`, `<[fim-prefix]>`, `<[fim-middle]>`
+    //! - File markers: StarCoder-style `<filename>path` (single token + path)
+    //!
+    //! All context (related files, edit history) goes in the PREFIX section.
+    //! The suffix contains only code after the editable region.
+    //!
+    //! Example prompt:
+    //!
+    //! <[fim-suffix]>
+    //! code after editable region
+    //! <[fim-prefix]><filename>related/file.py
+    //! related file content
+    //!
+    //! <filename>edit_history
+    //! --- a/some_file.py
+    //! +++ b/some_file.py
+    //! -old
+    //! +new
+    //!
+    //! <filename>path/to/target_file.py
+    //! code before editable region
+    //! <<<<<<< CURRENT
+    //! code that
+    //! needs to<|user_cursor|>
+    //! be rewritten
+    //! =======
+    //! <[fim-middle]>
+    //!
+    //! Expected output (model generates):
+    //!
+    //! updated
+    //! code with
+    //! changes applied
+    //! >>>>>>> UPDATED
+
+    use super::*;
+
+    pub const FIM_SUFFIX: &str = "<[fim-suffix]>";
+    pub const FIM_PREFIX: &str = "<[fim-prefix]>";
+    pub const FIM_MIDDLE: &str = "<[fim-middle]>";
+    pub const FILE_MARKER: &str = "<filename>";
+
+    pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
+    pub const SEPARATOR: &str = "=======\n";
+    pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    pub fn format_prompt_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
+        let suffix_section = build_suffix_section(input);
+        let cursor_prefix_section = build_cursor_prefix_section(input);
+
+        let suffix_tokens = estimate_tokens(suffix_section.len());
+        let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
+        let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
+
+        let edit_history_section = super::format_edit_history_within_budget(
+            &input.events,
+            FILE_MARKER,
+            "edit_history",
+            budget_after_cursor,
+        );
+        let edit_history_tokens = estimate_tokens(edit_history_section.len());
+        let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+
+        let related_files_section = super::format_related_files_within_budget(
+            &input.related_files,
+            FILE_MARKER,
+            budget_after_edit_history,
+        );
+
+        let mut prompt = String::new();
+        prompt.push_str(&suffix_section);
+        prompt.push_str(FIM_PREFIX);
+        prompt.push_str(&related_files_section);
+        if !related_files_section.is_empty() {
+            prompt.push('\n');
+        }
+        prompt.push_str(&edit_history_section);
+        if !edit_history_section.is_empty() {
+            prompt.push('\n');
+        }
+        prompt.push_str(&cursor_prefix_section);
+        prompt.push_str(FIM_MIDDLE);
+        prompt
+    }
+
+    fn build_suffix_section(input: &ZetaPromptInput) -> String {
+        let mut section = String::new();
+        section.push_str(FIM_SUFFIX);
+        section.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        if !section.ends_with('\n') {
+            section.push('\n');
+        }
+        section
+    }
+
+    fn build_cursor_prefix_section(input: &ZetaPromptInput) -> String {
+        let mut section = String::new();
+        let path_str = input.cursor_path.to_string_lossy();
+        write!(section, "{}{}\n", FILE_MARKER, path_str).ok();
+
+        section.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        section.push_str(START_MARKER);
+        section.push_str(
+            &input.cursor_excerpt
+                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
+        );
+        section.push_str(CURSOR_MARKER);
+        section.push_str(
+            &input.cursor_excerpt
+                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
+        );
+        if !section.ends_with('\n') {
+            section.push('\n');
+        }
+        section.push_str(SEPARATOR);
+        section
     }
 }
 
@@ -842,6 +986,124 @@ mod tests {
                 <|fim_suffix|>
                 <|fim_middle|>updated
             "#}
+        );
+    }
+
+    fn format_seed_coder(input: &ZetaPromptInput) -> String {
+        format_zeta_prompt_with_budget(input, ZetaFormat::V0211SeedCoder, 10000)
+    }
+
+    fn format_seed_coder_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
+        format_zeta_prompt_with_budget(input, ZetaFormat::V0211SeedCoder, max_tokens)
+    }
+
+    #[test]
+    fn test_seed_coder_basic_format() {
+        let input = make_input(
+            "prefix\neditable\nsuffix",
+            7..15,
+            10,
+            vec![make_event("a.rs", "-old\n+new\n")],
+            vec![make_related_file("related.rs", "fn helper() {}\n")],
+        );
+
+        assert_eq!(
+            format_seed_coder(&input),
+            indoc! {r#"
+                <[fim-suffix]>
+                suffix
+                <[fim-prefix]><filename>related.rs
+                fn helper() {}
+
+                <filename>edit_history
+                --- a/a.rs
+                +++ b/a.rs
+                -old
+                +new
+
+                <filename>test.rs
+                prefix
+                <<<<<<< CURRENT
+                edi<|user_cursor|>table
+                =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_seed_coder_no_context() {
+        let input = make_input("before\nmiddle\nafter", 7..13, 10, vec![], vec![]);
+
+        assert_eq!(
+            format_seed_coder(&input),
+            indoc! {r#"
+                <[fim-suffix]>
+                after
+                <[fim-prefix]><filename>test.rs
+                before
+                <<<<<<< CURRENT
+                mid<|user_cursor|>dle
+                =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_seed_coder_truncation_drops_context() {
+        let input = make_input(
+            "code",
+            0..4,
+            2,
+            vec![make_event("a.rs", "-x\n+y\n")],
+            vec![make_related_file("r1.rs", "content\n")],
+        );
+
+        // With large budget, everything is included
+        assert_eq!(
+            format_seed_coder(&input),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>r1.rs
+                content
+
+                <filename>edit_history
+                --- a/a.rs
+                +++ b/a.rs
+                -x
+                +y
+
+                <filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+
+        // With tight budget, context is dropped but cursor section remains
+        assert_eq!(
+            format_seed_coder_with_budget(&input, 30),
+            indoc! {r#"
+                <[fim-suffix]>
+                <[fim-prefix]><filename>test.rs
+                <<<<<<< CURRENT
+                co<|user_cursor|>de
+                =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_seed_coder_clean_output() {
+        let output_with_marker = "new code\n>>>>>>> UPDATED\n";
+        let output_without_marker = "new code\n";
+
+        assert_eq!(
+            clean_zeta2_model_output(output_with_marker, ZetaFormat::V0211SeedCoder),
+            "new code\n"
+        );
+        assert_eq!(
+            clean_zeta2_model_output(output_without_marker, ZetaFormat::V0211SeedCoder),
+            "new code\n"
         );
     }
 }
