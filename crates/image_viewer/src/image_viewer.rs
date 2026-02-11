@@ -6,6 +6,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
+#[cfg(target_os = "macos")]
+use gpui::MagnifyEvent;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
@@ -221,6 +223,17 @@ impl ImageView {
             self.pan_offset += delta;
             cx.notify();
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn handle_magnify(
+        &mut self,
+        event: &MagnifyEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom_factor = 1.0 + event.magnification;
+        self.set_zoom(self.zoom_level * zoom_factor, Some(event.position), cx);
     }
 
     fn handle_mouse_down(
@@ -704,6 +717,30 @@ impl Focusable for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut image_container = div()
+            .id("image-container")
+            .size_full()
+            .overflow_hidden()
+            .cursor(if self.is_dragging() {
+                gpui::CursorStyle::ClosedHand
+            } else {
+                gpui::CursorStyle::OpenHand
+            })
+            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel));
+
+        #[cfg(target_os = "macos")]
+        {
+            image_container = image_container.on_magnify(cx.listener(Self::handle_magnify));
+        }
+
+        image_container = image_container
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+            .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .child(ImageContentElement::new(cx.entity()));
+
         div()
             .track_focus(&self.focus_handle(cx))
             .key_context("ImageViewer")
@@ -715,24 +752,7 @@ impl Render for ImageView {
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
-            .child(
-                div()
-                    .id("image-container")
-                    .size_full()
-                    .overflow_hidden()
-                    .cursor(if self.is_dragging() {
-                        gpui::CursorStyle::ClosedHand
-                    } else {
-                        gpui::CursorStyle::OpenHand
-                    })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(ImageContentElement::new(cx.entity())),
-            )
+            .child(image_container)
     }
 }
 

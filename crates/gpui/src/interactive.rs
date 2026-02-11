@@ -452,6 +452,47 @@ impl Deref for ScrollWheelEvent {
     }
 }
 
+/// A trackpad magnify (pinch-to-zoom) gesture event from the platform.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, Default)]
+pub struct MagnifyEvent {
+    /// The position of the gesture on the window.
+    pub position: Point<Pixels>,
+
+    /// The incremental magnification delta.
+    /// Positive values indicate zoom in, negative values indicate zoom out.
+    /// For example, 0.02 means a 2% zoom-in increment.
+    pub magnification: f32,
+
+    /// The modifiers that were held down during the gesture.
+    pub modifiers: Modifiers,
+
+    /// The phase of the touch gesture.
+    pub touch_phase: TouchPhase,
+}
+
+#[cfg(target_os = "macos")]
+impl Sealed for MagnifyEvent {}
+
+#[cfg(target_os = "macos")]
+impl InputEvent for MagnifyEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Magnify(self)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl MouseEvent for MagnifyEvent {}
+
+#[cfg(target_os = "macos")]
+impl Deref for MagnifyEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
 /// The scroll delta for a scroll wheel event.
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
@@ -628,6 +669,9 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
+    /// A trackpad magnify (pinch-to-zoom) gesture.
+    #[cfg(target_os = "macos")]
+    Magnify(MagnifyEvent),
 }
 
 impl PlatformInput {
@@ -643,6 +687,8 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
+            #[cfg(target_os = "macos")]
+            PlatformInput::Magnify(event) => Some(event),
         }
     }
 
@@ -658,6 +704,8 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::FileDrop(_) => None,
+            #[cfg(target_os = "macos")]
+            PlatformInput::Magnify(_) => None,
         }
     }
 }

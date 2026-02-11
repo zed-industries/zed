@@ -15,6 +15,8 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
+#[cfg(target_os = "macos")]
+use crate::MagnifyEvent;
 use crate::{
     AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
@@ -348,6 +350,23 @@ impl Interactivity {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to trackpad magnify (pinch-to-zoom) gesture events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_magnify`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(target_os = "macos")]
+    pub fn on_magnify(
+        &mut self,
+        listener: impl Fn(&MagnifyEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.magnify_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx);
                 }
             }));
@@ -905,6 +924,19 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to trackpad magnify (pinch-to-zoom) gesture events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_magnify`].
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(target_os = "macos")]
+    fn on_magnify(
+        mut self,
+        listener: impl Fn(&MagnifyEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_magnify(listener);
+        self
+    }
+
     /// Capture the given action, before normal action dispatch can fire.
     /// The fluent API equivalent to [`Interactivity::capture_action`].
     ///
@@ -1290,6 +1322,10 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
+#[cfg(target_os = "macos")]
+pub(crate) type MagnifyListener =
+    Box<dyn Fn(&MagnifyEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
@@ -1644,6 +1680,8 @@ pub struct Interactivity {
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    #[cfg(target_os = "macos")]
+    pub(crate) magnify_listeners: Vec<MagnifyListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -1847,6 +1885,16 @@ impl Interactivity {
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
+            || {
+                #[cfg(target_os = "macos")]
+                {
+                    !self.magnify_listeners.is_empty()
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    false
+                }
+            }
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
@@ -2209,6 +2257,14 @@ impl Interactivity {
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
+        #[cfg(target_os = "macos")]
+        for listener in self.magnify_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &MagnifyEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
