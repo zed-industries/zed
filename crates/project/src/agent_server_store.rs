@@ -614,7 +614,6 @@ impl AgentServerStore {
             }
         }
 
-        log::error!("new settings: {:?}", new_settings);
         *old_settings = Some(new_settings);
 
         if let Some((project_id, downstream_client)) = downstream_client {
