@@ -42,6 +42,7 @@ use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -1427,6 +1428,23 @@ impl Vim {
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // If editor gains focus while search bar is still open (not dismissed),
+        // the user has explicitly navigated away - clear prior_selections so we
+        // don't restore to the old position if they later dismiss the search.
+        if !self.search.prior_selections.is_empty() {
+            if let Some(pane) = self.pane(window, cx) {
+                let search_still_open = pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .is_some_and(|bar| !bar.read(cx).is_dismissed());
+                if search_still_open {
+                    self.search.prior_selections.clear();
+                }
+            }
+        }
+
         let Some(editor) = self.editor() else {
             return;
         };
@@ -1781,14 +1799,16 @@ impl Vim {
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
-            if self.current_anchor.is_none() {
+            if let Some(current_anchor) = &self.current_anchor {
+                if current_anchor != &newest
+                    && let Some(tx_id) = self.current_tx.take()
+                {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.group_until_transaction(tx_id, cx)
+                    });
+                }
+            } else {
                 self.current_anchor = Some(newest);
-            } else if self.current_anchor.as_ref().unwrap() != &newest
-                && let Some(tx_id) = self.current_tx.take()
-            {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.group_until_transaction(tx_id, cx)
-                });
             }
         } else if self.mode == Mode::Normal && newest.start != newest.end {
             if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
@@ -2073,12 +2093,13 @@ struct VimEditorSettingsState {
     hide_edit_predictions: bool,
 }
 
-#[derive(RegisterSetting)]
+#[derive(Clone, RegisterSetting)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: settings::UseSystemClipboard,
     pub use_smartcase_find: bool,
+    pub gdefault: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
@@ -2164,6 +2185,7 @@ impl Settings for VimSettings {
             toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
             use_system_clipboard: vim.use_system_clipboard.unwrap(),
             use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            gdefault: vim.gdefault.unwrap(),
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),

@@ -288,6 +288,7 @@
       "cmd-alt-l": "agent::OpenRulesLibrary",
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "cmd-shift-j": "agent::ToggleNavigationMenu",
@@ -347,6 +348,12 @@
     },
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl--": "pane::GoBack",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -364,6 +371,10 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      "ctrl-;": "agent::OpenAddContextMenu",
+      "cmd-alt-k": "agent::ToggleThinkingMode",
+      "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {
@@ -679,6 +690,7 @@
       "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
+      "cmd-k n": "encoding_selector::Toggle",
       "cmd-k m": "language_selector::Toggle",
       "cmd-k cmd-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
@@ -1208,6 +1220,7 @@
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask",
+      "cmd->": "agent::AddSelectionToThread",
     },
   },
   {
@@ -1477,6 +1490,20 @@
     "context": "MultiProjectDropdown",
     "bindings": {
       "shift-backspace": "project_dropdown::RemoveSelectedFolder",
+    },
+  },
+  {
+    "context": "NotebookEditor",
+    "bindings": {
+      "shift-enter": "notebook::Run",
+      "cmd-enter": "notebook::Run",
+      "cmd-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "cmd-m": "notebook::AddCodeBlock",
+      "cmd-shift-m": "notebook::AddMarkdownBlock",
+      "cmd-shift-r": "notebook::RestartKernel",
+      "cmd-c": "notebook::InterruptKernel",
     },
   },
   {

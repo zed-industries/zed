@@ -123,6 +123,8 @@ actions!(
         OpenTasks,
         /// Opens debug tasks configuration.
         OpenDebugTasks,
+        /// Shows the default semantic token rules (read-only).
+        ShowDefaultSemanticTokenRules,
         /// Resets the application database.
         ResetDatabase,
         /// Shows all hidden windows.
@@ -237,6 +239,18 @@ pub fn init(cx: &mut App) {
             open_settings_file(
                 paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    })
+    .on_action(|_: &ShowDefaultSemanticTokenRules, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_semantic_token_rules(),
+                "Default Semantic Token Rules",
+                "JSONC",
                 window,
                 cx,
             );
@@ -407,7 +421,6 @@ pub fn initialize_workspace(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),
-                app_state.client.clone(),
                 workspace.project().clone(),
                 cx,
             )
@@ -1267,6 +1280,9 @@ fn initialize_pane(
             toolbar.add_item(telemetry_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
+            let highlights_tree_item =
+                cx.new(|_| language_tools::HighlightsTreeToolbarItemView::new());
+            toolbar.add_item(highlights_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
@@ -2397,7 +2413,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                         "aa": null,
@@ -2425,7 +2441,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
+                &[
+                    PathBuf::from(path!("/root/a")),
+                    PathBuf::from(path!("/root/b")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2437,7 +2456,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a")],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2466,7 +2485,10 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
+                &[
+                    PathBuf::from(path!("/root/c")),
+                    PathBuf::from(path!("/root/d")),
+                ],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2482,7 +2504,7 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/e")],
+                &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
                     replace_window: Some(window),
@@ -2505,7 +2527,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new("/root/e").into()]
+                    &[Path::new(path!("/root/e")).into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
@@ -2846,9 +2868,9 @@ mod tests {
                 editor.update(cx, |editor, cx| editor.insert("EDIT", window, cx));
             })
             .unwrap();
+        cx.run_until_parked();
 
         assert!(window_is_edited(window, cx));
-        cx.run_until_parked();
 
         // Advance the clock to make sure the workspace is serialized
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -4826,6 +4848,7 @@ mod tests {
                 "diagnostics",
                 "edit_prediction",
                 "editor",
+                "encoding_selector",
                 "feedback",
                 "file_finder",
                 "git",
@@ -4834,6 +4857,7 @@ mod tests {
                 "git_panel",
                 "git_picker",
                 "go_to_line",
+                "highlights_tree_view",
                 "icon_theme_selector",
                 "image_viewer",
                 "inline_assistant",
@@ -5049,6 +5073,16 @@ mod tests {
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
+            cx.set_global(workspace::PaneSearchBarCallbacks {
+                setup_search_bar: |languages, toolbar, window, cx| {
+                    let search_bar =
+                        cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                    toolbar.update(cx, |toolbar, cx| {
+                        toolbar.add_item(search_bar, window, cx);
+                    });
+                },
+                wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+            });
             app_state
         })
     }
@@ -5257,7 +5291,7 @@ mod tests {
 
             cx.update(|cx| {
                 let open_options = OpenOptions {
-                    prefer_focused_window: true,
+                    wait: true,
                     ..Default::default()
                 };
 

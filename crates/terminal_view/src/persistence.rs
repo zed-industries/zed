@@ -424,6 +424,9 @@ impl Domain for TerminalDb {
             ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
             UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
         ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN custom_title TEXT;
+        ),
     ];
 }
 
@@ -477,6 +480,40 @@ impl TerminalDb {
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    pub async fn save_custom_title(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        custom_title: Option<String>,
+    ) -> Result<()> {
+        log::debug!(
+            "Saving custom title {:?} for item {} in workspace {:?}",
+            custom_title,
+            item_id,
+            workspace_id
+        );
+        self.write(move |conn| {
+            let query = "INSERT INTO terminals (item_id, workspace_id, custom_title)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                    custom_title = excluded.custom_title";
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&custom_title, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_custom_title(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT custom_title
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }

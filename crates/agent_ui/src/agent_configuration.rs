@@ -9,13 +9,12 @@ use std::{ops::Range, sync::Arc};
 use agent::ContextServerRegistry;
 use anyhow::Result;
 use client::zed_urls;
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
@@ -499,9 +498,10 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::V2(PlanV2::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                Plan::V2(PlanV2::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                Plan::V2(PlanV2::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())
@@ -518,25 +518,7 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut context_server_ids = self
-            .context_server_store
-            .read(cx)
-            .server_ids(cx)
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        // Sort context servers: ones without mcp-server- prefix first, then prefixed ones
-        context_server_ids.sort_by(|a, b| {
-            const MCP_PREFIX: &str = "mcp-server-";
-            match (a.0.strip_prefix(MCP_PREFIX), b.0.strip_prefix(MCP_PREFIX)) {
-                // If one has mcp-server- prefix and other doesn't, non-mcp comes first
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                // If both have same prefix status, sort by appropriate key
-                (Some(a), Some(b)) => a.cmp(b),
-                (None, None) => a.0.cmp(&b.0),
-            }
-        });
+        let context_server_ids = self.context_server_store.read(cx).server_ids();
 
         let add_server_popover = PopoverMenu::new("add-server-popover")
             .trigger(
@@ -594,7 +576,7 @@ impl AgentConfiguration {
                     .pr_5()
                     .w_full()
                     .gap_1()
-                    .map(|mut parent| {
+                    .map(|parent| {
                         if context_server_ids.is_empty() {
                             parent.child(
                                 h_flex()
@@ -611,23 +593,17 @@ impl AgentConfiguration {
                                     ),
                             )
                         } else {
-                            for (index, context_server_id) in
-                                context_server_ids.into_iter().enumerate()
-                            {
-                                if index > 0 {
-                                    parent = parent.child(
-                                        Divider::horizontal()
-                                            .color(DividerColor::BorderFaded)
-                                            .into_any_element(),
-                                    );
-                                }
-                                parent = parent.child(self.render_context_server(
-                                    context_server_id,
-                                    window,
-                                    cx,
-                                ));
-                            }
-                            parent
+                            parent.children(itertools::intersperse_with(
+                                context_server_ids.iter().cloned().map(|context_server_id| {
+                                    self.render_context_server(context_server_id, window, cx)
+                                        .into_any_element()
+                                }),
+                                || {
+                                    Divider::horizontal()
+                                        .color(DividerColor::BorderFaded)
+                                        .into_any_element()
+                                },
+                            ))
                         }
                     }),
             )
@@ -637,7 +613,7 @@ impl AgentConfiguration {
         &self,
         context_server_id: ContextServerId,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> impl use<> + IntoElement {
         let server_status = self
             .context_server_store
@@ -999,26 +975,10 @@ impl AgentConfiguration {
             )
             .menu({
                 move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-                        if _cx.has_flag::<AcpBetaFeatureFlag>() {
-                            menu = menu.entry("Install from Registry", None, {
-                                |window, cx| {
-                                    window.dispatch_action(Box::new(zed_actions::AgentRegistry), cx)
-                                }
-                            });
-                        }
-                        menu.entry("Install from Extensions", None, {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Install from Registry", None, {
                             |window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::Extensions {
-                                        category_filter: Some(
-                                            ExtensionCategoryFilter::AgentServers,
-                                        ),
-                                        id: None,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                )
+                                window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
                             }
                         })
                         .entry("Add Custom Agent", None, {

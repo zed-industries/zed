@@ -1,7 +1,6 @@
 # Models
 
-Zed’s plans offer hosted versions of major LLMs, generally with higher rate limits than using your API keys.
-We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
+Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly.
 
 | Model                  | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |
 | ---------------------- | --------- | ------------------- | ---------------------------- | ----------------------- |
@@ -61,7 +60,7 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 
 Any usage of a Zed-hosted model will be billed at the Zed Price (rightmost column above). See [Plans and Usage](./plans-and-usage.md) for details on Zed's plans and limits for use of hosted models.
 
-> We encourage you to think through what model is best for your needs before leaving the Agent Panel to work. All LLMs can "spiral" and occasionally enter unending loops that require user intervention.
+> LLMs can enter unproductive loops that require user intervention. Monitor longer-running tasks and interrupt if needed.
 
 ## Context Windows {#context-windows}
 
@@ -81,12 +80,12 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Gemini 2.5 Flash  | Google    | 200k                      |
 | Gemini 3.0 Pro    | Google    | 200k                      |
 
-> We're planning on expanding supported context windows for hosted Sonnet 4 and Gemini 2.5 Pro/Flash in the near future. Stay tuned!
+> Context window limits for hosted Sonnet 4 and Gemini 2.5 Pro/Flash may increase in future releases.
 
 Each Agent thread and text thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.
 
-For best results, it’s recommended you take a purpose-based approach to Agent thread management, starting a new thread for each unique task.
+Start a new thread for each distinct task to keep context focused.
 
 ## Tool Calls {#tool-calls}
 

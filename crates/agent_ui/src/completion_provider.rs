@@ -5,18 +5,17 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::acp::AcpThreadHistory;
-use crate::user_slash_command::{self, CommandLoadError, UserSlashCommand};
 use acp_thread::{AgentSessionInfo, MentionUri};
 use anyhow::Result;
-use collections::{HashMap, HashSet};
 use editor::{
     CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
 };
-use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
+use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
+use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
@@ -25,7 +24,10 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
-use text::{Anchor, ToPoint as _};
+use settings::{Settings, TerminalDockPosition};
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::terminal_panel::TerminalPanel;
+use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -33,6 +35,7 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::truncate_and_remove_front;
 use workspace::Workspace;
+use workspace::dock::DockPosition;
 
 use crate::AgentPanel;
 use crate::mention_set::MentionSet;
@@ -186,18 +189,6 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
-    pub source: CommandSource,
-}
-
-/// The source of a slash command, used to differentiate UI behavior.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandSource {
-    /// Command provided by the ACP server
-    Server,
-    /// User-defined command from a markdown file
-    UserDefined { template: Arc<str> },
-    /// User-defined command that failed to load
-    UserDefinedError { error_message: Arc<str> },
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -209,18 +200,6 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
-
-    /// Returns cached user-defined slash commands, if available.
-    /// Default implementation returns None, meaning commands will be loaded from disk.
-    fn cached_user_commands(&self, _cx: &App) -> Option<HashMap<String, UserSlashCommand>> {
-        None
-    }
-
-    /// Returns cached errors from loading user-defined slash commands, if available.
-    /// Default implementation returns None.
-    fn cached_user_command_errors(&self, _cx: &App) -> Option<Vec<CommandLoadError>> {
-        None
-    }
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -554,48 +533,130 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
             PromptContextAction::AddSelections => {
-                const PLACEHOLDER: &str = "selection ";
-                let selections = selection_ranges(workspace, cx)
+                // Collect non-empty editor selections
+                let editor_selections: Vec<_> = selection_ranges(workspace, cx)
+                    .into_iter()
+                    .filter(|(buffer, range)| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        range.start.to_offset(&snapshot) != range.end.to_offset(&snapshot)
+                    })
+                    .collect();
+
+                // Collect terminal selections from all terminal views if the terminal panel is visible
+                let terminal_selections: Vec<String> =
+                    terminal_selections_if_panel_open(workspace, cx);
+
+                const EDITOR_PLACEHOLDER: &str = "selection ";
+                const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+                let selections = editor_selections
                     .into_iter()
                     .enumerate()
                     .map(|(ix, (buffer, range))| {
                         (
                             buffer,
                             range,
-                            (PLACEHOLDER.len() * ix)..(PLACEHOLDER.len() * (ix + 1) - 1),
+                            (EDITOR_PLACEHOLDER.len() * ix)
+                                ..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
                         )
                     })
                     .collect::<Vec<_>>();
 
-                let new_text: String = PLACEHOLDER.repeat(selections.len());
+                let mut new_text: String = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+                // Add terminal placeholders for each terminal selection
+                let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+                    .into_iter()
+                    .map(|text| {
+                        let start = new_text.len();
+                        new_text.push_str(TERMINAL_PLACEHOLDER);
+                        (text, start..(new_text.len() - 1))
+                    })
+                    .collect();
 
                 let callback = Arc::new({
                     let source_range = source_range.clone();
-                    move |_, window: &mut Window, cx: &mut App| {
+                    move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
                         let editor = editor.clone();
                         let selections = selections.clone();
                         let mention_set = mention_set.clone();
                         let source_range = source_range.clone();
+                        let terminal_ranges = terminal_ranges.clone();
                         window.defer(cx, move |window, cx| {
                             if let Some(editor) = editor.upgrade() {
-                                mention_set
-                                    .update(cx, |store, cx| {
-                                        store.confirm_mention_for_selection(
-                                            source_range,
-                                            selections,
-                                            editor,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .ok();
+                                // Insert editor selections
+                                if !selections.is_empty() {
+                                    mention_set
+                                        .update(cx, |store, cx| {
+                                            store.confirm_mention_for_selection(
+                                                source_range.clone(),
+                                                selections,
+                                                editor.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                        .ok();
+                                }
+
+                                // Insert terminal selections
+                                for (terminal_text, terminal_range) in terminal_ranges {
+                                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                                    let Some(start) =
+                                        snapshot.as_singleton_anchor(source_range.start)
+                                    else {
+                                        return;
+                                    };
+                                    let offset = start.to_offset(&snapshot);
+
+                                    let line_count = terminal_text.lines().count() as u32;
+                                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                                    let crease = crate::mention_set::crease_for_mention(
+                                        mention_uri.name().into(),
+                                        mention_uri.icon_path(cx),
+                                        range,
+                                        editor.downgrade(),
+                                    );
+
+                                    let crease_id = editor.update(cx, |editor, cx| {
+                                        let crease_ids =
+                                            editor.insert_creases(vec![crease.clone()], cx);
+                                        editor.fold_creases(vec![crease], false, window, cx);
+                                        crease_ids.first().copied().unwrap()
+                                    });
+
+                                    mention_set
+                                        .update(cx, |mention_set, _| {
+                                            mention_set.insert_mention(
+                                                crease_id,
+                                                mention_uri.clone(),
+                                                gpui::Task::ready(Ok(
+                                                    crate::mention_set::Mention::Text {
+                                                        content: terminal_text,
+                                                        tracked_buffers: vec![],
+                                                    },
+                                                ))
+                                                .shared(),
+                                            );
+                                        })
+                                        .ok();
+                                }
                             }
                         });
                         false
                     }
                 });
 
-                (new_text, callback)
+                (
+                    new_text,
+                    callback
+                        as Arc<
+                            dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync,
+                        >,
+                )
             }
         };
 
@@ -715,111 +776,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
-        let server_command_names = commands
-            .iter()
-            .map(|command| command.name.as_ref().to_string())
-            .collect::<HashSet<_>>();
-
-        // Try to use cached user commands and errors first
-        let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            self.source.cached_user_commands(cx)
-        } else {
-            None
-        };
-
-        let cached_user_command_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            self.source.cached_user_command_errors(cx)
-        } else {
-            None
-        };
-
-        // Get fs and worktree roots for async command loading (only if not cached)
-        let (fs, worktree_roots) =
-            if cached_user_commands.is_none() && cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-                let workspace = self.workspace.upgrade();
-                let fs = workspace
-                    .as_ref()
-                    .map(|w| w.read(cx).project().read(cx).fs().clone());
-                let roots: Vec<std::path::PathBuf> = workspace
-                    .map(|workspace| {
-                        workspace
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (fs, roots)
-            } else {
-                (None, Vec::new())
-            };
+        if commands.is_empty() {
+            return Task::ready(Vec::new());
+        }
 
         cx.spawn(async move |cx| {
-            let mut commands = commands;
-
-            // Use cached commands/errors if available, otherwise load from disk
-            let (mut user_commands, mut user_command_errors): (
-                Vec<UserSlashCommand>,
-                Vec<CommandLoadError>,
-            ) = if let Some(cached) = cached_user_commands {
-                let errors = cached_user_command_errors.unwrap_or_default();
-                (cached.into_values().collect(), errors)
-            } else if let Some(fs) = fs {
-                let load_result =
-                    crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
-
-                (load_result.commands, load_result.errors)
-            } else {
-                (Vec::new(), Vec::new())
-            };
-
-            user_slash_command::apply_server_command_conflicts(
-                &mut user_commands,
-                &mut user_command_errors,
-                &server_command_names,
-            );
-
-            let conflicting_names: HashSet<String> = user_command_errors
-                .iter()
-                .filter_map(|error| error.command_name())
-                .filter(|name| server_command_names.contains(name))
-                .collect();
-
-            if !conflicting_names.is_empty() {
-                commands.retain(|command| !conflicting_names.contains(command.name.as_ref()));
-            }
-
-            for cmd in user_commands {
-                commands.push(AvailableCommand {
-                    name: cmd.name.clone(),
-                    description: cmd.description().into(),
-                    requires_argument: cmd.requires_arguments(),
-                    source: CommandSource::UserDefined {
-                        template: cmd.template.clone(),
-                    },
-                });
-            }
-
-            // Add errored commands so they show up in autocomplete with error indication.
-            // Errors for commands that don't match the query will be silently ignored here
-            // since the user will see them via the error callout in the thread view.
-            for error in user_command_errors {
-                if let Some(name) = error.command_name() {
-                    commands.push(AvailableCommand {
-                        name: name.into(),
-                        description: "".into(),
-                        requires_argument: false,
-                        source: CommandSource::UserDefinedError {
-                            error_message: error.message.into(),
-                        },
-                    });
-                }
-            }
-
-            if commands.is_empty() {
-                return Vec::new();
-            }
-
             let candidates = commands
                 .iter()
                 .enumerate()
@@ -1087,7 +1048,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_selection = workspace
+        let has_editor_selection = workspace
             .read(cx)
             .active_item(cx)
             .and_then(|item| item.downcast::<Editor>())
@@ -1096,7 +1057,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     editor.has_non_empty_selection(&editor.display_snapshot(cx))
                 })
             });
-        if has_selection {
+
+        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+
+        if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
@@ -1173,20 +1137,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .await
                         .into_iter()
                         .map(|command| {
-                            let is_error =
-                                matches!(command.source, CommandSource::UserDefinedError { .. });
-
-                            // For errored commands, show the name with "(load error)" suffix
-                            let label_text = if is_error {
-                                format!("{} (load error)", command.name)
-                            } else {
-                                command.name.to_string()
-                            };
-
-                            // For errored commands, we don't want to insert anything useful
-                            let new_text = if is_error {
-                                format!("/{}", command.name)
-                            } else if let Some(argument) = argument.as_ref() {
+                            let new_text = if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument)
                             } else {
                                 format!("/{} ", command.name)
@@ -1195,72 +1146,21 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
 
-                            // For errored commands, use a deprecated-style label to indicate the error
-                            let label = if is_error {
-                                // Create a label where the command name portion has a highlight
-                                // that will be rendered with strikethrough by the completion menu
-                                // (similar to deprecated LSP completions)
-                                CodeLabel::plain(label_text, None)
-                            } else {
-                                CodeLabel::plain(label_text, None)
-                            };
-
-                            // For errored commands, show the error message in documentation
-                            let documentation =
-                                if let CommandSource::UserDefinedError { error_message } =
-                                    &command.source
-                                {
-                                    Some(CompletionDocumentation::MultiLinePlainText(
-                                        error_message.to_string().into(),
-                                    ))
-                                } else if !command.description.is_empty() {
-                                    Some(CompletionDocumentation::MultiLinePlainText(
-                                        command.description.to_string().into(),
-                                    ))
-                                } else {
-                                    None
-                                };
-
-                            // For errored commands, use a red X icon
-                            let icon_path = if is_error {
-                                Some(IconName::XCircle.path().into())
-                            } else {
-                                None
-                            };
-
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label,
-                                documentation,
-                                source: if is_error {
-                                    // Use a custom source that marks this as deprecated/errored
-                                    // so the completion menu renders it with strikethrough
-                                    project::CompletionSource::Lsp {
-                                        insert_range: None,
-                                        server_id: language::LanguageServerId(0),
-                                        lsp_completion: Box::new(lsp::CompletionItem {
-                                            label: command.name.to_string(),
-                                            deprecated: Some(true),
-                                            ..Default::default()
-                                        }),
-                                        lsp_defaults: None,
-                                        resolved: true,
-                                    }
-                                } else {
-                                    project::CompletionSource::Custom
-                                },
-                                icon_path,
+                                label: CodeLabel::plain(command.name.to_string(), None),
+                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
+                                    command.description.into(),
+                                )),
+                                source: project::CompletionSource::Custom,
+                                icon_path: None,
                                 match_start: None,
                                 snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let source = source.clone();
                                     move |intent, _window, cx| {
-                                        // Don't confirm errored commands
-                                        if is_error {
-                                            return false;
-                                        }
                                         if !is_missing_argument {
                                             cx.defer({
                                                 let source = source.clone();
@@ -1850,7 +1750,12 @@ pub(crate) fn search_files(
 
         Task::ready(recent_matches.chain(file_matches).collect())
     } else {
-        let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+        let workspace = workspace.read(cx);
+        let relative_to = workspace
+            .recent_navigation_history_iter(cx)
+            .next()
+            .map(|(path, _)| path.path);
+        let worktrees = workspace.visible_worktrees(cx).collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
             .into_iter()
@@ -1871,7 +1776,7 @@ pub(crate) fn search_files(
             fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.as_str(),
-                &None,
+                &relative_to,
                 false,
                 100,
                 &cancellation_flag,
@@ -2099,6 +2004,30 @@ fn build_code_label_for_path(
         label.push_str(&format!(" L{}", line_number), variable_highlight_id);
     }
     label.build()
+}
+
+/// Returns terminal selections from all terminal views if the terminal panel is open.
+fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+        return Vec::new();
+    };
+
+    // Check if the dock containing this panel is open
+    let position = match TerminalSettings::get_global(cx).dock {
+        TerminalDockPosition::Left => DockPosition::Left,
+        TerminalDockPosition::Bottom => DockPosition::Bottom,
+        TerminalDockPosition::Right => DockPosition::Right,
+    };
+    let dock_is_open = workspace
+        .read(cx)
+        .dock_at_position(position)
+        .read(cx)
+        .is_open();
+    if !dock_is_open {
+        return Vec::new();
+    }
+
+    panel.read(cx).terminal_selections(cx)
 }
 
 fn selection_ranges(
@@ -2418,5 +2347,82 @@ mod tests {
         let results = task.await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, alpha.session_id);
+    }
+
+    #[gpui::test]
+    async fn test_search_files_path_distance_ordering(cx: &mut TestAppContext) {
+        use project::Project;
+        use serde_json::json;
+        use util::{path, rel_path::rel_path};
+        use workspace::AppState;
+
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "dir1": { "a.txt": "" },
+                    "dir2": {
+                        "a.txt": "",
+                        "b.txt": ""
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| workspace::Workspace::test_new(project, window, cx));
+
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            worktrees[0].read(cx).id()
+        });
+
+        // Open a file in dir2 to create navigation history.
+        // When searching for "a.txt", dir2/a.txt should be sorted first because
+        // it is closer to the most recently opened file (dir2/b.txt).
+        let b_path = ProjectPath {
+            worktree_id,
+            path: rel_path("dir2/b.txt").into(),
+        };
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(b_path, None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let results = cx
+            .update(|_window, cx| {
+                search_files(
+                    "a.txt".into(),
+                    Arc::new(AtomicBool::default()),
+                    &workspace,
+                    cx,
+                )
+            })
+            .await;
+
+        assert_eq!(results.len(), 2, "expected 2 matching files");
+        assert_eq!(
+            results[0].mat.path.as_ref(),
+            rel_path("dir2/a.txt"),
+            "dir2/a.txt should be first because it's closer to the recently opened dir2/b.txt"
+        );
+        assert_eq!(
+            results[1].mat.path.as_ref(),
+            rel_path("dir1/a.txt"),
+            "dir1/a.txt should be second"
+        );
     }
 }

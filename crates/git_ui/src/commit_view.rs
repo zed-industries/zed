@@ -406,7 +406,11 @@ impl CommitView {
         cx: &mut App,
     ) -> AnyElement {
         let size = size.into();
-        let avatar = CommitAvatar::new(sha, self.remote.as_ref());
+        let avatar = CommitAvatar::new(
+            sha,
+            Some(self.commit.author_email.clone()),
+            self.remote.as_ref(),
+        );
 
         v_flex()
             .w(size)
@@ -479,19 +483,23 @@ impl CommitView {
             time_format::TimestampFormat::MediumAbsolute,
         );
 
-        let remote_info = self.remote.as_ref().map(|remote| {
-            let provider = remote.host.name();
-            let parsed_remote = ParsedGitRemote {
-                owner: remote.owner.as_ref().into(),
-                repo: remote.repo.as_ref().into(),
-            };
-            let params = BuildCommitPermalinkParams { sha: &commit.sha };
-            let url = remote
-                .host
-                .build_commit_permalink(&parsed_remote, params)
-                .to_string();
-            (provider, url)
-        });
+        let remote_info = self
+            .remote
+            .as_ref()
+            .filter(|_| self.stash.is_none())
+            .map(|remote| {
+                let provider = remote.host.name();
+                let parsed_remote = ParsedGitRemote {
+                    owner: remote.owner.as_ref().into(),
+                    repo: remote.repo.as_ref().into(),
+                };
+                let params = BuildCommitPermalinkParams { sha: &commit.sha };
+                let url = remote
+                    .host
+                    .build_commit_permalink(&parsed_remote, params)
+                    .to_string();
+                (provider, url)
+            });
 
         let (additions, deletions) = self.calculate_changed_lines(cx);
 

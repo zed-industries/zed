@@ -65,23 +65,13 @@ impl ReadFileTool {
             action_log,
         }
     }
-
-    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
-        Self {
-            thread: new_thread,
-            project: self.project.clone(),
-            action_log: self.action_log.clone(),
-        }
-    }
 }
 
 impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
 
-    fn name() -> &'static str {
-        "read_file"
-    }
+    const NAME: &'static str = "read_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
@@ -315,13 +305,6 @@ impl AgentTool for ReadFileTool {
 
             result
         })
-    }
-
-    fn rebind_thread(
-        &self,
-        new_thread: WeakEntity<Thread>,
-    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
-        Some(self.with_thread(new_thread).erase())
     }
 }
 

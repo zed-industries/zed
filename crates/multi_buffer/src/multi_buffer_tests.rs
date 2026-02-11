@@ -474,6 +474,47 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diff_hunks_in_range_query_starting_at_added_row(cx: &mut TestAppContext) {
+    let base_text = "one\ntwo\nthree\n";
+    let text = "one\nTWO\nthree\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_diff(diff, cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "  one
+             - two
+             + TWO
+               three
+            "
+        },
+    );
+
+    assert_eq!(
+        snapshot
+            .diff_hunks_in_range(Point::new(2, 0)..Point::MAX)
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
+            .collect::<Vec<_>>(),
+        vec![1..3],
+        "querying starting at the added row should still return the full hunk including deleted lines"
+    );
+}
+
+#[gpui::test]
 async fn test_inverted_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "ZERO\none\nTHREE\nfour\nseven\nEIGHT\nNINE\n";

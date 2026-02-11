@@ -1,24 +1,29 @@
+use super::edit_file_tool::EditFileTool;
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings, edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
+    AgentTool, Templates, Thread, ToolCallEventStream,
+    edit_agent::streaming_fuzzy_matcher::StreamingFuzzyMatcher,
 };
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
+use collections::HashSet;
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
-use language::{Anchor, LanguageRegistry, ToPoint};
+use language::LanguageRegistry;
+use language::language_settings::{self, FormatOnSave};
 use language_model::LanguageModelToolResultContent;
-use paths;
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
-use std::ffi::OsStr;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use text::BufferSnapshot;
 use ui::SharedString;
+use util::ResultExt;
 use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
@@ -160,69 +165,29 @@ impl StreamingEditFileTool {
         }
     }
 
+    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
+        Self {
+            project: self.project.clone(),
+            thread: new_thread,
+            language_registry: self.language_registry.clone(),
+            templates: self.templates.clone(),
+        }
+    }
+
     fn authorize(
         &self,
         input: &StreamingEditFileToolInput,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let path_str = input.path.to_string_lossy();
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
-
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {}
-        }
-
-        let local_settings_folder = paths::local_settings_folder_name();
-        let path = Path::new(&input.path);
-        if path.components().any(|component| {
-            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-        }) {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (local settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir())
-        {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (global settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
-        }) else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
-        };
-
-        if project_path.is_some() {
-            Task::ready(Ok(()))
-        } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            event_stream.authorize(&input.display_description, context, cx)
-        }
+        super::edit_file_tool::authorize_file_edit(
+            EditFileTool::NAME,
+            &input.path,
+            &input.display_description,
+            &self.thread,
+            event_stream,
+            cx,
+        )
     }
 }
 
@@ -230,9 +195,7 @@ impl AgentTool for StreamingEditFileTool {
     type Input = StreamingEditFileToolInput;
     type Output = StreamingEditFileToolOutput;
 
-    fn name() -> &'static str {
-        "streaming_edit_file"
-    }
+    const NAME: &'static str = "streaming_edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
@@ -330,8 +293,8 @@ impl AgentTool for StreamingEditFileTool {
                             .file()
                             .and_then(|file| file.disk_state().mtime());
                         let dirty = buffer.read(cx).is_dirty();
-                        let has_save = thread.has_tool("save_file");
-                        let has_restore = thread.has_tool("restore_file_from_disk");
+                        let has_save = thread.has_tool(SaveFileTool::NAME);
+                        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                         (last_read, current, dirty, has_save, has_restore)
                     })?;
 
@@ -389,32 +352,79 @@ impl AgentTool for StreamingEditFileTool {
                 })
                 .await;
 
+            let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
+
+            // Edit the buffer and report edits to the action log as part of the
+            // same effect cycle, otherwise the edit will be reported as if the
+            // user made it (due to the buffer subscription in action_log).
             match input.mode {
                 StreamingEditFileMode::Create | StreamingEditFileMode::Overwrite => {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_created(buffer.clone(), cx);
+                    });
                     let content = input.content.ok_or_else(|| {
                         anyhow!("'content' field is required for create and overwrite modes")
                     })?;
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.edit([(0..buffer.len(), content.as_str())], None, cx);
+                        });
+                        action_log.update(cx, |log, cx| {
+                            log.buffer_edited(buffer.clone(), cx);
+                        });
                     });
                 }
                 StreamingEditFileMode::Edit => {
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_read(buffer.clone(), cx);
+                    });
                     let edits = input.edits.ok_or_else(|| {
                         anyhow!("'edits' field is required for edit mode")
                     })?;
-                    apply_edits(&buffer, &edits, &diff, &event_stream, &abs_path, cx)?;
+                    // apply_edits now handles buffer_edited internally in the same effect cycle
+                    apply_edits(&buffer, &action_log, &edits, &diff, &event_stream, &abs_path, cx)?;
                 }
             }
 
-            let action_log = self.thread.read_with(cx, |thread, _cx| thread.action_log().clone())?;
-
-            action_log.update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), cx);
+            let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+                let settings = language_settings::language_settings(
+                    buffer.language().map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                );
+                settings.format_on_save != FormatOnSave::Off
             });
 
-            project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-                .await?;
+            if format_on_save_enabled {
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), cx);
+                });
+
+                let format_task = project.update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false,
+                        FormatTrigger::Save,
+                        cx,
+                    )
+                });
+                futures::select! {
+                    result = format_task.fuse() => { result.log_err(); },
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        anyhow::bail!("Edit cancelled by user");
+                    }
+                };
+            }
+
+            let save_task = project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+            futures::select! {
+                result = save_task.fuse() => { result?; },
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Edit cancelled by user");
+                }
+            };
 
             action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
@@ -476,34 +486,35 @@ impl AgentTool for StreamingEditFileTool {
 
 fn apply_edits(
     buffer: &Entity<language::Buffer>,
+    action_log: &Entity<action_log::ActionLog>,
     edits: &[EditOperation],
     diff: &Entity<Diff>,
     event_stream: &ToolCallEventStream,
     abs_path: &Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let mut emitted_location = false;
     let mut failed_edits = Vec::new();
     let mut ambiguous_edits = Vec::new();
+    let mut resolved_edits: Vec<(Range<usize>, String)> = Vec::new();
 
+    // First pass: resolve all edits without applying them
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
     for (index, edit) in edits.iter().enumerate() {
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
-        let result = apply_single_edit(buffer, &snapshot, edit, diff, cx);
+        let result = resolve_edit(&snapshot, edit);
 
         match result {
-            Ok(Some(range)) => {
-                if !emitted_location {
-                    let line = buffer.update(cx, |buffer, _cx| {
-                        range.start.to_point(&buffer.snapshot()).row
-                    });
-                    if let Some(abs_path) = abs_path.clone() {
-                        event_stream.update_fields(
-                            ToolCallUpdateFields::new()
-                                .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                        );
-                    }
-                    emitted_location = true;
-                }
+            Ok(Some((range, new_text))) => {
+                // Reveal the range in the diff view
+                let (start_anchor, end_anchor) = buffer.read_with(cx, |buffer, _cx| {
+                    (
+                        buffer.anchor_before(range.start),
+                        buffer.anchor_after(range.end),
+                    )
+                });
+                diff.update(cx, |card, cx| {
+                    card.reveal_range(start_anchor..end_anchor, cx)
+                });
+                resolved_edits.push((range, new_text));
             }
             Ok(None) => {
                 failed_edits.push(index);
@@ -514,6 +525,7 @@ fn apply_edits(
         }
     }
 
+    // Check for errors before applying any edits
     if !failed_edits.is_empty() {
         let indices = failed_edits
             .iter()
@@ -534,7 +546,7 @@ fn apply_edits(
             .map(|(index, ranges)| {
                 let lines = ranges
                     .iter()
-                    .map(|r| r.start.to_string())
+                    .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("edit {}: matches at lines {}", index, lines)
@@ -547,16 +559,71 @@ fn apply_edits(
         );
     }
 
+    // Sort edits by position so buffer.edit() can handle offset translation
+    let mut edits_sorted = resolved_edits;
+    edits_sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start));
+
+    // Emit location for the earliest edit in the file
+    if let Some((first_range, _)) = edits_sorted.first() {
+        if let Some(abs_path) = abs_path.clone() {
+            let line = snapshot.offset_to_point(first_range.start).row;
+            event_stream.update_fields(
+                ToolCallUpdateFields::new()
+                    .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
+            );
+        }
+    }
+
+    // Validate no overlaps (sorted ascending by start)
+    for window in edits_sorted.windows(2) {
+        if let [(earlier_range, _), (later_range, _)] = window
+            && (earlier_range.end > later_range.start || earlier_range.start == later_range.start)
+        {
+            let earlier_start_line = snapshot.offset_to_point(earlier_range.start).row + 1;
+            let earlier_end_line = snapshot.offset_to_point(earlier_range.end).row + 1;
+            let later_start_line = snapshot.offset_to_point(later_range.start).row + 1;
+            let later_end_line = snapshot.offset_to_point(later_range.end).row + 1;
+            anyhow::bail!(
+                "Conflicting edit ranges detected: lines {}-{} conflicts with lines {}-{}. \
+                 Conflicting edit ranges are not allowed, as they would overwrite each other.",
+                earlier_start_line,
+                earlier_end_line,
+                later_start_line,
+                later_end_line,
+            );
+        }
+    }
+
+    // Apply all edits in a single batch and report to action_log in the same
+    // effect cycle. This prevents the buffer subscription from treating these
+    // as user edits.
+    if !edits_sorted.is_empty() {
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    edits_sorted
+                        .iter()
+                        .map(|(range, new_text)| (range.clone(), new_text.as_str())),
+                    None,
+                    cx,
+                );
+            });
+            action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), cx);
+            });
+        });
+    }
+
     Ok(())
 }
 
-fn apply_single_edit(
-    buffer: &Entity<language::Buffer>,
+/// Resolves an edit operation by finding the matching text in the buffer.
+/// Returns Ok(Some((range, new_text))) if a unique match is found,
+/// Ok(None) if no match is found, or Err(ranges) if multiple matches are found.
+fn resolve_edit(
     snapshot: &BufferSnapshot,
     edit: &EditOperation,
-    diff: &Entity<Diff>,
-    cx: &mut AsyncApp,
-) -> std::result::Result<Option<Range<Anchor>>, Vec<Range<usize>>> {
+) -> std::result::Result<Option<(Range<usize>, String)>, Vec<Range<usize>>> {
     let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
     matcher.push(&edit.old_text, None);
     let matches = matcher.finish();
@@ -570,23 +637,7 @@ fn apply_single_edit(
     }
 
     let match_range = matches.into_iter().next().expect("checked len above");
-
-    let start_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(match_range.start));
-    let end_anchor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_after(match_range.end));
-
-    diff.update(cx, |card, cx| {
-        card.reveal_range(start_anchor..end_anchor, cx)
-    });
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(match_range.clone(), edit.new_text.as_str())], None, cx);
-    });
-
-    let new_end = buffer.read_with(cx, |buffer, _cx| {
-        buffer.anchor_after(match_range.start + edit.new_text.len())
-    });
-
-    Ok(Some(start_anchor..new_end))
+    Ok(Some((match_range, edit.new_text.clone())))
 }
 
 fn resolve_path(
@@ -656,7 +707,7 @@ fn resolve_path(
 mod tests {
     use super::*;
     use crate::{ContextServerRegistry, Templates};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -814,6 +865,198 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_multiple_nonoverlapping_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Edit multiple lines".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 5".into(),
+                            new_text: "modified line 5".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 1".into(),
+                            new_text: "modified line 1".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(
+            output.new_text,
+            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_adjacent_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Edit adjacent lines".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 2".into(),
+                            new_text: "modified line 2".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 3".into(),
+                            new_text: "modified line 3".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(
+            output.new_text,
+            "line 1\nmodified line 2\nmodified line 3\nline 4\nline 5\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_ascending_order_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Edit multiple lines in ascending order".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 1".into(),
+                            new_text: "modified line 1".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 5".into(),
+                            new_text: "modified line 5".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project.clone(),
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(
+            output.new_text,
+            "modified line 1\nline 2\nline 3\nline 4\nmodified line 5\n"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_nonexistent_file(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -917,10 +1160,88 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_streaming_edit_overlapping_edits_out_of_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        // Multi-line file so the line-based fuzzy matcher can resolve each edit.
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            crate::Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+
+        // Edit A spans lines 3-4, edit B spans lines 2-3. They overlap on
+        // "line 3" and are given in descending file order so the ascending
+        // sort must reorder them before the pairwise overlap check can
+        // detect them correctly.
+        let result = cx
+            .update(|cx| {
+                let input = StreamingEditFileToolInput {
+                    display_description: "Overlapping edits".into(),
+                    path: "root/file.txt".into(),
+                    mode: StreamingEditFileMode::Edit,
+                    content: None,
+                    edits: Some(vec![
+                        EditOperation {
+                            old_text: "line 3\nline 4".into(),
+                            new_text: "SECOND".into(),
+                        },
+                        EditOperation {
+                            old_text: "line 2\nline 3".into(),
+                            new_text: "FIRST".into(),
+                        },
+                    ]),
+                };
+                Arc::new(StreamingEditFileTool::new(
+                    project,
+                    thread.downgrade(),
+                    language_registry,
+                    Templates::new(),
+                ))
+                .run(input, ToolCallEventStream::test().0, cx)
+            })
+            .await;
+
+        let error = result.unwrap_err();
+        let error_message = error.to_string();
+        assert!(
+            error_message.contains("Conflicting edit ranges detected"),
+            "Expected 'Conflicting edit ranges detected' but got: {error_message}"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .ensure_final_newline_on_save = Some(false);
+                });
+            });
         });
     }
 }
