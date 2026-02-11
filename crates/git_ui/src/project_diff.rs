@@ -1843,7 +1843,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
     use unindent::Unindent as _;
     use util::{
@@ -1862,6 +1862,11 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
