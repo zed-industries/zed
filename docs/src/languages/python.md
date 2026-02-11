@@ -190,37 +190,30 @@ For most projects, Zed will automatically select the right Python toolchain. In 
 
 ## Code Formatting & Linting
 
-Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter for Python code. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Both formatting and linting are enabled by default, including format-on-save.
+Zed uses [Ruff](https://github.com/astral-sh/ruff) for formatting and linting Python code. Specifically, it runs Ruff as an LSP server using the `ruff server` subcommand.
 
-### Configuring formatting
+### Configuring Formatting
 
-Formatting in Zed follows a two-phase pipeline: first, Code Actions are executed, followed by the Formatter.
-
-The default configuration for Python files uses Ruff for both phases:
+Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter:
 
 ```json [settings]
 {
   "languages": {
     "Python": {
       "code_actions_on_format": {
-        "source.organizeImports.ruff": true,
+        "source.organizeImports.ruff": true
       },
       "formatter": {
         "language_server": {
-          "name": "ruff",
-        },
-      },
+          "name": "ruff"
+        }
+      }
     }
   }
 }
 ```
-1. Code Actions (`code_actions_on_format`):
-This phase runs before any formatting. In Python, it is configured by default to trigger Ruff's "organize imports" action, which sorts and groups imports.
 
-2. Formatter (`formatter`):
-After Code Actions are completed, Zed runs the designated formatter to handle code style (like indentation and line length), for Python files this is configured to use Ruff's formatting capabilities by default.
-
-These two phases are independent. You can use Ruff to organize imports in Phase 1, even if you choose a different tool (or no tool) for Phase 2. For example, if you prefer black for code style but want to keep Ruff's import sorting, you only need to change the formatter phase:
+These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase:
 
 ```json [settings]
 {
@@ -228,7 +221,7 @@ These two phases are independent. You can use Ruff to organize imports in Phase 
     "Python": {
       "code_actions_on_format": {
         // Phase 1: Ruff still handles organize imports
-        "source.organizeImports.ruff": true,
+        "source.organizeImports.ruff": true
       },
       "formatter": {
         // Phase 2: Black handles formatting
@@ -241,9 +234,10 @@ These two phases are independent. You can use Ruff to organize imports in Phase 
   }
 }
 ```
+
 To completely switch to another tool and prevent Ruff from modifying your code at all, you must explicitly set `source.organizeImports.ruff` to false in the `code_actions_on_format` section, in addition to changing the formatter.
 
-To prevent any formatting actions from occurring when you save, you can disable format-on-save for Python files in your `settings.json`:
+To prevent any formatting actions when you save, you can disable format-on-save for Python files in your `settings.json`:
 
 ```json [settings]
 {
