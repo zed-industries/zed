@@ -20,7 +20,8 @@ pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use util::paths::PathWithPosition;
 use workspace::{
-    AppState, OpenOptions, SerializedWorkspaceLocation, Workspace, find_existing_workspace,
+    AppState, NotificationSource, OpenOptions, SerializedWorkspaceLocation, Workspace,
+    find_existing_workspace,
 };
 
 pub use remote_connection::{
@@ -175,7 +176,7 @@ pub async fn open_remote_project(
         _ = existing.update(cx, |workspace, _, cx| {
             for item in open_results.iter().flatten() {
                 if let Err(e) = item {
-                    workspace.show_error(&e, cx);
+                    workspace.show_error(&e, NotificationSource::Remote, cx);
                 }
             }
         });

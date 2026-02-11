@@ -57,7 +57,10 @@ use ui::{
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use util::{debug_panic, defer};
-use workspace::{CollaboratorId, NewTerminal, Toast, Workspace, notifications::NotificationId};
+use workspace::{
+    CollaboratorId, NewTerminal, NotificationSource, Toast, Workspace,
+    notifications::NotificationId,
+};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
@@ -2350,6 +2353,7 @@ impl AcpServerView {
             active_thread.update(cx, |thread, cx| {
                 thread.message_editor.update(cx, |editor, cx| {
                     editor.insert_dragged_files(paths, added_worktrees, window, cx);
+                    editor.focus_handle(cx).focus(window, cx);
                 })
             });
         }
@@ -2495,7 +2499,7 @@ impl Render for AcpServerView {
         self.sync_queued_message_editors(window, cx);
 
         v_flex()
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {

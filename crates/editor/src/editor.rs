@@ -211,9 +211,10 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
-    OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
-    TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
+    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry,
+    NotificationSource, OpenInTerminal, OpenTerminal, Pane, RestoreOnStartupBehavior,
+    SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
+    WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::{CollapseDirection, SearchEvent},
@@ -11459,8 +11460,11 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        self.reload(project, window, cx)
-            .detach_and_notify_err(window, cx);
+        self.reload(project, window, cx).detach_and_notify_err(
+            NotificationSource::Editor,
+            window,
+            cx,
+        );
     }
 
     pub fn restore_file(
@@ -22968,6 +22972,7 @@ impl Editor {
                                     NotificationId::unique::<CopyPermalinkToLine>(),
                                     message,
                                 ),
+                                NotificationSource::Editor,
                                 cx,
                             )
                         })
@@ -23028,6 +23033,7 @@ impl Editor {
 
                         workspace.show_toast(
                             Toast::new(NotificationId::unique::<OpenPermalinkToLine>(), message),
+                            NotificationSource::Editor,
                             cx,
                         )
                     });

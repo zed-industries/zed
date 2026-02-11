@@ -9,7 +9,7 @@ use util::{ResultExt as _, maybe};
 use workspace::Workspace;
 use workspace::notifications::ErrorMessagePrompt;
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::notifications::{NotificationId, show_app_notification};
+use workspace::notifications::{NotificationId, NotificationSource, show_app_notification};
 
 actions!(
     auto_update,
@@ -47,6 +47,7 @@ fn notify_release_notes_failed_to_show(
     struct ViewReleaseNotesError;
     workspace.show_notification(
         NotificationId::unique::<ViewReleaseNotesError>(),
+        NotificationSource::Update,
         cx,
         |cx| {
             cx.new(move |cx| {
@@ -183,6 +184,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                 let app_name = ReleaseChannel::global(cx).display_name();
                 show_app_notification(
                     NotificationId::unique::<UpdateNotification>(),
+                    NotificationSource::Update,
                     cx,
                     move |cx| {
                         let workspace_handle = cx.entity().downgrade();

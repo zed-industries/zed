@@ -34,7 +34,7 @@ use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{ItemEvent, TabContentParams},
-    notifications::NotifyTaskExt,
+    notifications::{NotificationSource, NotifyTaskExt},
     pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
@@ -774,7 +774,7 @@ impl CommitView {
                 callback(repo, &sha, stash, commit_view_entity, workspace_weak, cx).await?;
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(NotificationSource::Git, window, cx);
     }
 
     async fn close_commit_view(

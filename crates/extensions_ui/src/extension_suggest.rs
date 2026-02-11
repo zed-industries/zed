@@ -9,7 +9,10 @@ use language::Buffer;
 use ui::prelude::*;
 use util::rel_path::RelPath;
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{Workspace, notifications::NotificationId};
+use workspace::{
+    Workspace,
+    notifications::{NotificationId, NotificationSource},
+};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -166,7 +169,7 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
             SharedString::from(extension_id.clone()),
         );
 
-        workspace.show_notification(notification_id, cx, |cx| {
+        workspace.show_notification(notification_id, NotificationSource::Extension, cx, |cx| {
             cx.new(move |cx| {
                 MessageNotification::new(
                     format!(

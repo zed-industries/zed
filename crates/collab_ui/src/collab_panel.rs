@@ -36,7 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, Mute, NotificationSource, OpenChannelNotes, ScreenShare,
+    ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -130,13 +131,18 @@ pub fn init(cx: &mut App) {
                                 "Room ID copied to clipboard",
                             )
                             .autohide(),
+                            NotificationSource::Collab,
                             cx,
                         );
                     })
                 })
-                .detach_and_notify_err(window, cx);
+                .detach_and_notify_err(NotificationSource::Collab, window, cx);
             } else {
-                workspace.show_error(&"There’s no active call; join one first.", cx);
+                workspace.show_error(
+                    &"There's no active call; join one first.",
+                    NotificationSource::Collab,
+                    cx,
+                );
             }
         });
         workspace.register_action(|workspace, _: &ShareProject, window, cx| {
@@ -2194,7 +2200,7 @@ impl CollabPanel {
                     channel_store
                         .update(cx, |channels, _| channels.remove_channel(channel_id))
                         .await
-                        .notify_async_err(cx);
+                        .notify_async_err(NotificationSource::Collab, cx);
                     this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
@@ -2228,7 +2234,7 @@ impl CollabPanel {
                 user_store
                     .update(cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .notify_async_err(cx);
+                    .notify_async_err(NotificationSource::Collab, cx);
             }
             anyhow::Ok(())
         })
@@ -2333,7 +2339,7 @@ impl CollabPanel {
                                         .connect(true, cx)
                                         .await
                                         .into_response()
-                                        .notify_async_err(cx);
+                                        .notify_async_err(NotificationSource::Collab, cx);
                                 })
                                 .detach()
                             })),

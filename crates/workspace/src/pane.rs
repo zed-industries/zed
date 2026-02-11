@@ -9,7 +9,7 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{NotificationSource, NotifyResultExt},
     toolbar::Toolbar,
     utility_pane::UtilityPaneSlot,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
@@ -391,6 +391,7 @@ pub struct Pane {
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
     can_toggle_zoom: bool,
     should_display_tab_bar: Rc<dyn Fn(&Window, &mut Context<Pane>) -> bool>,
+    should_display_welcome_page: bool,
     render_tab_bar_buttons: Rc<
         dyn Fn(
             &mut Pane,
@@ -574,6 +575,7 @@ impl Pane {
             can_split_predicate: None,
             can_toggle_zoom: true,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
+            should_display_welcome_page: false,
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
@@ -681,7 +683,9 @@ impl Pane {
                 self.last_focus_handle_by_item
                     .insert(active_item.item_id(), focused.downgrade());
             }
-        } else if let Some(welcome_page) = self.welcome_page.as_ref() {
+        } else if self.should_display_welcome_page
+            && let Some(welcome_page) = self.welcome_page.as_ref()
+        {
             if self.focus_handle.is_focused(window) {
                 welcome_page.read(cx).focus_handle(cx).focus(window, cx);
             }
@@ -791,6 +795,10 @@ impl Pane {
         F: 'static + Fn(&Window, &mut Context<Pane>) -> bool,
     {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
+    }
+
+    pub fn set_should_display_welcome_page(&mut self, should_display_welcome_page: bool) {
+        self.should_display_welcome_page = should_display_welcome_page;
     }
 
     pub fn set_can_split(
@@ -3882,8 +3890,9 @@ impl Pane {
                     {
                         let load_path_task = workspace.load_path(project_path.clone(), window, cx);
                         cx.spawn_in(window, async move |workspace, cx| {
-                            if let Some((project_entry_id, build_item)) =
-                                load_path_task.await.notify_async_err(cx)
+                            if let Some((project_entry_id, build_item)) = load_path_task
+                                .await
+                                .notify_async_err(NotificationSource::File, cx)
                             {
                                 let (to_pane, new_item_handle) = workspace
                                     .update_in(cx, |workspace, window, cx| {
@@ -3953,6 +3962,7 @@ impl Pane {
                 if workspace.project().read(cx).is_via_collab() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
+                        NotificationSource::File,
                         cx,
                     );
                     true
@@ -4010,7 +4020,7 @@ impl Pane {
                         _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(&e, cx);
+                                    workspace.show_error(&e, NotificationSource::File, cx);
                                 }
                             }
                             if to_pane.read(cx).items_len() == 0 {
@@ -4391,7 +4401,7 @@ impl Render for Pane {
                                         }
                                     },
                                 ));
-                            if has_worktrees {
+                            if has_worktrees || !self.should_display_welcome_page {
                                 placeholder
                             } else {
                                 if self.welcome_page.is_none() {
