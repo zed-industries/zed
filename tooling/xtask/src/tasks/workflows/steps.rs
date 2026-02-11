@@ -232,8 +232,11 @@ pub fn setup_sccache(platform: Platform) -> Step<Run> {
 pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
     match platform {
         // Use $env:RUSTC_WRAPPER (absolute path) because GITHUB_PATH changes
-        // don't take effect until the next step in PowerShell
-        Platform::Windows => named::pwsh("& $env:RUSTC_WRAPPER --show-stats; exit 0"),
+        // don't take effect until the next step in PowerShell.
+        // Check if RUSTC_WRAPPER is set first (it won't be for fork PRs without secrets).
+        Platform::Windows => {
+            named::pwsh("if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0")
+        }
         Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
     }
 }
