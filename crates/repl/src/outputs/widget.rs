@@ -407,15 +407,71 @@ fn convert_html_to_markdown_string(html: &str) -> String {
 
 const IPY_MODEL_PREFIX: &str = "IPY_MODEL_";
 
+struct LayoutProps {
+    align_items: Option<String>,
+    justify_content: Option<String>,
+    #[allow(dead_code)]
+    width: Option<String>,
+    #[allow(dead_code)]
+    flex_flow: Option<String>,
+}
+
+fn get_layout_props(store_ref: &WidgetStore, model: &WidgetModel) -> LayoutProps {
+    let layout_id = model
+        .state
+        .get("layout")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.strip_prefix(IPY_MODEL_PREFIX));
+
+    let layout_state = layout_id.and_then(|id| store_ref.get_state(id));
+
+    LayoutProps {
+        align_items: layout_state
+            .and_then(|s| s.get("align_items"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        justify_content: layout_state
+            .and_then(|s| s.get("justify_content"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        width: layout_state
+            .and_then(|s| s.get("width"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        flex_flow: layout_state
+            .and_then(|s| s.get("flex_flow"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    }
+}
+
 fn render_hbox(
     store: &Entity<WidgetStore>,
     model: &WidgetModel,
     window: &mut Window,
     cx: &App,
 ) -> AnyElement {
+    let store_ref = store.read(cx);
+    let layout = get_layout_props(&store_ref, model);
     let children = model.state.get("children").and_then(|v| v.as_array());
 
-    let mut flex = h_flex().gap_1().items_center();
+    let mut flex = h_flex().gap_2();
+
+    flex = match layout.align_items.as_deref() {
+        Some("center") => flex.items_center(),
+        Some("start" | "flex-start") => flex.items_start(),
+        Some("end" | "flex-end") => flex.items_end(),
+        _ => flex.items_center(),
+    };
+
+    flex = match layout.justify_content.as_deref() {
+        Some("center") => flex.justify_center(),
+        Some("start" | "flex-start") => flex.justify_start(),
+        Some("end" | "flex-end") => flex.justify_end(),
+        Some("space-between") => flex.justify_between(),
+        Some("space-around") => flex.justify_around(),
+        _ => flex,
+    };
 
     if let Some(children) = children {
         for child_ref in children {
@@ -437,9 +493,27 @@ fn render_vbox(
     window: &mut Window,
     cx: &App,
 ) -> AnyElement {
+    let store_ref = store.read(cx);
+    let layout = get_layout_props(&store_ref, model);
     let children = model.state.get("children").and_then(|v| v.as_array());
 
-    let mut flex = v_flex().gap_1();
+    let mut flex = v_flex().gap_2();
+
+    flex = match layout.align_items.as_deref() {
+        Some("center") => flex.items_center(),
+        Some("start" | "flex-start") => flex.items_start(),
+        Some("end" | "flex-end") => flex.items_end(),
+        _ => flex,
+    };
+
+    flex = match layout.justify_content.as_deref() {
+        Some("center") => flex.justify_center(),
+        Some("start" | "flex-start") => flex.justify_start(),
+        Some("end" | "flex-end") => flex.justify_end(),
+        Some("space-between") => flex.justify_between(),
+        Some("space-around") => flex.justify_around(),
+        _ => flex,
+    };
 
     if let Some(children) = children {
         for child_ref in children {
