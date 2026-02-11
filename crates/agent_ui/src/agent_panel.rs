@@ -158,7 +158,7 @@ pub fn init(cx: &mut App) {
                         .and_then(|thread_view| {
                             thread_view
                                 .read(cx)
-                                .as_active_thread()
+                                .active_thread()
                                 .map(|r| r.read(cx).thread.clone())
                         });
 
@@ -923,7 +923,7 @@ impl AgentPanel {
             return;
         };
 
-        let Some(active_thread) = thread_view.read(cx).as_active_thread() else {
+        let Some(active_thread) = thread_view.read(cx).active_thread() else {
             return;
         };
 
@@ -1196,7 +1196,7 @@ impl AgentPanel {
     ) {
         if let Some(workspace) = self.workspace.upgrade()
             && let Some(thread_view) = self.active_thread_view()
-            && let Some(active_thread) = thread_view.read(cx).as_active_thread()
+            && let Some(active_thread) = thread_view.read(cx).active_thread()
         {
             active_thread.update(cx, |thread, cx| {
                 thread
@@ -1431,7 +1431,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::AgentThread { thread_view, .. } => thread_view
                 .read(cx)
-                .as_active_thread()
+                .active_thread()
                 .map(|r| r.read(cx).thread.clone()),
             _ => None,
         }
@@ -1859,7 +1859,7 @@ impl AgentPanel {
 
                 if let Some(title_editor) = thread_view
                     .read(cx)
-                    .as_active_thread()
+                    .parent_thread(cx)
                     .and_then(|r| r.read(cx).title_editor.clone())
                 {
                     let container = div()

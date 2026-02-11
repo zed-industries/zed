@@ -167,7 +167,6 @@ impl Render for ProfileSelector {
         let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
-        let focus_handle = self.focus_handle.clone();
 
         let icon = if self.picker_handle.is_deployed() {
             IconName::ChevronUp
@@ -192,20 +191,18 @@ impl Render for ProfileSelector {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
                         .gap_1()
-                        .child(container().child(Label::new("Change Profile")).child(
-                            KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
-                        ))
+                        .child(
+                            container()
+                                .child(Label::new("Change Profile"))
+                                .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
+                        )
                         .child(
                             container()
                                 .pt_1()
                                 .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(Label::new("Cycle Through Profiles"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleModeSelector,
-                                    &focus_handle,
-                                    cx,
-                                )),
+                                .child(KeyBinding::for_action(&CycleModeSelector, cx)),
                         )
                         .into_any()
                 }

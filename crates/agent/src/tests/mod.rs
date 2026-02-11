@@ -155,8 +155,51 @@ impl crate::TerminalHandle for FakeTerminalHandle {
     }
 }
 
+struct FakeSubagentHandle {
+    session_id: acp::SessionId,
+    wait_for_summary_task: Shared<Task<String>>,
+}
+
+impl FakeSubagentHandle {
+    fn new_never_completes(cx: &App) -> Self {
+        Self {
+            session_id: acp::SessionId::new("subagent-id"),
+            wait_for_summary_task: cx.background_spawn(std::future::pending()).shared(),
+        }
+    }
+}
+
+impl SubagentHandle for FakeSubagentHandle {
+    fn id(&self) -> acp::SessionId {
+        self.session_id.clone()
+    }
+
+    fn wait_for_summary(&self, _summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
+        let task = self.wait_for_summary_task.clone();
+        cx.background_spawn(async move { Ok(task.await) })
+    }
+}
+
+#[derive(Default)]
 struct FakeThreadEnvironment {
-    handle: Rc<FakeTerminalHandle>,
+    terminal_handle: Option<Rc<FakeTerminalHandle>>,
+    subagent_handle: Option<Rc<FakeSubagentHandle>>,
+}
+
+impl FakeThreadEnvironment {
+    pub fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
+        Self {
+            terminal_handle: Some(terminal_handle.into()),
+            ..self
+        }
+    }
+
+    pub fn with_subagent(self, subagent_handle: FakeSubagentHandle) -> Self {
+        Self {
+            subagent_handle: Some(subagent_handle.into()),
+            ..self
+        }
+    }
 }
 
 impl crate::ThreadEnvironment for FakeThreadEnvironment {
@@ -167,7 +210,27 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _output_byte_limit: Option<u64>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
-        Task::ready(Ok(self.handle.clone() as Rc<dyn crate::TerminalHandle>))
+        let handle = self
+            .terminal_handle
+            .clone()
+            .expect("Terminal handle not available on FakeThreadEnvironment");
+        Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
+    }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout_ms: Option<Duration>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        Ok(self
+            .subagent_handle
+            .clone()
+            .expect("Subagent handle not available on FakeThreadEnvironment")
+            as Rc<dyn SubagentHandle>)
     }
 }
 
@@ -200,12 +263,24 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
         self.handles.borrow_mut().push(handle.clone());
         Task::ready(Ok(handle as Rc<dyn crate::TerminalHandle>))
     }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout: Option<Duration>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        unimplemented!()
+    }
 }
 
 fn always_allow_tools(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = true;
+        settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 }
@@ -228,14 +303,8 @@ async fn test_echo(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
-        assert_eq!(
-            thread.last_message().unwrap().to_markdown(),
-            indoc! {"
-                ## Assistant
-
-                Hello
-            "}
-        )
+        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
+        assert_eq!(thread.last_message().unwrap().to_markdown(), "Hello\n")
     });
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
@@ -248,10 +317,10 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
@@ -315,10 +384,10 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::TerminalTool::new(project, environment));
@@ -387,11 +456,10 @@ async fn test_thinking(cx: &mut TestAppContext) {
 
     let events = events.collect().await;
     thread.update(cx, |thread, _cx| {
+        assert_eq!(thread.last_message().unwrap().role(), Role::Assistant);
         assert_eq!(
             thread.last_message().unwrap().to_markdown(),
             indoc! {"
-                ## Assistant
-
                 <think>Think</think>
                 Hello
             "}
@@ -413,7 +481,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     project_context.update(cx, |project_context, _cx| {
         project_context.shell = "test-shell".into()
     });
-    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool, None));
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["abc"], cx)
@@ -549,7 +617,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Simulate a tool call and verify that the latest tool result is cached
-    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool, None));
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
@@ -635,7 +703,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     // Test a tool call that's likely to complete *before* streaming stops.
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
+            thread.add_tool(EchoTool, None);
             thread.send(
                 UserMessageId::new(),
                 ["Now test the echo tool with 'Hello'. Does it work? Say 'Yes' or 'No'."],
@@ -651,7 +719,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let events = thread
         .update(cx, |thread, cx| {
             thread.remove_tool(&EchoTool::NAME);
-            thread.add_tool(DelayTool);
+            thread.add_tool(DelayTool, None);
             thread.send(
                 UserMessageId::new(),
                 [
@@ -695,7 +763,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     // Test a tool call that's likely to complete *before* streaming stops.
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(WordListTool);
+            thread.add_tool(WordListTool, None);
             thread.send(UserMessageId::new(), ["Test the word_list tool."], cx)
         })
         .unwrap();
@@ -746,7 +814,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(ToolRequiringPermission);
+            thread.add_tool(ToolRequiringPermission, None);
             thread.send(UserMessageId::new(), ["abc"], cx)
         })
         .unwrap();
@@ -969,9 +1037,11 @@ async fn next_tool_call_authorization(
 
 #[test]
 fn test_permission_options_terminal_with_pattern() {
-    let permission_options =
-        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
-            .build_permission_options();
+    let permission_options = ToolPermissionContext::new(
+        TerminalTool::NAME,
+        vec!["cargo build --release".to_string()],
+    )
+    .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -990,7 +1060,8 @@ fn test_permission_options_terminal_with_pattern() {
 #[test]
 fn test_permission_options_edit_file_with_path_pattern() {
     let permission_options =
-        ToolPermissionContext::new(EditFileTool::NAME, "src/main.rs").build_permission_options();
+        ToolPermissionContext::new(EditFileTool::NAME, vec!["src/main.rs".to_string()])
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1006,8 +1077,9 @@ fn test_permission_options_edit_file_with_path_pattern() {
 
 #[test]
 fn test_permission_options_fetch_with_domain_pattern() {
-    let permission_options = ToolPermissionContext::new(FetchTool::NAME, "https://docs.rs/gpui")
-        .build_permission_options();
+    let permission_options =
+        ToolPermissionContext::new(FetchTool::NAME, vec!["https://docs.rs/gpui".to_string()])
+            .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1023,9 +1095,11 @@ fn test_permission_options_fetch_with_domain_pattern() {
 
 #[test]
 fn test_permission_options_without_pattern() {
-    let permission_options =
-        ToolPermissionContext::new(TerminalTool::NAME, "./deploy.sh --production")
-            .build_permission_options();
+    let permission_options = ToolPermissionContext::new(
+        TerminalTool::NAME,
+        vec!["./deploy.sh --production".to_string()],
+    )
+    .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1043,9 +1117,11 @@ fn test_permission_options_without_pattern() {
 
 #[test]
 fn test_permission_option_ids_for_terminal() {
-    let permission_options =
-        ToolPermissionContext::new(TerminalTool::NAME, "cargo build --release")
-            .build_permission_options();
+    let permission_options = ToolPermissionContext::new(
+        TerminalTool::NAME,
+        vec!["cargo build --release".to_string()],
+    )
+    .build_permission_options();
 
     let PermissionOptions::Dropdown(choices) = permission_options else {
         panic!("Expected dropdown permission options");
@@ -1087,7 +1163,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     // Test concurrent tool calls with different delay times
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(DelayTool);
+            thread.add_tool(DelayTool, None);
             thread.send(
                 UserMessageId::new(),
                 [
@@ -1132,9 +1208,9 @@ async fn test_profiles(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(DelayTool);
-        thread.add_tool(EchoTool);
-        thread.add_tool(InfiniteTool);
+        thread.add_tool(DelayTool, None);
+        thread.add_tool(EchoTool, None);
+        thread.add_tool(InfiniteTool, None);
     });
 
     // Override profiles and wait for settings to be loaded.
@@ -1220,7 +1296,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         paths::settings_file(),
         json!({
             "agent": {
-                "always_allow_tool_actions": true,
+                "tool_permissions": { "default": "allow" },
                 "profiles": {
                     "test": {
                         "name": "Test Profile",
@@ -1300,7 +1376,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 
     // Send again after adding the echo tool, ensuring the name collision is resolved.
     let events = thread.update(cx, |thread, cx| {
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
         thread.send(UserMessageId::new(), ["Go"], cx).unwrap()
     });
     cx.run_until_parked();
@@ -1409,11 +1485,11 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("test".into()), cx);
-        thread.add_tool(EchoTool);
-        thread.add_tool(DelayTool);
-        thread.add_tool(WordListTool);
-        thread.add_tool(ToolRequiringPermission);
-        thread.add_tool(InfiniteTool);
+        thread.add_tool(EchoTool, None);
+        thread.add_tool(DelayTool, None);
+        thread.add_tool(WordListTool, None);
+        thread.add_tool(ToolRequiringPermission, None);
+        thread.add_tool(InfiniteTool, None);
     });
 
     // Set up multiple context servers with some overlapping tool names
@@ -1543,8 +1619,8 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(InfiniteTool);
-            thread.add_tool(EchoTool);
+            thread.add_tool(InfiniteTool, None);
+            thread.add_tool(EchoTool, None);
             thread.send(
                 UserMessageId::new(),
                 ["Call the echo tool, then call the infinite tool, then explain their output"],
@@ -1628,17 +1704,17 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command"], cx)
         })
         .unwrap();
@@ -1732,7 +1808,7 @@ async fn test_cancellation_aware_tool_responds_to_cancellation(cx: &mut TestAppC
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(tool);
+            thread.add_tool(tool, None);
             thread.send(
                 UserMessageId::new(),
                 ["call the cancellation aware tool"],
@@ -1910,18 +1986,18 @@ async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let message_id = UserMessageId::new();
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(message_id.clone(), ["run a command"], cx)
         })
         .unwrap();
@@ -1982,10 +2058,10 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment.clone(),
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment.clone()),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run multiple commands"], cx)
         })
         .unwrap();
@@ -2088,17 +2164,17 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command"], cx)
         })
         .unwrap();
@@ -2182,17 +2258,17 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     always_allow_tools(cx);
     let fake_model = model.as_fake();
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment {
-        handle: handle.clone(),
-    });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+    let handle = environment.terminal_handle.clone().unwrap();
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(crate::TerminalTool::new(
-                thread.project().clone(),
-                environment,
-            ));
+            thread.add_tool(
+                crate::TerminalTool::new(thread.project().clone(), environment),
+                None,
+            );
             thread.send(UserMessageId::new(), ["run a command with timeout"], cx)
         })
         .unwrap();
@@ -2673,8 +2749,8 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
 
     let _events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(ToolRequiringPermission);
-            thread.add_tool(EchoTool);
+            thread.add_tool(ToolRequiringPermission, None);
+            thread.add_tool(EchoTool, None);
             thread.send(UserMessageId::new(), ["Hey!"], cx)
         })
         .unwrap();
@@ -2788,7 +2864,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
-        .update(|cx| connection_rc.new_thread(project, cwd, cx))
+        .update(|cx| connection_rc.new_session(project, cwd, cx))
         .await
         .expect("new_thread should succeed");
 
@@ -2855,9 +2931,11 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.update(|cx| connection.cancel(&session_id, cx));
     request.await.expect("prompt should fail gracefully");
 
-    // Ensure that dropping the ACP thread causes the native thread to be
-    // dropped as well.
-    cx.update(|_| drop(acp_thread));
+    // Explicitly close the session and drop the ACP thread.
+    cx.update(|cx| Rc::new(connection.clone()).close_session(&session_id, cx))
+        .await
+        .unwrap();
+    drop(acp_thread);
     let result = cx
         .update(|cx| {
             connection.prompt(
@@ -2878,7 +2956,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool));
+    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool, None));
     let fake_model = model.as_fake();
 
     let mut events = thread
@@ -3080,7 +3158,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
 
     let events = thread
         .update(cx, |thread, cx| {
-            thread.add_tool(EchoTool);
+            thread.add_tool(EchoTool, None);
             thread.send(UserMessageId::new(), ["Call the echo tool!"], cx)
         })
         .unwrap();
@@ -3652,17 +3730,16 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
     // Test 1: Deny rule blocks command
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Confirm,
+                    default: Some(settings::ToolPermissionMode::Confirm),
                     always_allow: vec![],
                     always_deny: vec![
                         agent_settings::CompiledRegex::new(r"rm\s+-rf", false).unwrap(),
@@ -3702,20 +3779,19 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 2: Allow rule skips confirmation (and overrides default_mode: Deny)
+    // Test 2: Allow rule skips confirmation (and overrides default: Deny)
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = false;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![
                         agent_settings::CompiledRegex::new(r"^echo\s", false).unwrap(),
                     ],
@@ -3760,20 +3836,20 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
         );
     }
 
-    // Test 3: always_allow_tool_actions=true overrides always_confirm patterns
+    // Test 3: global default: allow does NOT override always_confirm patterns
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Allow,
+                    default: Some(settings::ToolPermissionMode::Allow),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![
@@ -3787,9 +3863,9 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let tool = Arc::new(crate::TerminalTool::new(project.clone(), environment));
-        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
-        let task = cx.update(|cx| {
+        let _task = cx.update(|cx| {
             tool.run(
                 crate::TerminalToolInput {
                     command: "sudo rm file".to_string(),
@@ -3801,25 +3877,28 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        // With always_allow_tool_actions=true, confirm patterns are overridden
-        task.await
-            .expect("command should be allowed with always_allow_tool_actions=true");
+        // With global default: allow, confirm patterns are still respected
+        // The expect_authorization() call will panic if no authorization is requested,
+        // which validates that the confirm pattern still triggers confirmation
+        let _auth = rx.expect_authorization().await;
+
+        drop(_task);
     }
 
-    // Test 4: always_allow_tool_actions=true overrides default_mode: Deny
+    // Test 4: tool-specific default: deny is respected even with global default: allow
     {
-        let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_with_immediate_exit(cx, 0)));
-        let environment = Rc::new(FakeThreadEnvironment {
-            handle: handle.clone(),
-        });
+        let environment = Rc::new(cx.update(|cx| {
+            FakeThreadEnvironment::default()
+                .with_terminal(FakeTerminalHandle::new_with_immediate_exit(cx, 0))
+        }));
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             settings.tool_permissions.tools.insert(
                 TerminalTool::NAME.into(),
                 agent_settings::ToolRules {
-                    default_mode: settings::ToolPermissionMode::Deny,
+                    default: Some(settings::ToolPermissionMode::Deny),
                     always_allow: vec![],
                     always_deny: vec![],
                     always_confirm: vec![],
@@ -3845,9 +3924,17 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             )
         });
 
-        // With always_allow_tool_actions=true, even default_mode: Deny is overridden
-        task.await
-            .expect("command should be allowed with always_allow_tool_actions=true");
+        // tool-specific default: deny is respected even with global default: allow
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "expected command to be blocked by tool-specific deny default"
+        );
+        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        assert!(
+            err_msg.contains("disabled"),
+            "error should mention the tool is disabled, got: {err_msg}"
+        );
     }
 }
 
@@ -3868,8 +3955,9 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
 
     let thread = cx.new(|cx| {
         let mut thread = Thread::new(
@@ -3880,7 +3968,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
             Some(model),
             cx,
         );
-        thread.add_default_tools(environment, cx);
+        thread.add_default_tools(None, environment, cx);
         thread
     });
 
@@ -3893,7 +3981,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 }
 
 #[gpui::test]
-async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
+async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestAppContext) {
     init_test(cx);
 
     cx.update(|cx| {
@@ -3909,31 +3997,29 @@ async fn test_subagent_thread_inherits_parent_model(cx: &mut TestAppContext) {
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
 
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
             project.clone(),
             project_context,
             context_server_registry,
             Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
+            Some(model.clone()),
             cx,
         )
     });
 
-    subagent.read_with(cx, |thread, _| {
-        assert!(thread.is_subagent());
-        assert_eq!(thread.depth(), 1);
-        assert!(thread.model().is_some());
+    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
+    subagent_thread.read_with(cx, |subagent_thread, cx| {
+        assert!(subagent_thread.is_subagent());
+        assert_eq!(subagent_thread.depth(), 1);
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(model.id())
+        );
+        assert_eq!(
+            subagent_thread.parent_thread_id(),
+            Some(parent_thread.read(cx).id().clone())
+        );
     });
 }
 
@@ -3953,241 +4039,36 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
 
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: MAX_SUBAGENT_DEPTH,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
-    let environment = Rc::new(FakeThreadEnvironment { handle });
-
-    let deep_subagent = cx.new(|cx| {
-        let mut thread = Thread::new_subagent(
+    let deep_parent_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
             project.clone(),
             project_context,
             context_server_registry,
             Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
+            Some(model.clone()),
             cx,
         );
-        thread.add_default_tools(environment, cx);
+        thread.set_subagent_context(SubagentContext {
+            parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+            depth: MAX_SUBAGENT_DEPTH - 1,
+        });
+        thread
+    });
+    let deep_subagent_thread = cx.new(|cx| {
+        let mut thread = Thread::new_subagent(&deep_parent_thread, cx);
+        thread.add_default_tools(None, environment, cx);
         thread
     });
 
-    deep_subagent.read_with(cx, |thread, _| {
+    deep_subagent_thread.read_with(cx, |thread, _| {
         assert_eq!(thread.depth(), MAX_SUBAGENT_DEPTH);
         assert!(
             !thread.has_registered_tool(SubagentTool::NAME),
             "subagent tool should not be present at max depth"
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_subagent_receives_task_prompt(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize your work".to_string(),
-        context_low_prompt: "Context low, wrap up".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    let task_prompt = "Find all TODO comments in the codebase";
-    subagent
-        .update(cx, |thread, cx| thread.submit_user_message(task_prompt, cx))
-        .unwrap();
-    cx.run_until_parked();
-
-    let pending = fake_model.pending_completions();
-    assert_eq!(pending.len(), 1, "should have one pending completion");
-
-    let messages = &pending[0].messages;
-    let user_messages: Vec<_> = messages
-        .iter()
-        .filter(|m| m.role == language_model::Role::User)
-        .collect();
-    assert_eq!(user_messages.len(), 1, "should have one user message");
-
-    let content = &user_messages[0].content[0];
-    assert!(
-        content.to_str().unwrap().contains("TODO"),
-        "task prompt should be in user message"
-    );
-}
-
-#[gpui::test]
-async fn test_subagent_returns_summary_on_completion(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Please summarize what you found".to_string(),
-        context_low_prompt: "Context low, wrap up".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Do some work", cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    fake_model.send_last_completion_stream_text_chunk("I did the work");
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    subagent
-        .update(cx, |thread, cx| thread.request_final_summary(cx))
-        .unwrap();
-    cx.run_until_parked();
-
-    let pending = fake_model.pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "should have pending completion for summary"
-    );
-
-    let messages = &pending.last().unwrap().messages;
-    let user_messages: Vec<_> = messages
-        .iter()
-        .filter(|m| m.role == language_model::Role::User)
-        .collect();
-
-    let last_user = user_messages.last().unwrap();
-    assert!(
-        last_user.content[0].to_str().unwrap().contains("summarize"),
-        "summary prompt should be sent"
-    );
-}
-
-#[gpui::test]
-async fn test_allowed_tools_restricts_subagent_capabilities(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let subagent = cx.new(|cx| {
-        let mut thread = Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        );
-        thread.add_tool(EchoTool);
-        thread.add_tool(DelayTool);
-        thread.add_tool(WordListTool);
-        thread
-    });
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(thread.has_registered_tool("echo"));
-        assert!(thread.has_registered_tool("delay"));
-        assert!(thread.has_registered_tool("word_list"));
-    });
-
-    let allowed: collections::HashSet<gpui::SharedString> =
-        vec!["echo".into()].into_iter().collect();
-
-    subagent.update(cx, |thread, _cx| {
-        thread.restrict_tools(&allowed);
-    });
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(
-            thread.has_registered_tool("echo"),
-            "echo should still be available"
-        );
-        assert!(
-            !thread.has_registered_tool("delay"),
-            "delay should be removed"
-        );
-        assert!(
-            !thread.has_registered_tool("word_list"),
-            "word_list should be removed"
         );
     });
 }
@@ -4220,33 +4101,16 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         )
     });
 
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
+    let subagent = cx.new(|cx| Thread::new_subagent(&parent, cx));
 
     parent.update(cx, |thread, _cx| {
         thread.register_running_subagent(subagent.downgrade());
     });
 
     subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Do work".to_string()], cx)
+        })
         .unwrap();
     cx.run_until_parked();
 
@@ -4285,6 +4149,9 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_subagent(FakeSubagentHandle::new_never_completes(cx))
+    }));
 
     let parent = cx.new(|cx| {
         Thread::new(
@@ -4298,7 +4165,7 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
     });
 
     #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
+    let tool = Arc::new(SubagentTool::new(parent.downgrade(), environment));
 
     let (event_stream, _rx, mut cancellation_tx) =
         crate::ToolCallEventStream::test_with_cancellation();
@@ -4310,7 +4177,6 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
                 label: "Long running task".to_string(),
                 task_prompt: "Do a very long task that takes forever".to_string(),
                 summary_prompt: "Summarize".to_string(),
-                context_low_prompt: "Context low".to_string(),
                 timeout_ms: None,
                 allowed_tools: None,
             },
@@ -4343,404 +4209,7 @@ async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_subagent_model_error_returned_as_tool_error(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
-        .unwrap();
-    cx.run_until_parked();
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(!thread.is_turn_complete(), "turn should be in progress");
-    });
-
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::NoApiKey {
-        provider: LanguageModelProviderName::from("Fake".to_string()),
-    });
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(
-            thread.is_turn_complete(),
-            "turn should be complete after non-retryable error"
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_subagent_timeout_triggers_early_summary(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize your work".to_string(),
-        context_low_prompt: "Context low, stop and summarize".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            model.clone(),
-            subagent_context.clone(),
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    subagent.update(cx, |thread, _| {
-        thread.add_tool(EchoTool);
-    });
-
-    subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Do some work", cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    fake_model.send_last_completion_stream_text_chunk("Working on it...");
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let interrupt_result = subagent.update(cx, |thread, cx| thread.interrupt_for_summary(cx));
-    assert!(
-        interrupt_result.is_ok(),
-        "interrupt_for_summary should succeed"
-    );
-
-    cx.run_until_parked();
-
-    let pending = fake_model.pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "should have pending completion for interrupted summary"
-    );
-
-    let messages = &pending.last().unwrap().messages;
-    let user_messages: Vec<_> = messages
-        .iter()
-        .filter(|m| m.role == language_model::Role::User)
-        .collect();
-
-    let last_user = user_messages.last().unwrap();
-    let content_str = last_user.content[0].to_str().unwrap();
-    assert!(
-        content_str.contains("Context low") || content_str.contains("stop and summarize"),
-        "context_low_prompt should be sent when interrupting: got {:?}",
-        content_str
-    );
-}
-
-#[gpui::test]
-async fn test_context_low_check_returns_true_when_usage_high(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
-        .unwrap();
-    cx.run_until_parked();
-
-    let max_tokens = model.max_token_count();
-    let high_usage = language_model::TokenUsage {
-        input_tokens: (max_tokens as f64 * 0.80) as u64,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-    };
-
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(high_usage));
-    fake_model.send_last_completion_stream_text_chunk("Working...");
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let usage = subagent.read_with(cx, |thread, _| thread.latest_token_usage());
-    assert!(usage.is_some(), "should have token usage after completion");
-
-    let usage = usage.unwrap();
-    let remaining_ratio = 1.0 - (usage.used_tokens as f32 / usage.max_tokens as f32);
-    assert!(
-        remaining_ratio <= 0.25,
-        "remaining ratio should be at or below 25% (got {}%), indicating context is low",
-        remaining_ratio * 100.0
-    );
-}
-
-#[gpui::test]
-async fn test_allowed_tools_rejects_unknown_tool(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let parent = cx.new(|cx| {
-        let mut thread = Thread::new(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            Some(model.clone()),
-            cx,
-        );
-        thread.add_tool(EchoTool);
-        thread
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
-
-    let allowed_tools = Some(vec!["nonexistent_tool".to_string()]);
-    let result = cx.read(|cx| tool.validate_allowed_tools(&allowed_tools, cx));
-
-    assert!(result.is_err(), "should reject unknown tool");
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("nonexistent_tool"),
-        "error should mention the invalid tool name: {}",
-        err_msg
-    );
-    assert!(
-        err_msg.contains("do not exist"),
-        "error should explain the tool does not exist: {}",
-        err_msg
-    );
-}
-
-#[gpui::test]
-async fn test_subagent_empty_response_handled(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let project = thread.read_with(cx, |t, _| t.project.clone());
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-    let subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    subagent
-        .update(cx, |thread, cx| thread.submit_user_message("Do work", cx))
-        .unwrap();
-    cx.run_until_parked();
-
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(
-            thread.is_turn_complete(),
-            "turn should complete even with empty response"
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_nested_subagent_at_depth_2_succeeds(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let depth_1_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("root-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-1"),
-        depth: 1,
-        summary_prompt: "Summarize".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let depth_1_subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            model.clone(),
-            depth_1_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    depth_1_subagent.read_with(cx, |thread, _| {
-        assert_eq!(thread.depth(), 1);
-        assert!(thread.is_subagent());
-    });
-
-    let depth_2_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("depth-1-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-2"),
-        depth: 2,
-        summary_prompt: "Summarize depth 2".to_string(),
-        context_low_prompt: "Context low depth 2".to_string(),
-    };
-
-    let depth_2_subagent = cx.new(|cx| {
-        Thread::new_subagent(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            model.clone(),
-            depth_2_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        )
-    });
-
-    depth_2_subagent.read_with(cx, |thread, _| {
-        assert_eq!(thread.depth(), 2);
-        assert!(thread.is_subagent());
-    });
-
-    depth_2_subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Nested task", cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let pending = model.as_fake().pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "depth-2 subagent should be able to submit messages"
-    );
-}
-
-#[gpui::test]
-async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
+async fn test_thread_environment_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
     init_test(cx);
     always_allow_tools(cx);
 
@@ -4750,179 +4219,78 @@ async fn test_subagent_uses_tool_and_returns_result(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
     let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
     let model = Arc::new(FakeLanguageModel::default());
-    let fake_model = model.as_fake();
-
-    let subagent_context = SubagentContext {
-        parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-        tool_use_id: language_model::LanguageModelToolUseId::from("tool-use-id"),
-        depth: 1,
-        summary_prompt: "Summarize what you did".to_string(),
-        context_low_prompt: "Context low".to_string(),
-    };
-
-    let subagent = cx.new(|cx| {
-        let mut thread = Thread::new_subagent(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            model.clone(),
-            subagent_context,
-            std::collections::BTreeMap::new(),
-            cx,
-        );
-        thread.add_tool(EchoTool);
-        thread
-    });
-
-    subagent.read_with(cx, |thread, _| {
-        assert!(
-            thread.has_registered_tool("echo"),
-            "subagent should have echo tool"
-        );
-    });
-
-    subagent
-        .update(cx, |thread, cx| {
-            thread.submit_user_message("Use the echo tool to echo 'hello world'", cx)
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    let tool_use = LanguageModelToolUse {
-        id: "tool_call_1".into(),
-        name: EchoTool::NAME.into(),
-        raw_input: json!({"text": "hello world"}).to_string(),
-        input: json!({"text": "hello world"}),
-        is_input_complete: true,
-        thought_signature: None,
-    };
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let pending = fake_model.pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "should have pending completion after tool use"
-    );
-
-    let last_completion = pending.last().unwrap();
-    let has_tool_result = last_completion.messages.iter().any(|m| {
-        m.content
-            .iter()
-            .any(|c| matches!(c, MessageContent::ToolResult(_)))
-    });
-    assert!(
-        has_tool_result,
-        "tool result should be in the messages sent back to the model"
-    );
-}
-
-#[gpui::test]
-async fn test_max_parallel_subagents_enforced(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let parent = cx.new(|cx| {
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
         Thread::new(
             project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
+            project_context,
+            context_server_registry,
             Templates::new(),
             Some(model.clone()),
             cx,
         )
     });
 
-    let mut subagents = Vec::new();
-    for i in 0..MAX_PARALLEL_SUBAGENTS {
-        let subagent_context = SubagentContext {
-            parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
-            tool_use_id: language_model::LanguageModelToolUseId::from(format!("tool-use-{}", i)),
-            depth: 1,
-            summary_prompt: "Summarize".to_string(),
-            context_low_prompt: "Context low".to_string(),
-        };
-
-        let subagent = cx.new(|cx| {
-            Thread::new_subagent(
-                project.clone(),
-                project_context.clone(),
-                context_server_registry.clone(),
-                Templates::new(),
-                model.clone(),
-                subagent_context,
-                std::collections::BTreeMap::new(),
-                cx,
-            )
-        });
-
-        parent.update(cx, |thread, _cx| {
-            thread.register_running_subagent(subagent.downgrade());
-        });
-        subagents.push(subagent);
+    let mut handles = Vec::new();
+    for _ in 0..MAX_PARALLEL_SUBAGENTS {
+        let handle = cx
+            .update(|cx| {
+                NativeThreadEnvironment::create_subagent_thread(
+                    native_agent.downgrade(),
+                    parent_thread.clone(),
+                    "some title".to_string(),
+                    "some task".to_string(),
+                    None,
+                    None,
+                    cx,
+                )
+            })
+            .expect("Expected to be able to create subagent thread");
+        handles.push(handle);
     }
 
-    parent.read_with(cx, |thread, _| {
-        assert_eq!(
-            thread.running_subagent_count(),
-            MAX_PARALLEL_SUBAGENTS,
-            "should have MAX_PARALLEL_SUBAGENTS registered"
-        );
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
-
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
     let result = cx.update(|cx| {
-        tool.run(
-            SubagentToolInput {
-                label: "Test".to_string(),
-                task_prompt: "Do something".to_string(),
-                summary_prompt: "Summarize".to_string(),
-                context_low_prompt: "Context low".to_string(),
-                timeout_ms: None,
-                allowed_tools: None,
-            },
-            event_stream,
+        NativeThreadEnvironment::create_subagent_thread(
+            native_agent.downgrade(),
+            parent_thread.clone(),
+            "some title".to_string(),
+            "some task".to_string(),
+            None,
+            None,
             cx,
         )
     });
-
-    let err = result.await.unwrap_err();
-    assert!(
-        err.to_string().contains("Maximum parallel subagents"),
-        "should reject when max parallel subagents reached: {}",
-        err
+    assert!(result.is_err());
+    assert_eq!(
+        result.err().unwrap().to_string(),
+        format!(
+            "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
+            MAX_PARALLEL_SUBAGENTS
+        )
     );
-
-    drop(subagents);
 }
 
 #[gpui::test]
-async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
+async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
     init_test(cx);
+
     always_allow_tools(cx);
 
     cx.update(|cx| {
@@ -4931,105 +4299,334 @@ async fn test_subagent_tool_end_to_end(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
     let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
     let model = Arc::new(FakeLanguageModel::default());
-    let fake_model = model.as_fake();
-
-    let parent = cx.new(|cx| {
-        let mut thread = Thread::new(
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
             project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
+            project_context,
+            context_server_registry,
             Templates::new(),
             Some(model.clone()),
-            cx,
-        );
-        thread.add_tool(EchoTool);
-        thread
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), 0));
-
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            SubagentToolInput {
-                label: "Research task".to_string(),
-                task_prompt: "Find all TODOs in the codebase".to_string(),
-                summary_prompt: "Summarize what you found".to_string(),
-                context_low_prompt: "Context low, wrap up".to_string(),
-                timeout_ms: None,
-                allowed_tools: None,
-            },
-            event_stream,
             cx,
         )
     });
 
+    let subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(10)),
+                None,
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    let summary_task =
+        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
+
     cx.run_until_parked();
 
-    let pending = fake_model.pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "subagent should have started and sent a completion request"
-    );
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        // Ensure that model received a system prompt
+        assert_eq!(messages[0].role, Role::System);
+        // Ensure that model received a task prompt
+        assert_eq!(messages[1].role, Role::User);
+        assert_eq!(
+            messages[1].content,
+            vec![MessageContent::Text("task prompt".to_string())]
+        );
+    }
 
-    let first_completion = &pending[0];
-    let has_task_prompt = first_completion.messages.iter().any(|m| {
-        m.role == language_model::Role::User
-            && m.content
-                .iter()
-                .any(|c| c.to_str().map(|s| s.contains("TODO")).unwrap_or(false))
+    model.send_last_completion_stream_text_chunk("Some task response...");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        assert_eq!(messages[2].role, Role::Assistant);
+        assert_eq!(
+            messages[2].content,
+            vec![MessageContent::Text("Some task response...".to_string())]
+        );
+        // Ensure that model received a summary prompt
+        assert_eq!(messages[3].role, Role::User);
+        assert_eq!(
+            messages[3].content,
+            vec![MessageContent::Text("summary prompt".to_string())]
+        );
+    }
+
+    model.send_last_completion_stream_text_chunk("Some summary...");
+    model.end_last_completion_stream();
+
+    let result = summary_task.await;
+    assert_eq!(result.unwrap(), "Some summary...\n");
+}
+
+#[gpui::test]
+async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceeded(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
     });
-    assert!(has_task_prompt, "task prompt should be sent to subagent");
 
-    fake_model.send_last_completion_stream_text_chunk("I found 5 TODOs in the codebase.");
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-
-    let pending = fake_model.pending_completions();
-    assert!(
-        !pending.is_empty(),
-        "should have pending completion for summary request"
-    );
-
-    let last_completion = pending.last().unwrap();
-    let has_summary_prompt = last_completion.messages.iter().any(|m| {
-        m.role == language_model::Role::User
-            && m.content.iter().any(|c| {
-                c.to_str()
-                    .map(|s| s.contains("Summarize") || s.contains("summarize"))
-                    .unwrap_or(false)
-            })
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
     });
-    assert!(
-        has_summary_prompt,
-        "summary prompt should be sent after task completion"
-    );
 
-    fake_model.send_last_completion_stream_text_chunk("Summary: Found 5 TODOs across 3 files.");
-    fake_model
-        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
-    fake_model.end_last_completion_stream();
+    let subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(100)),
+                None,
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    let summary_task =
+        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
+
     cx.run_until_parked();
 
-    let result = task.await;
-    assert!(result.is_ok(), "subagent tool should complete successfully");
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        // Ensure that model received a system prompt
+        assert_eq!(messages[0].role, Role::System);
+        // Ensure that model received a task prompt
+        assert_eq!(
+            messages[1].content,
+            vec![MessageContent::Text("task prompt".to_string())]
+        );
+    }
 
-    let summary = result.unwrap();
-    assert!(
-        summary.contains("Summary") || summary.contains("TODO") || summary.contains("5"),
-        "summary should contain subagent's response: {}",
-        summary
-    );
+    // Don't complete the initial model stream — let the timeout expire instead.
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+
+    // After the timeout fires, the thread is cancelled and context_low_prompt is sent
+    // instead of the summary_prompt.
+    {
+        let messages = model.pending_completions().last().unwrap().messages.clone();
+        let last_user_message = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .unwrap();
+        assert_eq!(
+            last_user_message.content,
+            vec![MessageContent::Text("The time to complete the task was exceeded. Stop with the task and follow the directions below:\nsummary prompt".to_string())]
+        );
+    }
+
+    model.send_last_completion_stream_text_chunk("Some context low response...");
+    model.end_last_completion_stream();
+
+    let result = summary_task.await;
+    assert_eq!(result.unwrap(), "Some context low response...\n");
+}
+
+#[gpui::test]
+async fn test_subagent_inherits_parent_thread_tools(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(ListDirectoryTool::new(project.clone()), None);
+        thread.add_tool(GrepTool::new(project.clone()), None);
+        thread
+    });
+
+    let _subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(10)),
+                None,
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    cx.run_until_parked();
+
+    let tools = model
+        .pending_completions()
+        .last()
+        .unwrap()
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(tools.len(), 2);
+    assert!(tools.contains(&"grep".to_string()));
+    assert!(tools.contains(&"list_directory".to_string()));
+}
+
+#[gpui::test]
+async fn test_subagent_tool_restricts_tool_access(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    always_allow_tools(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    cx.update(LanguageModelRegistry::test);
+    let model = Arc::new(FakeLanguageModel::default());
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let native_agent = NativeAgent::new(
+        project.clone(),
+        thread_store,
+        Templates::new(),
+        None,
+        fs,
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let parent_thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        );
+        thread.add_tool(ListDirectoryTool::new(project.clone()), None);
+        thread.add_tool(GrepTool::new(project.clone()), None);
+        thread
+    });
+
+    let _subagent_handle = cx
+        .update(|cx| {
+            NativeThreadEnvironment::create_subagent_thread(
+                native_agent.downgrade(),
+                parent_thread.clone(),
+                "some title".to_string(),
+                "task prompt".to_string(),
+                Some(Duration::from_millis(10)),
+                Some(vec!["grep".to_string()]),
+                cx,
+            )
+        })
+        .expect("Failed to create subagent");
+
+    cx.run_until_parked();
+
+    let tools = model
+        .pending_completions()
+        .last()
+        .unwrap()
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(tools, vec!["grep"]);
 }
 
 #[gpui::test]
@@ -5046,7 +4643,7 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             EditFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"sensitive", false).unwrap()],
                 always_confirm: vec![],
@@ -5114,7 +4711,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
         settings.tool_permissions.tools.insert(
             DeletePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"important", false).unwrap()],
                 always_confirm: vec![],
@@ -5168,7 +4765,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         settings.tool_permissions.tools.insert(
             MovePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"protected", false).unwrap()],
                 always_confirm: vec![],
@@ -5224,7 +4821,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             MovePathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"secret", false).unwrap()],
                 always_confirm: vec![],
@@ -5280,7 +4877,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             CopyPathTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"confidential", false).unwrap(),
@@ -5337,7 +4934,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
         settings.tool_permissions.tools.insert(
             SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"readonly", false).unwrap()],
                 always_confirm: vec![],
@@ -5386,11 +4983,10 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             SaveFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![agent_settings::CompiledRegex::new(r"\.secret$", false).unwrap()],
                 always_confirm: vec![],
@@ -5431,7 +5027,7 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             WebSearchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company", false).unwrap(),
@@ -5471,11 +5067,10 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             EditFileTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"\.md$", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -5531,6 +5126,71 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".zed": {
+                "settings.json": "{}"
+            },
+            "README.md": "# Hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let context_server_registry =
+        cx.new(|cx| crate::ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+    let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+    let templates = crate::Templates::new();
+    let thread = cx.new(|cx| {
+        crate::Thread::new(
+            project.clone(),
+            cx.new(|_cx| prompt_store::ProjectContext::default()),
+            context_server_registry,
+            templates.clone(),
+            None,
+            cx,
+        )
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::EditFileTool::new(
+        project,
+        thread.downgrade(),
+        language_registry,
+        templates,
+    ));
+
+    // Editing a file inside .zed/ should still prompt even with global default: allow,
+    // because local settings paths are sensitive and require confirmation regardless.
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+    let _task = cx.update(|cx| {
+        tool.run(
+            crate::EditFileToolInput {
+                display_description: "Edit local settings".to_string(),
+                path: "root/.zed/settings.json".into(),
+                mode: crate::EditFileMode::Edit,
+            },
+            event_stream,
+            cx,
+        )
+    });
+
+    let _update = rx.expect_update_fields().await;
+    let _auth = rx.expect_authorization().await;
+}
+
+#[gpui::test]
 async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5539,7 +5199,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
         settings.tool_permissions.tools.insert(
             FetchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Allow,
+                default: Some(settings::ToolPermissionMode::Allow),
                 always_allow: vec![],
                 always_deny: vec![
                     agent_settings::CompiledRegex::new(r"internal\.company\.com", false).unwrap(),
@@ -5576,11 +5236,10 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.always_allow_tool_actions = false;
         settings.tool_permissions.tools.insert(
             FetchTool::NAME.into(),
             agent_settings::ToolRules {
-                default_mode: settings::ToolPermissionMode::Confirm,
+                default: Some(settings::ToolPermissionMode::Confirm),
                 always_allow: vec![agent_settings::CompiledRegex::new(r"docs\.rs", false).unwrap()],
                 always_deny: vec![],
                 always_confirm: vec![],
@@ -5620,7 +5279,7 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
 
     // Add a tool so we can simulate tool calls
     thread.update(cx, |thread, _cx| {
-        thread.add_tool(EchoTool);
+        thread.add_tool(EchoTool, None);
     });
 
     // Start a turn by sending a message

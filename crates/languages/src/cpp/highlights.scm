@@ -186,7 +186,7 @@ type: (primitive_type) @type.builtin
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword.directive
+] @preproc
 
 (comment) @comment
 

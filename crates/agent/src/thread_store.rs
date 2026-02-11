@@ -114,7 +114,12 @@ impl ThreadStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let threads = database.list_threads().await?;
+            let threads = database
+                .list_threads()
+                .await?
+                .into_iter()
+                .filter(|thread| thread.parent_session_id.is_none())
+                .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.threads = threads;
                 cx.notify();
@@ -156,6 +161,7 @@ mod tests {
             model: None,
             profile: None,
             imported: false,
+            subagent_context: None,
         }
     }
 

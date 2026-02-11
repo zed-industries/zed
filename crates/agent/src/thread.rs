@@ -63,22 +63,13 @@ pub const MAX_SUBAGENT_DEPTH: u8 = 4;
 pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
 
 /// Context passed to a subagent thread for lifecycle management
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
 
-    /// ID of the tool call that spawned this subagent
-    pub tool_use_id: LanguageModelToolUseId,
-
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
-
-    /// Prompt to send when subagent completes successfully
-    pub summary_prompt: String,
-
-    /// Prompt to send when context is running low (≤25% remaining)
-    pub context_low_prompt: String,
 }
 
 /// The ID of the user prompt that initiated a request.
@@ -179,7 +170,7 @@ pub enum UserMessageContent {
 
 impl UserMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## User\n\n");
+        let mut markdown = String::new();
 
         for content in &self.content {
             match content {
@@ -431,7 +422,7 @@ fn codeblock_tag(full_path: &Path, line_range: Option<&RangeInclusive<u32>>) -> 
 
 impl AgentMessage {
     pub fn to_markdown(&self) -> String {
-        let mut markdown = String::from("## Assistant\n\n");
+        let mut markdown = String::new();
 
         for content in &self.content {
             match content {
@@ -587,6 +578,11 @@ pub trait TerminalHandle {
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
+pub trait SubagentHandle {
+    fn id(&self) -> acp::SessionId;
+    fn wait_for_summary(&self, summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>>;
+}
+
 pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
@@ -595,6 +591,16 @@ pub trait ThreadEnvironment {
         output_byte_limit: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+
+    fn create_subagent(
+        &self,
+        parent_thread: Entity<Thread>,
+        label: String,
+        initial_prompt: String,
+        timeout: Option<Duration>,
+        allowed_tools: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>>;
 }
 
 #[derive(Debug)]
@@ -605,6 +611,7 @@ pub enum ThreadEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
 }
@@ -620,14 +627,14 @@ pub struct NewTerminal {
 #[derive(Debug, Clone)]
 pub struct ToolPermissionContext {
     pub tool_name: String,
-    pub input_value: String,
+    pub input_values: Vec<String>,
 }
 
 impl ToolPermissionContext {
-    pub fn new(tool_name: impl Into<String>, input_value: impl Into<String>) -> Self {
+    pub fn new(tool_name: impl Into<String>, input_values: Vec<String>) -> Self {
         Self {
             tool_name: tool_name.into(),
-            input_value: input_value.into(),
+            input_values,
         }
     }
 
@@ -660,7 +667,7 @@ impl ToolPermissionContext {
         use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
-        let input_value = &self.input_value;
+        let input_values = &self.input_values;
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
@@ -670,35 +677,50 @@ impl ToolPermissionContext {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
-            (
-                extract_terminal_pattern(input_value),
-                extract_terminal_pattern_display(input_value),
-            )
-        } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
-            // input_value is "source\ndestination"; extract a pattern from the
-            // common parent directory of both paths so that "always allow" covers
-            // future checks against both the source and the destination.
-            (
-                extract_copy_move_pattern(input_value),
-                extract_copy_move_pattern_display(input_value),
-            )
-        } else if tool_name == EditFileTool::NAME
-            || tool_name == DeletePathTool::NAME
-            || tool_name == CreateDirectoryTool::NAME
-            || tool_name == SaveFileTool::NAME
-        {
-            (
-                extract_path_pattern(input_value),
-                extract_path_pattern_display(input_value),
-            )
-        } else if tool_name == FetchTool::NAME {
-            (
-                extract_url_pattern(input_value),
-                extract_url_pattern_display(input_value),
-            )
-        } else {
-            (None, None)
+        let extract_for_value = |value: &str| -> (Option<String>, Option<String>) {
+            if tool_name == TerminalTool::NAME {
+                (
+                    extract_terminal_pattern(value),
+                    extract_terminal_pattern_display(value),
+                )
+            } else if tool_name == CopyPathTool::NAME
+                || tool_name == MovePathTool::NAME
+                || tool_name == EditFileTool::NAME
+                || tool_name == DeletePathTool::NAME
+                || tool_name == CreateDirectoryTool::NAME
+                || tool_name == SaveFileTool::NAME
+            {
+                (
+                    extract_path_pattern(value),
+                    extract_path_pattern_display(value),
+                )
+            } else if tool_name == FetchTool::NAME {
+                (
+                    extract_url_pattern(value),
+                    extract_url_pattern_display(value),
+                )
+            } else {
+                (None, None)
+            }
+        };
+
+        // Extract patterns from all input values. Only offer a pattern-specific
+        // "always allow/deny" button when every value produces the same pattern.
+        let (pattern, pattern_display) = match input_values.as_slice() {
+            [single] => extract_for_value(single),
+            _ => {
+                let mut iter = input_values.iter().map(|v| extract_for_value(v));
+                match iter.next() {
+                    Some(first) => {
+                        if iter.all(|pair| pair.0 == first.0) {
+                            first
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                }
+            }
         };
 
         let mut choices = Vec::new();
@@ -827,6 +849,27 @@ impl Thread {
             .embedded_context(true)
     }
 
+    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+        let project = parent_thread.read(cx).project.clone();
+        let project_context = parent_thread.read(cx).project_context.clone();
+        let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
+        let templates = parent_thread.read(cx).templates.clone();
+        let model = parent_thread.read(cx).model().cloned();
+        let mut thread = Self::new(
+            project,
+            project_context,
+            context_server_registry,
+            templates,
+            model,
+            cx,
+        );
+        thread.subagent_context = Some(SubagentContext {
+            parent_thread_id: parent_thread.read(cx).id().clone(),
+            depth: parent_thread.read(cx).depth() + 1,
+        });
+        thread
+    }
+
     pub fn new(
         project: Entity<Project>,
         project_context: Entity<ProjectContext>,
@@ -885,78 +928,6 @@ impl Thread {
             file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
-            running_subagents: Vec::new(),
-        }
-    }
-
-    pub fn new_subagent(
-        project: Entity<Project>,
-        project_context: Entity<ProjectContext>,
-        context_server_registry: Entity<ContextServerRegistry>,
-        templates: Arc<Templates>,
-        model: Arc<dyn LanguageModel>,
-        subagent_context: SubagentContext,
-        parent_tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
-        let enable_thinking = settings
-            .default_model
-            .as_ref()
-            .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.effort.clone());
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-        let (prompt_capabilities_tx, prompt_capabilities_rx) =
-            watch::channel(Self::prompt_capabilities(Some(model.as_ref())));
-
-        // Rebind tools that hold thread references to use this subagent's thread
-        // instead of the parent's thread. This is critical for tools like EditFileTool
-        // that make model requests using the thread's ID.
-        let weak_self = cx.weak_entity();
-        let tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>> = parent_tools
-            .into_iter()
-            .map(|(name, tool)| {
-                let rebound = tool.rebind_thread(weak_self.clone()).unwrap_or(tool);
-                (name, rebound)
-            })
-            .collect();
-
-        Self {
-            id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
-            prompt_id: PromptId::new(),
-            updated_at: Utc::now(),
-            title: None,
-            pending_title_generation: None,
-            pending_summary_generation: None,
-            summary: None,
-            messages: Vec::new(),
-            user_store: project.read(cx).user_store(),
-            running_turn: None,
-            has_queued_message: false,
-            pending_message: None,
-            tools,
-            request_token_usage: HashMap::default(),
-            cumulative_token_usage: TokenUsage::default(),
-            initial_project_snapshot: Task::ready(None).shared(),
-            context_server_registry,
-            profile_id,
-            project_context,
-            templates,
-            model: Some(model),
-            summarization_model: None,
-            thinking_enabled: enable_thinking,
-            thinking_effort,
-            prompt_capabilities_tx,
-            prompt_capabilities_rx,
-            project,
-            action_log,
-            file_read_times: HashMap::default(),
-            imported: false,
-            subagent_context: Some(subagent_context),
             running_subagents: Vec::new(),
         }
     }
@@ -1077,6 +1048,7 @@ impl Thread {
                         }),
                 )
                 .raw_output(output),
+            None,
         );
     }
 
@@ -1167,7 +1139,7 @@ impl Thread {
             prompt_capabilities_rx,
             file_read_times: HashMap::default(),
             imported: db_thread.imported,
-            subagent_context: None,
+            subagent_context: db_thread.subagent_context,
             running_subagents: Vec::new(),
         }
     }
@@ -1188,6 +1160,7 @@ impl Thread {
             }),
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
+            subagent_context: self.subagent_context.clone(),
         };
 
         cx.background_spawn(async move {
@@ -1286,53 +1259,106 @@ impl Thread {
 
     pub fn add_default_tools(
         &mut self,
+        allowed_tool_names: Option<Vec<&str>>,
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        self.add_tool(CopyPathTool::new(self.project.clone()));
-        self.add_tool(CreateDirectoryTool::new(self.project.clone()));
-        self.add_tool(DeletePathTool::new(
-            self.project.clone(),
-            self.action_log.clone(),
-        ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        self.add_tool(EditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry.clone(),
-            Templates::new(),
-        ));
-        self.add_tool(StreamingEditFileTool::new(
-            self.project.clone(),
-            cx.weak_entity(),
-            language_registry,
-            Templates::new(),
-        ));
-        self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
-        self.add_tool(FindPathTool::new(self.project.clone()));
-        self.add_tool(GrepTool::new(self.project.clone()));
-        self.add_tool(ListDirectoryTool::new(self.project.clone()));
-        self.add_tool(MovePathTool::new(self.project.clone()));
-        self.add_tool(NowTool);
-        self.add_tool(OpenTool::new(self.project.clone()));
-        self.add_tool(ReadFileTool::new(
-            cx.weak_entity(),
-            self.project.clone(),
-            self.action_log.clone(),
-        ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
-        self.add_tool(ThinkingTool);
-        self.add_tool(WebSearchTool);
+        self.add_tool(
+            CopyPathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            CreateDirectoryTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            DeletePathTool::new(self.project.clone(), self.action_log.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            DiagnosticsTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            EditFileTool::new(
+                self.project.clone(),
+                cx.weak_entity(),
+                language_registry.clone(),
+                Templates::new(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            StreamingEditFileTool::new(
+                self.project.clone(),
+                cx.weak_entity(),
+                language_registry,
+                Templates::new(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            FetchTool::new(self.project.read(cx).client().http_client()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            FindPathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            GrepTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            ListDirectoryTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            MovePathTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(NowTool, allowed_tool_names.as_ref());
+        self.add_tool(
+            OpenTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            ReadFileTool::new(
+                cx.weak_entity(),
+                self.project.clone(),
+                self.action_log.clone(),
+            ),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            SaveFileTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            RestoreFileFromDiskTool::new(self.project.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(
+            TerminalTool::new(self.project.clone(), environment.clone()),
+            allowed_tool_names.as_ref(),
+        );
+        self.add_tool(ThinkingTool, allowed_tool_names.as_ref());
+        self.add_tool(WebSearchTool, allowed_tool_names.as_ref());
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(SubagentTool::new(cx.weak_entity(), self.depth()));
+            self.add_tool(
+                SubagentTool::new(cx.weak_entity(), environment),
+                allowed_tool_names.as_ref(),
+            );
         }
     }
 
-    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T, allowed_tool_names: Option<&Vec<&str>>) {
+        if allowed_tool_names.is_some_and(|tool_names| !tool_names.contains(&T::NAME)) {
+            return;
+        }
+
         debug_assert!(
             !self.tools.contains_key(T::NAME),
             "Duplicate tool name: {}",
@@ -1343,10 +1369,6 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
-    }
-
-    pub fn restrict_tools(&mut self, allowed: &collections::HashSet<SharedString>) {
-        self.tools.retain(|name, _| allowed.contains(name));
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1778,6 +1800,7 @@ impl Thread {
                             acp::ToolCallStatus::Completed
                         })
                         .raw_output(tool_result.output.clone()),
+                    None,
                 );
                 this.update(cx, |this, _cx| {
                     this.pending_message()
@@ -2048,6 +2071,7 @@ impl Thread {
                     .title(title.as_str())
                     .kind(kind)
                     .raw_input(tool_use.input.clone()),
+                None,
             );
         }
 
@@ -2472,13 +2496,19 @@ impl Thread {
         self.tools.keys().cloned().collect()
     }
 
-    pub fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
+    pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
         self.running_subagents.push(subagent);
     }
 
-    pub fn unregister_running_subagent(&mut self, subagent: &WeakEntity<Thread>) {
-        self.running_subagents
-            .retain(|s| s.entity_id() != subagent.entity_id());
+    pub(crate) fn unregister_running_subagent(
+        &mut self,
+        subagent_session_id: &acp::SessionId,
+        cx: &App,
+    ) {
+        self.running_subagents.retain(|s| {
+            s.upgrade()
+                .map_or(false, |s| s.read(cx).id() != subagent_session_id)
+        });
     }
 
     pub fn running_subagent_count(&self) -> usize {
@@ -2492,51 +2522,23 @@ impl Thread {
         self.subagent_context.is_some()
     }
 
+    pub fn parent_thread_id(&self) -> Option<acp::SessionId> {
+        self.subagent_context
+            .as_ref()
+            .map(|c| c.parent_thread_id.clone())
+    }
+
     pub fn depth(&self) -> u8 {
         self.subagent_context.as_ref().map(|c| c.depth).unwrap_or(0)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_subagent_context(&mut self, context: SubagentContext) {
+        self.subagent_context = Some(context);
+    }
+
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
-    }
-
-    pub fn submit_user_message(
-        &mut self,
-        content: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let content = content.into();
-        self.messages.push(Message::User(UserMessage {
-            id: UserMessageId::new(),
-            content: vec![UserMessageContent::Text(content)],
-        }));
-        cx.notify();
-        self.send_existing(cx)
-    }
-
-    pub fn interrupt_for_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.context_low_prompt.clone();
-        self.cancel(cx).detach();
-        self.submit_user_message(prompt, cx)
-    }
-
-    pub fn request_final_summary(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let context = self
-            .subagent_context
-            .as_ref()
-            .context("Not a subagent thread")?;
-        let prompt = context.summary_prompt.clone();
-        self.submit_user_message(prompt, cx)
     }
 
     fn build_request_messages(
@@ -2584,11 +2586,16 @@ impl Thread {
             if ix > 0 {
                 markdown.push('\n');
             }
+            match message {
+                Message::User(_) => markdown.push_str("## User\n\n"),
+                Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
+                Message::Resume => {}
+            }
             markdown.push_str(&message.to_markdown());
         }
 
         if let Some(message) = self.pending_message.as_ref() {
-            markdown.push('\n');
+            markdown.push_str("\n## Assistant\n\n");
             markdown.push_str(&message.to_markdown());
         }
 
@@ -2795,15 +2802,6 @@ where
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
-
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 pub struct Erased<T>(T);
@@ -2835,14 +2833,6 @@ pub trait AnyAgentTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Result<()>;
-    /// Create a new instance of this tool bound to a different thread.
-    /// This is used when creating subagents, so that tools like EditFileTool
-    /// that hold a thread reference will use the subagent's thread instead
-    /// of the parent's thread.
-    /// Returns None if the tool doesn't need rebinding (most tools).
-    fn rebind_thread(&self, _new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        None
-    }
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -2906,10 +2896,6 @@ where
         let output = serde_json::from_value(output)?;
         self.0.replay(input, output, event_stream, cx)
     }
-
-    fn rebind_thread(&self, new_thread: WeakEntity<Thread>) -> Option<Arc<dyn AnyAgentTool>> {
-        self.0.rebind_thread(new_thread)
-    }
 }
 
 #[derive(Clone)]
@@ -2970,10 +2956,13 @@ impl ThreadEventStream {
         &self,
         tool_use_id: &LanguageModelToolUseId,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
     ) {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields).into(),
+                acp::ToolCallUpdate::new(tool_use_id.to_string(), fields)
+                    .meta(meta)
+                    .into(),
             )))
             .ok();
     }
@@ -3081,7 +3070,16 @@ impl ToolCallEventStream {
 
     pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
         self.stream
-            .update_tool_call_fields(&self.tool_use_id, fields);
+            .update_tool_call_fields(&self.tool_use_id, fields, None);
+    }
+
+    pub fn update_fields_with_meta(
+        &self,
+        fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
+    ) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields, meta);
     }
 
     pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
@@ -3097,26 +3095,20 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn update_subagent_thread(&self, thread: Entity<acp_thread::AcpThread>) {
+    pub fn subagent_spawned(&self, id: acp::SessionId) {
         self.stream
             .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateSubagentThread {
-                    id: acp::ToolCallId::new(self.tool_use_id.to_string()),
-                    thread,
-                }
-                .into(),
-            )))
+            .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
 
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// They only support `default` (allow/deny/confirm) per tool.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
@@ -3127,7 +3119,7 @@ impl ToolCallEventStream {
     ) -> Task<Result<()>> {
         let settings = agent_settings::AgentSettings::get_global(cx);
 
-        let decision = decide_permission_from_settings(&tool_id, "", &settings);
+        let decision = decide_permission_from_settings(&tool_id, &[String::new()], &settings);
 
         match decision {
             ToolPermissionDecision::Allow => return Task::ready(Ok(())),
@@ -3199,7 +3191,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3212,7 +3204,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3272,7 +3264,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3288,7 +3280,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3418,6 +3410,12 @@ impl std::ops::DerefMut for ToolCallEventStreamReceiver {
 impl From<&str> for UserMessageContent {
     fn from(text: &str) -> Self {
         Self::Text(text.into())
+    }
+}
+
+impl From<String> for UserMessageContent {
+    fn from(text: String) -> Self {
+        Self::Text(text)
     }
 }
 

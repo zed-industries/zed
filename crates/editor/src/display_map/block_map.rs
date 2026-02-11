@@ -1314,7 +1314,8 @@ impl BlockMap {
                 (first_point, edit_for_first_point.new.start)
             };
             let our_baseline = our_wrapper(our_baseline);
-            let their_baseline = companion_wrapper(their_baseline);
+            let their_baseline =
+                companion_wrapper(their_baseline.min(excerpt.target_excerpt_range.end));
 
             let mut delta = their_baseline.0 as i32 - our_baseline.0 as i32;
 
