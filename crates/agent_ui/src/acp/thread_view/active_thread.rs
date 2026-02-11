@@ -634,10 +634,21 @@ impl AcpThreadView {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
+                        let Some(connection) = server_view
+                            .update(cx, |view, _cx| {
+                                view.as_connected().map(|s| s.connection.clone())
+                            })
+                            .ok()
+                            .flatten()
+                        else {
+                            debug_panic!("This should not be possible");
+                            return;
+                        };
                         AcpServerView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
                             agent_name,
+                            connection,
                             window,
                             cx,
                         );
@@ -6717,10 +6728,22 @@ impl AcpThreadView {
                         });
                     }
                     window.defer(cx, |window, cx| {
+                        let Some(connection) = server_view
+                            .update(cx, |view, _cx| {
+                                view.as_connected().map(|s| s.connection.clone())
+                            })
+                            .ok()
+                            .flatten()
+                        else {
+                            debug_panic!("This should not be possible");
+                            return;
+                        };
+
                         AcpServerView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,
+                            connection,
                             window,
                             cx,
                         );
