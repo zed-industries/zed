@@ -391,6 +391,8 @@ impl LanguageRegistry {
             return;
         }
 
+        let cached = CachedLspAdapter::new(adapter.clone());
+        state.all_lsp_adapters.insert(cached.name.clone(), cached);
         state.available_lsp_adapters.insert(
             name,
             Arc::new(move || CachedLspAdapter::new(adapter.clone())),
