@@ -12,7 +12,7 @@ use rand::prelude::*;
 use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{SettingsStore, WorktreeId};
 use std::{
     env,
     fmt::Write,
@@ -49,6 +49,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -114,6 +115,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -214,6 +216,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -365,6 +368,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -443,6 +447,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -608,6 +613,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -709,6 +715,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -807,6 +814,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -873,6 +881,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -932,6 +941,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1018,6 +1028,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1100,6 +1111,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1211,6 +1223,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1323,6 +1336,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1362,6 +1376,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1431,6 +1446,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_fake,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1473,6 +1489,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_real,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1582,6 +1599,7 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1678,6 +1696,7 @@ async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAp
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1756,6 +1775,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1847,6 +1867,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1920,6 +1941,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             fs.clone(),
             Default::default(),
             true,
+            WorktreeId::from_proto(0),
             &mut cx.to_async(),
         )
         .await
@@ -2244,6 +2266,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2277,6 +2300,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         fs.clone(),
         Arc::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2343,6 +2367,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         fs.clone(),
         Arc::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2449,6 +2474,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2665,6 +2691,7 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2728,6 +2755,7 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2866,6 +2894,7 @@ async fn test_refresh_entries_for_paths_creates_ancestors(cx: &mut TestAppContex
         fs.clone(),
         Default::default(),
         false, // Disable scanning so the initial scan doesn't discover any entries
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await

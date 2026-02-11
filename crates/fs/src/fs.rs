@@ -1,12 +1,9 @@
-#[cfg(target_os = "macos")]
-mod mac_watcher;
-
-#[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
+use util::maybe;
 
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -149,7 +146,7 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
-    async fn is_case_sensitive(&self) -> Result<bool>;
+    async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
     #[cfg(feature = "test-support")]
@@ -314,6 +311,7 @@ pub struct RealFs {
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
+    is_case_sensitive: AtomicU8,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -421,6 +419,7 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+            is_case_sensitive: Default::default(),
         }
     }
 
@@ -976,62 +975,6 @@ impl Fs for RealFs {
         Ok(Box::pin(result))
     }
 
-    #[cfg(target_os = "macos")]
-    async fn watch(
-        &self,
-        path: &Path,
-        latency: Duration,
-    ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
-        Arc<dyn Watcher>,
-    ) {
-        use fsevent::StreamFlags;
-
-        let (events_tx, events_rx) = smol::channel::unbounded();
-        let handles = Arc::new(parking_lot::Mutex::new(collections::BTreeMap::default()));
-        let watcher = Arc::new(mac_watcher::MacWatcher::new(
-            events_tx,
-            Arc::downgrade(&handles),
-            latency,
-        ));
-        watcher.add(path).expect("handles can't be dropped");
-
-        (
-            Box::pin(
-                events_rx
-                    .map(|events| {
-                        events
-                            .into_iter()
-                            .map(|event| {
-                                log::trace!("fs path event: {event:?}");
-                                let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
-                                    Some(PathEventKind::Removed)
-                                } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
-                                    Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
-                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
-                                {
-                                    Some(PathEventKind::Changed)
-                                } else {
-                                    None
-                                };
-                                PathEvent {
-                                    path: event.path,
-                                    kind,
-                                }
-                            })
-                            .collect()
-                    })
-                    .chain(futures::stream::once(async move {
-                        drop(handles);
-                        vec![]
-                    })),
-            ),
-            watcher,
-        )
-    }
-
-    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
@@ -1178,37 +1121,63 @@ impl Fs for RealFs {
     /// that have the same name except for the casing.
     ///
     /// It creates both files in a temporary directory it removes at the end.
-    async fn is_case_sensitive(&self) -> Result<bool> {
-        let temp_dir = TempDir::new()?;
-        let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
-        let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
+    async fn is_case_sensitive(&self) -> bool {
+        const UNINITIALIZED: u8 = 0;
+        const CASE_SENSITIVE: u8 = 1;
+        const NOT_CASE_SENSITIVE: u8 = 2;
 
-        let create_opts = CreateOptions {
-            overwrite: false,
-            ignore_if_exists: false,
-        };
+        // Note we could CAS here, but really, if we race we do this work twice at worst which isn't a big deal.
+        let load = self.is_case_sensitive.load(Ordering::Acquire);
+        if load != UNINITIALIZED {
+            return load == CASE_SENSITIVE;
+        }
+        let temp_dir = self.executor.spawn(async { TempDir::new() });
+        let res = maybe!(async {
+            let temp_dir = temp_dir.await?;
+            let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
+            let test_file_2 = temp_dir.path().join("CASE_SENSITIVITY_TEST.TMP");
 
-        // Create file1
-        self.create_file(&test_file_1, create_opts).await?;
+            let create_opts = CreateOptions {
+                overwrite: false,
+                ignore_if_exists: false,
+            };
 
-        // Now check whether it's possible to create file2
-        let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
-            Ok(_) => Ok(true),
-            Err(e) => {
-                if let Some(io_error) = e.downcast_ref::<io::Error>() {
-                    if io_error.kind() == io::ErrorKind::AlreadyExists {
-                        Ok(false)
+            // Create file1
+            self.create_file(&test_file_1, create_opts).await?;
+
+            // Now check whether it's possible to create file2
+            let case_sensitive = match self.create_file(&test_file_2, create_opts).await {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    if let Some(io_error) = e.downcast_ref::<io::Error>() {
+                        if io_error.kind() == io::ErrorKind::AlreadyExists {
+                            Ok(false)
+                        } else {
+                            Err(e)
+                        }
                     } else {
                         Err(e)
                     }
-                } else {
-                    Err(e)
                 }
-            }
-        };
+            };
 
-        temp_dir.close()?;
-        case_sensitive
+            temp_dir.close()?;
+            case_sensitive
+        }).await.unwrap_or_else(|e| {
+            log::error!(
+                "Failed to determine whether filesystem is case sensitive (falling back to true) due to error: {e:#}"
+            );
+            true
+        });
+        self.is_case_sensitive.store(
+            if res {
+                CASE_SENSITIVE
+            } else {
+                NOT_CASE_SENSITIVE
+            },
+            Ordering::Release,
+        );
+        res
     }
 }
 
@@ -2820,8 +2789,8 @@ impl Fs for FakeFs {
         true
     }
 
-    async fn is_case_sensitive(&self) -> Result<bool> {
-        Ok(true)
+    async fn is_case_sensitive(&self) -> bool {
+        true
     }
 
     fn subscribe_to_jobs(&self) -> JobEventReceiver {

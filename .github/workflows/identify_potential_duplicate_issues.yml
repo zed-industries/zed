@@ -12,18 +12,18 @@ on:
 
 concurrency:
   group: potential-duplicate-check-${{ github.event.issue.number || inputs.issue_number }}
-  # let's not overspend tokens on multiple parallel checks of the same issue
   cancel-in-progress: true
 
 jobs:
   identify-duplicates:
-    if: github.repository == 'zed-industries/zed'
+    # For manual testing, allow running on any branch; for automatic runs, only on main repo
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'zed-industries/zed'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     permissions:
       contents: read
       issues: read
-      id-token: write
 
     steps:
       - name: Get github app token
@@ -34,8 +34,8 @@ jobs:
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
 
-      - name: Check issue type
-        id: check-type
+      - name: Fetch issue and check eligibility
+        id: fetch-issue
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           github-token: ${{ steps.get-app-token.outputs.token }}
@@ -59,173 +59,616 @@ jobs:
             console.log(`Issue type: ${typeName || '(none)'}`);
             console.log(`Is target type (Bug/Crash): ${isTargetType}`);
 
+            // Set default outputs for all paths
             core.setOutput('issue_number', issueNumber);
-            core.setOutput('issue_author', issue.user?.login || '');
-            core.setOutput('is_target_type', isTargetType);
+            core.setOutput('issue_title', issue.title);
+            core.setOutput('issue_body', (issue.body || '').slice(0, 6000));
+            core.setOutput('is_target_type', String(isTargetType));
+            core.setOutput('is_staff', 'false');
+            core.setOutput('should_continue', 'false');
 
             if (!isTargetType) {
               console.log('::notice::Skipping - issue type is not Bug or Crash');
+              return;
             }
 
-      - name: Check if author is staff
-        if: steps.check-type.outputs.is_target_type == 'true'
-        id: check-staff
+            // Check if author is staff (skip if so - they know what they're doing)
+            const author = issue.user?.login || '';
+            let isStaff = false;
+            if (author) {
+              try {
+                const response = await github.rest.teams.getMembershipForUserInOrg({
+                  org: 'zed-industries',
+                  team_slug: 'staff',
+                  username: author
+                });
+                isStaff = response.data.state === 'active';
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            core.setOutput('is_staff', String(isStaff));
+            if (isStaff) {
+              console.log(`::notice::Skipping - author @${author} is a staff member`);
+              return;
+            }
+
+            core.setOutput('should_continue', 'true');
+
+      # ========================================================================
+      # PASS 1: Detect areas using Claude with the full area taxonomy
+      # ========================================================================
+      - name: "Pass 1: Detect areas with Claude"
+        if: steps.fetch-issue.outputs.should_continue == 'true'
+        id: detect-areas
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
+          ISSUE_TITLE: ${{ steps.fetch-issue.outputs.issue_title }}
+          ISSUE_BODY: ${{ steps.fetch-issue.outputs.issue_body }}
+        run: |
+          # shellcheck disable=SC2016
+          cat > /tmp/area_prompt.txt << 'PROMPT_EOF'
+          You are classifying a GitHub issue for the Zed code editor into area categories.
+
+          ## Issue Title
+          ISSUE_TITLE_PLACEHOLDER
+
+          ## Issue Body
+          ISSUE_BODY_PLACEHOLDER
+
+          ## Available Area Labels
+          (descriptions provided only where the label name isn't self-explanatory)
+
+          accessibility
+          ai, ai/acp (Agent Communication Protocol), ai/agent thread, ai/anthropic, ai/assistant, ai/bedrock, ai/codex, ai/copilot, ai/deepseek, ai/edit prediction, ai/gemini, ai/inline assistant, ai/lmstudio, ai/mcp (Model Context Protocol), ai/mistral, ai/ollama, ai/openai, ai/openai compatible, ai/openrouter, ai/qwen, ai/supermaven, ai/text thread, ai/zeta
+          auth
+          autocompletions
+          billing
+          cli
+          code actions
+          code folding
+          collab - real-time collaboration with other Zed users (screen sharing, shared editing). NOT for remote development over SSH.
+          collab/audio, collab/chat
+          command palette
+          controls/ime, controls/keybinds, controls/mouse
+          debugger, debugger/dap/CodeLLDB, debugger/dap/debugpy, debugger/dap/gdb, debugger/dap/javascript
+          design papercut - small UI/UX polish issues
+          dev containers - Docker-based development environments
+          diagnostics - LSP errors/warnings display
+          discoverability
+          editor, editor/brackets, editor/linked edits
+          extensions/infrastructure
+          file finder - fuzzy file search (Cmd/Ctrl+P)
+          gpui - Zed's internal UI rendering framework
+          inlay hints - inline hints from LSP (type annotations, parameter names)
+          installer-updater
+          integrations/environment - shell environment, PATH, env vars
+          integrations/git, integrations/git/blame, integrations/terminal
+          internationalization, internationalization/rtl support
+          keymap editor
+          language server, language server/server failure
+          languages/* - language-specific syntax, grammar, or LSP issues (e.g., languages/python, languages/rust, languages/typescript)
+          legal
+          logging
+          multi-buffer - viewing multiple files or search results in a single editor pane
+          multi-cursor
+          navigation - go to definition, find references, symbol search
+          network - proxy settings, connectivity, SSL certificates. NOT for collab.
+          onboarding
+          outline - document symbols/structure sidebar
+          parity/* - feature parity requests comparing to other editors (parity/vscode, parity/vim, parity/emacs, parity/jetbrains, parity/helix)
+          performance, performance/memory leak
+          permissions
+          popovers - hover cards, tooltips, autocomplete dropdowns
+          preview/images, preview/markdown
+          project panel - file tree sidebar
+          release notes
+          repl
+          search - project-wide search, find/replace
+          security & privacy, security & privacy/workspace trust
+          serialization - saving/restoring workspace state, undo history, folding state across restarts
+          settings, settings/ui
+          snippets
+          status bar
+          tasks - task runner integration
+          telemetry
+          tooling/* - external tool integrations (tooling/emmet, tooling/eslint, tooling/prettier, tooling/flatpak, tooling/nix)
+          tree-sitter - syntax parsing and highlighting engine
+          ui/animations, ui/dock, ui/file icons, ui/font, ui/menus, ui/minimap, ui/panel, ui/scaling, ui/scrolling, ui/tabs, ui/themes
+          workspace - window management, pane layout, project handling
+          zed account
+          zed.dev
+
+          ## Your Task
+
+          Based on the issue title and body, identify which areas this issue relates to.
+          - Select 1-5 areas that best match the issue
+          - Prefer more specific sub-areas when applicable (e.g., "ai/gemini" over just "ai")
+          - Only select areas that are clearly relevant
+
+          ## Response Format
+
+          Return ONLY a JSON object (no markdown fences, no explanation):
+          {
+            "areas": ["area1", "area2"],
+            "reasoning": "Brief explanation of why these areas were selected"
+          }
+          PROMPT_EOF
+
+          # Single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # shellcheck disable=SC2016
+          node << 'SCRIPT_EOF'
+          const fs = require('fs');
+          let prompt = fs.readFileSync('/tmp/area_prompt.txt', 'utf8');
+          prompt = prompt.replace('ISSUE_TITLE_PLACEHOLDER', process.env.ISSUE_TITLE || '');
+          prompt = prompt.replace('ISSUE_BODY_PLACEHOLDER', process.env.ISSUE_BODY || '');
+          fs.writeFileSync('/tmp/area_prompt_final.txt', prompt);
+          SCRIPT_EOF
+
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/area_response.json -X POST "https://api.anthropic.com/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            --data-binary @- << EOF
+          {
+            "model": "claude-sonnet-4-5-20250929",
+            "max_tokens": 256,
+            "messages": [{"role": "user", "content": $(jq -Rs . < /tmp/area_prompt_final.txt)}]
+          }
+          EOF
+          )
+
+          RESPONSE=$(< /tmp/area_response.json)
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "HTTP Error: $HTTP_CODE"
+            echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+            exit 1
+          fi
+
+          if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+            echo "API Error:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          AREA_RESULT=$(echo "$RESPONSE" | jq -r '.content[0].text // empty')
+
+          if [ -z "$AREA_RESULT" ]; then
+            echo "Error: No response from Claude for area detection"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          echo "Area detection result: $AREA_RESULT"
+
+          # Extract just the areas array, handling potential markdown fences
+          # shellcheck disable=SC2016
+          CLEAN_JSON=$(echo "$AREA_RESULT" | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
+          AREAS=$(echo "$CLEAN_JSON" | jq -r '.areas // [] | join(",")')
+          echo "Detected areas: $AREAS"
+
+          echo "detected_areas=$AREAS" >> "$GITHUB_OUTPUT"
+
+          INPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.input_tokens')
+          OUTPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.output_tokens')
+          echo "Pass 1 token usage - Input: $INPUT_TOKENS, Output: $OUTPUT_TOKENS"
+
+      # ========================================================================
+      # Use detected areas to filter magnets and search for candidates
+      # ========================================================================
+      - name: Filter magnets and search for candidates
+        if: steps.fetch-issue.outputs.should_continue == 'true'
+        id: gather-candidates
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           github-token: ${{ steps.get-app-token.outputs.token }}
           script: |
-            const author = process.env.ISSUE_AUTHOR || '';
-            if (!author) {
-              console.log('Could not determine issue author, proceeding with check');
-              core.setOutput('is_staff', 'false');
-              return;
+            // ============================================================
+            // KNOWN DUPLICATE MAGNETS (from #46355)
+            // ============================================================
+            const DUPLICATE_MAGNETS = [
+              { number: 37074, title: "Support history with external ACP agents", areas: ["ai", "ai/gemini", "ai/acp"] },
+              { number: 35780, title: "Zed consumes a lot of memory and CPU when opening ~/ or other large file trees", areas: ["workspace", "performance", "performance/memory leak", "integrations/git"] },
+              { number: 16965, title: "Support for non UTF-8 text encodings", areas: ["editor", "internationalization"] },
+              { number: 38109, title: "Zed out of sync with changes made outside of editor", areas: ["workspace"] },
+              { number: 16727, title: "Select text in markdown preview", areas: ["preview/markdown", "languages/markdown"] },
+              { number: 31102, title: "RTL Right-to-Left Text Input/Rendering Support", areas: ["internationalization"] },
+              { number: 7371, title: "Restarts should be non-destructive on workspace restore/reload", areas: ["workspace", "serialization"] },
+              { number: 7992, title: "Font rendering on LoDPI displays", areas: ["ui/font"] },
+              { number: 40018, title: "Windows Beta: Terminal overwrites text when resized and window overflow", areas: ["integrations/terminal"] },
+              { number: 29962, title: "Agent Panel: Cannot access zed hosted models (via Cloudflare HKG)", areas: ["ai", "network"] },
+              { number: 15097, title: "Serialize undo history (local and remote projects)", areas: ["workspace", "serialization"] },
+              { number: 29846, title: "Collapsed code blocks are not restored properly", areas: ["editor", "serialization", "code folding"] },
+              { number: 38799, title: "Poor search performance in large repositories", areas: ["performance", "search"] },
+              { number: 27283, title: "Inefficient memory use when opening large file in Zed", areas: ["performance"] },
+              { number: 39806, title: "Raspberry Pi OS (Trixie) Zed 0.207.3 Video Memory Corruption on Start", areas: ["gpui"] },
+              { number: 29970, title: "Unable to download any extensions (due to potential DigitalOcean IP block or ISP block)", areas: ["network"] },
+              { number: 29026, title: "Ability to copy/paste files from the system file manager", areas: ["workspace"] },
+              { number: 7940, title: "Zed is sometimes unresponsive when the OS awakes from sleep", areas: ["workspace"] },
+              { number: 37025, title: "Failed to generate thread summary", areas: ["ai"] },
+              { number: 16156, title: "Support for project settings to enable/disable/control AI features", areas: ["ai", "settings"] },
+              { number: 24752, title: "Extra horizontal scrolling when inline blame is enabled with soft wrapping", areas: ["editor"] },
+              { number: 20970, title: "Excessive memory consumption on project search with large files present", areas: ["performance/memory leak", "search", "multi-buffer"] },
+              { number: 12176, title: "Only some ligatures are being applied", areas: ["ui/font", "settings"] },
+              { number: 13564, title: "blade: Text is rendered either too thick or too thin", areas: ["ui/font"] },
+              { number: 38901, title: "Terminal freezes in Linux session when Ctrl+C is pressed before exit", areas: ["controls/keybinds", "integrations/terminal"] },
+              { number: 20167, title: "Support unsetting default keybindings", areas: ["controls/keybinds"] },
+              { number: 25469, title: "Tracking - Linux non-QWERTY keyboard support", areas: ["controls/keybinds"] },
+              { number: 29598, title: "Manual refresh on unsupported filesystems (nfs, fuse, exfat) without inotify/fsevents", areas: ["project panel"] },
+              { number: 14428, title: "Ordering of search tokens in file finder fuzzy match", areas: ["file finder"] },
+              { number: 20771, title: "Workspace: Reload to respect the desktop/workspace Zed windows were in after reload", areas: ["workspace", "serialization"] },
+              { number: 7465, title: "Lines with RTL text aren't rendered correctly", areas: ["editor", "internationalization/rtl support", "parity/vscode"] },
+              { number: 16120, title: "Large files without newlines (all on one line) cause Zed to hang/crash", areas: ["editor"] },
+              { number: 22703, title: "Syntax aware folding (folds.scm support)", areas: ["editor", "tree-sitter"] },
+              { number: 38927, title: "Find & Replace memory leak on large files", areas: ["performance", "performance/memory leak"] },
+              { number: 4560, title: "Improve streaming search speed", areas: ["performance", "search"] },
+              { number: 14053, title: "Linux Shortcuts don't work with non-latin / international keyboard layouts", areas: ["internationalization", "controls/keybinds"] },
+              { number: 31637, title: "High memory consumption in Project Search with large codebases", areas: ["performance/memory leak", "search"] },
+              { number: 11744, title: "Incorrect spacing of terminal font", areas: ["ui/font", "integrations/terminal"] },
+              { number: 4746, title: "Terminal Nerd Font rendering incorrect line height", areas: ["ui/font", "integrations/terminal"] },
+              { number: 10647, title: "User configurable mouse bindings (like keymap for key+mouse)", areas: ["controls/keybinds", "controls/mouse", "accessibility"] },
+              { number: 34865, title: "ctrl-w with pane::CloseActiveItem binding closes the project panel instead of the active pane", areas: ["controls/keybinds", "ui/panel"] },
+              { number: 12163, title: "Cannot see list of installed extensions when offline / disconnected", areas: ["network"] },
+              { number: 44630, title: "Tables do not render all columns in markdown preview", areas: ["preview/markdown"] },
+              { number: 39435, title: "Windows: Low fps in many cases", areas: ["gpui"] },
+              { number: 36227, title: "Zed becomes unresponsive when closing", areas: ["workspace"] },
+              { number: 44962, title: "Can not open file in zed if filename includes (1)", areas: ["workspace"] },
+              { number: 32318, title: "Zed hangs after exiting sleep mode in Linux", areas: ["workspace"] },
+              { number: 5120, title: "Add options to hide title and status bar", areas: ["settings", "status bar"] },
+              { number: 29323, title: "uv: Failed to detect Python venv correctly", areas: ["language server", "languages/python", "integrations/environment"] },
+              { number: 7450, title: "Support LSP Semantic Tokens", areas: ["language server", "languages", "ui/themes"] },
+              { number: 31846, title: "LSP: triggerCharacters for signature help declared by servers do not seem to be respected", areas: ["language server"] },
+              { number: 32792, title: "[SWAY] Zed window flashes rapidly on Sway/wlroots", areas: ["gpui"] },
+              { number: 28398, title: "Stale buffers should be removed from search multibuffer", areas: ["search", "multi-buffer"] },
+              { number: 35011, title: "Delete Key against remote Hosts Doesn't Delete Folders", areas: ["project panel"] },
+              { number: 8626, title: "Palette File Navigation - Preview File Content", areas: ["file finder"] },
+              { number: 31468, title: "Certain LSP features are not activated till you trigger them manually when working with a remote project", areas: ["language server/server failure", "autocompletions"] },
+              { number: 9789, title: "Zed checks for LSP updates when offline and disables LSPs irreversibly in the process", areas: ["language server/server failure"] },
+              { number: 21403, title: "Completions and code actions should not use uniform lists", areas: ["autocompletions", "popovers", "diagnostics"] },
+              { number: 15196, title: "Remote Project REPL support", areas: ["repl"] },
+            ];
+
+            const MAX_SEARCHES = 5;
+
+            const issueNumber = parseInt('${{ steps.fetch-issue.outputs.issue_number }}', 10);
+            const title = process.env.ISSUE_TITLE || '';
+            const body = process.env.ISSUE_BODY || '';
+            const detectedAreasStr = '${{ steps.detect-areas.outputs.detected_areas }}';
+            const detectedAreas = new Set(detectedAreasStr.split(',').filter(a => a.trim()));
+
+            console.log(`Detected areas from Claude: ${[...detectedAreas].join(', ') || '(none)'}`);
+
+            // Helper: check if two areas match (handles hierarchy like "ai" matching "ai/gemini")
+            function areasMatch(detected, magnetArea) {
+              if (detected === magnetArea) return true;
+              if (magnetArea.startsWith(detected + '/')) return true;
+              if (detected.startsWith(magnetArea + '/')) return true;
+              return false;
             }
 
-            try {
-              const response = await github.rest.teams.getMembershipForUserInOrg({
-                org: 'zed-industries',
-                team_slug: 'staff',
-                username: author
+            // Filter magnets based on detected areas
+            const relevantMagnets = DUPLICATE_MAGNETS.filter(magnet => {
+              if (detectedAreas.size === 0) return true;
+              return magnet.areas.some(magnetArea =>
+                [...detectedAreas].some(detected => areasMatch(detected, magnetArea))
+              );
+            }).slice(0, 20);
+
+            console.log(`Relevant duplicate magnets: ${relevantMagnets.length}`);
+
+            // Build search queries
+            const searchQueries = [];
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+            // 1. Keyword search from title
+            const stopwords = ['with', 'that', 'this', 'from', 'have', 'been', 'were', 'what', 'when',
+                               'where', 'which', 'while', 'does', 'doesn', 'should', 'would', 'could',
+                               'about', 'after', 'before', 'between', 'into', 'through', 'during',
+                               'above', 'below', 'under', 'again', 'further', 'then', 'once', 'here',
+                               'there', 'some', 'such', 'only', 'same', 'than', 'very', 'just', 'also',
+                               'work', 'working', 'works', 'issue', 'problem', 'error', 'bug', 'zed'];
+            const titleKeywords = title
+              .toLowerCase()
+              .replace(/[^\w\s]/g, ' ')
+              .split(/\s+/)
+              .filter(w => w.length >= 3 && !stopwords.includes(w))
+              .slice(0, 5);
+
+            if (titleKeywords.length >= 2) {
+              searchQueries.push({
+                type: 'keyword',
+                query: `repo:zed-industries/zed is:issue created:>${thirtyDaysAgo} ${titleKeywords.join(' ')}`
               });
-              const isStaff = response.data.state === 'active';
-              core.setOutput('is_staff', String(isStaff));
-              if (isStaff) {
-                console.log(`::notice::Skipping - author @${author} is a staff member`);
-              }
-            } catch (error) {
-              if (error.status === 404) {
-                core.setOutput('is_staff', 'false');
-              } else {
-                throw error;
+            }
+
+            // 2. Area-based searches (using Claude-detected areas)
+            for (const area of [...detectedAreas].slice(0, 3)) {
+              searchQueries.push({
+                type: 'area',
+                query: `repo:zed-industries/zed is:issue is:open label:"area:${area}" created:>${thirtyDaysAgo}`
+              });
+            }
+
+            // 3. Look for error patterns in the body
+            const errorPatterns = body.match(/(?:error|panic|crash|failed|exception)[:\s]+[^\n]{10,100}/gi) || [];
+            if (errorPatterns.length > 0) {
+              const errorSnippet = errorPatterns[0]
+                .slice(0, 60)
+                .replace(/[^\w\s]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              if (errorSnippet.length > 15) {
+                searchQueries.push({
+                  type: 'error',
+                  query: `repo:zed-industries/zed is:issue "${errorSnippet.slice(0, 40)}"`
+                });
               }
             }
+
+            // Execute searches and collect candidates
+            const candidates = [];
+            const seenIssues = new Set([issueNumber]);
+
+            for (const { type, query } of searchQueries.slice(0, MAX_SEARCHES)) {
+              try {
+                console.log(`Search (${type}): ${query}`);
+                const { data: results } = await github.rest.search.issuesAndPullRequests({
+                  q: query,
+                  sort: 'created',
+                  order: 'desc',
+                  per_page: 10
+                });
+
+                for (const item of results.items) {
+                  if (!seenIssues.has(item.number) && !item.pull_request) {
+                    seenIssues.add(item.number);
+                    candidates.push({
+                      number: item.number,
+                      title: item.title,
+                      state: item.state,
+                      created_at: item.created_at,
+                      body_preview: (item.body || '').slice(0, 800),
+                      source: type
+                    });
+                  }
+                }
+              } catch (error) {
+                console.log(`Search failed (${type}): ${error.message}`);
+              }
+            }
+
+            console.log(`Found ${candidates.length} candidates from searches`);
+
+            // Prepare issue data for Claude
+            const issueData = {
+              number: issueNumber,
+              title: title,
+              body: body.slice(0, 4000),
+            };
+
+            // Prepare output
+            core.setOutput('issue_data', JSON.stringify(issueData));
+            core.setOutput('duplicate_magnets', JSON.stringify(relevantMagnets));
+            core.setOutput('candidates', JSON.stringify(candidates.slice(0, 12)));
+            core.setOutput('detected_areas', [...detectedAreas].join(', '));
+            core.setOutput('should_analyze', (relevantMagnets.length > 0 || candidates.length > 0) ? 'true' : 'false');
         env:
-          ISSUE_AUTHOR: ${{ steps.check-type.outputs.issue_author }}
+          ISSUE_TITLE: ${{ steps.fetch-issue.outputs.issue_title }}
+          ISSUE_BODY: ${{ steps.fetch-issue.outputs.issue_body }}
 
-      - name: Checkout repository
+      # ========================================================================
+      # PASS 2: Analyze duplicates with Claude
+      # ========================================================================
+      - name: "Pass 2: Analyze duplicates with Claude"
         if: |
-          steps.check-type.outputs.is_target_type == 'true' &&
-          steps.check-staff.outputs.is_staff == 'false'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 1
-
-      - name: Analyze for potential duplicates (DRY RUN)
-        if: |
-          steps.check-type.outputs.is_target_type == 'true' &&
-          steps.check-staff.outputs.is_staff == 'false'
+          steps.fetch-issue.outputs.should_continue == 'true' &&
+          steps.gather-candidates.outputs.should_analyze == 'true'
         id: analyze
-        # let's not overspend tokens on checks that went too deep into the rabbit hole
-        timeout-minutes: 5
-        uses: anthropics/claude-code-action@231bd75b7196d48291c1498f1c6d277c2810d9a3 # v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
-          github_token: ${{ steps.get-app-token.outputs.token }}
-          # this is automatic analysis, not user-invoked, and Claude only has read-only tools, so should be safe
-          allowed_non_write_users: "*"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_ISSUE_DEDUP }}
+          ISSUE_DATA: ${{ steps.gather-candidates.outputs.issue_data }}
+          DUPLICATE_MAGNETS: ${{ steps.gather-candidates.outputs.duplicate_magnets }}
+          CANDIDATES: ${{ steps.gather-candidates.outputs.candidates }}
+        run: |
+          # shellcheck disable=SC2016
+          cat > /tmp/prompt.txt << 'PROMPT_EOF'
+          You are analyzing a GitHub issue to determine if it might be a duplicate of an existing issue.
 
-          prompt: |
-            You are analyzing issue #${{ steps.check-type.outputs.issue_number }} in the zed-industries/zed repository to determine if it might be a duplicate of an existing issue.
+          ## New Issue Being Analyzed
+          ISSUE_DATA_PLACEHOLDER
 
-            THIS IS A DRY RUN - do not post any comments or modify anything. Only analyze and return your findings.
+          ## Known Frequently-Duplicated Issues (High Priority)
+          These issues have historically received many duplicate reports. Check these first.
+          DUPLICATE_MAGNETS_PLACEHOLDER
 
-            ## Instructions
+          ## Recent Similar Issues Found by Search
+          CANDIDATES_PLACEHOLDER
 
-            1. Use mcp__github__get_issue to fetch the full details of issue #${{ steps.check-type.outputs.issue_number }}
+          ## Your Task
 
-            2. Extract key identifying information:
-               - Error messages (exact text)
-               - Stack traces or panic messages
-               - Affected features/components
-               - Steps to reproduce
-               - Platform/OS information
+          1. First, understand what the new issue is about:
+             - What specific bug or problem is being reported?
+             - What error messages, stack traces, or specific behaviors are mentioned?
+             - What component/feature is affected?
 
-            3. Search for potential duplicates using mcp__github__search_issues with:
-               - Key error messages or panic text (most reliable signal)
-               - Specific feature names or components mentioned
-               - Limit search to repo:zed-industries/zed and recent issues (last 90 days)
-               - Search both open AND closed issues (duplicates may have been closed)
+          2. Check against the frequently-duplicated issues first (high priority):
+             - These are known "duplicate magnets" that often get re-reported
+             - If the new issue describes the same problem, it's likely a duplicate
 
-            4. For each potential match, evaluate similarity:
-               - SAME error message or stack trace = high confidence
-               - SAME steps to reproduce with same outcome = high confidence
-               - Similar description but different error/context = low confidence
-               - Vaguely related topic = NOT a duplicate
+          3. Then check the recent similar issues:
+             - Look for issues describing the SAME bug, not just related topics
 
-            ## Critical Guidelines
+          ## Duplicate Criteria (be strict!)
 
-            - Be VERY conservative. When in doubt, conclude it is NOT a duplicate.
-            - Only flag as potential duplicate if you have HIGH confidence (same error, same repro steps, same root cause).
-            - "Similar topic" or "related feature" is NOT sufficient - the issues must describe the SAME bug.
-            - False positives are worse than false negatives. Users finding their legitimate issue incorrectly flagged as duplicate is a poor experience.
+          An issue IS a duplicate if:
+          - It describes the EXACT same bug with the same root cause
+          - It has the same error message or stack trace
+          - It has the same reproduction steps leading to the same outcome
 
-            ## Output
+          An issue is NOT a duplicate if:
+          - It's merely related to the same feature/area
+          - It has similar symptoms but potentially different causes
+          - It mentions similar things but describes a different problem
 
-            Return your analysis as JSON with this exact structure. Do not include any other text outside the JSON.
+          Be VERY conservative. It's better to miss a duplicate than to incorrectly flag a unique issue.
 
-          claude_args: |
-            --max-turns 3
-            --allowedTools mcp__github__get_issue,mcp__github__search_issues,mcp__github__list_issues
-            --json-schema {"type":"object","properties":{"issue_number":{"type":"integer"},"issue_title":{"type":"string"},"is_potential_duplicate":{"type":"boolean"},"confidence":{"type":"string","enum":["high","medium","low","none"]},"potential_duplicates":{"type":"array","items":{"type":"object","properties":{"number":{"type":"integer"},"title":{"type":"string"},"similarity_reason":{"type":"string"}},"required":["number","title","similarity_reason"]}},"analysis_summary":{"type":"string"},"recommendation":{"type":"string","enum":["flag_as_duplicate","needs_human_review","not_a_duplicate"]}},"required":["issue_number","is_potential_duplicate","confidence","potential_duplicates","analysis_summary","recommendation"]}
+          ## Response Format
 
+          Return ONLY a JSON object (no markdown fences, no explanation before or after):
+          {
+            "is_potential_duplicate": boolean,
+            "confidence": "high" | "medium" | "low" | "none",
+            "potential_duplicates": [
+              {"number": integer, "title": "string", "similarity_reason": "string explaining why this might be the same bug"}
+            ],
+            "analysis_summary": "Brief explanation of what the new issue is about and your conclusion",
+            "recommendation": "flag_as_duplicate" | "needs_human_review" | "not_a_duplicate"
+          }
+          PROMPT_EOF
+
+          # Single quotes are intentional to prevent bash expansion; node reads env vars via process.env
+          # shellcheck disable=SC2016
+          node << 'SCRIPT_EOF'
+          const fs = require('fs');
+
+          let prompt = fs.readFileSync('/tmp/prompt.txt', 'utf8');
+          prompt = prompt.replace('ISSUE_DATA_PLACEHOLDER', process.env.ISSUE_DATA);
+          prompt = prompt.replace('DUPLICATE_MAGNETS_PLACEHOLDER', process.env.DUPLICATE_MAGNETS);
+          prompt = prompt.replace('CANDIDATES_PLACEHOLDER', process.env.CANDIDATES);
+
+          fs.writeFileSync('/tmp/prompt_final.txt', prompt);
+          SCRIPT_EOF
+
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/response.json -X POST "https://api.anthropic.com/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            --data-binary @- << EOF
+          {
+            "model": "claude-sonnet-4-5-20250929",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": $(jq -Rs . < /tmp/prompt_final.txt)}]
+          }
+          EOF
+          )
+
+          RESPONSE=$(< /tmp/response.json)
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "HTTP Error: $HTTP_CODE"
+            echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+            exit 1
+          fi
+
+          if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+            echo "API Error:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          ANALYSIS=$(echo "$RESPONSE" | jq -r '.content[0].text // empty')
+
+          if [ -z "$ANALYSIS" ]; then
+            echo "Error: No response from Claude"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          {
+            echo "analysis<<ANALYSIS_EOF"
+            echo "$ANALYSIS"
+            echo "ANALYSIS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          INPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.input_tokens')
+          OUTPUT_TOKENS=$(echo "$RESPONSE" | jq -r '.usage.output_tokens')
+          echo "Pass 2 token usage - Input: $INPUT_TOKENS, Output: $OUTPUT_TOKENS"
+
+      # ========================================================================
+      # Log results
+      # ========================================================================
       - name: Log analysis results
         if: |
-          steps.check-type.outputs.is_target_type == 'true' &&
-          steps.check-staff.outputs.is_staff == 'false' &&
+          steps.fetch-issue.outputs.should_continue == 'true' &&
           !cancelled()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
-            const output = process.env.ANALYSIS_OUTPUT || '';
+            const issueNumber = parseInt('${{ steps.fetch-issue.outputs.issue_number }}', 10) || 0;
+            const issueTitle = process.env.ISSUE_TITLE || '';
+            const detectedAreas = '${{ steps.gather-candidates.outputs.detected_areas }}' || '(none)';
+            const shouldAnalyze = '${{ steps.gather-candidates.outputs.should_analyze }}' === 'true';
+            const analysisRaw = process.env.ANALYSIS_OUTPUT || '';
 
             console.log('='.repeat(60));
-            console.log('DRY RUN ANALYSIS RESULTS');
+            console.log('DUPLICATE DETECTION RESULTS (TWO-PASS)');
             console.log('='.repeat(60));
+            console.log(`Issue: #${issueNumber} - ${issueTitle}`);
+            console.log(`URL: https://github.com/zed-industries/zed/issues/${issueNumber}`);
+            console.log(`Detected Areas: ${detectedAreas}`);
 
-            if (!output || output === '') {
-              console.log('No structured output received from analysis');
-              core.summary.addHeading('⚠️ Analysis did not produce output', 2);
-              core.summary.addRaw('The duplicate detection analysis did not return structured output. Check the workflow logs for details.');
+            if (!shouldAnalyze) {
+              console.log('\nNo duplicate magnets or candidates found - skipping analysis');
+              core.summary.addHeading(`✅ Issue #${issueNumber}: No similar issues found`, 2);
+              core.summary.addRaw(`\n**Title:** ${issueTitle}\n\n`);
+              core.summary.addRaw(`**Detected Areas:** ${detectedAreas}\n\n`);
+              core.summary.addRaw('No potential duplicates were found by search or in the known duplicate magnets list.\n');
+              await core.summary.write();
+              return;
+            }
+
+            if (!analysisRaw) {
+              console.log('\nNo analysis output received');
+              core.summary.addHeading(`⚠️ Issue #${issueNumber}: Analysis incomplete`, 2);
+              core.summary.addRaw(`**Detected Areas:** ${detectedAreas}\n\n`);
+              core.summary.addRaw('The Claude analysis step did not produce output. Check workflow logs.\n');
               await core.summary.write();
               return;
             }
 
             try {
-              const analysis = JSON.parse(output);
+              let cleanJson = analysisRaw.trim();
+              if (cleanJson.startsWith('```')) {
+                cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+              }
 
-              console.log(`\nIssue: #${analysis.issue_number} - ${analysis.issue_title || 'N/A'}`);
-              console.log(`Is Potential Duplicate: ${analysis.is_potential_duplicate}`);
+              const analysis = JSON.parse(cleanJson);
+
+              console.log(`\nIs Potential Duplicate: ${analysis.is_potential_duplicate}`);
               console.log(`Confidence: ${analysis.confidence}`);
               console.log(`Recommendation: ${analysis.recommendation}`);
               console.log(`\nAnalysis Summary:\n${analysis.analysis_summary}`);
 
-              if (analysis.potential_duplicates.length > 0) {
+              if (analysis.potential_duplicates && analysis.potential_duplicates.length > 0) {
                 console.log(`\nPotential Duplicates Found: ${analysis.potential_duplicates.length}`);
                 for (const dup of analysis.potential_duplicates) {
                   console.log(`  - #${dup.number}: ${dup.title}`);
                   console.log(`    Reason: ${dup.similarity_reason}`);
                 }
               } else {
-                console.log('\nNo potential duplicates identified.');
+                console.log('\nNo potential duplicates identified by analysis.');
               }
 
               console.log('\n' + '='.repeat(60));
 
-              // set summary for workflow run
               const summaryIcon = analysis.is_potential_duplicate ? '⚠️' : '✅';
               const summaryText = analysis.is_potential_duplicate
                 ? `Potential duplicate detected (${analysis.confidence} confidence)`
                 : 'No likely duplicates found';
 
-              core.summary.addHeading(`${summaryIcon} Issue #${analysis.issue_number}: ${summaryText}`, 2);
-              core.summary.addRaw(`\n**Recommendation:** ${analysis.recommendation}\n\n`);
+              core.summary.addHeading(`${summaryIcon} Issue #${issueNumber}: ${summaryText}`, 2);
+              core.summary.addRaw(`\n**Title:** ${issueTitle}\n\n`);
+              core.summary.addRaw(`**Detected Areas:** ${detectedAreas}\n\n`);
+              core.summary.addRaw(`**Recommendation:** \`${analysis.recommendation}\`\n\n`);
               core.summary.addRaw(`**Summary:** ${analysis.analysis_summary}\n\n`);
 
-              if (analysis.potential_duplicates.length > 0) {
+              if (analysis.potential_duplicates && analysis.potential_duplicates.length > 0) {
                 core.summary.addHeading('Potential Duplicates', 3);
                 const rows = analysis.potential_duplicates.map(d => [
-                  `#${d.number}`,
-                  d.title,
+                  `[#${d.number}](https://github.com/zed-industries/zed/issues/${d.number})`,
+                  d.title.slice(0, 60) + (d.title.length > 60 ? '...' : ''),
                   d.similarity_reason
                 ]);
                 core.summary.addTable([
@@ -238,10 +681,12 @@ jobs:
 
             } catch (e) {
               console.log('Failed to parse analysis output:', e.message);
-              console.log('Raw output:', output);
-              core.summary.addHeading('⚠️ Failed to parse analysis output', 2);
-              core.summary.addRaw(`Error: ${e.message}\n\nRaw output:\n\`\`\`\n${output}\n\`\`\``);
+              console.log('Raw output:', analysisRaw);
+              core.summary.addHeading(`⚠️ Issue #${issueNumber}: Failed to parse analysis`, 2);
+              core.summary.addRaw(`**Detected Areas:** ${detectedAreas}\n\n`);
+              core.summary.addRaw(`Error: ${e.message}\n\nRaw output:\n\`\`\`\n${analysisRaw.slice(0, 1000)}\n\`\`\``);
               await core.summary.write();
             }
         env:
-          ANALYSIS_OUTPUT: ${{ steps.analyze.outputs.structured_output }}
+          ISSUE_TITLE: ${{ steps.fetch-issue.outputs.issue_title }}
+          ANALYSIS_OUTPUT: ${{ steps.analyze.outputs.analysis }}

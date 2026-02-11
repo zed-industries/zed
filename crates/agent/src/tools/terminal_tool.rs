@@ -65,9 +65,7 @@ impl AgentTool for TerminalTool {
     type Input = TerminalToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "terminal"
-    }
+    const NAME: &'static str = "terminal";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Execute
@@ -97,7 +95,11 @@ impl AgentTool for TerminalTool {
         };
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.command, settings);
+        let decision = decide_permission_from_settings(
+            Self::NAME,
+            std::slice::from_ref(&input.command),
+            settings,
+        );
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -106,8 +108,8 @@ impl AgentTool for TerminalTool {
             }
             ToolPermissionDecision::Confirm => {
                 let context = crate::ToolPermissionContext {
-                    tool_name: "terminal".to_string(),
-                    input_value: input.command.clone(),
+                    tool_name: Self::NAME.to_string(),
+                    input_values: vec![input.command.clone()],
                 };
                 Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
             }

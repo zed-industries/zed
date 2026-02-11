@@ -9,7 +9,7 @@ use std::{
     ffi::OsString,
     fs::File,
     io::Read as _,
-    os::fd::{AsFd, AsRawFd, FromRawFd},
+    os::fd::{AsFd, FromRawFd, IntoRawFd},
     time::Duration,
 };
 
@@ -26,7 +26,7 @@ use crate::{
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, WindowAppearance, WindowParams, px,
+    RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -201,6 +201,12 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+    }
+
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn thermal_state(&self) -> ThermalState {
+        ThermalState::Nominal
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -731,8 +737,8 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
+pub(super) unsafe fn read_fd(fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
+    let mut file = unsafe { File::from_raw_fd(fd.into_raw_fd()) };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
     Ok(buffer)

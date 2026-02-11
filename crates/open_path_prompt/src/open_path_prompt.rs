@@ -225,7 +225,8 @@ impl OpenPathPrompt {
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
+            let delegate =
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let mut query = lister.default_query(cx);
             if let Some(suggested_name) = suggested_name {
@@ -402,13 +403,15 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             };
 
-            let mut max_id = 0;
-            if !suffix.starts_with('.') && !hidden_entries {
-                new_entries.retain(|entry| {
-                    max_id = max_id.max(entry.path.id);
-                    !entry.path.string.starts_with('.')
-                });
+            if !hidden_entries {
+                new_entries.retain(|entry| !entry.path.string.starts_with('.'));
             }
+
+            let max_id = new_entries
+                .iter()
+                .map(|entry| entry.path.id)
+                .max()
+                .unwrap_or(0);
 
             if suffix.is_empty() {
                 let should_prepend_with_current_dir = this
@@ -487,6 +490,8 @@ impl PickerDelegate for OpenPathDelegate {
                 .filter_map(|entry| {
                     if is_create_state && !entry.is_dir && Some(&suffix) == Some(&entry.path.string)
                     {
+                        None
+                    } else if !suffix.is_empty() && entry.path.string == current_dir {
                         None
                     } else {
                         Some(&entry.path)
@@ -891,33 +896,6 @@ fn path_candidates(
         .collect()
 }
 
-#[cfg(target_os = "windows")]
-fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
-    let last_item = Path::new(&query)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
-    let (mut dir, suffix) = if let Some(dir) = query.strip_suffix(last_item.as_ref()) {
-        (dir.to_string(), last_item.into_owned())
-    } else {
-        (query.to_string(), String::new())
-    };
-    match path_style {
-        PathStyle::Posix => {
-            if dir.is_empty() {
-                dir = "/".to_string();
-            }
-        }
-        PathStyle::Windows => {
-            if dir.len() < 3 {
-                dir = "C:\\".to_string();
-            }
-        }
-    }
-    (dir, suffix)
-}
-
-#[cfg(not(target_os = "windows"))]
 fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) {
     match path_style {
         PathStyle::Posix => {
@@ -932,16 +910,17 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
             (dir, suffix)
         }
         PathStyle::Windows => {
-            let (mut dir, suffix) = if let Some(index) = query.rfind('\\') {
-                (query[..index].to_string(), query[index + 1..].to_string())
+            let last_sep = query.rfind('\\').into_iter().chain(query.rfind('/')).max();
+            let (mut dir, suffix) = if let Some(index) = last_sep {
+                (
+                    query[..index + 1].to_string(),
+                    query[index + 1..].to_string(),
+                )
             } else {
                 (query, String::new())
             };
             if dir.len() < 3 {
                 dir = "C:\\".to_string();
-            }
-            if !dir.ends_with('\\') {
-                dir.push('\\');
             }
             (dir, suffix)
         }
@@ -986,6 +965,34 @@ mod tests {
             get_dir_and_suffix("C:\\Users\\Junkui\\Documents\\".into(), PathStyle::Windows);
         assert_eq!(dir, "C:\\Users\\Junkui\\Documents\\");
         assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\root\\.".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:\\root\\");
+        assert_eq!(suffix, ".");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\root\\..".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:\\root\\");
+        assert_eq!(suffix, "..");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\root\\.hidden".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:\\root\\");
+        assert_eq!(suffix, ".hidden");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root/".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root/");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root/Use".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root/");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("C:\\root/Use".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:\\root/");
+        assert_eq!(suffix, "Use");
+
+        let (dir, suffix) = get_dir_and_suffix("C:/root\\.hidden".into(), PathStyle::Windows);
+        assert_eq!(dir, "C:/root\\");
+        assert_eq!(suffix, ".hidden");
     }
 
     #[test]
@@ -1013,5 +1020,17 @@ mod tests {
         let (dir, suffix) = get_dir_and_suffix("/Users/Junkui/Documents/".into(), PathStyle::Posix);
         assert_eq!(dir, "/Users/Junkui/Documents/");
         assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("/root/.".into(), PathStyle::Posix);
+        assert_eq!(dir, "/root/");
+        assert_eq!(suffix, ".");
+
+        let (dir, suffix) = get_dir_and_suffix("/root/..".into(), PathStyle::Posix);
+        assert_eq!(dir, "/root/");
+        assert_eq!(suffix, "..");
+
+        let (dir, suffix) = get_dir_and_suffix("/root/.hidden".into(), PathStyle::Posix);
+        assert_eq!(dir, "/root/");
+        assert_eq!(suffix, ".hidden");
     }
 }

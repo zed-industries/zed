@@ -519,8 +519,17 @@ impl Render for ErrorMessagePrompt {
                                     }),
                             )
                             .child(
-                                ui::IconButton::new("close", ui::IconName::Close)
-                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        CopyButton::new("copy-error-message", self.message.clone())
+                                            .tooltip_label("Copy Error Message"),
+                                    )
+                                    .child(
+                                        ui::IconButton::new("close", ui::IconName::Close).on_click(
+                                            cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),
+                                        ),
+                                    ),
                             ),
                     )
                     .child(

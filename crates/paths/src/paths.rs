@@ -69,15 +69,10 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
-        let mut path = PathBuf::from(dir);
-        if path.is_relative() && path.exists() {
-            let abs_path = path
-                .canonicalize()
-                .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = util::paths::SanitizedPath::new(&abs_path).into()
-        }
+        let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path
+        path.canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path")
     })
 }
 
@@ -123,6 +118,29 @@ pub fn data_dir() -> &'static PathBuf {
                 .join("Zed")
         } else {
             config_dir().clone() // Fallback
+        }
+    })
+}
+
+pub fn state_dir() -> &'static PathBuf {
+    static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    STATE_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return home_dir().join(".local").join("state").join("Zed");
+        }
+
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
+                flatpak_xdg_state.into()
+            } else {
+                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
+            }
+            .join("zed");
+        } else {
+            // Windows
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
         }
     })
 }
@@ -292,10 +310,9 @@ pub fn snippets_dir() -> &'static PathBuf {
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
-/// Returns the path to the contexts directory.
-///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
+// Returns old path to contexts directory.
+// Fallback
+fn text_threads_dir_fallback() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
@@ -304,6 +321,17 @@ pub fn text_threads_dir() -> &'static PathBuf {
             data_dir().join("conversations")
         }
     })
+}
+/// Returns the path to the contexts directory.
+///
+/// This is where the saved contexts from the Assistant are stored.
+pub fn text_threads_dir() -> &'static PathBuf {
+    let fallback_dir = text_threads_dir_fallback();
+    if fallback_dir.exists() {
+        return fallback_dir;
+    }
+    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CONTEXTS_DIR.get_or_init(|| state_dir().join("conversations"))
 }
 
 /// Returns the path to the contexts directory.
