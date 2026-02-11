@@ -89,6 +89,20 @@ impl ShapedLine {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        self.paint_with_opacity(origin, line_height, align, align_width, 1.0, window, cx)
+    }
+
+    /// Paint the line of text to the window with a specified opacity.
+    pub fn paint_with_opacity(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        opacity: f32,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
         paint_line(
             origin,
             &self.layout,
@@ -97,6 +111,7 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            opacity,
             window,
             cx,
         )?;
@@ -293,6 +308,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            1.0,
             window,
             cx,
         )?;
@@ -339,6 +355,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    opacity: f32,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -524,6 +541,14 @@ fn paint_line(
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {
                     let vertical_offset = point(px(0.0), glyph.position.y);
+                    let final_color = if opacity < 1.0 {
+                        Hsla {
+                            a: color.a * opacity,
+                            ..color
+                        }
+                    } else {
+                        color
+                    };
                     if glyph.is_emoji {
                         window.paint_emoji(
                             glyph_origin + baseline_offset + vertical_offset,
@@ -537,7 +562,7 @@ fn paint_line(
                             run.font_id,
                             glyph.id,
                             layout.font_size,
-                            color,
+                            final_color,
                         )?;
                     }
                 }

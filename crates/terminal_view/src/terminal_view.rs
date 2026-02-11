@@ -5,8 +5,8 @@ mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 
 use editor::{
-    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
-    ui_scrollbar_settings_from_raw,
+    CursorAnimationTicker, Editor, EditorSettings, InertialCursorConfig, QuadCursor,
+    actions::SelectAll, blink_manager::BlinkManager, ui_scrollbar_settings_from_raw,
 };
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
@@ -28,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use task::TaskId;
 use terminal::{
@@ -58,9 +58,7 @@ use workspace::{
         HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{
-        Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
-    },
+    searchable::{Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle},
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
@@ -69,6 +67,7 @@ struct ImeState {
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_CURSOR_ANIMATION_DT: f32 = 1.0 / 120.0;
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -130,6 +129,9 @@ pub struct TerminalView {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_manager: Entity<BlinkManager>,
+    quad_cursor: Option<QuadCursor>,
+    cursor_animation_ticker: CursorAnimationTicker,
+    last_cursor_origin: Option<gpui::Point<Pixels>>,
     mode: TerminalMode,
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
@@ -244,6 +246,8 @@ impl TerminalView {
             },
         );
         let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
+        let smooth_caret_settings = EditorSettings::get_global(cx).smooth_caret;
+        let smooth_caret_config = InertialCursorConfig::from_settings(&smooth_caret_settings);
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
@@ -258,6 +262,9 @@ impl TerminalView {
                 },
                 cx,
             )
+        });
+        blink_manager.update(cx, |manager, _cx| {
+            manager.set_smooth_blink_enabled(smooth_caret_settings.smooth_blink);
         });
 
         let subscriptions = vec![
@@ -276,6 +283,16 @@ impl TerminalView {
             context_menu: None,
             cursor_shape,
             blink_manager,
+            quad_cursor: smooth_caret_config.enabled.then(|| {
+                QuadCursor::new(
+                    smooth_caret_config,
+                    gpui::point(Pixels::ZERO, Pixels::ZERO),
+                    10.0,
+                    20.0,
+                )
+            }),
+            cursor_animation_ticker: CursorAnimationTicker::new(),
+            last_cursor_origin: None,
             blinking_terminal_enabled: false,
             hover: None,
             hover_tooltip_update: Task::ready(()),
@@ -548,6 +565,8 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let settings = TerminalSettings::get_global(cx);
+        let smooth_caret_settings = EditorSettings::get_global(cx).smooth_caret;
+        let smooth_caret_config = InertialCursorConfig::from_settings(&smooth_caret_settings);
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
@@ -573,6 +592,26 @@ impl TerminalView {
                 BlinkManager::disable
             },
         );
+        self.blink_manager.update(cx, |manager, _cx| {
+            manager.set_smooth_blink_enabled(smooth_caret_settings.smooth_blink);
+        });
+
+        if smooth_caret_config.enabled {
+            if let Some(cursor) = &mut self.quad_cursor {
+                cursor.set_config(smooth_caret_config);
+            } else {
+                self.quad_cursor = Some(QuadCursor::new(
+                    smooth_caret_config,
+                    gpui::point(Pixels::ZERO, Pixels::ZERO),
+                    10.0,
+                    20.0,
+                ));
+            }
+        } else {
+            self.quad_cursor = None;
+            self.cursor_animation_ticker.stop();
+            self.last_cursor_origin = None;
+        }
 
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
@@ -751,6 +790,23 @@ impl TerminalView {
         cx.notify();
     }
 
+    pub(crate) fn should_blink_cursor_for_mode(
+        &self,
+        focused: bool,
+        terminal_mode: TermMode,
+        cx: &App,
+    ) -> bool {
+        if !focused || terminal_mode.contains(TermMode::ALT_SCREEN) {
+            return false;
+        }
+
+        match TerminalSettings::get_global(cx).blinking {
+            TerminalBlink::Off => false,
+            TerminalBlink::On => true,
+            TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
+        }
+    }
+
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
         // Hide cursor when in embedded mode and not focused (read-only output like Agent panel)
         if let TerminalMode::Embedded { .. } = &self.mode {
@@ -759,26 +815,107 @@ impl TerminalView {
             }
         }
 
-        // For Standalone mode: always show cursor when not focused or in special modes
-        if !focused
-            || self
-                .terminal
-                .read(cx)
-                .last_content
-                .mode
-                .contains(TermMode::ALT_SCREEN)
-        {
+        let terminal_mode = self.terminal.read(cx).last_content.mode;
+        if !focused || terminal_mode.contains(TermMode::ALT_SCREEN) {
             return true;
         }
 
-        // When focused, check blinking settings and blink manager state
-        match TerminalSettings::get_global(cx).blinking {
-            TerminalBlink::Off => true,
-            TerminalBlink::TerminalControlled => {
-                !self.blinking_terminal_enabled || self.blink_manager.read(cx).visible()
-            }
-            TerminalBlink::On => self.blink_manager.read(cx).visible(),
+        if self.should_blink_cursor_for_mode(focused, terminal_mode, cx) {
+            self.blink_manager.read(cx).should_render()
+        } else {
+            true
         }
+    }
+
+    fn tick_cursor_animations(&mut self) -> bool {
+        let now = Instant::now();
+        let quad_animating = self
+            .quad_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_animating());
+        if !quad_animating {
+            self.cursor_animation_ticker.stop();
+            return false;
+        }
+
+        let dt = self.cursor_animation_ticker.tick(now);
+        let dt_secs = dt.as_secs_f32();
+        let steps = ((dt_secs / MAX_CURSOR_ANIMATION_DT).ceil() as usize).max(1);
+        let dt_per_step = dt_secs / steps as f32;
+
+        if let Some(cursor) = &mut self.quad_cursor {
+            for _ in 0..steps {
+                cursor.update_physics(dt_per_step);
+            }
+        }
+
+        let still_animating = self
+            .quad_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_animating());
+        if !still_animating {
+            self.cursor_animation_ticker.stop();
+        }
+        still_animating
+    }
+
+    pub(crate) fn next_cursor_frame(
+        &mut self,
+        cursor_origin: gpui::Point<Pixels>,
+        block_width: Pixels,
+        line_height: Pixels,
+        cursor_shape: language::CursorShape,
+        should_show_cursor: bool,
+        should_blink_cursor: bool,
+        cx: &mut Context<Self>,
+    ) -> (
+        gpui::Point<Pixels>,
+        Option<[gpui::Point<Pixels>; 4]>,
+        f32,
+        bool,
+    ) {
+        if should_blink_cursor
+            && self.last_cursor_origin.is_some_and(|previous| previous != cursor_origin)
+        {
+            self.blink_manager.update(cx, BlinkManager::cursor_moved);
+        }
+        self.last_cursor_origin = Some(cursor_origin);
+
+        if let Some(cursor) = &mut self.quad_cursor {
+            cursor.set_cell_size(block_width.into(), line_height.into());
+            cursor.set_shape(cursor_shape);
+            cursor.set_logical_pos(cursor_origin);
+        }
+
+        let cursor_animating = self.tick_cursor_animations();
+        let (origin, quad_corners) = if let Some(cursor) = self.quad_cursor.as_ref() {
+            (
+                cursor.visual_pos(),
+                Some(cursor.interpolated_corner_positions()),
+            )
+        } else {
+            (cursor_origin, None)
+        };
+
+        let blink_opacity = self
+            .blink_manager
+            .update(cx, |manager, cx| manager.opacity(cx));
+        let opacity = if !should_show_cursor {
+            0.0
+        } else if should_blink_cursor {
+            blink_opacity
+        } else {
+            1.0
+        };
+        let blink_animating =
+            should_blink_cursor && self.blink_manager.read(cx).is_smooth_blink_animating();
+
+        (
+            origin,
+            quad_corners,
+            opacity,
+            cursor_animating || blink_animating,
+        )
     }
 
     pub fn pause_cursor_blinking(&mut self, _window: &mut Window, cx: &mut Context<Self>) {

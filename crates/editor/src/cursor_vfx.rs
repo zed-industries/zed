@@ -188,7 +188,6 @@ impl CursorVfxSystem {
             window.paint_quad(gpui::fill(bounds, color));
         }
     }
-
 }
 
 #[cfg(test)]

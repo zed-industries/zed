@@ -729,7 +729,11 @@ impl Editor {
             }
         }
 
-        self.blink_manager.update(cx, BlinkManager::pause_blinking);
+        if old_cursor_position != &new_cursor_position {
+            self.blink_manager.update(cx, BlinkManager::cursor_moved);
+        } else {
+            self.blink_manager.update(cx, BlinkManager::pause_blinking);
+        }
 
         if local && !self.suppress_selection_callback {
             if let Some(callback) = self.on_local_selections_changed.as_ref() {

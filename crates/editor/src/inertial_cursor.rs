@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use gpui::{Pixels, Point, point};
+use language::CursorShape;
 
 use crate::editor_settings::SmoothCaret;
 
@@ -12,10 +13,6 @@ pub const MAX_ANIMATION_DT: f32 = 1.0 / 120.0;
 /// Physics always runs at this rate; rendering interpolates between states.
 const PHYSICS_DT: f32 = 1.0 / 120.0;
 
-/// Distance threshold (in pixels) above which cursor snaps immediately.
-/// Prevents excessive stretching during very large jumps (e.g., search, goto).
-const LARGE_JUMP_SNAP_THRESHOLD: f32 = 1000.0;
-
 /// Minimum animation time for corner animation.
 /// Allows near-instant snap for leading corners with high trail_size.
 const MIN_CORNER_ANIMATION_TIME: f32 = 0.001;
@@ -23,6 +20,10 @@ const MIN_CORNER_ANIMATION_TIME: f32 = 0.001;
 /// Convergence threshold for spring animation.
 /// Only check position for convergence, not velocity.
 const SPRING_CONVERGENCE_THRESHOLD: f32 = 0.01;
+
+const BAR_WIDTH: f32 = 2.0;
+const UNDERLINE_HEIGHT: f32 = 2.0;
+const SHORT_MOVE_VERTICAL_THRESHOLD: f32 = 0.001;
 
 /// Simple frame pacing for cursor animations.
 /// Uses actual wall-clock delta for smooth, drift-free animation.
@@ -122,7 +123,7 @@ impl SpringAnimation {
             return false;
         }
 
-        if self.position == 0.0 {
+        if self.position == 0.0 && self.velocity == 0.0 {
             return false;
         }
 
@@ -154,8 +155,7 @@ impl SpringAnimation {
 
     pub fn is_complete(&self) -> bool {
         // Check both position and velocity to prevent oscillation at threshold
-        self.position.abs() < SPRING_CONVERGENCE_THRESHOLD
-            && self.velocity.abs() < 0.1
+        self.position.abs() < SPRING_CONVERGENCE_THRESHOLD && self.velocity.abs() < 0.1
     }
 }
 
@@ -207,8 +207,8 @@ impl Default for InertialCursorConfig {
         Self {
             enabled: true,
             animation_time: Duration::from_millis(150),
-            short_animation_time: Duration::from_millis(25),
-            trail_size: 1.0,
+            short_animation_time: Duration::from_millis(40),
+            trail_size: 0.7,
             animate_in_insert_mode: true,
         }
     }
@@ -434,6 +434,10 @@ impl AnimatedCorner {
         self.animation_x.reset();
         self.animation_y.reset();
     }
+
+    pub fn set_relative_position(&mut self, relative_x: f32, relative_y: f32) {
+        self.relative_position = Vec2::new(relative_x, relative_y);
+    }
 }
 
 /// Four-corner cursor for parallelogram deformation.
@@ -519,6 +523,41 @@ impl QuadCursor {
         self.cell_height = height;
     }
 
+    pub fn set_shape(&mut self, shape: CursorShape) {
+        let bar_fraction = if self.cell_width > 0.0 {
+            (BAR_WIDTH / self.cell_width).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let underline_fraction = if self.cell_height > 0.0 {
+            (UNDERLINE_HEIGHT / self.cell_height).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+
+        let offsets = match shape {
+            CursorShape::Block | CursorShape::Hollow => {
+                [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+            }
+            CursorShape::Bar => [
+                (0.0, 0.0),
+                (bar_fraction, 0.0),
+                (bar_fraction, 1.0),
+                (0.0, 1.0),
+            ],
+            CursorShape::Underline => [
+                (0.0, 1.0 - underline_fraction),
+                (1.0, 1.0 - underline_fraction),
+                (1.0, 1.0),
+                (0.0, 1.0),
+            ],
+        };
+
+        for (corner, (x, y)) in self.corners.iter_mut().zip(offsets) {
+            corner.set_relative_position(x, y);
+        }
+    }
+
     /// Set the logical (target) center position.
     /// Only sets animation_length via jump(). Actual animation happens in update_physics().
     pub fn set_logical_pos(&mut self, pos: Point<Pixels>) {
@@ -539,20 +578,13 @@ impl QuadCursor {
             return;
         }
 
-        // Snap immediately for very large jumps to prevent excessive stretching
-        if move_distance > LARGE_JUMP_SNAP_THRESHOLD {
-            self.snap_to_logical();
-            return;
-        }
-
         self.jumped = true;
 
         // Short jump detection: horizontal movement <= 2 chars AND vertical ~= 0
         let is_short_animation = if self.cell_width > 0.001 && self.cell_height > 0.001 {
             let chars_x = (move_vec.x / self.cell_width).abs();
             let chars_y = (move_vec.y / self.cell_height).abs();
-            // Use 0.1 threshold (10% of cell height) for sub-pixel tolerance
-            chars_x <= 2.001 && chars_y < 0.1
+            chars_x <= 2.001 && chars_y <= SHORT_MOVE_VERTICAL_THRESHOLD
         } else {
             false
         };
@@ -611,7 +643,16 @@ impl QuadCursor {
 
             // 2. Sort by alignment to assign ranks (0 = most trailing, 3 = most leading)
             let mut sorted: [(usize, f32); 4] = alignments;
-            sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            sorted.sort_by(|a, b| {
+                let ordering = match a.1.partial_cmp(&b.1) {
+                    Some(ordering) => ordering,
+                    None => {
+                        log::warn!("NaN detected in cursor corner alignment calculation");
+                        std::cmp::Ordering::Equal
+                    }
+                };
+                ordering.then_with(|| a.0.cmp(&b.0))
+            });
 
             // 3. Build rank lookup: ranks[corner_index] = rank (0-3)
             let mut ranks = [0usize; 4];
@@ -641,6 +682,11 @@ impl QuadCursor {
 
     pub fn visual_pos(&self) -> Point<Pixels> {
         self.corners[0].position().to_point()
+    }
+
+    /// Target position in pixels relative to content origin.
+    pub fn destination_pos(&self) -> Point<Pixels> {
+        self.logical_center.to_point()
     }
 
     pub fn snap_to_logical(&mut self) {
@@ -794,5 +840,76 @@ mod tests {
             cursor.update_physics(0.016); // 16ms delta time
         }
         assert!(!cursor.is_animating());
+    }
+
+    #[test]
+    fn quad_cursor_shape_mapping_updates_corners() {
+        let mut cursor = QuadCursor::new(
+            InertialCursorConfig::default(),
+            point(Pixels::from(0.0), Pixels::from(0.0)),
+            20.0,
+            20.0,
+        );
+
+        cursor.set_shape(CursorShape::Bar);
+        assert_eq!(cursor.corners[0].relative_position, Vec2::new(0.0, 0.0));
+        assert_eq!(cursor.corners[3].relative_position, Vec2::new(0.0, 1.0));
+        assert_eq!(cursor.corners[1].relative_position, Vec2::new(0.1, 0.0),);
+        assert_eq!(cursor.corners[2].relative_position, Vec2::new(0.1, 1.0),);
+
+        cursor.set_shape(CursorShape::Underline);
+        assert_eq!(cursor.corners[0].relative_position, Vec2::new(0.0, 0.9),);
+        assert_eq!(cursor.corners[1].relative_position, Vec2::new(1.0, 0.9),);
+        assert_eq!(cursor.corners[2].relative_position, Vec2::new(1.0, 1.0));
+        assert_eq!(cursor.corners[3].relative_position, Vec2::new(0.0, 1.0));
+    }
+
+    #[test]
+    fn large_jump_stays_animated() {
+        let mut cursor = QuadCursor::new(
+            InertialCursorConfig::default(),
+            point(Pixels::from(0.0), Pixels::from(0.0)),
+            10.0,
+            20.0,
+        );
+
+        cursor.set_logical_pos(point(Pixels::from(5_000.0), Pixels::from(0.0)));
+
+        let visual = cursor.visual_pos();
+        assert!(f32::from(visual.x) < 1.0);
+        assert!(cursor.is_animating());
+    }
+
+    #[test]
+    fn short_move_requires_near_zero_vertical_delta() {
+        let mut cursor = QuadCursor::new(
+            InertialCursorConfig::default(),
+            point(Pixels::from(0.0), Pixels::from(0.0)),
+            10.0,
+            20.0,
+        );
+
+        cursor.set_logical_pos(point(Pixels::from(20.0), Pixels::from(0.03 * 20.0)));
+        assert!(
+            cursor
+                .corners
+                .iter()
+                .all(|corner| !corner.is_short_movement)
+        );
+    }
+
+    #[test]
+    fn remains_animating_before_first_fixed_step() {
+        let mut cursor = QuadCursor::new(
+            InertialCursorConfig::default(),
+            point(Pixels::from(0.0), Pixels::from(0.0)),
+            10.0,
+            20.0,
+        );
+
+        cursor.set_logical_pos(point(Pixels::from(100.0), Pixels::from(0.0)));
+        let changed = cursor.update_physics(PHYSICS_DT * 0.5);
+        assert!(!changed);
+        assert!(cursor.is_animating());
     }
 }

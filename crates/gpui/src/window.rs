@@ -2699,7 +2699,10 @@ impl Window {
             &mut self.next_frame.dispatch_tree,
             &mut self.rendered_frame.dispatch_tree,
         );
-        mem::swap(&mut self.next_frame.hitboxes, &mut self.rendered_frame.hitboxes);
+        mem::swap(
+            &mut self.next_frame.hitboxes,
+            &mut self.rendered_frame.hitboxes,
+        );
         mem::swap(
             &mut self.next_frame.window_control_hitboxes,
             &mut self.rendered_frame.window_control_hitboxes,
@@ -2721,11 +2724,17 @@ impl Window {
             &mut self.next_frame.cursor_styles,
             &mut self.rendered_frame.cursor_styles,
         );
-        mem::swap(&mut self.next_frame.tab_stops, &mut self.rendered_frame.tab_stops);
+        mem::swap(
+            &mut self.next_frame.tab_stops,
+            &mut self.rendered_frame.tab_stops,
+        );
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            mem::swap(&mut self.next_frame.debug_bounds, &mut self.rendered_frame.debug_bounds);
+            mem::swap(
+                &mut self.next_frame.debug_bounds,
+                &mut self.rendered_frame.debug_bounds,
+            );
         }
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
