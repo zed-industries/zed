@@ -477,6 +477,7 @@ fn render_button(store: &Entity<WidgetStore>, model: &WidgetModel) -> AnyElement
                 SharedString::from(format!("widget-btn-{}", model_id)),
                 description,
             )
+            .style(ButtonStyle::Outlined)
             .disabled(disabled)
             .on_click(move |_, _window, cx| {
                 let model_id = model_id.clone();
