@@ -923,7 +923,7 @@ impl AgentPanel {
             return;
         };
 
-        let Some(active_thread) = thread_view.read(cx).active_thread().cloned() else {
+        let Some(active_thread) = thread_view.read(cx).active_thread() else {
             return;
         };
 
@@ -1196,7 +1196,7 @@ impl AgentPanel {
     ) {
         if let Some(workspace) = self.workspace.upgrade()
             && let Some(thread_view) = self.active_thread_view()
-            && let Some(active_thread) = thread_view.read(cx).active_thread().cloned()
+            && let Some(active_thread) = thread_view.read(cx).active_thread()
         {
             active_thread.update(cx, |thread, cx| {
                 thread
