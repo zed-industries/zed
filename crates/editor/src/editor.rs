@@ -16211,10 +16211,9 @@ impl Editor {
                 .selections
                 .all::<MultiBufferPoint>(&this.display_snapshot(cx));
             for selection in &mut selections {
-                if let Some((_, prefix_len, suffix_len, was_empty, suffix_row)) =
-                    markers_inserted
-                        .iter()
-                        .find(|(id, _, _, _, _)| *id == selection.id)
+                if let Some((_, prefix_len, suffix_len, was_empty, suffix_row)) = markers_inserted
+                    .iter()
+                    .find(|(id, _, _, _, _)| *id == selection.id)
                 {
                     if *was_empty {
                         selection.start.column = selection
