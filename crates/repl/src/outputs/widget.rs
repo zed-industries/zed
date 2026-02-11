@@ -1,8 +1,12 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use collections::HashMap;
 use editor::{Editor, EditorEvent};
 use gpui::{AnyElement, App, Context, Corner, Entity, EventEmitter, Subscription, Window};
+use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown as html_md};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use runtimelib::{CommId, CommMsg, JupyterMessage, MimeBundle, MimeType};
-use theme::ActiveTheme;
 use ui::prelude::*;
 use ui::{Checkbox, ContextMenu, PopoverMenu, ProgressBar, ToggleState};
 
@@ -15,6 +19,7 @@ struct WidgetModel {
 pub struct WidgetStore {
     models: HashMap<String, WidgetModel>,
     text_editors: HashMap<String, Entity<Editor>>,
+    markdown_views: HashMap<String, Entity<Markdown>>,
     _editor_subscriptions: Vec<Subscription>,
 }
 
@@ -27,6 +32,7 @@ impl WidgetStore {
         Self {
             models: HashMap::default(),
             text_editors: HashMap::default(),
+            markdown_views: HashMap::default(),
             _editor_subscriptions: Vec::new(),
         }
     }
@@ -61,13 +67,19 @@ impl WidgetStore {
     pub fn close_model(&mut self, comm_id: &str) {
         self.models.remove(comm_id);
         self.text_editors.remove(comm_id);
+        self.markdown_views.remove(comm_id);
     }
 
     pub fn create_missing_text_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let needed: Vec<(String, String, bool)> = self
             .models
             .iter()
-            .filter(|(_, m)| m.model_name == "TextModel" || m.model_name == "TextareaModel")
+            .filter(|(_, m)| {
+                matches!(
+                    m.model_name.as_str(),
+                    "TextModel" | "TextareaModel" | "PasswordModel"
+                )
+            })
             .filter(|(id, _)| !self.text_editors.contains_key(*id))
             .map(|(id, m)| {
                 let value = m
@@ -118,6 +130,31 @@ impl WidgetStore {
 
             self.text_editors.insert(model_id, editor);
             self._editor_subscriptions.push(subscription);
+        }
+    }
+
+    pub fn create_missing_markdown_views(&mut self, cx: &mut Context<Self>) {
+        let needed: Vec<(String, String)> = self
+            .models
+            .iter()
+            .filter(|(_, m)| m.model_name == "HTMLModel")
+            .filter(|(id, _)| !self.markdown_views.contains_key(*id))
+            .map(|(id, m)| {
+                let html = m
+                    .state
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                (id.clone(), html)
+            })
+            .collect();
+
+        for (model_id, html) in needed {
+            let markdown_text = convert_html_to_markdown_string(&html);
+            let markdown_entity =
+                cx.new(|cx| Markdown::new(markdown_text.into(), None, None, cx));
+            self.markdown_views.insert(model_id, markdown_entity);
         }
     }
 
@@ -205,18 +242,19 @@ impl WidgetStore {
         };
 
         let text_editor = store_ref.text_editors.get(model_id).cloned();
+        let markdown_view = store_ref.markdown_views.get(model_id).cloned();
 
         match model.model_name.as_str() {
             "FloatProgressModel" | "IntProgressModel" => render_progress(model, window, cx),
             "LabelModel" => render_label(model),
-            "HTMLModel" => render_html_as_text(model),
+            "HTMLModel" => render_html_as_markdown(model, markdown_view, window, cx),
             "HBoxModel" => render_hbox(store, model, window, cx),
             "VBoxModel" | "BoxModel" => render_vbox(store, model, window, cx),
             "ButtonModel" => render_button(store, model),
             "CheckboxModel" => render_checkbox(store, model),
             "DropdownModel" => render_dropdown(store, model),
             "IntSliderModel" | "FloatSliderModel" => render_slider(store, model, window, cx),
-            "TextModel" | "TextareaModel" => render_text(model, text_editor, cx),
+            "TextModel" | "TextareaModel" | "PasswordModel" => render_text(model, text_editor, cx),
             "OutputModel" => render_output_widget(store, model, window, cx),
             "LayoutModel"
             | "ProgressStyleModel"
@@ -313,51 +351,57 @@ fn render_label(model: &WidgetModel) -> AnyElement {
         .into_any_element()
 }
 
-fn render_html_as_text(model: &WidgetModel) -> AnyElement {
-    let value = model
-        .state
-        .get("value")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+fn render_html_as_markdown(
+    model: &WidgetModel,
+    markdown_entity: Option<Entity<Markdown>>,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    if let Some(markdown) = markdown_entity {
+        let style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
+        div()
+            .w_full()
+            .child(MarkdownElement::new(markdown, style))
+            .into_any_element()
+    } else {
+        let value = model
+            .state
+            .get("value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
-    if value.is_empty() {
-        return div().into_any_element();
-    }
-
-    let text = strip_html_tags(value);
-    if text.is_empty() {
-        return div().into_any_element();
-    }
-
-    Label::new(text)
-        .size(LabelSize::Small)
-        .color(Color::Muted)
-        .into_any_element()
-}
-
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut inside_tag = false;
-
-    for ch in html.chars() {
-        match ch {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => result.push(ch),
-            _ => {}
+        if value.is_empty() {
+            return div().into_any_element();
         }
-    }
 
-    decode_html_entities(&result)
+        let markdown_text = convert_html_to_markdown_string(value);
+        if markdown_text.trim().is_empty() {
+            return div().into_any_element();
+        }
+
+        div()
+            .child(
+                Label::new(markdown_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Default),
+            )
+            .into_any_element()
+    }
 }
 
-fn decode_html_entities(text: &str) -> String {
-    text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
+fn convert_html_to_markdown_string(html: &str) -> String {
+    let mut handlers: Vec<TagHandler> = vec![
+        Rc::new(RefCell::new(html_md::WebpageChromeRemover)),
+        Rc::new(RefCell::new(html_md::ParagraphHandler)),
+        Rc::new(RefCell::new(html_md::HeadingHandler)),
+        Rc::new(RefCell::new(html_md::ListHandler)),
+        Rc::new(RefCell::new(html_md::TableHandler::new())),
+        Rc::new(RefCell::new(html_md::StyledTextHandler)),
+        Rc::new(RefCell::new(html_md::CodeHandler)),
+    ];
+
+    convert_html_to_markdown(html.as_bytes(), &mut handlers)
+        .unwrap_or_else(|_| html.to_string())
 }
 
 const IPY_MODEL_PREFIX: &str = "IPY_MODEL_";

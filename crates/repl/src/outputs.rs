@@ -799,6 +799,7 @@ impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.widget_store.update(cx, |store, cx| {
             store.create_missing_text_editors(window, cx);
+            store.create_missing_markdown_views(cx);
         });
 
         let status = match &self.status {
