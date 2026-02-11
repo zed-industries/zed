@@ -1922,7 +1922,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     .min_h_9()
                     .px_2p5()
                     .gap_1()
-                    .items_start()
+                    .items_center()
                     .child(
                         h_flex()
                             .flex_1()
@@ -1975,7 +1975,6 @@ impl PickerDelegate for QuickSearchDelegate {
                         h_flex()
                             .flex_none()
                             .gap_0p5()
-                            .pt_1()
                             .child({
                                 let editor_for_click = editor.clone();
                                 IconButton::new("insert-newline", IconName::Return)
