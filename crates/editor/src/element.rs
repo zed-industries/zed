@@ -1920,8 +1920,9 @@ impl EditorElement {
                             // Physics tick happens in animation callback only (prevents double-tick)
                             // Use interpolated positions for smooth rendering between physics ticks
                             let corners = quad.interpolated_corner_positions();
-                            let visual = quad.visual_pos();
-                            (visual.x, visual.y, Some(corners))
+                            let render_origin =
+                                quad_top_left_or_fallback(Some(corners), quad.visual_pos());
+                            (render_origin.x, render_origin.y, Some(corners))
                         } else {
                             (logical_x, logical_y, None)
                         }
@@ -2006,6 +2007,7 @@ impl EditorElement {
                             line_height: cursor.line_height,
                             block_width: cursor.block_width,
                             cursor_shape: cursor.shape,
+                            target_display_point: cursor_position,
                             block_text: cursor.block_text.clone(),
                             font: block_cursor_font.clone(),
                             font_size: cursor_row_layout.font_size,
@@ -11929,6 +11931,64 @@ fn resolve_block_cursor_grapheme(
     Some(normalize_block_cursor_grapheme(grapheme.as_ref()))
 }
 
+fn shape_block_cursor_text_for_point(
+    snapshot: &DisplaySnapshot,
+    target_point: DisplayPoint,
+    placeholder_text: Option<&str>,
+    font: &Font,
+    font_size: Pixels,
+    block_text_color: Hsla,
+    window: &mut Window,
+) -> Option<ShapedLine> {
+    let target_text = resolve_block_cursor_grapheme(snapshot, target_point).or_else(|| {
+        placeholder_text.and_then(|placeholder| {
+            placeholder
+                .graphemes(true)
+                .next()
+                .map(normalize_block_cursor_grapheme)
+        })
+    });
+
+    target_text.map(|text| {
+        let len = text.len();
+        window.text_system().shape_line(
+            text,
+            font_size,
+            &[TextRun {
+                len,
+                font: font.clone(),
+                color: block_text_color,
+                ..Default::default()
+            }],
+            None,
+        )
+    })
+}
+
+fn prefer_cached_block_cursor_text<T>(
+    cached_block_text: Option<T>,
+    fresh_block_text: Option<T>,
+) -> Option<T> {
+    cached_block_text.or(fresh_block_text)
+}
+
+fn quad_top_left_or_fallback(
+    quad_corners: Option<[gpui::Point<Pixels>; 4]>,
+    fallback_origin: gpui::Point<Pixels>,
+) -> gpui::Point<Pixels> {
+    quad_corners
+        .map(|corners| corners[0])
+        .unwrap_or(fallback_origin)
+}
+
+fn should_paint_block_cursor_destination_mask<T>(
+    cursor_animating: bool,
+    destination_pos: Option<gpui::Point<Pixels>>,
+    block_text: Option<&T>,
+) -> bool {
+    cursor_animating && destination_pos.is_some() && block_text.is_some()
+}
+
 #[derive(Debug)]
 pub struct IndentGuideLayout {
     origin: gpui::Point<Pixels>,
@@ -11972,6 +12032,8 @@ struct CursorAnimationState {
     line_height: Pixels,
     block_width: Pixels,
     cursor_shape: CursorShape,
+    /// Target display point captured at layout time.
+    target_display_point: DisplayPoint,
     /// Block text captured at layout time (character under cursor)
     block_text: Option<ShapedLine>,
     /// Font for shaping block_text
@@ -12005,86 +12067,78 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
         cursor_or_vfx_animating,
         fresh_block_text,
         destination_pos,
-    ) =
-        state.editor.update(cx, |editor, cx| {
-            editor.tick_cursor_animations();
+    ) = state.editor.update(cx, |editor, cx| {
+        editor.tick_cursor_animations();
 
-            let (origin, quad_corners) = if let Some(quad) = editor.quad_cursor() {
-                let visual = quad.visual_pos();
-                (visual, Some(quad.interpolated_corner_positions()))
-            } else {
-                (state.cursor_pos, None)
-            };
+        let (origin, quad_corners) = if let Some(quad) = editor.quad_cursor() {
+            let corners = quad.interpolated_corner_positions();
+            (
+                quad_top_left_or_fallback(Some(corners), quad.visual_pos()),
+                Some(corners),
+            )
+        } else {
+            (state.cursor_pos, None)
+        };
 
-            editor.update_cursor_vfx(origin);
+        editor.update_cursor_vfx(origin);
 
-            let cursor_animating = editor.is_cursor_animating();
-            let cursor_or_vfx_animating = cursor_animating || editor.is_cursor_vfx_animating();
+        let cursor_animating = editor.is_cursor_animating();
+        let cursor_or_vfx_animating = cursor_animating || editor.is_cursor_vfx_animating();
 
-            let fresh_block_text =
-                if state.cursor_shape == CursorShape::Block && !state.is_target_redacted {
-                    let snapshot = editor.display_snapshot(cx);
-                    let target_point = editor.selections.newest_display(&snapshot).head();
-                    let target_text = resolve_block_cursor_grapheme(&snapshot, target_point)
-                        .or_else(|| {
-                            if snapshot.is_empty() {
-                                editor.placeholder_text(cx).and_then(|placeholder| {
-                                    placeholder
-                                        .graphemes(true)
-                                        .next()
-                                        .map(normalize_block_cursor_grapheme)
-                                })
-                            } else {
-                                None
-                            }
-                        });
-
-                    target_text.map(|text| {
-                        let len = text.len();
-                        window.text_system().shape_line(
-                            text,
-                            state.font_size,
-                            &[TextRun {
-                                len,
-                                font: state.font.clone(),
-                                color: state.block_text_color,
-                                ..Default::default()
-                            }],
-                            None,
-                        )
-                    })
+        let fresh_block_text =
+            if state.cursor_shape == CursorShape::Block && !state.is_target_redacted {
+                let snapshot = editor.display_snapshot(cx);
+                let placeholder_text = if snapshot.is_empty() {
+                    editor.placeholder_text(cx)
                 } else {
                     None
                 };
-
-            let destination_pos = if cursor_animating
-                && state.cursor_shape == CursorShape::Block
-                && !state.is_target_redacted
-            {
-                editor
-                    .quad_cursor()
-                    .map(|quad| quad.destination_pos())
-                    .or(Some(state.cursor_pos))
+                shape_block_cursor_text_for_point(
+                    &snapshot,
+                    state.target_display_point,
+                    placeholder_text.as_deref(),
+                    &state.font,
+                    state.font_size,
+                    state.block_text_color,
+                    window,
+                )
             } else {
                 None
             };
 
-            (
-                origin,
-                quad_corners,
-                cursor_animating,
-                cursor_or_vfx_animating,
-                fresh_block_text,
-                destination_pos,
-            )
-        });
+        let destination_pos = if cursor_animating
+            && state.cursor_shape == CursorShape::Block
+            && !state.is_target_redacted
+        {
+            editor
+                .quad_cursor()
+                .map(|quad| quad.destination_pos())
+                .or(Some(state.cursor_pos))
+        } else {
+            None
+        };
+
+        (
+            origin,
+            quad_corners,
+            cursor_animating,
+            cursor_or_vfx_animating,
+            fresh_block_text,
+            destination_pos,
+        )
+    });
 
     let blink_animating = state.blink_manager.read(cx).is_smooth_blink_animating();
     let still_animating = cursor_or_vfx_animating || blink_animating;
 
-    let block_text = fresh_block_text.or_else(|| state.block_text.clone());
+    let block_text = prefer_cached_block_cursor_text(state.block_text.clone(), fresh_block_text);
 
-    if cursor_animating && let Some(destination_pos) = destination_pos {
+    if should_paint_block_cursor_destination_mask(
+        cursor_animating,
+        destination_pos,
+        block_text.as_ref(),
+    ) && let Some(destination_pos) = destination_pos
+    {
         let destination_bounds = Bounds::new(
             state.content_origin + destination_pos,
             size(state.block_width, state.line_height),
@@ -12259,44 +12313,21 @@ impl CursorLayout {
             }
 
             if let Some(block_text) = &self.block_text {
-                let min_x = corners_with_offset
-                    .iter()
-                    .map(|c| c.x)
-                    .fold(Pixels::MAX, |a, b| a.min(b));
-                let max_x = corners_with_offset
-                    .iter()
-                    .map(|c| c.x)
-                    .fold(Pixels::MIN, |a, b| a.max(b));
-                let min_y = corners_with_offset
-                    .iter()
-                    .map(|c| c.y)
-                    .fold(Pixels::MAX, |a, b| a.min(b));
-                let max_y = corners_with_offset
-                    .iter()
-                    .map(|c| c.y)
-                    .fold(Pixels::MIN, |a, b| a.max(b));
-
-                let clip_bounds =
-                    Bounds::new(point(min_x, min_y), size(max_x - min_x, max_y - min_y));
-
-                window.with_content_mask(
-                    Some(ContentMask {
-                        bounds: clip_bounds,
-                    }),
-                    |window| {
-                        block_text
-                            .paint_with_opacity(
-                                self.origin + origin,
-                                self.line_height,
-                                TextAlign::Left,
-                                None,
-                                self.opacity,
-                                window,
-                                cx,
-                            )
-                            .log_err();
-                    },
+                let block_text_origin = quad_top_left_or_fallback(
+                    Some(corners_with_offset),
+                    self.origin + origin,
                 );
+                block_text
+                    .paint_with_opacity(
+                        block_text_origin,
+                        self.line_height,
+                        TextAlign::Left,
+                        None,
+                        self.opacity,
+                        window,
+                        cx,
+                    )
+                    .log_err();
             }
             return;
         }
@@ -13164,6 +13195,125 @@ mod tests {
         assert_eq!(
             state.active_rows.keys().cloned().collect::<Vec<_>>(),
             vec![DisplayRow(0), DisplayRow(3), DisplayRow(5), DisplayRow(6)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_block_cursor_animation_text_uses_provided_target_point(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("ab", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        window
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([Point::new(0, 1)..Point::new(0, 1)]);
+                });
+
+                let snapshot = editor.display_snapshot(cx);
+                let newest_head = editor.selections.newest_display(&snapshot).head();
+                assert_eq!(newest_head, DisplayPoint::new(DisplayRow(0), 1));
+
+                let mut block_cursor_font = editor.style(cx).text.font();
+                block_cursor_font.features = editor.style(cx).text.font_features.clone();
+                let font_size = editor.style(cx).text.font_size.to_pixels(window.rem_size());
+
+                let target_left = DisplayPoint::new(DisplayRow(0), 0);
+                let target_right = DisplayPoint::new(DisplayRow(0), 1);
+                let left_text = shape_block_cursor_text_for_point(
+                    &snapshot,
+                    target_left,
+                    None,
+                    &block_cursor_font,
+                    font_size,
+                    Hsla::white(),
+                    window,
+                )
+                .map(|line| line.text.to_string());
+                let right_text = shape_block_cursor_text_for_point(
+                    &snapshot,
+                    target_right,
+                    None,
+                    &block_cursor_font,
+                    font_size,
+                    Hsla::white(),
+                    window,
+                )
+                .map(|line| line.text.to_string());
+
+                assert_eq!(left_text.as_deref(), Some("a"));
+                assert_eq!(right_text.as_deref(), Some("b"));
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_prefer_cached_block_cursor_text_prioritizes_cached_value() {
+        assert_eq!(prefer_cached_block_cursor_text(Some(1), Some(2)), Some(1));
+        assert_eq!(prefer_cached_block_cursor_text(Some(1), None), Some(1));
+        assert_eq!(
+            prefer_cached_block_cursor_text(None::<i32>, Some(2)),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_destination_mask_requires_block_text() {
+        let destination = Some(point(px(4.), px(2.)));
+
+        assert!(!should_paint_block_cursor_destination_mask::<u8>(
+            true,
+            destination,
+            None
+        ));
+        assert!(!should_paint_block_cursor_destination_mask(
+            false,
+            destination,
+            Some(&1u8)
+        ));
+        assert!(should_paint_block_cursor_destination_mask(
+            true,
+            destination,
+            Some(&1u8)
+        ));
+    }
+
+    #[test]
+    fn test_quad_top_left_or_fallback_prefers_quad_top_left() {
+        let fallback = point(px(10.), px(20.));
+        let quad_corners = Some([
+            point(px(1.), px(2.)),
+            point(px(3.), px(2.)),
+            point(px(3.), px(4.)),
+            point(px(1.), px(4.)),
+        ]);
+
+        assert_eq!(
+            quad_top_left_or_fallback(quad_corners, fallback),
+            point(px(1.), px(2.))
+        );
+        assert_eq!(
+            quad_top_left_or_fallback(None, fallback),
+            point(px(10.), px(20.))
+        );
+    }
+
+    #[test]
+    fn test_quad_block_text_origin_uses_top_left_corner() {
+        let fallback = point(px(80.), px(90.));
+        let quad_corners_with_offset = Some([
+            point(px(12.), px(14.)),
+            point(px(16.), px(15.)),
+            point(px(15.), px(22.)),
+            point(px(11.), px(21.)),
+        ]);
+
+        assert_eq!(
+            quad_top_left_or_fallback(quad_corners_with_offset, fallback),
+            point(px(12.), px(14.))
         );
     }
 
