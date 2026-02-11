@@ -457,7 +457,7 @@ impl MetalRenderer {
             let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
 
             let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+                self.draw_primitives(scene, None, &mut instance_buffer, drawable, viewport_size);
 
             match command_buffer {
                 Ok(command_buffer) => {

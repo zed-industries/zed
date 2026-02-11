@@ -29,8 +29,8 @@ pub struct EditorSettingsContent {
     /// {
     ///   "enabled": true,
     ///   "animation_time_ms": 150,
-    ///   "short_animation_time_ms": 25,
-    ///   "trail_size": 1.0,
+    ///   "short_animation_time_ms": 40,
+    ///   "trail_size": 0.8,
     ///   "animate_in_insert_mode": true
     /// }
     /// ```
@@ -724,6 +724,8 @@ pub enum CursorShape {
 
 /// Detailed smooth cursor animation settings.
 /// Allows fine-grained control over cursor animation behavior.
+/// Recommended opt-in preset for Neovide-like motion:
+/// `{ "smooth_caret": { "enabled": true, "animation_time_ms": 150, "short_animation_time_ms": 40, "trail_size": 0.7, "animate_in_insert_mode": true, "smooth_blink": true }, "cursor_vfx": { "mode": "none" } }`
 #[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct SmoothCaretContent {
@@ -739,7 +741,7 @@ pub struct SmoothCaretContent {
 
     /// Animation duration for small moves (typing) in milliseconds.
     ///
-    /// Default: 25
+    /// Default: 40
     pub short_animation_time_ms: Option<u64>,
 
     /// Trail size controls cursor responsiveness vs smoothness:
@@ -747,7 +749,7 @@ pub struct SmoothCaretContent {
     /// - 0.5 = Balanced animation
     /// - 0.0 = Full smooth animation (maximum smoothness, more perceived latency)
     ///
-    /// Default: 1.0
+    /// Default: 0.7
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     #[schemars(range(min = 0.0, max = 1.0))]
     pub trail_size: Option<f32>,
@@ -757,6 +759,12 @@ pub struct SmoothCaretContent {
     ///
     /// Default: true
     pub animate_in_insert_mode: Option<bool>,
+
+    /// Whether to use smooth opacity transitions for cursor blinking.
+    /// When enabled, cursor fades in/out smoothly instead of toggling on/off.
+    ///
+    /// Default: true
+    pub smooth_blink: Option<bool>,
 }
 
 /// Smooth cursor setting that supports both simple boolean and detailed configuration.

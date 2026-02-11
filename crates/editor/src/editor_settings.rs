@@ -199,6 +199,8 @@ pub struct SmoothCaret {
     pub trail_size: f32,
     /// Whether to animate cursor during insert mode (typing).
     pub animate_in_insert_mode: bool,
+    /// Whether to use smooth opacity transitions for cursor blinking.
+    pub smooth_blink: bool,
 }
 
 impl Default for SmoothCaret {
@@ -206,9 +208,10 @@ impl Default for SmoothCaret {
         Self {
             enabled: true,
             animation_time_ms: 150,
-            short_animation_time_ms: 25,
-            trail_size: 1.0,
+            short_animation_time_ms: 40,
+            trail_size: 0.7,
             animate_in_insert_mode: true,
+            smooth_blink: true,
         }
     }
 }
@@ -219,14 +222,16 @@ impl SmoothCaret {
         match setting {
             Some(SmoothCaretSetting::Bool(enabled)) => Self {
                 enabled,
+                smooth_blink: enabled,
                 ..Self::default()
             },
             Some(SmoothCaretSetting::Config(config)) => Self {
                 enabled: config.enabled.unwrap_or(true),
                 animation_time_ms: config.animation_time_ms.unwrap_or(150),
-                short_animation_time_ms: config.short_animation_time_ms.unwrap_or(25),
-                trail_size: config.trail_size.unwrap_or(1.0).clamp(0.0, 1.0),
+                short_animation_time_ms: config.short_animation_time_ms.unwrap_or(40),
+                trail_size: config.trail_size.unwrap_or(0.7).clamp(0.0, 1.0),
                 animate_in_insert_mode: config.animate_in_insert_mode.unwrap_or(true),
+                smooth_blink: config.smooth_blink.unwrap_or(true),
             },
             None => Self::default(),
         }

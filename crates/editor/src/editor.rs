@@ -1173,7 +1173,8 @@ pub struct Editor {
     blink_manager: Entity<BlinkManager>,
     quad_cursor: Option<inertial_cursor::QuadCursor>,
     cursor_animation_ticker: inertial_cursor::CursorAnimationTicker,
-    cursor_animation_destination: Option<(DisplayPoint, Pixels, Pixels)>,
+    cursor_animation_callback_generation: u64,
+    active_cursor_animation_callback_generation: Option<u64>,
     cursor_vfx_system: Option<cursor_vfx::CursorVfxSystem>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
@@ -2127,6 +2128,8 @@ impl Editor {
                 |cx| EditorSettings::get_global(cx).cursor_blink,
                 cx,
             );
+            blink_manager
+                .set_smooth_blink_enabled(EditorSettings::get_global(cx).smooth_caret.smooth_blink);
             if is_minimap {
                 blink_manager.disable(cx);
             }
@@ -2480,7 +2483,8 @@ impl Editor {
                 }
             },
             cursor_animation_ticker: inertial_cursor::CursorAnimationTicker::new(),
-            cursor_animation_destination: None,
+            cursor_animation_callback_generation: 0,
+            active_cursor_animation_callback_generation: None,
             cursor_vfx_system: {
                 let vfx_settings = &EditorSettings::get_global(cx).cursor_vfx;
                 let vfx_config = cursor_vfx::CursorVfxConfig::from_runtime_settings(vfx_settings);
@@ -3372,15 +3376,22 @@ impl Editor {
         self.quad_cursor.as_mut()
     }
 
-    pub fn set_cursor_animation_destination(
-        &mut self,
-        destination: Option<(DisplayPoint, Pixels, Pixels)>,
-    ) {
-        self.cursor_animation_destination = destination;
+    pub fn begin_cursor_animation_callback_cycle(&mut self) -> u64 {
+        self.cursor_animation_callback_generation =
+            self.cursor_animation_callback_generation.wrapping_add(1);
+        let generation = self.cursor_animation_callback_generation;
+        self.active_cursor_animation_callback_generation = Some(generation);
+        generation
     }
 
-    pub fn cursor_animation_destination(&self) -> Option<(DisplayPoint, Pixels, Pixels)> {
-        self.cursor_animation_destination
+    pub fn is_active_cursor_animation_generation(&self, generation: u64) -> bool {
+        self.active_cursor_animation_callback_generation == Some(generation)
+    }
+
+    pub fn end_cursor_animation_callback_cycle(&mut self, generation: u64) {
+        if self.active_cursor_animation_callback_generation == Some(generation) {
+            self.active_cursor_animation_callback_generation = None;
+        }
     }
 
     fn build_inertial_cursor_config(
@@ -3429,15 +3440,16 @@ impl Editor {
         let steps = ((dt_secs / inertial_cursor::MAX_ANIMATION_DT).ceil() as usize).max(1);
         let dt_per_step = dt_secs / steps as f32;
 
-        let mut still_animating = false;
-
         if let Some(cursor) = &mut self.quad_cursor {
             for _ in 0..steps {
-                if cursor.update_physics(dt_per_step) {
-                    still_animating = true;
-                }
+                cursor.update_physics(dt_per_step);
             }
         }
+
+        let still_animating = self
+            .quad_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_animating());
 
         if !still_animating {
             self.cursor_animation_ticker.stop();
@@ -3769,7 +3781,11 @@ impl Editor {
             }
         }
 
-        self.blink_manager.update(cx, BlinkManager::pause_blinking);
+        if old_cursor_position != &new_cursor_position {
+            self.blink_manager.update(cx, BlinkManager::cursor_moved);
+        } else {
+            self.blink_manager.update(cx, BlinkManager::pause_blinking);
+        }
 
         if local && !self.suppress_selection_callback {
             if let Some(callback) = self.on_local_selections_changed.as_ref() {
@@ -23903,7 +23919,7 @@ impl Editor {
     }
 
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
-        (self.read_only(cx) || self.blink_manager.read(cx).visible())
+        (self.read_only(cx) || self.blink_manager.read(cx).should_render())
             && self.focus_handle.is_focused(window)
     }
 
@@ -24312,6 +24328,7 @@ impl Editor {
             // Handle smooth_caret settings changes
             let new_smooth_caret_config =
                 Self::build_inertial_cursor_config(&editor_settings.smooth_caret);
+            let smooth_blink_enabled = editor_settings.smooth_caret.smooth_blink;
             if new_smooth_caret_config.enabled {
                 if let Some(cursor) = &mut self.quad_cursor {
                     cursor.set_config(new_smooth_caret_config);
@@ -24339,6 +24356,11 @@ impl Editor {
             } else {
                 self.cursor_vfx_system = None;
             }
+
+            // Update smooth blink setting (after editor_settings is no longer used)
+            self.blink_manager.update(cx, |blink_manager, _cx| {
+                blink_manager.set_smooth_blink_enabled(smooth_blink_enabled);
+            });
         }
 
         if old_cursor_shape != self.cursor_shape {

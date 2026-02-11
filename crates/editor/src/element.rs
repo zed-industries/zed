@@ -2,19 +2,19 @@ use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
-    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
-    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
+    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll, blink_manager::BlinkManager,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
-        HighlightKey, HighlightedChunk, ToDisplayPoint,
+        HighlightKey, HighlightedChunk, ToDisplayPoint, is_invisible, replacement,
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
@@ -1797,16 +1797,11 @@ impl EditorElement {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
-            // When smooth cursor animation is enabled, disable blinking entirely.
-            // Blinking adds visual noise when cursor is already smoothly animating.
             let smooth_cursor_enabled = editor.quad_cursor().is_some();
-            let blink_opacity = if smooth_cursor_enabled {
-                1.0 // Always visible when smooth cursor is enabled
-            } else if editor.blink_manager.read(cx).visible() {
-                1.0
-            } else {
-                0.0
-            };
+            let is_editor_focused = editor.is_focused(window);
+            let blink_opacity = editor
+                .blink_manager
+                .update(cx, |blink_manager, cx| blink_manager.opacity(cx));
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1867,68 +1862,45 @@ impl EditorElement {
                         cx.theme().colors().editor_background
                     };
 
-                    if selection.cursor_shape == CursorShape::Block && !is_target_redacted {
-                        if let Some(text) = snapshot.grapheme_at(cursor_position).or_else(|| {
-                            if snapshot.is_empty() {
-                                snapshot.placeholder_text().and_then(|s| {
-                                    s.graphemes(true).next().map(|s| s.to_string().into())
-                                })
-                            } else {
-                                None
-                            }
-                        }) {
-                            let is_ascii_whitespace_only =
-                                text.as_ref().chars().all(|c| c.is_ascii_whitespace());
-                            let len = text.len();
-
-                            let shaped = window.text_system().shape_line(
-                                text,
-                                cursor_row_layout.font_size,
-                                &[TextRun {
-                                    len,
-                                    font: block_cursor_font.clone(),
-                                    color: block_text_color,
-                                    ..Default::default()
-                                }],
-                                None,
-                            );
-                            if !is_ascii_whitespace_only {
-                                block_width = block_width.max(shaped.width);
-                            }
-                            block_text = Some(shaped);
-                        }
+                    let block_text = if selection.cursor_shape == CursorShape::Block
+                        && !is_target_redacted
+                    {
+                        resolve_block_cursor_grapheme(&snapshot.display_snapshot, cursor_position)
+                            .or_else(|| {
+                                if snapshot.is_empty() {
+                                    snapshot
+                                        .placeholder_text()
+                                        .and_then(|text| text.graphemes(true).next().map(normalize_block_cursor_grapheme))
+                                } else {
+                                    None
+                                }
+                            })
+                            .map(|text| {
+                                let is_ascii_whitespace_only =
+                                    text.chars().all(|c| c.is_ascii_whitespace());
+                                let len = text.len();
+                                let shaped = window.text_system().shape_line(
+                                    text,
+                                    cursor_row_layout.font_size,
+                                    &[TextRun {
+                                        len,
+                                        font: block_cursor_font.clone(),
+                                        color: block_text_color,
+                                        ..Default::default()
+                                    }],
+                                    None,
+                                );
+                                if !is_ascii_whitespace_only {
+                                    block_width = block_width.max(shaped.width);
+                                }
+                                shaped
+                            })
+                    } else {
+                        None
+                    };
+                    if let Some(shaped) = &block_text {
+                        block_width = block_width.max(shaped.width);
                     }
-
-                    let block_text =
-                        if selection.cursor_shape == CursorShape::Block && !is_target_redacted {
-                            snapshot
-                                .grapheme_at(cursor_position)
-                                .or_else(|| {
-                                    if snapshot.is_empty() {
-                                        snapshot.placeholder_text().and_then(|s| {
-                                            s.graphemes(true).next().map(|s| s.to_string().into())
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .map(|text| {
-                                    let len = text.len();
-                                    window.text_system().shape_line(
-                                        text,
-                                        cursor_row_layout.font_size,
-                                        &[TextRun {
-                                            len,
-                                            font: block_cursor_font.clone(),
-                                            color: block_text_color,
-                                            ..Default::default()
-                                        }],
-                                        None,
-                                    )
-                                })
-                        } else {
-                            None
-                        };
                     let block_cursor_font_size = cursor_row_layout.font_size;
 
                     let logical_x = cursor_character_x - scroll_pixel_position.x.into();
@@ -1939,33 +1911,22 @@ impl EditorElement {
                     // For the newest (primary) cursor, use inertial animation if enabled
                     // Order: 1) set target 2) tick physics 3) read position
                     // This ensures physics uses the NEW target, eliminating one-frame lag
-                    let (x, y, quad_corners, cursor_animating_for_opacity) = if selection.is_newest
-                    {
+                    let (x, y, quad_corners) = if selection.is_newest {
                         if let Some(quad) = editor.quad_cursor_mut() {
+                            quad.set_cell_size(block_width.into(), line_height.into());
+                            quad.set_shape(selection.cursor_shape);
                             // Set target position for animation
                             quad.set_logical_pos(point(logical_x, logical_y));
-                            quad.set_cell_size(block_width.into(), line_height.into());
                             // Physics tick happens in animation callback only (prevents double-tick)
                             // Use interpolated positions for smooth rendering between physics ticks
                             let corners = quad.interpolated_corner_positions();
                             let visual = quad.visual_pos();
-                            let cursor_animating = editor.is_cursor_animating();
-                            // Track destination position for block cursor to mask ghost character
-                            if cursor_animating && selection.cursor_shape == CursorShape::Block {
-                                editor.set_cursor_animation_destination(Some((
-                                    cursor_position,
-                                    cursor_character_x,
-                                    block_width,
-                                )));
-                            } else {
-                                editor.set_cursor_animation_destination(None);
-                            }
-                            (visual.x, visual.y, Some(corners), cursor_animating)
+                            (visual.x, visual.y, Some(corners))
                         } else {
-                            (logical_x, logical_y, None, false)
+                            (logical_x, logical_y, None)
                         }
                     } else {
-                        (logical_x, logical_y, None, false)
+                        (logical_x, logical_y, None)
                     };
 
                     if selection.is_newest {
@@ -2013,22 +1974,18 @@ impl EditorElement {
                         origin: point(x, y),
                         quad_corners,
                         line_height,
-                        // When smooth cursor is animating, animation callback handles this cursor.
-                        // Only suppress when animation is active to prevent flicker on animation end.
-                        // With smooth cursor disabled, use normal blink behavior.
-                        opacity: if selection.is_newest
-                            && quad_corners.is_some()
-                            && cursor_animating_for_opacity
-                        {
-                            0.0 // Animation callback handles this cursor
-                        } else if selection.is_local && smooth_cursor_enabled {
-                            1.0 // Smooth cursor at rest - always visible
-                        } else if selection.is_local {
-                            blink_opacity // Normal blink behavior
+                        opacity: if selection.is_local {
+                            blink_opacity // Includes smooth blink interpolation
                         } else {
                             1.0 // Remote cursors
                         },
-                        shape: selection.cursor_shape,
+                        // When editor is unfocused and smooth cursor is enabled, show hollow outline
+                        shape: if !is_editor_focused && smooth_cursor_enabled && selection.is_local
+                        {
+                            CursorShape::Hollow
+                        } else {
+                            selection.cursor_shape
+                        },
                         block_text,
                         cursor_name: None,
                     };
@@ -2040,7 +1997,9 @@ impl EditorElement {
                     cursor.layout(content_origin, cursor_name, window, cx);
                     if selection.is_newest {
                         animation_state = Some(CursorAnimationState {
+                            generation: 0,
                             editor: editor_handle.clone(),
+                            blink_manager: editor.blink_manager.clone(),
                             content_origin,
                             cursor_pos: point(x, y),
                             cursor_color: cursor.color,
@@ -2048,13 +2007,10 @@ impl EditorElement {
                             block_width: cursor.block_width,
                             cursor_shape: cursor.shape,
                             block_text: cursor.block_text.clone(),
-                            target_display_point: cursor_position,
-                            font: block_cursor_font,
-                            font_size: block_cursor_font_size,
+                            font: block_cursor_font.clone(),
+                            font_size: cursor_row_layout.font_size,
                             block_text_color,
                             is_target_redacted,
-                            scroll_position,
-                            scroll_pixel_position,
                         });
                     }
                     cursors.push(cursor);
@@ -2072,10 +2028,11 @@ impl EditorElement {
         // Note: tick_cursor_animations() handles physics with centralized frame pacing
         let cursor_vfx_pos = cursor_vfx_pos;
         let update_vfx_in_callback = animation_state.is_some();
-        let is_animating = self.editor.update(cx, move |editor, _cx| {
+        let is_animating = self.editor.update(cx, move |editor, cx| {
             let cursor_animating = editor.is_cursor_animating();
             let vfx_animating = editor.is_cursor_vfx_animating();
-            let is_animating = cursor_animating || vfx_animating;
+            let blink_animating = editor.blink_manager.read(cx).is_smooth_blink_animating();
+            let is_animating = cursor_animating || vfx_animating || blink_animating;
 
             // Update VFX system with cursor position from quad cursor
             if !(is_animating && update_vfx_in_callback) {
@@ -2093,15 +2050,16 @@ impl EditorElement {
         // This uses scene caching to skip full layout on animation frames.
         // We register an animation callback to tick physics and paint the cursor
         // on top of the cached scene.
-        if is_animating {
-            window.request_animation_only_frame();
+        if is_animating && let Some(mut state) = animation_state {
+            let generation = self.editor.update(cx, |editor, _cx| {
+                editor.begin_cursor_animation_callback_cycle()
+            });
+            state.generation = generation;
 
-            // Register animation callback with state that re-registers itself each frame
-            if let Some(state) = animation_state {
-                window.on_animation_frame(move |window, cx| {
-                    paint_cursor_animation_frame(state, window, cx);
-                });
-            }
+            window.request_animation_only_frame();
+            window.on_animation_frame(move |window, cx| {
+                paint_cursor_animation_frame(state, window, cx);
+            });
         }
 
         cursor_layouts
@@ -6599,7 +6557,6 @@ impl EditorElement {
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
-                self.paint_block_cursor_destination_mask(layout, window, cx);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
@@ -6813,39 +6770,6 @@ impl EditorElement {
                 );
             }
         });
-    }
-
-    fn paint_block_cursor_destination_mask(
-        &self,
-        layout: &EditorLayout,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some((dest_point, dest_x, dest_width)) =
-            self.editor.read(cx).cursor_animation_destination()
-        else {
-            return;
-        };
-
-        let dest_row = dest_point.row();
-        if dest_row < layout.visible_display_row_range.start
-            || dest_row >= layout.visible_display_row_range.end
-        {
-            return;
-        }
-
-        let line_height = layout.position_map.line_height;
-
-        let y = layout.content_origin.y
-            + line_height * (dest_row.0 as f32 - layout.position_map.scroll_position.y as f32);
-        let x = layout.content_origin.x + dest_x
-            - Pixels::from(layout.position_map.scroll_pixel_position.x);
-
-        let bg_color = cx.theme().colors().editor_background;
-        window.paint_quad(fill(
-            Bounds::new(point(x, y), size(dest_width, line_height)),
-            bg_color,
-        ));
     }
 
     fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
@@ -11979,6 +11903,32 @@ pub fn layout_line(
     .unwrap()
 }
 
+fn normalize_block_cursor_grapheme(grapheme: &str) -> SharedString {
+    if let Some(invisible) = grapheme.chars().next().filter(|&char| is_invisible(char)) {
+        replacement(invisible).unwrap_or(grapheme).to_owned().into()
+    } else if grapheme == "\n" {
+        " ".into()
+    } else {
+        grapheme.to_owned().into()
+    }
+}
+
+fn resolve_block_cursor_grapheme(
+    snapshot: &DisplaySnapshot,
+    point: DisplayPoint,
+) -> Option<SharedString> {
+    let grapheme = snapshot.grapheme_at(point).or_else(|| {
+        let clipped = snapshot.clip_point(point, Bias::Left);
+        if clipped != point {
+            snapshot.grapheme_at(clipped)
+        } else {
+            None
+        }
+    })?;
+
+    Some(normalize_block_cursor_grapheme(grapheme.as_ref()))
+}
+
 #[derive(Debug)]
 pub struct IndentGuideLayout {
     origin: gpui::Point<Pixels>,
@@ -12013,16 +11963,17 @@ pub struct CursorName {
 
 /// State for cursor animation callback that re-registers itself each frame.
 struct CursorAnimationState {
+    generation: u64,
     editor: Entity<Editor>,
+    blink_manager: Entity<BlinkManager>,
     content_origin: gpui::Point<Pixels>,
     cursor_pos: gpui::Point<Pixels>,
     cursor_color: Hsla,
     line_height: Pixels,
     block_width: Pixels,
     cursor_shape: CursorShape,
+    /// Block text captured at layout time (character under cursor)
     block_text: Option<ShapedLine>,
-    /// Target position for dynamic block_text lookup
-    target_display_point: DisplayPoint,
     /// Font for shaping block_text
     font: Font,
     /// Font size for shaping block_text
@@ -12031,13 +11982,30 @@ struct CursorAnimationState {
     block_text_color: Hsla,
     /// Whether target position is in a redacted range
     is_target_redacted: bool,
-    scroll_position: gpui::Point<ScrollOffset>,
-    scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
 }
 
 /// Paint one frame of cursor animation and re-register callback if still animating.
 fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window, cx: &mut App) {
-    let (cursor_origin, cursor_corners, still_animating, fresh_block_text, destination_mask) =
+    if !state
+        .editor
+        .read(cx)
+        .is_active_cursor_animation_generation(state.generation)
+    {
+        return;
+    }
+
+    let blink_opacity = state
+        .blink_manager
+        .update(cx, |blink_manager, cx| blink_manager.opacity(cx));
+
+    let (
+        cursor_origin,
+        cursor_corners,
+        cursor_animating,
+        cursor_or_vfx_animating,
+        fresh_block_text,
+        destination_pos,
+    ) =
         state.editor.update(cx, |editor, cx| {
             editor.tick_cursor_animations();
 
@@ -12050,21 +12018,28 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
 
             editor.update_cursor_vfx(origin);
 
-            let still_animating = editor.is_cursor_animating() || editor.is_cursor_vfx_animating();
+            let cursor_animating = editor.is_cursor_animating();
+            let cursor_or_vfx_animating = cursor_animating || editor.is_cursor_vfx_animating();
 
-            // Get fresh block_text based on CURRENT target position to fix:
-            // 1. Character "slip-through" when quickly moving cursor
-            // 2. Missing character when moving to a new line
             let fresh_block_text =
                 if state.cursor_shape == CursorShape::Block && !state.is_target_redacted {
-                    // Use current target from editor if available (handles rapid cursor movements)
-                    let target_point = editor
-                        .cursor_animation_destination()
-                        .map(|(dp, _, _)| dp)
-                        .unwrap_or(state.target_display_point);
-
                     let snapshot = editor.display_snapshot(cx);
-                    snapshot.grapheme_at(target_point).map(|text| {
+                    let target_point = editor.selections.newest_display(&snapshot).head();
+                    let target_text = resolve_block_cursor_grapheme(&snapshot, target_point)
+                        .or_else(|| {
+                            if snapshot.is_empty() {
+                                editor.placeholder_text(cx).and_then(|placeholder| {
+                                    placeholder
+                                        .graphemes(true)
+                                        .next()
+                                        .map(normalize_block_cursor_grapheme)
+                                })
+                            } else {
+                                None
+                            }
+                        });
+
+                    target_text.map(|text| {
                         let len = text.len();
                         window.text_system().shape_line(
                             text,
@@ -12082,40 +12057,43 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
                     None
                 };
 
-            let destination_mask =
-                if state.cursor_shape == CursorShape::Block && !state.is_target_redacted {
-                    editor
-                        .cursor_animation_destination()
-                        .map(|(dest_point, dest_x, dest_width)| {
-                            let dest_row = dest_point.row();
-                            let y = state.content_origin.y
-                                + state.line_height
-                                    * (dest_row.0 as f32 - state.scroll_position.y as f32);
-                            let x = state.content_origin.x + dest_x
-                                - Pixels::from(state.scroll_pixel_position.x);
-
-                            Bounds::new(point(x, y), size(dest_width, state.line_height))
-                        })
-                } else {
-                    None
-                };
+            let destination_pos = if cursor_animating
+                && state.cursor_shape == CursorShape::Block
+                && !state.is_target_redacted
+            {
+                editor
+                    .quad_cursor()
+                    .map(|quad| quad.destination_pos())
+                    .or(Some(state.cursor_pos))
+            } else {
+                None
+            };
 
             (
                 origin,
                 quad_corners,
-                still_animating,
+                cursor_animating,
+                cursor_or_vfx_animating,
                 fresh_block_text,
-                destination_mask,
+                destination_pos,
             )
         });
 
-    if let Some(mask_bounds) = destination_mask {
-        let bg_color = cx.theme().colors().editor_background;
-        window.paint_quad(fill(mask_bounds, bg_color));
-    }
+    let blink_animating = state.blink_manager.read(cx).is_smooth_blink_animating();
+    let still_animating = cursor_or_vfx_animating || blink_animating;
 
-    // Use fresh block_text if available, otherwise fall back to stored value
     let block_text = fresh_block_text.or_else(|| state.block_text.clone());
+
+    if cursor_animating && let Some(destination_pos) = destination_pos {
+        let destination_bounds = Bounds::new(
+            state.content_origin + destination_pos,
+            size(state.block_width, state.line_height),
+        );
+        window.paint_quad(fill(
+            destination_bounds,
+            cx.theme().colors().editor_background,
+        ));
+    }
 
     let mut cursor = CursorLayout {
         origin: cursor_origin,
@@ -12123,7 +12101,7 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
         block_width: state.block_width,
         line_height: state.line_height,
         color: state.cursor_color,
-        opacity: 1.0,
+        opacity: blink_opacity,
         shape: state.cursor_shape,
         block_text,
         cursor_name: None,
@@ -12134,6 +12112,14 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
         vfx_system.paint(state.content_origin, window, state.cursor_color);
     }
 
+    if !state
+        .editor
+        .read(cx)
+        .is_active_cursor_animation_generation(state.generation)
+    {
+        return;
+    }
+
     if still_animating {
         window.request_animation_only_frame();
         window.on_animation_frame(move |window, cx| {
@@ -12141,7 +12127,7 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
         });
     } else {
         state.editor.update(cx, |editor, cx| {
-            editor.set_cursor_animation_destination(None);
+            editor.end_cursor_animation_callback_cycle(state.generation);
             cx.notify();
         });
     }
@@ -12266,41 +12252,53 @@ impl CursorLayout {
                 gpui::Point::new(corners[3].x + origin.x, corners[3].y + origin.y),
             ];
 
-            // Check if corners form a parallelogram (not a rectangle)
-            // In a rectangle: top edge and bottom edge are parallel and equal length
-            // Deformation = how much the corners deviate from a perfect rectangle
-            let top_edge_x = f32::from(corners_with_offset[1].x - corners_with_offset[0].x);
-            let bottom_edge_x = f32::from(corners_with_offset[2].x - corners_with_offset[3].x);
-            let left_edge_y = f32::from(corners_with_offset[3].y - corners_with_offset[0].y);
-            let right_edge_y = f32::from(corners_with_offset[2].y - corners_with_offset[1].y);
+            self.paint_quad_corners(corners_with_offset, color, window);
 
-            // Measure skew: difference between parallel edges indicates parallelogram deformation
-            let horizontal_skew = (top_edge_x - bottom_edge_x).abs();
-            let vertical_skew = (left_edge_y - right_edge_y).abs();
-            let deformation =
-                (horizontal_skew * horizontal_skew + vertical_skew * vertical_skew).sqrt();
-
-            if deformation > 2.0 && !matches!(self.shape, CursorShape::Hollow) {
-                self.paint_quad_corners(corners_with_offset, color, window);
-
-                if let Some(name) = &mut self.cursor_name {
-                    name.paint(window, cx);
-                }
-
-                if let Some(block_text) = &self.block_text {
-                    block_text
-                        .paint(
-                            self.origin + origin,
-                            self.line_height,
-                            TextAlign::Left,
-                            None,
-                            window,
-                            cx,
-                        )
-                        .log_err();
-                }
-                return;
+            if let Some(name) = &mut self.cursor_name {
+                name.paint(window, cx);
             }
+
+            if let Some(block_text) = &self.block_text {
+                let min_x = corners_with_offset
+                    .iter()
+                    .map(|c| c.x)
+                    .fold(Pixels::MAX, |a, b| a.min(b));
+                let max_x = corners_with_offset
+                    .iter()
+                    .map(|c| c.x)
+                    .fold(Pixels::MIN, |a, b| a.max(b));
+                let min_y = corners_with_offset
+                    .iter()
+                    .map(|c| c.y)
+                    .fold(Pixels::MAX, |a, b| a.min(b));
+                let max_y = corners_with_offset
+                    .iter()
+                    .map(|c| c.y)
+                    .fold(Pixels::MIN, |a, b| a.max(b));
+
+                let clip_bounds =
+                    Bounds::new(point(min_x, min_y), size(max_x - min_x, max_y - min_y));
+
+                window.with_content_mask(
+                    Some(ContentMask {
+                        bounds: clip_bounds,
+                    }),
+                    |window| {
+                        block_text
+                            .paint_with_opacity(
+                                self.origin + origin,
+                                self.line_height,
+                                TextAlign::Left,
+                                None,
+                                self.opacity,
+                                window,
+                                cx,
+                            )
+                            .log_err();
+                    },
+                );
+            }
+            return;
         }
 
         // Normal cursor rendering
@@ -12318,11 +12316,12 @@ impl CursorLayout {
 
         if let Some(block_text) = &self.block_text {
             block_text
-                .paint(
+                .paint_with_opacity(
                     self.origin + origin,
                     self.line_height,
                     TextAlign::Left,
                     None,
+                    self.opacity,
                     window,
                     cx,
                 )
@@ -12380,8 +12379,17 @@ impl CursorLayout {
                 }
             }
             CursorShape::Hollow => {
-                // Hollow cursors don't support quad animation, fall back to head bounds
-                // This case is handled earlier in paint() but included for completeness
+                // Hollow: draw the deformed cursor outline as a stroked quad path.
+                let mut builder = gpui::PathBuilder::stroke(px(1.0));
+                builder.move_to(corners[0]); // top-left
+                builder.line_to(corners[1]); // top-right
+                builder.line_to(corners[2]); // bottom-right
+                builder.line_to(corners[3]); // bottom-left
+                builder.close();
+
+                if let Ok(path) = builder.build() {
+                    window.paint_path(path, color);
+                }
             }
         }
     }
@@ -13755,6 +13763,7 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn test_checkerboard_size() {
         // line height is smaller than target height, so we just return half the line height
         assert_eq!(EditorElement::checkerboard_size(10.0, 20.0), 5.0);
@@ -13814,5 +13823,32 @@ mod tests {
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
             Some(px(400.0)),
         );
+    }
+
+    #[test]
+    fn test_normalize_block_cursor_grapheme() {
+        assert_eq!(
+            normalize_block_cursor_grapheme("\n"),
+            SharedString::from(" ")
+        );
+        assert_eq!(
+            normalize_block_cursor_grapheme("a"),
+            SharedString::from("a")
+        );
+
+        if let Some(invisible_char) = ['\u{200B}', '\u{200C}', '\u{00A0}']
+            .into_iter()
+            .find(|character| is_invisible(*character))
+        {
+            let grapheme = invisible_char.to_string();
+            let expected = replacement(invisible_char)
+                .unwrap_or(grapheme.as_str())
+                .to_string();
+            assert_eq!(
+                normalize_block_cursor_grapheme(grapheme.as_str()),
+                SharedString::from(expected)
+            );
+        }
+    }
     }
 }
