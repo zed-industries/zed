@@ -29,7 +29,7 @@ use ui::utils::WithRemSize;
 use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
 use workspace::notifications::NotificationId;
-use workspace::{NotificationSource, Toast, Workspace};
+use workspace::{Toast, Workspace};
 use zed_actions::{
     agent::ToggleModelSelector,
     editor::{MoveDown, MoveUp},
@@ -725,7 +725,6 @@ impl<T: 'static> PromptEditor<T> {
 
                         toast
                     },
-                    NotificationSource::Agent,
                     cx,
                 );
             })

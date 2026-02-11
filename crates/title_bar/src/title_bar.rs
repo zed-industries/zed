@@ -43,10 +43,7 @@ use ui::{
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
-use workspace::{
-    SwitchProject, ToggleWorktreeSecurity, Workspace,
-    notifications::{NotificationSource, NotifyResultExt},
-};
+use workspace::{SwitchProject, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
@@ -948,7 +945,7 @@ impl TitleBar {
                         client
                             .sign_in_with_optional_connect(true, cx)
                             .await
-                            .notify_async_err(NotificationSource::Collab, cx);
+                            .notify_async_err(cx);
                     })
                     .detach();
             })

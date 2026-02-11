@@ -59,7 +59,6 @@ use itertools::Itertools;
 use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-pub use notifications::NotificationSource;
 use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
@@ -1359,7 +1358,6 @@ impl Workspace {
                     link,
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
-                    NotificationSource::Project,
                     cx,
                     |cx| {
                         let mut notification = MessageNotification::new(message.clone(), cx);
@@ -1382,7 +1380,6 @@ impl Workspace {
 
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(request.id),
-                        NotificationSource::Lsp,
                         cx,
                         |cx| {
                             cx.new(|cx| {
@@ -3135,7 +3132,6 @@ impl Workspace {
         if project.is_via_collab() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
-                NotificationSource::Collab,
                 cx,
             );
             return;
@@ -7065,7 +7061,6 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 
                 workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
-                    NotificationSource::Database,
                     cx,
                     |cx| {
                         cx.new(|cx| {
@@ -8464,7 +8459,7 @@ pub fn open_paths(
             _ = existing.update(cx, |workspace, _, cx| {
                 for item in open_task.iter().flatten() {
                     if let Err(e) = item {
-                        workspace.show_error(&e, NotificationSource::File, cx);
+                        workspace.show_error(&e, cx);
                     }
                 }
             });
@@ -8491,7 +8486,7 @@ pub fn open_paths(
             workspace
                 .update(cx, move |workspace, _window, cx| {
                     struct OpenInWsl;
-                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), NotificationSource::Remote, cx, move |cx| {
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
                         let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
                         let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
                         cx.new(move |cx| {
@@ -8753,14 +8748,10 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(
-                        &anyhow!("'{path}' does not exist"),
-                        NotificationSource::Remote,
-                        cx,
-                    )
+                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
                 }
             } else {
-                workspace.show_error(&error, NotificationSource::Remote, cx)
+                workspace.show_error(&error, cx)
             }
         }
     })?;

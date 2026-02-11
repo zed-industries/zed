@@ -1439,7 +1439,6 @@ impl AcpThreadView {
                                     ));
                                 },
                             ),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });
@@ -1513,7 +1512,6 @@ impl AcpThreadView {
                                 "Thread synced with latest version",
                             )
                             .autohide(),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });

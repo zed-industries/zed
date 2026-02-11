@@ -7,10 +7,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
-use workspace::{
-    notifications::{NotificationSource, NotifyResultExt},
-    searchable::Direction,
-};
+use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
     Vim, VimSettings,
@@ -574,7 +571,7 @@ impl Vim {
             anyhow::Ok(())
         }) {
             workspace.update(cx, |workspace, cx| {
-                result.notify_err(workspace, NotificationSource::Editor, cx);
+                result.notify_err(workspace, cx);
             })
         }
         let Some(search_bar) = pane.update(cx, |pane, cx| {
