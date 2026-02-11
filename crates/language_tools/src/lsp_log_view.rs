@@ -23,7 +23,7 @@ use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 use crate::get_or_create_tool;
@@ -813,11 +813,12 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |e, cx| {
-            e.update_matches(matches, active_match_index, window, cx)
+            e.update_matches(matches, active_match_index, token, window, cx)
         })
     }
 
@@ -830,21 +831,24 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, token, window, cx)
+        })
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor
-            .update(cx, |e, cx| e.select_matches(matches, window, cx))
+            .update(cx, |e, cx| e.select_matches(matches, token, window, cx))
     }
 
     fn find_matches(
@@ -861,6 +865,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -881,11 +886,12 @@ impl SearchableItem for LspLogView {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |e, cx| {
-            e.active_match_index(direction, matches, window, cx)
+            e.active_match_index(direction, matches, token, window, cx)
         })
     }
 }

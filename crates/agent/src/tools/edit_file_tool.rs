@@ -1,6 +1,8 @@
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings,
+    decide_permission_for_path,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -144,87 +146,158 @@ impl EditFileTool {
         }
     }
 
-    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
-        Self {
-            project: self.project.clone(),
-            thread: new_thread,
-            language_registry: self.language_registry.clone(),
-            templates: self.templates.clone(),
-        }
-    }
-
     fn authorize(
         &self,
         input: &EditFileToolInput,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let path_str = input.path.to_string_lossy();
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+        authorize_file_edit(
+            Self::NAME,
+            &input.path,
+            &input.display_description,
+            &self.thread,
+            event_stream,
+            cx,
+        )
+    }
+}
 
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
+pub enum SensitiveSettingsKind {
+    Local,
+    Global,
+}
+
+/// Canonicalize a path, stripping the Windows extended-length path prefix (`\\?\`)
+/// that `std::fs::canonicalize` adds on Windows. This ensures that canonicalized
+/// paths can be compared with non-canonicalized paths via `starts_with`.
+fn safe_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = std::fs::canonicalize(path)?;
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix("\\\\?\\") {
+            return Ok(PathBuf::from(stripped));
+        }
+    }
+    Ok(canonical)
+}
+
+/// Returns the kind of sensitive settings location this path targets, if any:
+/// either inside a `.zed/` local-settings directory or inside the global config dir.
+pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
+    let local_settings_folder = paths::local_settings_folder_name();
+    if path.components().any(|component| {
+        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+    }) {
+        return Some(SensitiveSettingsKind::Local);
+    }
+
+    // Walk up the path hierarchy until we find an ancestor that exists and can
+    // be canonicalized, then reconstruct the path from there. This handles
+    // cases where multiple levels of subdirectories don't exist yet (e.g.
+    // ~/.config/zed/new_subdir/evil.json).
+    let canonical_path = {
+        let mut current: Option<&Path> = Some(path);
+        let mut suffix_components = Vec::new();
+        loop {
+            match current {
+                Some(ancestor) => match safe_canonicalize(ancestor) {
+                    Ok(canonical) => {
+                        let mut result = canonical;
+                        for component in suffix_components.into_iter().rev() {
+                            result.push(component);
+                        }
+                        break Some(result);
+                    }
+                    Err(_) => {
+                        if let Some(file_name) = ancestor.file_name() {
+                            suffix_components.push(file_name.to_os_string());
+                        }
+                        current = ancestor.parent();
+                    }
+                },
+                None => break None,
             }
-            ToolPermissionDecision::Confirm => {}
         }
+    };
+    if let Some(canonical_path) = canonical_path {
+        let config_dir = safe_canonicalize(paths::config_dir())
+            .unwrap_or_else(|_| paths::config_dir().to_path_buf());
+        if canonical_path.starts_with(&config_dir) {
+            return Some(SensitiveSettingsKind::Global);
+        }
+    }
 
-        // If any path component matches the local settings folder, then this could affect
-        // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_name();
-        let path = Path::new(&input.path);
-        if path.components().any(|component| {
-            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-        }) {
+    None
+}
+
+pub fn is_sensitive_settings_path(path: &Path) -> bool {
+    sensitive_settings_kind(path).is_some()
+}
+
+pub fn authorize_file_edit(
+    tool_name: &str,
+    path: &Path,
+    display_description: &str,
+    thread: &WeakEntity<Thread>,
+    event_stream: &ToolCallEventStream,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let path_str = path.to_string_lossy();
+    let settings = agent_settings::AgentSettings::get_global(cx);
+    let decision = decide_permission_for_path(tool_name, &path_str, settings);
+
+    if let ToolPermissionDecision::Deny(reason) = decision {
+        return Task::ready(Err(anyhow!("{}", reason)));
+    }
+
+    let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+
+    if explicitly_allowed && !is_sensitive_settings_path(path) {
+        return Task::ready(Ok(()));
+    }
+
+    match sensitive_settings_kind(path) {
+        Some(SensitiveSettingsKind::Local) => {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
+                tool_name: tool_name.to_string(),
+                input_values: vec![path_str.to_string()],
             };
             return event_stream.authorize(
-                format!("{} (local settings)", input.display_description),
+                format!("{} (local settings)", display_description),
                 context,
                 cx,
             );
         }
-
-        // It's also possible that the global config dir is configured to be inside the project,
-        // so check for that edge case too.
-        // TODO this is broken when remoting
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir())
-        {
+        Some(SensitiveSettingsKind::Global) => {
             let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
+                tool_name: tool_name.to_string(),
+                input_values: vec![path_str.to_string()],
             };
             return event_stream.authorize(
-                format!("{} (global settings)", input.display_description),
+                format!("{} (settings)", display_description),
                 context,
                 cx,
             );
         }
+        None => {}
+    }
 
-        // Check if path is inside the global config directory
-        // First check if it's already inside project - if not, try to canonicalize
-        let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
-        }) else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
+    let Ok(project_path) = thread.read_with(cx, |thread, cx| {
+        thread.project().read(cx).find_project_path(path, cx)
+    }) else {
+        return Task::ready(Err(anyhow!("thread was dropped")));
+    };
+
+    if project_path.is_some() {
+        Task::ready(Ok(()))
+    } else {
+        let context = crate::ToolPermissionContext {
+            tool_name: tool_name.to_string(),
+            input_values: vec![path_str.to_string()],
         };
-
-        // If the path is inside the project, and it's not one of the above edge cases,
-        // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() {
-            Task::ready(Ok(()))
-        } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            event_stream.authorize(&input.display_description, context, cx)
-        }
+        event_stream.authorize(display_description, context, cx)
     }
 }
 
@@ -232,9 +305,7 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name() -> &'static str {
-        "edit_file"
-    }
+    const NAME: &'static str = "edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
@@ -342,8 +413,8 @@ impl AgentTool for EditFileTool {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    let has_save = thread.has_tool("save_file");
-                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    let has_save = thread.has_tool(SaveFileTool::NAME);
+                    let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                     (last_read, current, dirty, has_save, has_restore)
                 })?;
 
@@ -467,7 +538,8 @@ impl AgentTool for EditFileTool {
                 }
             }
 
-            // If format_on_save is enabled, format the buffer
+            let edit_agent_output = output.await?;
+
             let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                 let settings = language_settings::language_settings(
                     buffer.language().map(|l| l.name()),
@@ -476,8 +548,6 @@ impl AgentTool for EditFileTool {
                 );
                 settings.format_on_save != FormatOnSave::Off
             });
-
-            let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
@@ -582,13 +652,6 @@ impl AgentTool for EditFileTool {
             )
         }));
         Ok(())
-    }
-
-    fn rebind_thread(
-        &self,
-        new_thread: gpui::WeakEntity<crate::Thread>,
-    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
-        Some(self.with_thread(new_thread).erase())
     }
 }
 
@@ -1243,15 +1306,17 @@ mod tests {
             Some("test 4 (local settings)".into())
         );
 
-        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
+        // Test 5: When global default is allow, sensitive and outside-project
+        // paths still require confirmation
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
+        // 5.1: .zed/settings.json is a sensitive path — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
+        let _auth = cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.1".into(),
@@ -1261,11 +1326,14 @@ mod tests {
                 &stream_tx,
                 cx,
             )
-        })
-        .await
-        .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 5.1 (local settings)".into())
+        );
 
+        // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         cx.update(|cx| {
             tool.authorize(
@@ -1281,6 +1349,46 @@ mod tests {
         .await
         .unwrap();
         assert!(stream_rx.try_next().is_err());
+
+        // 5.3: Normal in-project path with allow — no confirmation needed
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.3".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert!(stream_rx.try_next().is_err());
+
+        // 5.4: With Confirm default, non-project paths still prompt
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.4".into(),
+                    path: "/etc/hosts".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(event.tool_call.fields.title, Some("test 5.4".into()));
     }
 
     #[gpui::test]
@@ -2281,6 +2389,44 @@ mod tests {
             error_msg.contains("save or revert the file manually"),
             "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error_msg
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_detects_nonexistent_subdirectory() {
+        let config_dir = paths::config_dir();
+        let path = config_dir.join("nonexistent_subdir_xyz").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path),
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_detects_deeply_nested_nonexistent_subdirectory() {
+        let config_dir = paths::config_dir();
+        let path = config_dir.join("a").join("b").join("c").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path),
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in deeply nested non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[test]
+    fn test_sensitive_settings_kind_returns_none_for_non_config_path() {
+        let path = PathBuf::from("/tmp/not_a_config_dir/some_file.json");
+        assert!(
+            sensitive_settings_kind(&path).is_none(),
+            "Path outside config dir should not be detected as sensitive: {:?}",
+            path
         );
     }
 }

@@ -50,6 +50,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sqlez.workspace = true
+strum.workspace = true
 sqlez_macros.workspace = true
 terminal_view.workspace = true
 util.workspace = true

@@ -61,7 +61,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::{
     CollaboratorId,
-    searchable::{Direction, SearchableItemHandle},
+    searchable::{Direction, SearchToken, SearchableItemHandle},
 };
 
 use workspace::{
@@ -319,11 +319,15 @@ impl TextThreadEditor {
                         move |model, cx| {
                             update_settings_file(fs.clone(), cx, move |settings, _| {
                                 let provider = model.provider_id().0.to_string();
-                                let model = model.id().0.to_string();
+                                let model_id = model.id().0.to_string();
                                 settings.agent.get_or_insert_default().set_model(
                                     LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider),
-                                        model,
+                                        model: model_id,
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     },
                                 )
                             });
@@ -2248,8 +2252,6 @@ impl TextThreadEditor {
             .map(|p| p.icon())
             .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
-        let focus_handle = self.editor().focus_handle(cx);
-
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
@@ -2272,7 +2274,7 @@ impl TextThreadEditor {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
@@ -2795,11 +2797,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.update_matches(matches, active_match_index, window, cx)
+            editor.update_matches(matches, active_match_index, token, window, cx)
         });
     }
 
@@ -2812,33 +2815,37 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, window, cx);
+            editor.activate_match(index, matches, token, window, cx);
         });
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.select_matches(matches, window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.select_matches(matches, token, window, cx)
+        });
     }
 
     fn replace(
         &mut self,
         identifier: &Self::Match,
         query: &project::search::SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.replace(identifier, query, window, cx)
+            editor.replace(identifier, query, token, window, cx)
         });
     }
 
@@ -2856,11 +2863,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, cx| {
-            editor.active_match_index(direction, matches, window, cx)
+            editor.active_match_index(direction, matches, token, window, cx)
         })
     }
 }
@@ -2995,6 +3003,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {

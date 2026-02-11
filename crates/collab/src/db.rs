@@ -4,13 +4,13 @@ mod tables;
 
 use crate::{Error, Result};
 use anyhow::{Context as _, anyhow};
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use project_repository_statuses::StatusKind;
-use rpc::ExtensionProvides;
 use rpc::{
-    ConnectionId, ExtensionMetadata,
+    ConnectionId,
     proto::{self},
 };
 use sea_orm::{

@@ -2,6 +2,8 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+const SCCACHE_R2_BUCKET: &str = "sccache-zed";
+
 const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
@@ -153,6 +155,24 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
     named::uses("namespacelabs", "nscloud-cache-action", "v1")
         .add_with(("cache", "rust"))
         .add_with(("path", "~/.rustup"))
+}
+
+pub fn setup_sccache(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh("./script/setup-sccache.ps1"),
+        Platform::Linux | Platform::Mac => named::bash("./script/setup-sccache"),
+    };
+    step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
+        .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
+        .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
+        .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
+}
+
+pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
+    match platform {
+        Platform::Windows => named::pwsh("sccache --show-stats; exit 0"),
+        Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
+    }
 }
 
 pub fn cache_nix_dependencies_namespace() -> Step<Use> {

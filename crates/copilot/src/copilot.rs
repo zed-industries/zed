@@ -24,6 +24,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
+use project::project_settings::ProjectSettings;
 use project::{DisableAiSettings, Project};
 use request::DidChangeStatus;
 use semver::Version;
@@ -347,6 +348,9 @@ impl Copilot {
         let global_authentication_events =
             cx.try_global::<GlobalCopilotAuth>().cloned().map(|auth| {
                 cx.subscribe(&auth.0, |_, _, _: &Event, cx| {
+                    let request_timeout = ProjectSettings::get_global(cx)
+                        .global_lsp_settings
+                        .get_request_timeout();
                     cx.spawn(async move |this, cx| {
                         let Some(server) = this
                             .update(cx, |this, _| this.language_server().cloned())
@@ -356,9 +360,12 @@ impl Copilot {
                             return;
                         };
                         let status = server
-                            .request::<request::CheckStatus>(request::CheckStatusParams {
-                                local_checks_only: false,
-                            })
+                            .request::<request::CheckStatus>(
+                                request::CheckStatusParams {
+                                    local_checks_only: false,
+                                },
+                                request_timeout,
+                            )
                             .await
                             .into_response()
                             .ok();
@@ -584,10 +591,18 @@ impl Copilot {
                                     .ok()
                                     .flatten();
                                 let Some(lsp) = lsp else { return };
+                                let request_timeout = cx.update(|cx| {
+                                    ProjectSettings::get_global(cx)
+                                        .global_lsp_settings
+                                        .get_request_timeout()
+                                });
                                 let status = lsp
-                                    .request::<request::CheckStatus>(request::CheckStatusParams {
-                                        local_checks_only: false,
-                                    })
+                                    .request::<request::CheckStatus>(
+                                        request::CheckStatusParams {
+                                            local_checks_only: false,
+                                        },
+                                        request_timeout,
+                                    )
                                     .await
                                     .into_response()
                                     .ok();
@@ -630,6 +645,12 @@ impl Copilot {
             };
             let editor_info_json = serde_json::to_value(&editor_info)?;
 
+            let request_timeout = cx.update(|app| {
+                ProjectSettings::get_global(app)
+                    .global_lsp_settings
+                    .get_request_timeout()
+            });
+
             let server = cx
                 .update(|cx| {
                     let mut params = server.default_initialize_params(false, false, cx);
@@ -640,7 +661,7 @@ impl Copilot {
                         .get_or_insert_with(Default::default)
                         .show_document =
                         Some(lsp::ShowDocumentClientCapabilities { support: true });
-                    server.initialize(params, configuration.into(), cx)
+                    server.initialize(params, configuration.into(), request_timeout, cx)
                 })
                 .await?;
 
@@ -648,9 +669,12 @@ impl Copilot {
                 .context("copilot: did change configuration")?;
 
             let status = server
-                .request::<request::CheckStatus>(request::CheckStatusParams {
-                    local_checks_only: false,
-                })
+                .request::<request::CheckStatus>(
+                    request::CheckStatusParams {
+                        local_checks_only: false,
+                    },
+                    request_timeout,
+                )
                 .await
                 .into_response()
                 .context("copilot: check status")?;
@@ -710,11 +734,18 @@ impl Copilot {
                 SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
 
+                    let request_timeout = ProjectSettings::get_global(cx)
+                        .global_lsp_settings
+                        .get_request_timeout();
+
                     let task = cx
                         .spawn(async move |this, cx| {
                             let sign_in = async {
                                 let flow = lsp
-                                    .request::<request::SignIn>(request::SignInParams {})
+                                    .request::<request::SignIn>(
+                                        request::SignInParams {},
+                                        request_timeout,
+                                    )
                                     .await
                                     .into_response()
                                     .context("copilot sign-in")?;
@@ -771,10 +802,14 @@ impl Copilot {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         match &self.server {
             CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
+                let request_timeout = ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .get_request_timeout();
+
                 let server = server.clone();
                 cx.background_spawn(async move {
                     server
-                        .request::<request::SignOut>(request::SignOutParams {})
+                        .request::<request::SignOut>(request::SignOutParams {}, request_timeout)
                         .await
                         .into_response()
                         .context("copilot: sign in confirm")?;
@@ -987,6 +1022,10 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         drop(settings);
 
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         let nes_enabled = AllLanguageSettings::get_global(cx)
             .edit_predictions
             .copilot
@@ -998,13 +1037,16 @@ impl Copilot {
             let lsp_position = point_to_lsp(position);
 
             let nes_fut = if nes_enabled {
-                lsp.request::<NextEditSuggestions>(request::NextEditSuggestionsParams {
-                    text_document: lsp::VersionedTextDocumentIdentifier {
-                        uri: uri.clone(),
-                        version,
+                lsp.request::<NextEditSuggestions>(
+                    request::NextEditSuggestionsParams {
+                        text_document: lsp::VersionedTextDocumentIdentifier {
+                            uri: uri.clone(),
+                            version,
+                        },
+                        position: lsp_position,
                     },
-                    position: lsp_position,
-                })
+                    request_timeout,
+                )
                 .map(|resp| {
                     resp.into_response()
                         .ok()
@@ -1044,20 +1086,23 @@ impl Copilot {
             };
 
             let inline_fut = lsp
-                .request::<InlineCompletions>(request::InlineCompletionsParams {
-                    text_document: lsp::VersionedTextDocumentIdentifier {
-                        uri: uri.clone(),
-                        version,
+                .request::<InlineCompletions>(
+                    request::InlineCompletionsParams {
+                        text_document: lsp::VersionedTextDocumentIdentifier {
+                            uri: uri.clone(),
+                            version,
+                        },
+                        position: lsp_position,
+                        context: InlineCompletionContext {
+                            trigger_kind: InlineCompletionTriggerKind::Automatic,
+                        },
+                        formatting_options: Some(FormattingOptions {
+                            tab_size,
+                            insert_spaces: !hard_tabs,
+                        }),
                     },
-                    position: lsp_position,
-                    context: InlineCompletionContext {
-                        trigger_kind: InlineCompletionTriggerKind::Automatic,
-                    },
-                    formatting_options: Some(FormattingOptions {
-                        tab_size,
-                        insert_spaces: !hard_tabs,
-                    }),
-                })
+                    request_timeout,
+                )
                 .map(|resp| {
                     resp.into_response()
                         .ok()
@@ -1135,13 +1180,18 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
         if let Some(command) = &completion.command {
-            let request = server
-                .lsp
-                .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
+            let request = server.lsp.request::<lsp::ExecuteCommand>(
+                lsp::ExecuteCommandParams {
                     command: command.command.clone(),
                     arguments: command.arguments.clone().unwrap_or_default(),
                     ..Default::default()
-                });
+                },
+                request_timeout,
+            );
             cx.background_spawn(async move {
                 request
                     .await
@@ -1402,6 +1452,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
+        init_test(cx);
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
@@ -1496,19 +1547,24 @@ mod tests {
             .update(cx, |copilot, cx| copilot.sign_out(cx))
             .await
             .unwrap();
-        assert_eq!(
+        let mut received_close_notifications = vec![
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
-            }
-        );
-        assert_eq!(
             lsp.receive_notification::<lsp::notification::DidCloseTextDocument>()
                 .await,
-            lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
-            }
+        ];
+        received_close_notifications
+            .sort_by_key(|notification| notification.text_document.uri.clone());
+        assert_eq!(
+            received_close_notifications,
+            vec![
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_2_uri.clone()),
+                },
+                lsp::DidCloseTextDocumentParams {
+                    text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri.clone()),
+                },
+            ],
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
@@ -1537,29 +1593,34 @@ mod tests {
             );
         });
 
-        assert_eq!(
+        let mut received_open_notifications = vec![
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_1_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Hello world".into()
-                ),
-            }
-        );
-        assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
-            lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem::new(
-                    buffer_2_uri.clone(),
-                    "plaintext".into(),
-                    0,
-                    "Goodbye".into()
-                ),
-            }
+        ];
+        received_open_notifications
+            .sort_by_key(|notification| notification.text_document.uri.clone());
+        assert_eq!(
+            received_open_notifications,
+            vec![
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_2_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Goodbye".into()
+                    ),
+                },
+                lsp::DidOpenTextDocumentParams {
+                    text_document: lsp::TextDocumentItem::new(
+                        buffer_1_uri.clone(),
+                        "plaintext".into(),
+                        0,
+                        "Hello world".into()
+                    ),
+                }
+            ]
         );
         // Dropping a buffer causes it to be closed on the LSP side as well.
         cx.update(|_| drop(buffer_2));
@@ -1630,10 +1691,13 @@ mod tests {
             unimplemented!()
         }
     }
-}
 
-#[cfg(test)]
-#[ctor::ctor]
-fn init_logger() {
-    zlog::init_test();
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
 }

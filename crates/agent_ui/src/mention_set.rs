@@ -659,17 +659,12 @@ pub(crate) async fn insert_images_as_context(
                 let (excerpt_id, _, buffer_snapshot) =
                     snapshot.buffer_snapshot().as_singleton().unwrap();
 
-                let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
+                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
+                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
                     .anchor_in_excerpt(*excerpt_id, text_anchor);
-                editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        format!("{replacement_text} "),
-                    )],
-                    cx,
-                );
+                editor.insert(&format!("{replacement_text} "), window, cx);
                 (*excerpt_id, text_anchor, multibuffer_anchor)
             })
             .ok()

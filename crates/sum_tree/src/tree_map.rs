@@ -83,9 +83,6 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
             .into_iter()
             .map(|(key, value)| Edit::Insert(MapEntry { key, value }))
             .collect();
-        if edits.is_empty() {
-            return;
-        }
         self.0.edit(edits, ());
     }
 
