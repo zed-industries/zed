@@ -9180,18 +9180,34 @@ pub fn client_side_decorations(
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { .. } => div
-                .when(!(tiling.top || tiling.right || border_radius_tiling.top || border_radius_tiling.right), |div| {
-                    div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                })
-                .when(!(tiling.top || tiling.left || border_radius_tiling.top || border_radius_tiling.left), |div| {
-                    div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                })
-                .when(!(tiling.bottom || tiling.right || border_radius_tiling.bottom || border_radius_tiling.right), |div| {
-                    div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                })
-                .when(!(tiling.bottom || tiling.left || border_radius_tiling.bottom || border_radius_tiling.left), |div| {
-                    div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                })
+                .when(
+                    !(tiling.top
+                        || tiling.right
+                        || border_radius_tiling.top
+                        || border_radius_tiling.right),
+                    |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                )
+                .when(
+                    !(tiling.top
+                        || tiling.left
+                        || border_radius_tiling.top
+                        || border_radius_tiling.left),
+                    |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                )
+                .when(
+                    !(tiling.bottom
+                        || tiling.right
+                        || border_radius_tiling.bottom
+                        || border_radius_tiling.right),
+                    |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                )
+                .when(
+                    !(tiling.bottom
+                        || tiling.left
+                        || border_radius_tiling.bottom
+                        || border_radius_tiling.left),
+                    |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                )
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -9246,18 +9262,34 @@ pub fn client_side_decorations(
                     Decorations::Server => div,
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .when(!(tiling.top || tiling.right || border_radius_tiling.top || border_radius_tiling.right), |div| {
-                            div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                        })
-                        .when(!(tiling.top || tiling.left || border_radius_tiling.top || border_radius_tiling.left), |div| {
-                            div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                        })
-                        .when(!(tiling.bottom || tiling.right || border_radius_tiling.bottom || border_radius_tiling.right), |div| {
-                            div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                        })
-                        .when(!(tiling.bottom || tiling.left || border_radius_tiling.bottom || border_radius_tiling.left), |div| {
-                            div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                        })
+                        .when(
+                            !(tiling.top
+                                || tiling.right
+                                || border_radius_tiling.top
+                                || border_radius_tiling.right),
+                            |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                        )
+                        .when(
+                            !(tiling.top
+                                || tiling.left
+                                || border_radius_tiling.top
+                                || border_radius_tiling.left),
+                            |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                        )
+                        .when(
+                            !(tiling.bottom
+                                || tiling.right
+                                || border_radius_tiling.bottom
+                                || border_radius_tiling.right),
+                            |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                        )
+                        .when(
+                            !(tiling.bottom
+                                || tiling.left
+                                || border_radius_tiling.bottom
+                                || border_radius_tiling.left),
+                            |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                        )
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))

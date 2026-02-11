@@ -2,8 +2,8 @@ use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, actions, deferred,
-    px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, actions,
+    deferred, px,
 };
 use project::Project;
 use std::path::PathBuf;
@@ -11,7 +11,9 @@ use ui::prelude::*;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
-use crate::{DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations};
+use crate::{
+    DockPosition, Item, ModalView, Panel, Workspace, WorkspaceId, client_side_decorations,
+};
 
 actions!(
     multi_workspace,
