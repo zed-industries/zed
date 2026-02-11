@@ -170,7 +170,9 @@ pub fn setup_sccache(platform: Platform) -> Step<Run> {
 
 pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("sccache --show-stats; exit 0"),
+        // Use $env:RUSTC_WRAPPER (absolute path) because GITHUB_PATH changes
+        // don't take effect until the next step in PowerShell
+        Platform::Windows => named::pwsh("& $env:RUSTC_WRAPPER --show-stats; exit 0"),
         Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
     }
 }
