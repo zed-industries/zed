@@ -21,7 +21,6 @@ use std::{
     sync::Arc,
 };
 use uuid::Uuid;
-use zeromq::Socket as _;
 
 use super::{KernelSession, RunningKernel};
 
@@ -159,32 +158,20 @@ impl NativeRunningKernel {
             let control_socket =
                 runtimelib::create_client_control_connection(&connection_info, &session_id).await?;
 
-            // Shell and stdin DealerSockets must share the same ZMQ identity so
-            // that the kernel's stdin RouterSocket can address input_request
-            // messages using the identity it learned from shell execute_requests.
-            let peer_identity = zeromq::util::PeerIdentity::try_from(session_id.as_bytes())
-                .context("failed to create peer identity from session id")?;
-
-            let shell_socket = {
-                let mut options = zeromq::SocketOptions::default();
-                options.peer_identity(peer_identity.clone());
-                let mut socket = zeromq::DealerSocket::with_options(options);
-                socket
-                    .connect(&connection_info.shell_url())
-                    .await
-                    .context("shell connect")?;
-                runtimelib::Connection::new(socket, &connection_info.key, &session_id)
-            };
-            let stdin_socket = {
-                let mut options = zeromq::SocketOptions::default();
-                options.peer_identity(peer_identity);
-                let mut socket = zeromq::DealerSocket::with_options(options);
-                socket
-                    .connect(&connection_info.stdin_url())
-                    .await
-                    .context("stdin connect")?;
-                runtimelib::Connection::new(socket, &connection_info.key, &session_id)
-            };
+            let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
+            let shell_socket =
+                runtimelib::create_client_shell_connection_with_identity(
+                    &connection_info,
+                    &session_id,
+                    peer_identity.clone(),
+                )
+                .await?;
+            let stdin_socket = runtimelib::create_client_stdin_connection_with_identity(
+                &connection_info,
+                &session_id,
+                peer_identity,
+            )
+            .await?;
 
             let (mut shell_send, shell_recv) = shell_socket.split();
             let (mut control_send, control_recv) = control_socket.split();

@@ -8857,9 +8857,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "1.1.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "073486929b8271fc18bd001fb8604f4b4d88c0fae134b88ed943c46c8826d9eb"
+checksum = "5fecdcf39420574a8df6fa5758cecafa99a4af93a80ca2a9a96596f9b301e3a5"
 dependencies = [
  "async-trait",
  "bytes 1.11.1",
@@ -13889,7 +13889,6 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
- "zeromq",
 ]
 
 [[package]]
@@ -14239,9 +14238,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25a8031614aa3913648d167bc69e2b9fda7731f2226ef588b50323c392bfeb58"
+checksum = "d80685459e1e5fa5603182058351ae91c98ca458dfef4e85f0a37be4f7cf1e6c"
 dependencies = [
  "async-dispatcher",
  "async-std",

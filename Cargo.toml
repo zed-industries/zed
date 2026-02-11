@@ -553,7 +553,7 @@ itertools = "0.14.0"
 json_dotpath = "1.1"
 jsonschema = "0.37.0"
 jsonwebtoken = "10.0"
-jupyter-protocol = "1.1.1"
+jupyter-protocol = "1.2.0"
 jupyter-websocket-client = "1.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
@@ -636,7 +636,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662
     "stream",
 ], package = "zed-reqwest", version = "0.12.15-zed" }
 rsa = "0.9.6"
-runtimelib = { version = "1.1.0", default-features = false, features = [
+runtimelib = { version = "1.2.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -740,7 +740,6 @@ wax = "0.7"
 which = "6.0.0"
 windows-core = "0.61"
 yawc = "0.2.5"
-zeromq = { version = "0.5.0", default-features = false, features = ["tcp-transport", "async-dispatcher-runtime"] }
 zeroize = "1.8"
 zstd = "0.11"
 
