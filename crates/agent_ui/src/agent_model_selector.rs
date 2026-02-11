@@ -25,8 +25,6 @@ impl AgentModelSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle_clone = focus_handle.clone();
-
         Self {
             selector: cx.new(move |cx| {
                 language_model_selector(
@@ -63,7 +61,7 @@ impl AgentModelSelector {
                         }
                     },
                     true, // Use popover styles for picker
-                    focus_handle_clone,
+                    focus_handle.clone(),
                     window,
                     cx,
                 )
