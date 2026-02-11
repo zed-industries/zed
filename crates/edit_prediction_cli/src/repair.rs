@@ -10,7 +10,7 @@ use crate::{
     BatchProvider, PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{ActualCursor, Example, ExamplePrediction},
-    format_prompt::{TeacherPrompt, extract_cursor_excerpt_from_example, extract_last_codeblock},
+    format_prompt::{TeacherPrompt, extract_last_codeblock},
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
@@ -148,16 +148,15 @@ fn build_score_feedback(example: &Example) -> Option<String> {
     Some(feedback)
 }
 
-/// Build the repair prompt for an example that needs improvement.
-pub fn build_repair_prompt(example: &Example) -> Result<String> {
+/// Build the repair message (Turn 3) for a multi-turn conversation.
+///
+/// This message is sent after the original teacher prompt (Turn 1) and
+/// teacher response (Turn 2) to request an improved prediction.
+pub fn build_repair_message(example: &Example) -> Result<String> {
     let prediction = example
         .predictions
         .first()
         .context("no predictions available")?;
-    let prompt_inputs = example
-        .prompt_inputs
-        .as_ref()
-        .context("prompt_inputs missing (run context retrieval first)")?;
     let actual_patch = prediction
         .actual_patch
         .as_ref()
@@ -169,35 +168,8 @@ pub fn build_repair_prompt(example: &Example) -> Result<String> {
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
-    let mut edit_history = String::new();
-    for event in &prompt_inputs.edit_history {
-        match event.as_ref() {
-            zeta_prompt::Event::BufferChange {
-                path,
-                old_path,
-                diff,
-                predicted: _,
-                in_open_source_repo: _,
-            } => {
-                edit_history.push_str(&format!("--- a{}\n", old_path.display()));
-                edit_history.push_str(&format!("+++ b{}\n", path.display()));
-                let diff_word_diff = unified_to_word_diff(diff);
-                edit_history.push_str(&diff_word_diff);
-                edit_history.push_str("\n\n");
-            }
-        }
-    }
-
-    let context = TeacherPrompt::format_context(example);
-
-    let cursor_excerpt =
-        extract_cursor_excerpt_from_example(example).context("failed to extract cursor excerpt")?;
-
     let prompt_template = crate::prompt_assets::get_prompt("repair.md");
     Ok(prompt_template
-        .replace("{edit_history}", &edit_history)
-        .replace("{context}", &context)
-        .replace("{cursor_excerpt}", &cursor_excerpt)
         .replace("{actual_patch_word_diff}", &actual_patch_word_diff)
         .replace("{quality_feedback}", &quality_feedback))
 }
@@ -266,6 +238,12 @@ static OPENAI_CLIENT_BATCH: OnceLock<OpenAiClient> = OnceLock::new();
 static OPENAI_CLIENT_PLAIN: OnceLock<OpenAiClient> = OnceLock::new();
 
 /// Run repair for a single example.
+///
+/// This sends a multi-turn conversation to the LLM:
+/// - Turn 1 (User): Original teacher prompt
+/// - Turn 2 (Assistant): Original teacher response
+/// - Turn 3 (User): Repair critique and instructions
+/// - Turn 4 (Assistant): Improved prediction (the response we parse)
 pub async fn run_repair(
     example: &mut Example,
     args: &RepairArgs,
@@ -289,10 +267,20 @@ pub async fn run_repair(
         anyhow::bail!("no predictions available (run predict first)");
     }
 
+    let teacher_prompt = example
+        .prompt
+        .as_ref()
+        .context("prompt missing (run format_prompt first)")?;
+
+    let teacher_response = &example.predictions[0].actual_output;
+    if teacher_response.is_empty() {
+        anyhow::bail!("teacher response is empty (run predict first)");
+    }
+
     let step_progress = example_progress.start(Step::Repair);
 
     let model = model_for_backend(args.backend);
-    let prompt = build_repair_prompt(example).context("Failed to build repair prompt")?;
+    let repair_message = build_repair_message(example).context("Failed to build repair message")?;
 
     step_progress.set_substatus("generating");
 
@@ -309,13 +297,32 @@ pub async fn run_repair(
                 })
             };
 
-            let messages = vec![anthropic::Message {
-                role: anthropic::Role::User,
-                content: vec![anthropic::RequestContent::Text {
-                    text: prompt,
-                    cache_control: None,
-                }],
-            }];
+            let messages = vec![
+                // Turn 1: Original teacher prompt
+                anthropic::Message {
+                    role: anthropic::Role::User,
+                    content: vec![anthropic::RequestContent::Text {
+                        text: teacher_prompt.input.clone(),
+                        cache_control: None,
+                    }],
+                },
+                // Turn 2: Original teacher response
+                anthropic::Message {
+                    role: anthropic::Role::Assistant,
+                    content: vec![anthropic::RequestContent::Text {
+                        text: teacher_response.clone(),
+                        cache_control: None,
+                    }],
+                },
+                // Turn 3: Repair critique and instructions
+                anthropic::Message {
+                    role: anthropic::Role::User,
+                    content: vec![anthropic::RequestContent::Text {
+                        text: repair_message,
+                        cache_control: None,
+                    }],
+                },
+            ];
 
             let Some(response) = client.generate(model, 16384, messages, None, false).await? else {
                 return Ok(());
@@ -341,9 +348,21 @@ pub async fn run_repair(
                 })
             };
 
-            let messages = vec![open_ai::RequestMessage::User {
-                content: open_ai::MessageContent::Plain(prompt),
-            }];
+            let messages = vec![
+                // Turn 1: Original teacher prompt
+                open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::Plain(teacher_prompt.input.clone()),
+                },
+                // Turn 2: Original teacher response
+                open_ai::RequestMessage::Assistant {
+                    content: Some(open_ai::MessageContent::Plain(teacher_response.clone())),
+                    tool_calls: vec![],
+                },
+                // Turn 3: Repair critique and instructions
+                open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::Plain(repair_message),
+                },
+            ];
 
             let Some(response) = client.generate(model, 16384, messages, None, false).await? else {
                 return Ok(());
