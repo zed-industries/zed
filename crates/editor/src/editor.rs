@@ -12442,11 +12442,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::Title))
-                .join("\n")
-        })
+        self.manipulate_text(window, cx, |text| Self::convert_text(text, Case::Title))
     }
 
     pub fn convert_to_snake_case(
@@ -12455,7 +12451,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Snake))
+        self.manipulate_text(window, cx, |text| Self::convert_text(text, Case::Snake))
     }
 
     pub fn convert_to_kebab_case(
@@ -12464,7 +12460,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Kebab))
+        self.manipulate_text(window, cx, |text| Self::convert_text(text, Case::Kebab))
     }
 
     pub fn convert_to_upper_camel_case(
@@ -12474,9 +12470,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |text| {
-            text.split('\n')
-                .map(|line| line.to_case(Case::UpperCamel))
-                .join("\n")
+            Self::convert_text(text, Case::UpperCamel)
         })
     }
 
@@ -12486,7 +12480,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Camel))
+        self.manipulate_text(window, cx, |text| Self::convert_text(text, Case::Camel))
     }
 
     pub fn convert_to_opposite_case(
@@ -12514,7 +12508,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.manipulate_text(window, cx, |text| text.to_case(Case::Sentence))
+        self.manipulate_text(window, cx, |text| Self::convert_text(text, Case::Sentence))
     }
 
     pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
@@ -12562,6 +12556,16 @@ impl Editor {
                 })
                 .collect()
         })
+    }
+
+    fn convert_text(text: &str, case: Case) -> String {
+        text.split('\n')
+            .map(|line| {
+                let indent_len = line.len() - line.trim_start().len();
+                let (indent, code) = line.split_at(indent_len);
+                format!("{}{}", indent, code.to_case(case))
+            })
+            .join("\n")
     }
 
     fn manipulate_text<Fn>(&mut self, window: &mut Window, cx: &mut Context<Self>, mut callback: Fn)
