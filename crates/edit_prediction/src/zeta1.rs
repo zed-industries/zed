@@ -398,4 +398,30 @@ mod tests {
         assert_eq!(range.to_offset(&snapshot), 0..text.len(),);
         assert_eq!(new_text.as_ref(), "");
     }
+
+    #[gpui::test]
+    fn test_parse_edits_multibyte_char_before_end_marker(cx: &mut App) {
+        let text = "// café";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let output = "<|editable_region_start|>\n// café<|editable_region_end|>";
+        let editable_range = 0..text.len();
+
+        let edits = parse_edits(output, editable_range, &snapshot).unwrap();
+        assert!(edits.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_parse_edits_multibyte_char_after_start_marker(cx: &mut App) {
+        let text = "é is great";
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        let output = "<|editable_region_start|>é is great\n<|editable_region_end|>";
+        let editable_range = 0..text.len();
+
+        let edits = parse_edits(output, editable_range, &snapshot).unwrap();
+        assert!(edits.is_empty());
+    }
 }
