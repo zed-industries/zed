@@ -5,7 +5,7 @@ use std::{
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+
 use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
 use itertools::Itertools;
 use language::{Buffer, Capability};
@@ -362,16 +362,6 @@ fn patch_for_excerpt(
     }
 }
 
-pub struct SplitDiffFeatureFlag;
-
-impl FeatureFlag for SplitDiffFeatureFlag {
-    const NAME: &'static str = "split-diff";
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
 pub struct ToggleSplitDiff;
@@ -513,9 +503,6 @@ impl SplittableEditor {
     }
 
     pub fn split(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !cx.has_flag::<SplitDiffFeatureFlag>() {
-            return;
-        }
         if self.lhs.is_some() {
             return;
         }

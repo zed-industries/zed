@@ -13,11 +13,9 @@ use crate::{
 use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
-    SplittableEditor, ToggleSplitDiff,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
-use feature_flags::FeatureFlagAppExt as _;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
@@ -107,8 +105,7 @@ impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let has_splittable_editor =
-            self.splittable_editor.is_some() && cx.has_flag::<SplitDiffFeatureFlag>();
+        let has_splittable_editor = self.splittable_editor.is_some();
         let split_buttons = if has_splittable_editor {
             self.splittable_editor
                 .as_ref()

@@ -224,7 +224,7 @@ pub struct EditorSettingsContent {
 
     /// How to display diffs in the editor.
     ///
-    /// Default: unified
+    /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
 }
 
@@ -806,9 +806,9 @@ pub enum SnippetSortOrder {
 #[serde(rename_all = "snake_case")]
 pub enum DiffViewStyle {
     /// Show diffs in a single unified view.
-    #[default]
     Unified,
     /// Show diffs in a split view.
+    #[default]
     Split,
 }
 
