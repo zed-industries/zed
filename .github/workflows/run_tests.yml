@@ -162,16 +162,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: install_cargo_mtime
-      run: |-
-        New-Item -ItemType Directory -Path "target" -Force
-        Invoke-WebRequest -Uri "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-pc-windows-msvc-v0.1.2.tar.gz" -OutFile "target/cargo-mtime.tar.gz"
-        tar xzf target/cargo-mtime.tar.gz -C target
-        Remove-Item target/cargo-mtime.tar.gz
-      shell: pwsh
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime.exe . target/cargo-mtime.db
-      shell: pwsh
     - name: steps::clippy
       run: ./script/clippy.ps1
       shell: pwsh
@@ -211,12 +201,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: install_cargo_mtime
-      run: |-
-        mkdir -p target
-        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-unknown-linux-musl-v0.1.2.tar.gz" | tar xz -C target
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: steps::clippy
       run: ./script/clippy
     - name: steps::show_sccache_stats
@@ -248,12 +232,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: install_cargo_mtime
-      run: |-
-        mkdir -p target
-        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-aarch64-apple-darwin-v0.1.2.tar.gz" | tar xz -C target
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: steps::clippy
       run: ./script/clippy
     - name: steps::show_sccache_stats
@@ -288,16 +266,6 @@ jobs:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
-      shell: pwsh
-    - name: install_cargo_mtime
-      run: |-
-        New-Item -ItemType Directory -Path "target" -Force
-        Invoke-WebRequest -Uri "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-pc-windows-msvc-v0.1.2.tar.gz" -OutFile "target/cargo-mtime.tar.gz"
-        tar xzf target/cargo-mtime.tar.gz -C target
-        Remove-Item target/cargo-mtime.tar.gz
-      shell: pwsh
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime.exe . target/cargo-mtime.db
       shell: pwsh
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
@@ -351,12 +319,6 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-    - name: install_cargo_mtime
-      run: |-
-        mkdir -p target
-        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-x86_64-unknown-linux-musl-v0.1.2.tar.gz" | tar xz -C target
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::show_sccache_stats
@@ -408,12 +370,6 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-    - name: install_cargo_mtime
-      run: |-
-        mkdir -p target
-        curl -sL "https://github.com/zed-industries/cargo-mtime/releases/download/v0.1.2/cargo-mtime-aarch64-apple-darwin-v0.1.2.tar.gz" | tar xz -C target
-    - name: run_cargo_mtime
-      run: ./target/cargo-mtime . target/cargo-mtime.db
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
     - name: steps::show_sccache_stats
