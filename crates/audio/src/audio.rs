@@ -4,12 +4,11 @@ use cpal::{
     DeviceDescription, DeviceId, default_host,
     traits::{DeviceTrait, HostTrait},
 };
-use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
+use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 mod non_windows_and_freebsd_deps {
     pub(super) use cpal::Sample;
-    pub(super) use gpui::AsyncApp;
     pub(super) use libwebrtc::native::apm;
     pub(super) use parking_lot::Mutex;
     pub(super) use rodio::source::LimitSettings;
@@ -55,6 +54,15 @@ pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
     LIVE_SETTINGS.initialize(cx);
+    // TODO(jk): this is currently cached only once at startup - we should observe and react instead
+    let task = cx
+        .background_executor()
+        .spawn(async move { get_available_audio_devices() });
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let devices = task.await;
+        cx.update(|cx| cx.set_global(AvailableAudioDevices(devices)))
+    })
+    .detach();
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
@@ -406,22 +414,20 @@ impl std::fmt::Display for AudioDeviceInfo {
     }
 }
 
+fn get_available_audio_devices() -> Vec<AudioDeviceInfo> {
+    let Some(devices) = default_host().devices().ok() else {
+        return Vec::new();
+    };
+    devices
+        .filter_map(|device| {
+            let id = device.id().ok()?;
+            let desc = device.description().ok()?;
+            Some(AudioDeviceInfo { id, desc })
+        })
+        .collect()
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct AvailableAudioDevices(pub Vec<AudioDeviceInfo>);
-
-impl AvailableAudioDevices {
-    pub fn populate(&mut self) {
-        let Some(devices) = default_host().devices().ok() else {
-            return;
-        };
-        self.0 = devices
-            .filter_map(|device| {
-                let id = device.id().ok()?;
-                let desc = device.description().ok()?;
-                Some(AudioDeviceInfo { id, desc })
-            })
-            .collect();
-    }
-}
 
 impl Global for AvailableAudioDevices {}
