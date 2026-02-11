@@ -171,11 +171,21 @@ To delete a custom profile, open the Agent Profile modal, select the profile you
 
 ### Tool Approval
 
-Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
+> **Note:** In Zed v0.224.0 and above, tool approval is controlled by `agent.tool_permissions.default`.
 
-You can change that by setting this key to `true` in either your `settings.json` or via the Agent Panel's settings view.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior:
 
-You can also give more granular permissions through the dropdown that appears in the UI whenever the agent requests authorization to run a tool call.
+- `"confirm"` (default) — Prompts for approval before running any tool action
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
+
+You can change this in either your `settings.json` or via the Agent Panel's settings view.
+
+Even with `"default": "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected — so you can auto-approve most actions while blocking or gating specific ones. For the `copy_path` and `move_path` tools, patterns are matched independently against both the source and destination paths. See [Per-tool Permission Rules](./agent-settings.md#per-tool-permission-rules) for details.
+
+When the agent requests permission for an action, the confirmation dialog includes options to allow or deny once, plus "Always for <tool>" choices that set a tool-level default. When Zed can extract a safe pattern from the input, it also offers pattern-based "Always for ..." choices that add `always_allow`/`always_deny` rules. MCP tools only support tool-level defaults.
+
+> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation for edits and tool calls (including MCP tools).
 
 ### Model Support {#model-support}
 

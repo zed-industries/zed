@@ -428,7 +428,17 @@ impl PathStyle {
             .find_map(|sep| parent.strip_suffix(sep))
             .unwrap_or(parent);
         let child = child.to_str()?;
-        let stripped = child.strip_prefix(parent)?;
+
+        // Match behavior of std::path::Path, which is case-insensitive for drive letters (e.g., "C:" == "c:")
+        let stripped = if self.is_windows()
+            && child.as_bytes().get(1) == Some(&b':')
+            && parent.as_bytes().get(1) == Some(&b':')
+            && child.as_bytes()[0].eq_ignore_ascii_case(&parent.as_bytes()[0])
+        {
+            child[2..].strip_prefix(&parent[2..])?
+        } else {
+            child.strip_prefix(parent)?
+        };
         if let Some(relative) = self
             .separators()
             .iter()

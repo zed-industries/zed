@@ -49,7 +49,10 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{
+        CollapseDirection, Direction, SearchEvent, SearchToken, SearchableItem,
+        SearchableItemHandle,
+    },
 };
 
 actions!(
@@ -731,7 +734,7 @@ impl ProjectSearchView {
             let mat = self.entity.read(cx).match_ranges.get(active_index).cloned();
             self.results_editor.update(cx, |editor, cx| {
                 if let Some(mat) = mat.as_ref() {
-                    editor.replace(mat, &query, window, cx);
+                    editor.replace(mat, &query, SearchToken::default(), window, cx);
                 }
             });
             self.select_match(Direction::Next, window, cx)
@@ -761,7 +764,13 @@ impl ProjectSearchView {
         }
 
         self.results_editor.update(cx, |editor, cx| {
-            editor.replace_all(&mut match_ranges.iter(), &query, window, cx);
+            editor.replace_all(
+                &mut match_ranges.iter(),
+                &query,
+                SearchToken::default(),
+                window,
+                cx,
+            );
         });
 
         self.entity.update(cx, |model, _cx| {
@@ -1394,7 +1403,15 @@ impl ProjectSearchView {
             }
 
             let new_index = self.results_editor.update(cx, |editor, cx| {
-                editor.match_index_for_direction(&match_ranges, index, direction, 1, window, cx)
+                editor.match_index_for_direction(
+                    &match_ranges,
+                    index,
+                    direction,
+                    1,
+                    SearchToken::default(),
+                    window,
+                    cx,
+                )
             });
 
             let range_to_select = match_ranges[new_index].clone();

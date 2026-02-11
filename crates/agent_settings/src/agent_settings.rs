@@ -1,6 +1,7 @@
 mod agent_profile;
 
-use std::sync::Arc;
+use std::path::{Component, Path};
+use std::sync::{Arc, LazyLock};
 
 use agent_client_protocol::ModelId;
 use collections::{HashSet, IndexMap};
@@ -38,7 +39,7 @@ pub struct AgentSettings {
     pub default_profile: AgentProfileId,
     pub default_view: DefaultAgentView,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
-    pub always_allow_tool_actions: bool,
+
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: bool,
     pub single_file_review: bool,
@@ -111,6 +112,8 @@ impl Default for AgentProfileId {
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolPermissions {
+    /// Global default permission when no tool-specific rules or patterns match.
+    pub default: ToolPermissionMode,
     pub tools: collections::HashMap<Arc<str>, ToolRules>,
 }
 
@@ -142,26 +145,14 @@ pub struct InvalidRegexPattern {
     pub error: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ToolRules {
-    pub default_mode: ToolPermissionMode,
+    pub default: Option<ToolPermissionMode>,
     pub always_allow: Vec<CompiledRegex>,
     pub always_deny: Vec<CompiledRegex>,
     pub always_confirm: Vec<CompiledRegex>,
     /// Patterns that failed to compile. If non-empty, tool calls should be blocked.
     pub invalid_patterns: Vec<InvalidRegexPattern>,
-}
-
-impl Default for ToolRules {
-    fn default() -> Self {
-        Self {
-            default_mode: ToolPermissionMode::Confirm,
-            always_allow: Vec::new(),
-            always_deny: Vec::new(),
-            always_confirm: Vec::new(),
-            invalid_patterns: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -201,6 +192,214 @@ impl CompiledRegex {
     }
 }
 
+pub const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
+     harmful to be allowed, and cannot be overridden by settings.";
+
+/// Security rules that are always enforced and cannot be overridden by any setting.
+/// These protect against catastrophic operations like wiping filesystems.
+pub struct HardcodedSecurityRules {
+    pub terminal_deny: Vec<CompiledRegex>,
+}
+
+pub static HARDCODED_SECURITY_RULES: LazyLock<HardcodedSecurityRules> = LazyLock::new(|| {
+    const FLAGS: &str = r"(--[a-zA-Z0-9][-a-zA-Z0-9_]*(=[^\s]*)?\s+|-[a-zA-Z]+\s+)*";
+    const TRAILING_FLAGS: &str = r"(\s+--[a-zA-Z0-9][-a-zA-Z0-9_]*(=[^\s]*)?|\s+-[a-zA-Z]+)*\s*";
+
+    HardcodedSecurityRules {
+        terminal_deny: vec![
+            // Recursive deletion of root - "rm -rf /", "rm -rf /*"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?/\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via tilde - "rm -rf ~", "rm -rf ~/"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?~/?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of home via env var - "rm -rf $HOME", "rm -rf ${HOME}"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?(\$HOME|\$\{{HOME\}})/?(\*)?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of current directory - "rm -rf .", "rm -rf ./"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?\./?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+            // Recursive deletion of parent directory - "rm -rf ..", "rm -rf ../"
+            CompiledRegex::new(
+                &format!(r"\brm\s+{FLAGS}(--\s+)?\.\./?\*?{TRAILING_FLAGS}$"),
+                false,
+            )
+            .expect("hardcoded regex should compile"),
+        ],
+    }
+});
+
+/// Checks if input matches any hardcoded security rules that cannot be bypassed.
+/// Returns the denial reason string if blocked, None otherwise.
+///
+/// `terminal_tool_name` should be the tool name used for the terminal tool
+/// (e.g. `"terminal"`). `extracted_commands` can optionally provide parsed
+/// sub-commands for chained command checking; callers with access to a shell
+/// parser should extract sub-commands and pass them here.
+pub fn check_hardcoded_security_rules(
+    tool_name: &str,
+    terminal_tool_name: &str,
+    input: &str,
+    extracted_commands: Option<&[String]>,
+) -> Option<String> {
+    if tool_name != terminal_tool_name {
+        return None;
+    }
+
+    let rules = &*HARDCODED_SECURITY_RULES;
+    let terminal_patterns = &rules.terminal_deny;
+
+    if matches_hardcoded_patterns(input, terminal_patterns) {
+        return Some(HARDCODED_SECURITY_DENIAL_MESSAGE.into());
+    }
+
+    if let Some(commands) = extracted_commands {
+        for command in commands {
+            if matches_hardcoded_patterns(command, terminal_patterns) {
+                return Some(HARDCODED_SECURITY_DENIAL_MESSAGE.into());
+            }
+        }
+    }
+
+    None
+}
+
+fn matches_hardcoded_patterns(command: &str, patterns: &[CompiledRegex]) -> bool {
+    for pattern in patterns {
+        if pattern.is_match(command) {
+            return true;
+        }
+    }
+
+    for expanded in expand_rm_to_single_path_commands(command) {
+        for pattern in patterns {
+            if pattern.is_match(&expanded) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn expand_rm_to_single_path_commands(command: &str) -> Vec<String> {
+    let trimmed = command.trim();
+
+    let first_token = trimmed.split_whitespace().next();
+    if !first_token.is_some_and(|t| t.eq_ignore_ascii_case("rm")) {
+        return vec![];
+    }
+
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    let mut flags = Vec::new();
+    let mut paths = Vec::new();
+    let mut past_double_dash = false;
+
+    for part in parts.iter().skip(1) {
+        if !past_double_dash && *part == "--" {
+            past_double_dash = true;
+            flags.push(*part);
+            continue;
+        }
+        if !past_double_dash && part.starts_with('-') {
+            flags.push(*part);
+        } else {
+            paths.push(*part);
+        }
+    }
+
+    let flags_str = if flags.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", flags.join(" "))
+    };
+
+    let mut results = Vec::new();
+    for path in &paths {
+        if path.starts_with('$') {
+            let home_prefix = if path.starts_with("${HOME}") {
+                Some("${HOME}")
+            } else if path.starts_with("$HOME") {
+                Some("$HOME")
+            } else {
+                None
+            };
+
+            if let Some(prefix) = home_prefix {
+                let suffix = &path[prefix.len()..];
+                if suffix.is_empty() {
+                    results.push(format!("rm {flags_str}{path}"));
+                } else if suffix.starts_with('/') {
+                    let normalized_suffix = normalize_path(suffix);
+                    let reconstructed = if normalized_suffix == "/" {
+                        prefix.to_string()
+                    } else {
+                        format!("{prefix}{normalized_suffix}")
+                    };
+                    results.push(format!("rm {flags_str}{reconstructed}"));
+                } else {
+                    results.push(format!("rm {flags_str}{path}"));
+                }
+            } else {
+                results.push(format!("rm {flags_str}{path}"));
+            }
+            continue;
+        }
+
+        let mut normalized = normalize_path(path);
+        if normalized.is_empty() && !Path::new(path).has_root() {
+            normalized = ".".to_string();
+        }
+
+        results.push(format!("rm {flags_str}{normalized}"));
+    }
+
+    results
+}
+
+pub fn normalize_path(raw: &str) -> String {
+    let is_absolute = Path::new(raw).has_root();
+    let mut components: Vec<&str> = Vec::new();
+    for component in Path::new(raw).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if components.last() == Some(&"..") {
+                    components.push("..");
+                } else if !components.is_empty() {
+                    components.pop();
+                } else if !is_absolute {
+                    components.push("..");
+                }
+            }
+            Component::Normal(segment) => {
+                if let Some(s) = segment.to_str() {
+                    components.push(s);
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    let joined = components.join("/");
+    if is_absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
+}
+
 impl Settings for AgentSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent = content.agent.clone().unwrap();
@@ -228,7 +427,7 @@ impl Settings for AgentSettings {
                 .into_iter()
                 .map(|(key, val)| (AgentProfileId(key), val.into()))
                 .collect(),
-            always_allow_tool_actions: agent.always_allow_tool_actions.unwrap(),
+
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
@@ -290,7 +489,8 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
             }
 
             let rules = ToolRules {
-                default_mode: rules_content.default_mode.unwrap_or_default(),
+                // Preserve tool-specific default; None means fall back to global default at decision time
+                default: rules_content.default,
                 always_allow,
                 always_deny,
                 always_confirm,
@@ -300,7 +500,10 @@ fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -
         })
         .collect();
 
-    ToolPermissions { tools }
+    ToolPermissions {
+        default: content.default.unwrap_or_default(),
+        tools,
+    }
 }
 
 fn compile_regex_rules(
@@ -311,6 +514,14 @@ fn compile_regex_rules(
     let mut errors = Vec::new();
 
     for rule in rules {
+        if rule.pattern.is_empty() {
+            errors.push(InvalidRegexPattern {
+                pattern: rule.pattern,
+                rule_type: rule_type.to_string(),
+                error: "empty regex patterns are not allowed".to_string(),
+            });
+            continue;
+        }
         let case_sensitive = rule.case_sensitive.unwrap_or(false);
         match CompiledRegex::try_new(&rule.pattern, case_sensitive) {
             Ok(regex) => compiled.push(regex),
@@ -331,6 +542,7 @@ fn compile_regex_rules(
 mod tests {
     use super::*;
     use serde_json::json;
+    use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
 
     #[test]
@@ -359,7 +571,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [
                         { "pattern": "rm\\s+-rf" }
                     ],
@@ -374,7 +586,7 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let terminal_rules = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal_rules.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal_rules.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal_rules.always_deny.len(), 1);
         assert_eq!(terminal_rules.always_allow.len(), 1);
         assert!(terminal_rules.always_deny[0].is_match("rm -rf /"));
@@ -382,11 +594,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_rules_default_mode() {
+    fn test_tool_rules_default() {
         let json = json!({
             "tools": {
                 "edit_file": {
-                    "default_mode": "deny"
+                    "default": "deny"
                 }
             }
         });
@@ -395,19 +607,20 @@ mod tests {
         let permissions = compile_tool_permissions(Some(content));
 
         let rules = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(rules.default_mode, ToolPermissionMode::Deny);
+        assert_eq!(rules.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
     fn test_tool_permissions_empty() {
         let permissions = compile_tool_permissions(None);
         assert!(permissions.tools.is_empty());
+        assert_eq!(permissions.default, ToolPermissionMode::Confirm);
     }
 
     #[test]
     fn test_tool_rules_default_returns_confirm() {
         let default_rules = ToolRules::default();
-        assert_eq!(default_rules.default_mode, ToolPermissionMode::Confirm);
+        assert_eq!(default_rules.default, None);
         assert!(default_rules.always_allow.is_empty());
         assert!(default_rules.always_deny.is_empty());
         assert!(default_rules.always_confirm.is_empty());
@@ -418,15 +631,15 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [{ "pattern": "rm\\s+-rf" }]
                 },
                 "edit_file": {
-                    "default_mode": "confirm",
+                    "default": "confirm",
                     "always_deny": [{ "pattern": "\\.env$" }]
                 },
                 "delete_path": {
-                    "default_mode": "deny"
+                    "default": "deny"
                 }
             }
         });
@@ -437,15 +650,15 @@ mod tests {
         assert_eq!(permissions.tools.len(), 3);
 
         let terminal = permissions.tools.get("terminal").unwrap();
-        assert_eq!(terminal.default_mode, ToolPermissionMode::Allow);
+        assert_eq!(terminal.default, Some(ToolPermissionMode::Allow));
         assert_eq!(terminal.always_deny.len(), 1);
 
         let edit_file = permissions.tools.get("edit_file").unwrap();
-        assert_eq!(edit_file.default_mode, ToolPermissionMode::Confirm);
+        assert_eq!(edit_file.default, Some(ToolPermissionMode::Confirm));
         assert!(edit_file.always_deny[0].is_match("secrets.env"));
 
         let delete_path = permissions.tools.get("delete_path").unwrap();
-        assert_eq!(delete_path.default_mode, ToolPermissionMode::Deny);
+        assert_eq!(delete_path.default, Some(ToolPermissionMode::Deny));
     }
 
     #[test]
@@ -526,7 +739,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_deny": [{ "pattern": "dangerous" }],
                     "always_confirm": [{ "pattern": "dangerous" }],
                     "always_allow": [{ "pattern": "dangerous" }]
@@ -557,7 +770,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow",
+                    "default": "allow",
                     "always_confirm": [{ "pattern": "risky" }],
                     "always_allow": [{ "pattern": "risky" }]
                 }
@@ -661,7 +874,7 @@ mod tests {
         let json = json!({
             "tools": {
                 "terminal": {
-                    "default_mode": "allow"
+                    "default": "allow"
                 }
             }
         });
@@ -722,11 +935,86 @@ mod tests {
             "Pattern ^echo\\s should NOT match 'echoHello' (requires whitespace)"
         );
 
-        // Verify default_mode is Confirm (the default)
         assert_eq!(
-            terminal.default_mode,
-            settings::ToolPermissionMode::Confirm,
-            "default_mode should be Confirm when not specified"
+            terminal.default, None,
+            "default should be None when not specified"
         );
+    }
+
+    #[test]
+    fn test_empty_regex_pattern_is_invalid() {
+        let json = json!({
+            "tools": {
+                "terminal": {
+                    "always_allow": [
+                        { "pattern": "" }
+                    ],
+                    "always_deny": [
+                        { "case_sensitive": true }
+                    ],
+                    "always_confirm": [
+                        { "pattern": "" },
+                        { "pattern": "valid_pattern" }
+                    ]
+                }
+            }
+        });
+
+        let content: ToolPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        let terminal = permissions.tools.get("terminal").unwrap();
+
+        assert_eq!(terminal.always_allow.len(), 0);
+        assert_eq!(terminal.always_deny.len(), 0);
+        assert_eq!(terminal.always_confirm.len(), 1);
+        assert!(terminal.always_confirm[0].is_match("valid_pattern"));
+
+        assert_eq!(terminal.invalid_patterns.len(), 3);
+        for invalid in &terminal.invalid_patterns {
+            assert_eq!(invalid.pattern, "");
+            assert!(invalid.error.contains("empty"));
+        }
+    }
+
+    #[test]
+    fn test_default_json_tool_permissions_parse() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value = serde_json_lenient::from_str(default_json).unwrap();
+        let agent = value
+            .get("agent")
+            .expect("default.json should have 'agent' key");
+        let tool_permissions_value = agent
+            .get("tool_permissions")
+            .expect("agent should have 'tool_permissions' key");
+
+        let content: ToolPermissionsContent =
+            serde_json_lenient::from_value(tool_permissions_value.clone()).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+
+        assert_eq!(permissions.default, ToolPermissionMode::Confirm);
+
+        assert!(
+            permissions.tools.is_empty(),
+            "default.json should not have any active tool-specific rules, found: {:?}",
+            permissions.tools.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_tool_permissions_explicit_global_default() {
+        let json_allow = json!({
+            "default": "allow"
+        });
+        let content: ToolPermissionsContent = serde_json::from_value(json_allow).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+        assert_eq!(permissions.default, ToolPermissionMode::Allow);
+
+        let json_deny = json!({
+            "default": "deny"
+        });
+        let content: ToolPermissionsContent = serde_json::from_value(json_deny).unwrap();
+        let permissions = compile_tool_permissions(Some(content));
+        assert_eq!(permissions.default, ToolPermissionMode::Deny);
     }
 }

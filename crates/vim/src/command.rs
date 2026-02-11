@@ -1627,12 +1627,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
         VimCommand::new(
             ("bd", "elete"),
-            workspace::CloseItemInAllPanes {
+            workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
                 close_pinned: false,
             },
         )
-        .bang(workspace::CloseItemInAllPanes {
+        .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
             close_pinned: true,
         }),
