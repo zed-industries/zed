@@ -493,7 +493,6 @@ pub fn initialize_workspace(
     .detach();
 }
 
-
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused)]
 fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
