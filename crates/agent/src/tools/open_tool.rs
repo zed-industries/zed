@@ -38,9 +38,7 @@ impl AgentTool for OpenTool {
     type Input = OpenToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "open"
-    }
+    const NAME: &'static str = "open";
 
     fn kind() -> ToolKind {
         ToolKind::Execute
@@ -67,8 +65,8 @@ impl AgentTool for OpenTool {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
         let context = crate::ToolPermissionContext {
-            tool_name: "open".to_string(),
-            input_value: input.path_or_url.clone(),
+            tool_name: Self::NAME.to_string(),
+            input_values: vec![input.path_or_url.clone()],
         };
         let authorize =
             event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);

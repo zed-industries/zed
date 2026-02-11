@@ -902,7 +902,7 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
+            .text_highlights(editor::HighlightKey::PendingInput, cx)
             .unwrap()
             .1;
         let (_, ranges) = marked_text_ranges(expected, false);
@@ -966,7 +966,7 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
+            .text_highlights(editor::HighlightKey::PendingInput, cx)
             .unwrap()
             .1;
 

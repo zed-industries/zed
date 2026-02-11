@@ -49,6 +49,7 @@ pub async fn run_context_retrieval(
             cursor_row: captured.cursor_row,
             cursor_column: captured.cursor_column,
             cursor_offset: captured.cursor_offset,
+            excerpt_start_row: captured.excerpt_start_row,
             edit_history,
             related_files: Some(related_files),
         });
@@ -74,7 +75,6 @@ pub async fn run_context_retrieval(
 
     let mut events = ep_store.update(&mut cx, |store, cx| {
         store.register_buffer(&state.buffer, &project, cx);
-        store.set_use_context(true);
         store.refresh_context(&project, &state.buffer, state.cursor_position, cx);
         store.debug_info(&project, cx)
     });

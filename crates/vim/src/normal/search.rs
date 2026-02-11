@@ -225,45 +225,71 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
-        pane.update(cx, |pane, cx| {
-            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(window, cx) {
-                        return;
-                    }
 
-                    search_bar.select_query(window, cx);
-                    cx.focus_self(window);
+        let Some(search_bar) = pane
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+        else {
+            return;
+        };
 
-                    search_bar.set_replacement(None, cx);
-                    let mut options = SearchOptions::NONE;
-                    if action.regex {
-                        options |= SearchOptions::REGEX;
-                    }
-                    if action.backwards {
-                        options |= SearchOptions::BACKWARDS;
-                    }
-                    if EditorSettings::get_global(cx).search.case_sensitive {
-                        options |= SearchOptions::CASE_SENSITIVE;
-                    }
-                    search_bar.set_search_options(options, cx);
-                    let prior_mode = if self.temp_mode {
-                        Mode::Insert
-                    } else {
-                        self.mode
-                    };
-
-                    self.search = SearchState {
-                        direction,
-                        count,
-                        prior_selections,
-                        prior_operator: self.operator_stack.last().cloned(),
-                        prior_mode,
-                        helix_select: false,
-                    }
-                });
+        let shown = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(window, cx) {
+                return false;
             }
-        })
+
+            search_bar.select_query(window, cx);
+            cx.focus_self(window);
+
+            search_bar.set_replacement(None, cx);
+            let mut options = SearchOptions::NONE;
+            if action.regex {
+                options |= SearchOptions::REGEX;
+            }
+            if action.backwards {
+                options |= SearchOptions::BACKWARDS;
+            }
+            if EditorSettings::get_global(cx).search.case_sensitive {
+                options |= SearchOptions::CASE_SENSITIVE;
+            }
+            search_bar.set_search_options(options, cx);
+            true
+        });
+
+        if !shown {
+            return;
+        }
+
+        let subscription = cx.subscribe_in(&search_bar, window, |vim, _, event, window, cx| {
+            if let buffer_search::Event::Dismissed = event {
+                if !vim.search.prior_selections.is_empty() {
+                    let prior_selections: Vec<_> = vim.search.prior_selections.drain(..).collect();
+                    vim.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.select_ranges(prior_selections);
+                        });
+                    });
+                }
+            }
+        });
+
+        let prior_mode = if self.temp_mode {
+            Mode::Insert
+        } else {
+            self.mode
+        };
+
+        self.search = SearchState {
+            direction,
+            count,
+            prior_selections,
+            prior_operator: self.operator_stack.last().cloned(),
+            prior_mode,
+            helix_select: false,
+            _dismiss_subscription: Some(subscription),
+        }
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
@@ -1294,5 +1320,89 @@ mod test {
                 a
                  "
         });
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should return to line 2
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        // Cursor should be restored to line 2 where it was when search was opened
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_restores_cursor_no_matches(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇapple\nbanana\ncherry\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+
+        // Open search and type query for something that doesn't exist
+        cx.simulate_keystrokes("/ n o n e x i s t e n t");
+        cx.run_until_parked();
+
+        // Dismiss search with Escape - cursor should still be at original position
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.assert_state("apple\nˇbanana\ncherry\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_dismiss_after_editor_focus_does_not_restore(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world\nfoo bar\nhello again\n", Mode::Normal);
+
+        // Move cursor to line 2
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+        cx.assert_state("hello world\nˇfoo bar\nhello again\n", Mode::Normal);
+
+        // Open search and type a query that matches line 3
+        cx.simulate_keystrokes("/ a g a i n");
+        cx.run_until_parked();
+
+        // Simulate the editor gaining focus while search is still open
+        // This represents the user clicking in the editor
+        cx.update_editor(|_, window, cx| cx.focus_self(window));
+        cx.run_until_parked();
+
+        // Now dismiss the search bar directly
+        cx.workspace(|workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            if let Some(search_bar) = pane
+                .toolbar()
+                .read(cx)
+                .item_of_type::<search::BufferSearchBar>()
+            {
+                search_bar.update(cx, |bar, cx| {
+                    bar.dismiss(&search::buffer_search::Dismiss, window, cx)
+                });
+            }
+        });
+        cx.run_until_parked();
+
+        // Cursor should NOT be restored to line 2 (row 1) where search was opened.
+        // Since the user "clicked" in the editor (by focusing it), prior_selections
+        // was cleared, so dismiss should not restore the cursor.
+        // The cursor should be at the match location on line 3 (row 2).
+        cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
     }
 }

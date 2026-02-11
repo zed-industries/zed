@@ -11,6 +11,9 @@
 (_ "{" "}" @end) @indent
 (_ "(" ")" @end) @indent
 
+((comment) @indent
+ (#match? @indent "^/\\*"))
+
 (if_statement) @start.if
 (for_statement) @start.for
 (while_statement) @start.while

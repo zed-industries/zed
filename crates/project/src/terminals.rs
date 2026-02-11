@@ -26,6 +26,20 @@ pub struct Terminals {
 }
 
 impl Project {
+    pub fn active_entry_directory(&self, cx: &App) -> Option<PathBuf> {
+        let entry_id = self.active_entry()?;
+        let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree = worktree.read(cx);
+        let entry = worktree.entry_for_id(entry_id)?;
+
+        let absolute_path = worktree.absolutize(entry.path.as_ref());
+        if entry.is_dir() {
+            Some(absolute_path)
+        } else {
+            absolute_path.parent().map(|p| p.to_path_buf())
+        }
+    }
+
     pub fn active_project_directory(&self, cx: &App) -> Option<Arc<Path>> {
         self.active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))

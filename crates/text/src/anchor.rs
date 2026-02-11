@@ -5,7 +5,8 @@ use crate::{
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
-/// A timestamped position in a buffer
+/// A timestamped position in a buffer.
+#[doc(alias = "TextAnchor")]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Anchor {
     /// The timestamp of the operation that inserted the text

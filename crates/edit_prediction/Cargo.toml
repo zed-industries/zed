@@ -65,6 +65,7 @@ workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
 zeta_prompt.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
@@ -80,4 +81,5 @@ parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+tree-sitter-rust.workspace = true
 zlog.workspace = true
