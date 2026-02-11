@@ -7154,7 +7154,7 @@ impl Render for AcpThreadView {
 
         v_flex()
             .key_context("AcpThread")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.parent_id.is_none() {
                     this.cancel_generation(cx);

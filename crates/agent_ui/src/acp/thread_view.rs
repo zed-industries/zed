@@ -2335,6 +2335,7 @@ impl AcpServerView {
             active_thread.update(cx, |thread, cx| {
                 thread.message_editor.update(cx, |editor, cx| {
                     editor.insert_dragged_files(paths, added_worktrees, window, cx);
+                    editor.focus_handle(cx).focus(window, cx);
                 })
             });
         }
@@ -2469,7 +2470,7 @@ impl Render for AcpServerView {
         self.sync_queued_message_editors(window, cx);
 
         v_flex()
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
