@@ -130,7 +130,11 @@ impl EditorBlock {
         cx: &mut Context<Session>,
     ) {
         self.execution_view.update(cx, |execution_view, cx| {
-            execution_view.push_message(message, window, cx);
+            if matches!(&message.content, JupyterMessageContent::InputRequest(_)) {
+                execution_view.handle_input_request(message, window, cx);
+            } else {
+                execution_view.push_message(&message.content, window, cx);
+            }
         });
     }
 

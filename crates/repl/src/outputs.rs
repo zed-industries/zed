@@ -502,14 +502,44 @@ impl ExecutionView {
         }
     }
 
-    /// Accept a Jupyter message belonging to this execution
-    pub fn push_message(
+    /// Handle an InputRequest message, storing the full message for replying
+    pub fn handle_input_request(
         &mut self,
         message: &JupyterMessage,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let output: Output = match &message.content {
+        if let JupyterMessageContent::InputRequest(input_request) = &message.content {
+            let prompt = input_request.prompt.clone();
+            let password = input_request.password;
+
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Type here and press Enter", window, cx);
+                if password {
+                    editor.set_masked(true, cx);
+                }
+                editor
+            });
+
+            self.pending_input = Some(PendingInput {
+                prompt,
+                password,
+                editor,
+                parent_message: message.clone(),
+            });
+            cx.notify();
+        }
+    }
+
+    /// Accept a Jupyter message belonging to this execution
+    pub fn push_message(
+        &mut self,
+        message: &JupyterMessageContent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let output: Output = match message {
             JupyterMessageContent::ExecuteResult(result) => Output::new(
                 &result.data,
                 result.transient.as_ref().and_then(|t| t.display_id.clone()),
@@ -560,26 +590,8 @@ impl ExecutionView {
                 // Create a marker to clear the output after we get in a new output
                 Output::ClearOutputWaitMarker
             }
-            JupyterMessageContent::InputRequest(input_request) => {
-                let prompt = input_request.prompt.clone();
-                let password = input_request.password;
-
-                let editor = cx.new(|cx| {
-                    let mut editor = Editor::single_line(window, cx);
-                    editor.set_placeholder_text("Type here and press Enter", window, cx);
-                    if password {
-                        editor.set_masked(true, cx);
-                    }
-                    editor
-                });
-
-                self.pending_input = Some(PendingInput {
-                    prompt,
-                    password,
-                    editor,
-                    parent_message: message.clone(),
-                });
-                cx.notify();
+            JupyterMessageContent::InputRequest(_) => {
+                // InputRequest is handled by handle_input_request which needs the full message
                 return;
             }
             JupyterMessageContent::Status(status) => {
@@ -814,8 +826,8 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use runtimelib::{
-        ClearOutput, ErrorOutput, ExecutionState, JupyterMessageContent, MimeType, Status, Stdio,
-        StreamContent,
+        ClearOutput, ErrorOutput, ExecutionState, InputRequest, JupyterMessage,
+        JupyterMessageContent, MimeType, Status, Stdio, StreamContent,
     };
     use settings::SettingsStore;
     use std::path::Path;
@@ -1111,5 +1123,144 @@ mod tests {
             emitted.load(std::sync::atomic::Ordering::SeqCst),
             "should emit ExecutionViewFinishedEmpty when idle with no outputs"
         );
+    }
+
+    #[gpui::test]
+    async fn test_handle_input_request_creates_pending_input(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                assert!(view.pending_input.is_none());
+
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Enter name: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(view.pending_input.is_some());
+            let pending = view.pending_input.as_ref().unwrap();
+            assert_eq!(pending.prompt, "Enter name: ");
+            assert!(!pending.password);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_handle_input_request_with_password(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Password: ".to_string(),
+                        password: true,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(view.pending_input.is_some());
+            let pending = view.pending_input.as_ref().unwrap();
+            assert_eq!(pending.prompt, "Password: ");
+            assert!(pending.password);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_submit_input_emits_reply_event(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        let received_value = Arc::new(std::sync::Mutex::new(None::<String>));
+        let received_clone = received_value.clone();
+
+        cx.update(|_, cx| {
+            cx.subscribe(&execution_view, move |_, event: &InputReplyEvent, _cx| {
+                *received_clone.lock().unwrap() = Some(event.value.clone());
+            })
+            .detach();
+        });
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Name: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+
+                // Type into the editor
+                if let Some(ref pending) = view.pending_input {
+                    pending.editor.update(cx, |editor, cx| {
+                        editor.set_text("test_user", window, cx);
+                    });
+                }
+
+                view.submit_input(window, cx);
+            });
+        });
+
+        let value = received_value.lock().unwrap().clone();
+        assert_eq!(value, Some("test_user".to_string()));
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(
+                view.pending_input.is_none(),
+                "pending_input should be cleared after submit"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_status_idle_clears_pending_input(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessage::new(
+                    InputRequest {
+                        prompt: "Input: ".to_string(),
+                        password: false,
+                    },
+                    None,
+                );
+                view.handle_input_request(&message, window, cx);
+                assert!(view.pending_input.is_some());
+
+                // Simulate kernel going idle (e.g., execution interrupted)
+                let idle = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Idle,
+                });
+                view.push_message(&idle, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert!(
+                view.pending_input.is_none(),
+                "pending_input should be cleared when kernel goes idle"
+            );
+        });
     }
 }
