@@ -540,8 +540,6 @@ struct RegistryIndex {
     #[serde(rename = "version")]
     _version: String,
     agents: Vec<RegistryEntry>,
-    #[serde(rename = "extensions")]
-    _extensions: Vec<RegistryEntry>,
 }
 
 #[derive(Deserialize)]
