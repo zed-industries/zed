@@ -785,7 +785,7 @@ mod tests {
         let lsp_names = outline_names(&outline_view, cx);
         assert_eq!(
             lsp_names,
-            vec!["Foo", "bar", "lsp_only_field"],
+            vec!["struct Foo", "bar", "lsp_only_field"],
             "Step 2: LSP-provided symbols should be displayed"
         );
         assert_eq!(

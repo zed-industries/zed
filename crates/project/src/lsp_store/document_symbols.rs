@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,7 @@ use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, OutlineItem};
 use lsp::LanguageServerId;
 use settings::Settings as _;
-use text::{Anchor, Bias};
+use text::{Anchor, Bias, PointUtf16};
 use util::ResultExt;
 
 use crate::DocumentSymbol;
@@ -255,13 +256,23 @@ fn flatten_document_symbols(
         let selection_range =
             snapshot.anchor_after(selection_start)..snapshot.anchor_before(selection_end);
 
-        let text = symbol.name.clone();
-        let name_ranges = vec![0..text.len()];
+        let (text, name_ranges, source_range_for_text) = enriched_symbol_text(
+            &symbol.name,
+            start,
+            selection_start,
+            selection_end,
+            snapshot,
+        )
+        .unwrap_or_else(|| {
+            let name = symbol.name.clone();
+            let name_len = name.len();
+            (name, vec![0..name_len], selection_range.clone())
+        });
 
         output.push(OutlineItem {
             depth,
             range,
-            source_range_for_text: selection_range,
+            source_range_for_text,
             text,
             highlight_ranges: Vec::new(),
             name_ranges,
@@ -273,6 +284,45 @@ fn flatten_document_symbols(
             flatten_document_symbols(&symbol.children, snapshot, depth + 1, output);
         }
     }
+}
+
+/// Tries to build an enriched label by including buffer text from the symbol
+/// range start to the selection range end (e.g., "struct Foo" instead of just "Foo").
+/// Only uses same-line prefix to avoid pulling in attributes/decorators.
+fn enriched_symbol_text(
+    name: &str,
+    range_start: PointUtf16,
+    selection_start: PointUtf16,
+    selection_end: PointUtf16,
+    snapshot: &BufferSnapshot,
+) -> Option<(String, Vec<Range<usize>>, Range<Anchor>)> {
+    let text_start = if range_start.row == selection_start.row {
+        range_start
+    } else {
+        PointUtf16::new(selection_start.row, 0)
+    };
+
+    let start_offset = snapshot.point_utf16_to_offset(text_start);
+    let end_offset = snapshot.point_utf16_to_offset(selection_end);
+    if start_offset >= end_offset {
+        return None;
+    }
+
+    let raw: String = snapshot.text_for_range(start_offset..end_offset).collect();
+    let trimmed = raw.trim_start();
+    if trimmed.len() <= name.len() || !trimmed.ends_with(name) {
+        return None;
+    }
+
+    let name_start = trimmed.len() - name.len();
+    let leading_ws = raw.len() - trimmed.len();
+    let adjusted_start = start_offset + leading_ws;
+
+    Some((
+        trimmed.to_string(),
+        vec![name_start..trimmed.len()],
+        snapshot.anchor_after(adjusted_start)..snapshot.anchor_before(end_offset),
+    ))
 }
 
 #[cfg(test)]
@@ -372,8 +422,8 @@ mod tests {
         assert_eq!(items.len(), 5);
 
         assert_eq!(items[0].depth, 0);
-        assert_eq!(items[0].text, "Foo");
-        assert_eq!(items[0].name_ranges, vec![0..3]);
+        assert_eq!(items[0].text, "struct Foo");
+        assert_eq!(items[0].name_ranges, vec![7..10]);
 
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[1].text, "bar");
@@ -384,12 +434,12 @@ mod tests {
         assert_eq!(items[2].name_ranges, vec![0..3]);
 
         assert_eq!(items[3].depth, 0);
-        assert_eq!(items[3].text, "Foo");
-        assert_eq!(items[3].name_ranges, vec![0..3]);
+        assert_eq!(items[3].text, "impl Foo");
+        assert_eq!(items[3].name_ranges, vec![5..8]);
 
         assert_eq!(items[4].depth, 1);
-        assert_eq!(items[4].text, "new");
-        assert_eq!(items[4].name_ranges, vec![0..3]);
+        assert_eq!(items[4].text, "fn new");
+        assert_eq!(items[4].name_ranges, vec![3..6]);
     }
 
     #[gpui::test]

@@ -5639,7 +5639,7 @@ async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(
             texts,
-            vec!["main.rs", "Foo"],
+            vec!["main.rs", "struct Foo"],
             "Host should see file path and LSP symbol 'Foo' in breadcrumbs"
         );
     });
@@ -5665,13 +5665,14 @@ async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     executor.run_until_parked();
 
     editor_b.update(cx_b, |editor, cx| {
-        let breadcrumbs = editor
-            .breadcrumbs(cx)
-            .expect("Client B should have breadcrumbs");
-        let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(
-            texts,
-            vec!["main.rs", "Foo"],
+            editor
+                .breadcrumbs(cx)
+                .expect("Client B should have breadcrumbs")
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["main.rs", "struct Foo"],
             "Client B should see file path and LSP symbol 'Foo' via remote project"
         );
     });
