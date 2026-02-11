@@ -1179,6 +1179,8 @@ pub struct Editor {
     delegate_expand_excerpts: bool,
     delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
+    enable_lsp_data: bool,
+    enable_runnables: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -2409,6 +2411,8 @@ impl Editor {
             delegate_expand_excerpts: false,
             delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
+            enable_lsp_data: true,
+            enable_runnables: true,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -16905,7 +16909,7 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
-        if !EditorSettings::get_global(cx).gutter.runnables {
+        if !EditorSettings::get_global(cx).gutter.runnables || !self.enable_runnables {
             self.clear_tasks();
             return Task::ready(());
         }
@@ -25216,6 +25220,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if !self.enable_lsp_data {
+            return;
+        }
+
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
             self.update_semantic_tokens(Some(buffer_id), None, cx);
@@ -25349,6 +25357,14 @@ impl Editor {
             font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
+    }
+
+    fn disable_lsp_data(&mut self) {
+        self.enable_lsp_data = false;
+    }
+
+    fn disable_runnables(&mut self) {
+        self.enable_runnables = false;
     }
 }
 
