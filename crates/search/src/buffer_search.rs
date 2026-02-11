@@ -14,7 +14,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
-    SplittableEditor, ToggleDiffView,
+    SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
 use feature_flags::FeatureFlagAppExt as _;
@@ -119,13 +119,13 @@ impl Render for BufferSearchBar {
                     h_flex()
                         .gap_1()
                         .child(
-                            IconButton::new("diff-stacked", IconName::DiffStacked)
+                            IconButton::new("diff-unified", IconName::DiffUnified)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
                                         .gap_1()
-                                        .child(Label::new("Stacked"))
+                                        .child(Label::new("Unified"))
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
@@ -151,14 +151,14 @@ impl Render for BufferSearchBar {
                                                 cx,
                                                 |settings, _| {
                                                     settings.editor.diff_view_style =
-                                                        Some(DiffViewStyle::Stacked);
+                                                        Some(DiffViewStyle::Unified);
                                                 },
                                             );
                                         }
                                         if is_split {
                                             focus_handle.focus(window, cx);
                                             window
-                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
+                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
                                         }
                                     }
                                 }),
@@ -170,7 +170,7 @@ impl Render for BufferSearchBar {
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
                                         .gap_1()
-                                        .child(Label::new("Side by Side"))
+                                        .child(Label::new("Split"))
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
@@ -195,14 +195,14 @@ impl Render for BufferSearchBar {
                                                 cx,
                                                 |settings, _| {
                                                     settings.editor.diff_view_style =
-                                                        Some(DiffViewStyle::SideBySide);
+                                                        Some(DiffViewStyle::Split);
                                                 },
                                             );
                                         }
                                         if !is_split {
                                             focus_handle.focus(window, cx);
                                             window
-                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
+                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
                                         }
                                     }
                                 }),

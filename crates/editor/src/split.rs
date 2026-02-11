@@ -374,7 +374,7 @@ impl FeatureFlag for SplitDiffFeatureFlag {
 
 #[derive(Clone, Copy, PartialEq, Eq, Action, Default)]
 #[action(namespace = editor)]
-pub struct ToggleDiffView;
+pub struct ToggleSplitDiff;
 
 pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
@@ -492,7 +492,7 @@ impl SplittableEditor {
                             .ok();
                     })
                     .ok();
-                if style == DiffViewStyle::SideBySide {
+                if style == DiffViewStyle::Split {
                     this.update(cx, |this, cx| {
                         this.split(window, cx);
                     })
@@ -836,7 +836,7 @@ impl SplittableEditor {
         });
     }
 
-    fn toggle_split(&mut self, _: &ToggleDiffView, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_split(&mut self, _: &ToggleSplitDiff, window: &mut Window, cx: &mut Context<Self>) {
         if self.lhs.is_some() {
             self.unsplit(window, cx);
         } else {
@@ -2208,7 +2208,7 @@ mod tests {
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
 
-        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
         let operations = std::env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -2292,8 +2292,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -2422,8 +2421,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text1 = "
             aaa
@@ -2581,8 +2579,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -2701,8 +2698,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -2831,8 +2827,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -2957,8 +2952,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -3071,8 +3065,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let text = "aaaa bbbb cccc dddd eeee ffff";
 
@@ -3140,8 +3133,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3203,8 +3195,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3273,8 +3264,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let text = "
             aaaa bbbb cccc dddd eeee ffff
@@ -3386,8 +3376,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let (buffer1, diff1) = buffer_with_diff("xxx\nyyy", "xxx\nyyy", &mut cx);
 
@@ -3491,8 +3480,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -3574,8 +3562,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "aaaa bbbb cccc dddd eeee ffff\n";
 
@@ -3654,8 +3641,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -3777,8 +3763,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "";
         let current_text = "
@@ -3854,8 +3839,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             aaa
@@ -3950,7 +3934,7 @@ mod tests {
         use gpui::size;
         use rope::Point;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let long_line = "x".repeat(200);
         let mut lines: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
@@ -4033,8 +4017,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) =
-            init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
 
         let base_text = "
             first line
@@ -4164,7 +4147,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             bbb
@@ -4311,7 +4294,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             bbb
@@ -4533,7 +4516,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             bbb
@@ -4858,7 +4841,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Stacked).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
 
         let base_text1 = "
             aaa
@@ -5035,7 +5018,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             ddd
@@ -5196,7 +5179,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             ddd
@@ -5357,7 +5340,7 @@ mod tests {
         use rope::Point;
         use unindent::Unindent as _;
 
-        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::SideBySide).await;
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
 
         let base_text = "
             bbb
