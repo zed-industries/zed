@@ -53,14 +53,32 @@ pub(crate) fn parse_edits(
 
     let content_start = start_markers
         .first()
-        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len() + 1) // +1 to skip \n after marker
+        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len())
+        .map(|start| {
+            if content.len() > start
+                && content.is_char_boundary(start)
+                && content[start..].starts_with('\n')
+            {
+                start + 1
+            } else {
+                start
+            }
+        })
         .unwrap_or(0);
     let content_end = end_markers
         .first()
-        .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
+        .map(|e| {
+            if e.0 > 0 && content.is_char_boundary(e.0 - 1) && content[e.0 - 1..].starts_with('\n')
+            {
+                e.0 - 1
+            } else {
+                e.0
+            }
+        })
         .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
 
-    // if there is a single newline between markers, content_start will be 1 more than content_end. .min ensures empty slice in that case
+    // min to account for content_end and content_start both accounting for the same newline in the following case:
+    // <|editable_region_start|>\n<|editable_region_end|>
     let new_text = &content[content_start.min(content_end)..content_end];
 
     let old_text = snapshot
@@ -409,7 +427,7 @@ mod tests {
         let editable_range = 0..text.len();
 
         let edits = parse_edits(output, editable_range, &snapshot).unwrap();
-        assert!(edits.is_empty());
+        assert_eq!(edits, vec![]);
     }
 
     #[gpui::test]
