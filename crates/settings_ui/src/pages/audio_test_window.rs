@@ -81,12 +81,6 @@ fn start_test_playback(
         .spawn({
             let stop_signal = stop_signal.clone();
             move || {
-                let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
-                let Ok(output) = audio::open_output_stream(output_device_id) else {
-                    log::error!("Could not open output device for audio test");
-                    return;
-                };
-
                 let input_device_id = input_device_id.and_then(|id| DeviceId::from_str(&id).ok());
                 let microphone = match open_test_microphone(input_device_id, stop_signal.clone()) {
                     Ok(mic) => mic,
@@ -96,6 +90,13 @@ fn start_test_playback(
                     }
                 };
 
+                let output_device_id = output_device_id.and_then(|id| DeviceId::from_str(&id).ok());
+                let Ok(output) = audio::open_output_stream(output_device_id) else {
+                    log::error!("Could not open output device for audio test");
+                    return;
+                };
+
+                // let microphone = rx.recv().unwrap();
                 output.mixer().add(microphone);
 
                 // Keep thread (and output device) alive until stop signal
