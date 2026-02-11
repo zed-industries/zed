@@ -2771,18 +2771,25 @@ impl AcpThreadView {
 
         let thinking = thread.thinking_enabled();
 
-        let (tooltip_label, icon) = if thinking {
-            ("Disable Thinking Mode", IconName::ThinkingMode)
+        let (tooltip_label, icon, color) = if thinking {
+            (
+                "Disable Thinking Mode",
+                IconName::ThinkingMode,
+                Color::Muted,
+            )
         } else {
-            ("Enable Thinking Mode", IconName::ToolThink)
+            (
+                "Enable Thinking Mode",
+                IconName::ThinkingModeOff,
+                Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
+            )
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .toggle_state(thinking)
+            .icon_color(color)
             .tooltip(move |_, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
             })
