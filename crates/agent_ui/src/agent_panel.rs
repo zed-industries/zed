@@ -498,10 +498,13 @@ impl AgentPanel {
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
 
-        let last_active_thread = self.active_agent_thread(cx).map(|thread| {
+        let last_active_thread = self.active_agent_thread(cx).and_then(|thread| {
             let thread = thread.read(cx);
+            if thread.entries().is_empty() {
+                return None;
+            }
             let title = thread.title();
-            SerializedActiveThread {
+            Some(SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent.clone(),
                 title: if title.as_ref() != DEFAULT_THREAD_TITLE {
@@ -510,7 +513,7 @@ impl AgentPanel {
                     None
                 },
                 cwd: None,
-            }
+            })
         });
 
         self.pending_serialization = Some(cx.background_spawn(async move {
@@ -578,22 +581,40 @@ impl AgentPanel {
                     });
                 }
 
-                if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
-                    let agent_type = thread_info.agent_type.clone();
-                    let session_info = AgentSessionInfo {
-                        session_id: acp::SessionId::new(thread_info.session_id),
-                        cwd: thread_info.cwd,
-                        title: thread_info.title.map(SharedString::from),
-                        updated_at: None,
-                        meta: None,
-                    };
-                    panel.update(cx, |panel, cx| {
-                        panel.selected_agent = agent_type;
-                        panel.load_agent_thread(session_info, window, cx);
-                    });
-                }
                 panel
             })?;
+
+            if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
+                let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                let load_task = panel.update(cx, |panel, cx| {
+                    let thread_store = panel.thread_store.clone();
+                    thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
+                });
+                let thread_exists = load_task
+                    .await
+                    .map(|thread: Option<agent::DbThread>| thread.is_some())
+                    .unwrap_or(false);
+
+                if thread_exists {
+                    panel.update_in(cx, |panel, window, cx| {
+                        panel.selected_agent = thread_info.agent_type.clone();
+                        let session_info = AgentSessionInfo {
+                            session_id: acp::SessionId::new(thread_info.session_id),
+                            cwd: thread_info.cwd,
+                            title: thread_info.title.map(SharedString::from),
+                            updated_at: None,
+                            meta: None,
+                        };
+                        panel.load_agent_thread(session_info, window, cx);
+                    })?;
+                } else {
+                    log::error!(
+                        "could not restore last active thread: \
+                         no thread found in database with ID {:?}",
+                        thread_info.session_id
+                    );
+                }
+            }
 
             Ok(panel)
         })
@@ -3463,6 +3484,38 @@ mod tests {
                 "workspace A should have an active thread after connection"
             );
         });
+
+        // Add a user message so the thread is non-empty (empty threads are
+        // intentionally not serialized because they are never persisted to the DB).
+        // Also save the thread to the DB so the load-side validation can find it.
+        let save_task = panel_a.update(cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(
+                    None,
+                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
+                    cx,
+                );
+            });
+            let session_id = thread.read(cx).session_id().clone();
+            let db_thread = agent::DbThread {
+                title: "Test Thread".into(),
+                messages: Vec::new(),
+                updated_at: chrono::Utc::now(),
+                detailed_summary: None,
+                initial_project_snapshot: None,
+                cumulative_token_usage: Default::default(),
+                request_token_usage: Default::default(),
+                model: None,
+                profile: None,
+                subagent_context: None,
+                imported: false,
+            };
+            let thread_store = panel.thread_store.clone();
+            thread_store.update(cx, |store, cx| store.save_thread(session_id, db_thread, cx))
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
