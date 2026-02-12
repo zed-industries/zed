@@ -2147,25 +2147,6 @@ impl EditPredictionStore {
             .is_some_and(|watcher| watcher.is_project_open_source())
     }
 
-    fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled(cx) && self.is_file_open_source(project, file, cx)
-    }
-
-    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>], cx: &App) -> bool {
-        if !self.data_collection_choice.is_enabled(cx) {
-            return false;
-        }
-        events.iter().all(|event| {
-            matches!(
-                event.as_ref(),
-                zeta_prompt::Event::BufferChange {
-                    in_open_source_repo: true,
-                    ..
-                }
-            )
-        })
-    }
-
     fn load_data_collection_choice() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
