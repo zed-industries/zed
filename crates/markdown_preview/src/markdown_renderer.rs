@@ -11,15 +11,16 @@ use crate::{
 use collections::{HashMap, IndexSet};
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
-    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
-    ParentElement, Render, RenderImage, Resource, SharedString, Styled, StyledText, Task,
-    TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
+    StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
     sync::{Arc, OnceLock},
+    time::Duration,
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
@@ -824,15 +825,24 @@ fn render_mermaid_diagram(
             .bg(cx.code_block_background_color)
             .rounded_sm()
             .child(
-                div().w_full().child(
-                    img(ImageSource::Render(fallback.clone()))
-                        .max_w_full()
-                        .with_fallback(|| {
-                            div()
-                                .child(Label::new("Failed to load mermaid diagram"))
-                                .into_any_element()
-                        }),
-                ),
+                div()
+                    .w_full()
+                    .child(
+                        img(ImageSource::Render(fallback.clone()))
+                            .max_w_full()
+                            .with_fallback(|| {
+                                div()
+                                    .child(Label::new("Failed to load mermaid diagram"))
+                                    .into_any_element()
+                            }),
+                    )
+                    .with_animation(
+                        "mermaid-fallback-pulse",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.6, 1.0)),
+                        |el, delta| el.opacity(delta),
+                    ),
             )
             .into_any()
     } else {
@@ -841,7 +851,17 @@ fn render_mermaid_diagram(
             .py_3()
             .bg(cx.code_block_background_color)
             .rounded_sm()
-            .child(Label::new("Rendering mermaid diagram..."))
+            .child(
+                Label::new("Rendering mermaid diagram...")
+                    .color(Color::Muted)
+                    .with_animation(
+                        "mermaid-loading-pulse",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    ),
+            )
             .into_any()
     }
 }
