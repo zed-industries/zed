@@ -753,7 +753,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{AppState, MultiWorkspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -1323,7 +1323,7 @@ mod tests {
             .await;
 
         assert_eq!(cx.windows().len(), 1);
-        let window1 = cx.windows()[0].downcast::<Workspace>().unwrap();
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
 
         // Open second workspace in a new window
         let workspace_paths_2 = vec![file2_path.to_string()];
@@ -1350,10 +1350,10 @@ mod tests {
             .await;
 
         assert_eq!(cx.windows().len(), 2);
-        let window2 = cx.windows()[1].downcast::<Workspace>().unwrap();
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
 
         // Focus window2
-        window2
+        multi_workspace_2
             .update(cx, |_, window, _| {
                 window.activate_window();
             })
@@ -1399,18 +1399,18 @@ mod tests {
         assert_eq!(cx.windows().len(), 2);
 
         // Verify the file was added to window2 (the focused one)
-        window2
+        multi_workspace_2
             .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
+                let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();
                 // Should have 2 items now (file2.txt and new_file.txt)
                 assert_eq!(items.len(), 2, "Focused window should have 2 items");
             })
             .unwrap();
 
         // Verify window1 still has only 1 item
-        window1
+        multi_workspace_1
             .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
+                let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Other window should still have 1 item");
             })
             .unwrap();
