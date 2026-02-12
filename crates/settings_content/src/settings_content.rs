@@ -417,7 +417,7 @@ pub struct AudioSettingsContent {
 pub struct AudioOutputDeviceName(pub Option<String>);
 
 impl AsRef<Option<String>> for AudioInputDeviceName {
-    fn as_ref(self: &Self) -> &Option<String> {
+    fn as_ref(&self) -> &Option<String> {
         &self.0
     }
 }
@@ -433,7 +433,7 @@ impl From<Option<String>> for AudioInputDeviceName {
 pub struct AudioInputDeviceName(pub Option<String>);
 
 impl AsRef<Option<String>> for AudioOutputDeviceName {
-    fn as_ref(self: &Self) -> &Option<String> {
+    fn as_ref(&self) -> &Option<String> {
         &self.0
     }
 }

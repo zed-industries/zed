@@ -6876,7 +6876,7 @@ fn collaboration_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Output Audio Device".into(),
+                title: "Output Audio Device",
                 description: "Select output audio device",
                 field: Box::new(SettingField {
                     json_path: Some("audio.experimental.output_audio_device"),
@@ -6899,7 +6899,7 @@ fn collaboration_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Input Audio Device".into(),
+                title: "Input Audio Device",
                 description: "Select input audio device",
                 field: Box::new(SettingField {
                     json_path: Some("audio.experimental.input_audio_device"),
