@@ -42,7 +42,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    SwitchProject, ToggleWorktreeSecurity, Workspace,
+    ToggleWorktreeSecurity, Workspace,
     notifications::{NotificationSource, NotifyResultExt},
 };
 use zed_actions::OpenRemote;
