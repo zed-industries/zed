@@ -111,6 +111,7 @@ members = [
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
+    "crates/mermaid_preview",
     "crates/media",
     "crates/menu",
     "crates/migrator",
@@ -353,6 +354,7 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+mermaid_preview = { path = "crates/mermaid_preview" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
@@ -564,6 +566,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "fb6bcad59522455a041b7eb9579f706e5cfb2d6f" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
+mermaid-rs-renderer = { version = "0.1.2", default-features = false }
 metal = "0.29"
 minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }

@@ -4522,6 +4522,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dagre_rust"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be0e44f22d2a32979a1265aa1a70f6e2f4f43ec0d562d483a1c818f9a4121926"
+dependencies = [
+ "graphlib_rust",
+ "ordered_hashmap",
+]
+
+[[package]]
 name = "dap"
 version = "0.1.0"
 dependencies = [
@@ -7564,6 +7574,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphlib_rust"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b47de2c5685b5bb3689d6b0977f38959f3d7d82d3556627cfebbfaa42eda05ea"
+dependencies = [
+ "ordered_hashmap",
+]
+
+[[package]]
 name = "grid"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8773,6 +8792,17 @@ checksum = "ec48937a97411dcb524a265206ccd4c90bb711fca92b2792c407f268825b9305"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "json5"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b0db21af676c1ce64250b5f40f3ce2cf27e4e47cb91ed91eb6fe9350b430c1"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "serde",
 ]
 
 [[package]]
@@ -10108,6 +10138,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "mermaid-rs-renderer"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "809edd3a9b85b6ae4bbe646317c2de9ea2ff7cb984e4e064625e048d9b1ef7f4"
+dependencies = [
+ "anyhow",
+ "dagre_rust",
+ "graphlib_rust",
+ "json5",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mermaid_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "file_icons",
+ "gpui",
+ "language",
+ "mermaid-rs-renderer",
+ "multi_buffer",
+ "ui",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "metal"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11336,6 +11398,12 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "ordered_hashmap"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb1ea499d242299d564879c8b375c11285f5a26d62d8010768909d6d099c4c5a"
 
 [[package]]
 name = "ouroboros"
@@ -21118,6 +21186,7 @@ dependencies = [
  "markdown",
  "markdown_preview",
  "menu",
+ "mermaid_preview",
  "migrator",
  "mimalloc",
  "miniprofiler_ui",

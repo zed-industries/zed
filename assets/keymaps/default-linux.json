@@ -559,6 +559,14 @@
     },
   },
   {
+    "context": "Editor && (extension == mmd || extension == mermaid)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "mermaid::OpenPreviewToTheSide",
+      "ctrl-shift-v": "mermaid::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-shift-o": "outline::Toggle",
