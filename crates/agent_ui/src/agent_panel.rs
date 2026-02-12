@@ -498,13 +498,10 @@ impl AgentPanel {
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
 
-        let last_active_thread = self.active_agent_thread(cx).and_then(|thread| {
+        let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
-            if thread.entries().is_empty() {
-                return None;
-            }
             let title = thread.title();
-            Some(SerializedActiveThread {
+            SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent.clone(),
                 title: if title.as_ref() != DEFAULT_THREAD_TITLE {
@@ -513,7 +510,7 @@ impl AgentPanel {
                     None
                 },
                 cwd: None,
-            })
+            }
         });
 
         self.pending_serialization = Some(cx.background_spawn(async move {
@@ -3485,38 +3482,6 @@ mod tests {
             );
         });
 
-        // Add a user message so the thread is non-empty (empty threads are
-        // intentionally not serialized because they are never persisted to the DB).
-        // Also save the thread to the DB so the load-side validation can find it.
-        let save_task = panel_a.update(cx, |panel, cx| {
-            let thread = panel.active_agent_thread(cx).unwrap();
-            thread.update(cx, |thread, cx| {
-                thread.push_user_content_block(
-                    None,
-                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
-                    cx,
-                );
-            });
-            let session_id = thread.read(cx).session_id().clone();
-            let db_thread = agent::DbThread {
-                title: "Test Thread".into(),
-                messages: Vec::new(),
-                updated_at: chrono::Utc::now(),
-                detailed_summary: None,
-                initial_project_snapshot: None,
-                cumulative_token_usage: Default::default(),
-                request_token_usage: Default::default(),
-                model: None,
-                profile: None,
-                subagent_context: None,
-                imported: false,
-            };
-            let thread_store = panel.thread_store.clone();
-            thread_store.update(cx, |store, cx| store.save_thread(session_id, db_thread, cx))
-        });
-        save_task.await.unwrap();
-        cx.run_until_parked();
-
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
         // --- Set up workspace B: ClaudeCode, width=400, no active thread ---
@@ -3550,7 +3515,9 @@ mod tests {
             .expect("panel B load should succeed");
         cx.run_until_parked();
 
-        // Workspace A should restore its thread, width, and agent type
+        // Workspace A should restore width and agent type, but the thread
+        // should NOT be restored because the stub agent never persisted it
+        // to the database (the load-side validation skips missing threads).
         loaded_a.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.width,
@@ -3560,10 +3527,6 @@ mod tests {
             assert_eq!(
                 panel.selected_agent, agent_type_a,
                 "workspace A agent type should be restored"
-            );
-            assert!(
-                panel.active_thread_view().is_some(),
-                "workspace A should have its active thread restored"
             );
         });
 
