@@ -68,7 +68,6 @@ bitflags! {
         const CASE_SENSITIVE = 1 << SearchOption::CaseSensitive as u8;
         const INCLUDE_IGNORED = 1 << SearchOption::IncludeIgnored as u8;
         const REGEX = 1 << SearchOption::Regex as u8;
-        const SEARCH_ON_INPUT = 1 << SearchOption::SearchOnInput as u8;
         const ONE_MATCH_PER_LINE = 1 << SearchOption::OneMatchPerLine as u8;
         /// If set, reverse direction when finding the active match
         const BACKWARDS = 1 << SearchOption::Backwards as u8;
@@ -82,7 +81,6 @@ pub enum SearchOption {
     CaseSensitive,
     IncludeIgnored,
     Regex,
-    SearchOnInput,
     OneMatchPerLine,
     Backwards,
 }
@@ -103,7 +101,6 @@ impl SearchOption {
             SearchOption::CaseSensitive => "Match Case Sensitivity",
             SearchOption::IncludeIgnored => "Also search files ignored by configuration",
             SearchOption::Regex => "Use Regular Expressions",
-            SearchOption::SearchOnInput => "Search on input",
             SearchOption::OneMatchPerLine => "One Match Per Line",
             SearchOption::Backwards => "Search Backwards",
         }
@@ -185,7 +182,6 @@ impl SearchOptions {
         options.set(SearchOptions::CASE_SENSITIVE, settings.case_sensitive);
         options.set(SearchOptions::INCLUDE_IGNORED, settings.include_ignored);
         options.set(SearchOptions::REGEX, settings.regex);
-        options.set(SearchOptions::SEARCH_ON_INPUT, settings.search_on_input);
         options
     }
 }
