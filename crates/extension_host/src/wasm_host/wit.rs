@@ -480,8 +480,15 @@ impl Extension {
                 )
                 .await
             }
-            // Schema methods are only available in v0.8.0+
-            _ => Ok(Ok(None)),
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Ok(None)),
         }
     }
 
@@ -496,8 +503,15 @@ impl Extension {
                 ext.call_language_server_settings_schema(store, &language_server_id.0, resource)
                     .await
             }
-            // Schema methods are only available in v0.8.0+
-            _ => Ok(Ok(None)),
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Ok(None)),
         }
     }
 
