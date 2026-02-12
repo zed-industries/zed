@@ -149,6 +149,22 @@ impl CachedMermaidDiagram {
             _task,
         }
     }
+
+    #[cfg(test)]
+    fn new_for_test(
+        render_image: Option<Arc<RenderImage>>,
+        fallback_image: Option<Arc<RenderImage>>,
+    ) -> Self {
+        let result = Arc::new(OnceLock::new());
+        if let Some(img) = render_image {
+            let _ = result.set(Ok(img));
+        }
+        Self {
+            render_image: result,
+            fallback_image,
+            _task: Task::ready(()),
+        }
+    }
 }
 #[derive(Clone)]
 pub struct RenderContext<'a> {
@@ -1110,6 +1126,7 @@ fn list_item_prefix(order: usize, ordered: bool, depth: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown_elements::ParsedMarkdownMermaidDiagramContents;
     use crate::markdown_elements::ParsedMarkdownTableColumn;
     use crate::markdown_elements::ParsedMarkdownText;
 
@@ -1266,5 +1283,143 @@ mod tests {
         assert_eq!(list_item_prefix(1, false, 2), "▪ ");
         assert_eq!(list_item_prefix(1, false, 3), "‣ ");
         assert_eq!(list_item_prefix(1, false, 4), "⁃ ");
+    }
+
+    fn mermaid_contents(s: &str) -> ParsedMarkdownMermaidDiagramContents {
+        ParsedMarkdownMermaidDiagramContents {
+            contents: SharedString::from(s.to_string()),
+            scale: 1,
+        }
+    }
+
+    fn mock_render_image() -> Arc<RenderImage> {
+        Arc::new(RenderImage::new(Vec::new()))
+    }
+
+    #[test]
+    fn test_mermaid_fallback_on_edit() {
+        let old_order = vec![
+            mermaid_contents("graph A"),
+            mermaid_contents("graph B"),
+            mermaid_contents("graph C"),
+        ];
+        let new_order = vec![
+            mermaid_contents("graph A"),
+            mermaid_contents("graph B modified"),
+            mermaid_contents("graph C"),
+        ];
+
+        let svg_b = mock_render_image();
+        let mut cache: MermaidDiagramCache = HashMap::default();
+        cache.insert(
+            mermaid_contents("graph A"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+        cache.insert(
+            mermaid_contents("graph B"),
+            CachedMermaidDiagram::new_for_test(Some(svg_b.clone()), None),
+        );
+        cache.insert(
+            mermaid_contents("graph C"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+
+        let fallback = MermaidState::get_fallback_image(1, &new_order, &old_order, &cache);
+
+        assert!(
+            fallback.is_some(),
+            "Should use old diagram as fallback when editing"
+        );
+        assert!(
+            Arc::ptr_eq(&fallback.unwrap(), &svg_b),
+            "Fallback should be the old diagram's SVG"
+        );
+    }
+
+    #[test]
+    fn test_mermaid_no_fallback_on_add_in_middle() {
+        let old_order = vec![mermaid_contents("graph A"), mermaid_contents("graph C")];
+        let new_order = vec![
+            mermaid_contents("graph A"),
+            mermaid_contents("graph NEW"),
+            mermaid_contents("graph C"),
+        ];
+
+        let mut cache: MermaidDiagramCache = HashMap::default();
+        cache.insert(
+            mermaid_contents("graph A"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+        cache.insert(
+            mermaid_contents("graph C"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+
+        let fallback = MermaidState::get_fallback_image(1, &new_order, &old_order, &cache);
+
+        assert!(
+            fallback.is_none(),
+            "Should NOT use fallback when adding new diagram"
+        );
+    }
+
+    #[test]
+    fn test_mermaid_fallback_chains_on_rapid_edits() {
+        let old_order = vec![
+            mermaid_contents("graph A"),
+            mermaid_contents("graph B modified"),
+            mermaid_contents("graph C"),
+        ];
+        let new_order = vec![
+            mermaid_contents("graph A"),
+            mermaid_contents("graph B modified again"),
+            mermaid_contents("graph C"),
+        ];
+
+        let original_svg = mock_render_image();
+        let mut cache: MermaidDiagramCache = HashMap::default();
+        cache.insert(
+            mermaid_contents("graph A"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+        cache.insert(
+            mermaid_contents("graph B modified"),
+            // Still rendering, but has fallback from original "graph B"
+            CachedMermaidDiagram::new_for_test(None, Some(original_svg.clone())),
+        );
+        cache.insert(
+            mermaid_contents("graph C"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+
+        let fallback = MermaidState::get_fallback_image(1, &new_order, &old_order, &cache);
+
+        assert!(
+            fallback.is_some(),
+            "Should chain fallback when previous render not complete"
+        );
+        assert!(
+            Arc::ptr_eq(&fallback.unwrap(), &original_svg),
+            "Fallback should chain through to the original SVG"
+        );
+    }
+
+    #[test]
+    fn test_mermaid_no_fallback_when_no_old_diagram_at_index() {
+        let old_order = vec![mermaid_contents("graph A")];
+        let new_order = vec![mermaid_contents("graph A"), mermaid_contents("graph B")];
+
+        let mut cache: MermaidDiagramCache = HashMap::default();
+        cache.insert(
+            mermaid_contents("graph A"),
+            CachedMermaidDiagram::new_for_test(Some(mock_render_image()), None),
+        );
+
+        let fallback = MermaidState::get_fallback_image(1, &new_order, &old_order, &cache);
+
+        assert!(
+            fallback.is_none(),
+            "Should NOT have fallback when adding diagram at end"
+        );
     }
 }
