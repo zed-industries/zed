@@ -30133,7 +30133,7 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
           3. ˇ
     "});
 
-    // Case 6: Adding newline with cursor right after marker, unindents
+    // Case 6: Adding newline with cursor right after marker, unindents and continues numbering
     cx.set_state(indoc! {"
         1. item
           2. sub item
@@ -30144,16 +30144,16 @@ async fn test_newline_ordered_list_continuation(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
-          1. ˇ
+          3. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.wait_for_autoindent_applied().await;
 
-    // Case 7: Adding newline with cursor right after marker, removes marker
+    // Case 7: Adding newline with cursor right after marker, continues numbering from parent
     cx.assert_editor_state(indoc! {"
         1. item
           2. sub item
-        1. ˇ
+        2. ˇ
     "});
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.wait_for_autoindent_applied().await;
@@ -30208,7 +30208,7 @@ async fn test_newline_should_not_autoindent_ordered_list(cx: &mut TestAppContext
         1. first item
           1. sub first item
           2. sub second item
-        1. ˇ
+        2. ˇ
     "});
 }
 

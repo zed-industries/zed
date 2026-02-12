@@ -11053,6 +11053,86 @@ impl Editor {
                 indent_delta.chars().collect::<String>(),
             ));
 
+            // Check if this line contains an ordered list marker and update it appropriately
+            if let Some(language) = snapshot.language_scope_at(Point::new(row, 0)) {
+                if let Some((buffer_snapshot, range)) = snapshot.buffer_line_for_row(MultiBufferRow(row)) {
+                    let line_start_whitespace = buffer_snapshot
+                        .chars_for_range(range.clone())
+                        .take_while(|c| c.is_whitespace())
+                        .count();
+                    
+                    let candidate: String = buffer_snapshot
+                        .chars_for_range(range)
+                        .skip(line_start_whitespace)
+                        .take(ORDERED_LIST_MAX_MARKER_LEN)
+                        .collect();
+                    
+                    for ordered_config in language.ordered_list() {
+                        if let Ok(regex) = Regex::new(&ordered_config.pattern) {
+                            if let Some(captures) = regex.captures(&candidate) {
+                                if captures.get(0).is_some() {
+                                    if let Some(number_match) = captures.get(1) {
+                                        let current_number = number_match.as_str();
+                                        
+                                        // Calculate the new indentation level after adding indent_delta
+                                        let new_indent = line_start_whitespace + indent_delta.len as usize;
+                                        
+                                        // Look for previous list items at the NEW indentation level
+                                        let mut target_number = 1u32;
+                                        for prev_row in (0..row).rev() {
+                                            if let Some((prev_snapshot, prev_range)) = 
+                                                snapshot.buffer_line_for_row(MultiBufferRow(prev_row)) 
+                                            {
+                                                let prev_indent = prev_snapshot
+                                                    .chars_for_range(prev_range.clone())
+                                                    .take_while(|c| c.is_whitespace())
+                                                    .count();
+                                                
+                                                if prev_indent == new_indent {
+                                                    let prev_candidate: String = prev_snapshot
+                                                        .chars_for_range(prev_range)
+                                                        .skip(prev_indent)
+                                                        .take(ORDERED_LIST_MAX_MARKER_LEN)
+                                                        .collect();
+                                                    
+                                                    if let Ok(prev_regex) = Regex::new(&ordered_config.pattern) {
+                                                        if let Some(prev_captures) = prev_regex.captures(&prev_candidate) {
+                                                            if let Some(prev_number_match) = prev_captures.get(1) {
+                                                                if let Ok(prev_num) = prev_number_match.as_str().parse::<u32>() {
+                                                                    target_number = prev_num + 1;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Only update if the number needs to change
+                                        if current_number != target_number.to_string().as_str() {
+                                            let marker_start = Point::new(row, (line_start_whitespace + number_match.start()) as u32);
+                                            let marker_end = Point::new(row, (line_start_whitespace + number_match.end()) as u32);
+                                            edits.push((marker_start..marker_end, target_number.to_string()));
+                                            
+                                            // Adjust selection if needed
+                                            let number_len_delta = current_number.len() as i32 - target_number.to_string().len() as i32;
+                                            if row == selection.start.row && selection.start.column > marker_start.column {
+                                                selection.start.column = (selection.start.column as i32 - number_len_delta).max(0) as u32;
+                                            }
+                                            if row == selection.end.row && selection.end.column > marker_start.column {
+                                                selection.end.column = (selection.end.column as i32 - number_len_delta).max(0) as u32;
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Update this selection's endpoints to reflect the indentation.
             if row == selection.start.row {
                 selection.start.column += indent_delta.len;
@@ -11142,6 +11222,105 @@ impl Editor {
                     cx,
                 );
             });
+            
+            // After removing indentation, update list markers
+            let buffer = this.buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let mut list_marker_updates = Vec::new();
+            
+            for selection in &selections {
+                let mut rows = selection.spanned_rows(false, &display_map);
+                if let Some(last_row) = last_outdent
+                    && last_row == rows.start
+                {
+                    rows.start = rows.start.next_row();
+                }
+                
+                for row in rows.iter_rows() {
+                    if let Some(language) = snapshot.language_scope_at(Point::new(row.0, 0)) {
+                        if let Some((buffer_snapshot, range)) = snapshot.buffer_line_for_row(row) {
+                            let current_indent = buffer_snapshot
+                                .chars_for_range(range.clone())
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+                            
+                            let candidate: String = buffer_snapshot
+                                .chars_for_range(range.clone())
+                                .skip(current_indent)
+                                .take(ORDERED_LIST_MAX_MARKER_LEN)
+                                .collect();
+                            
+                            for ordered_config in language.ordered_list() {
+                                if let Ok(regex) = Regex::new(&ordered_config.pattern) {
+                                    if let Some(captures) = regex.captures(&candidate) {
+                                        if let Some(number_match) = captures.get(1) {
+                                            // Find the last list item at the same indentation level
+                                            let mut target_number = 1u32;
+                                            for prev_row in (0..row.0).rev() {
+                                                if let Some((prev_snapshot, prev_range)) = 
+                                                    snapshot.buffer_line_for_row(MultiBufferRow(prev_row)) 
+                                                {
+                                                    let prev_indent = prev_snapshot
+                                                        .chars_for_range(prev_range.clone())
+                                                        .take_while(|c| c.is_whitespace())
+                                                        .count();
+                                                    
+                                                    if prev_indent == current_indent {
+                                                        let prev_candidate: String = prev_snapshot
+                                                            .chars_for_range(prev_range)
+                                                            .skip(prev_indent)
+                                                            .take(ORDERED_LIST_MAX_MARKER_LEN)
+                                                            .collect();
+                                                        
+                                                        if let Ok(prev_regex) = Regex::new(&ordered_config.pattern) {
+                                                            if let Some(prev_captures) = prev_regex.captures(&prev_candidate) {
+                                                                if let Some(prev_number_match) = prev_captures.get(1) {
+                                                                    if let Ok(prev_num) = prev_number_match.as_str().parse::<u32>() {
+                                                                        target_number = prev_num + 1;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            let current_number = number_match.as_str();
+                                            if current_number != target_number.to_string().as_str() {
+                                                let marker_start = Point::new(
+                                                    row.0,
+                                                    (current_indent + number_match.start()) as u32
+                                                );
+                                                let marker_end = Point::new(
+                                                    row.0,
+                                                    (current_indent + number_match.end()) as u32
+                                                );
+                                                list_marker_updates.push((
+                                                    marker_start..marker_end,
+                                                    target_number.to_string(),
+                                                ));
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !list_marker_updates.is_empty() {
+                this.buffer.update(cx, |buffer, cx| {
+                    buffer.edit(
+                        list_marker_updates.into_iter().map(|(range, text)| (range, text)),
+                        None,
+                        cx,
+                    );
+                });
+            }
+            
             let selections = this
                 .selections
                 .all::<MultiBufferOffset>(&this.display_snapshot(cx));
@@ -25851,10 +26030,46 @@ fn list_delimiter_for_newline(
             }
 
             if start_point.column as usize == end_of_prefix {
-                let continuation = ordered_config.format.replace("{1}", "1");
                 if num_of_whitespaces == 0 {
                     *newline_config = NewlineConfig::ClearCurrentLine;
                 } else {
+                    // Search backwards for the last ordered list item at a
+                    // lower indentation level (the parent list) to continue
+                    // numbering from there.
+                    let mut target_number = 1u32;
+                    for prev_row in (0..start_point.row).rev() {
+                        if let Some((prev_snap, prev_range)) =
+                            buffer.buffer_line_for_row(MultiBufferRow(prev_row))
+                        {
+                            let prev_indent = prev_snap
+                                .chars_for_range(prev_range.clone())
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+
+                            if prev_indent < num_of_whitespaces {
+                                let prev_candidate: String = prev_snap
+                                    .chars_for_range(prev_range)
+                                    .skip(prev_indent)
+                                    .take(ORDERED_LIST_MAX_MARKER_LEN)
+                                    .collect();
+
+                                if let Some(prev_captures) = regex.captures(&prev_candidate) {
+                                    if let Some(prev_num_match) = prev_captures.get(1) {
+                                        if let Ok(prev_num) =
+                                            prev_num_match.as_str().parse::<u32>()
+                                        {
+                                            target_number = prev_num + 1;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    let continuation = ordered_config
+                        .format
+                        .replace("{1}", &target_number.to_string());
                     *newline_config = NewlineConfig::UnindentCurrentLine {
                         continuation: continuation.into(),
                     };
