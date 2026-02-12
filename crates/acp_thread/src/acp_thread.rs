@@ -930,7 +930,6 @@ pub struct RetryStatus {
 pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
-    title_manually_overridden: bool,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
     project: Entity<Project>,
@@ -1174,7 +1173,6 @@ impl AcpThread {
             entries: Default::default(),
             plan: Default::default(),
             title: title.into(),
-            title_manually_overridden: false,
             project,
             send_task: None,
             connection,
@@ -1467,14 +1465,6 @@ impl AcpThread {
             }
         }
         Task::ready(Ok(()))
-    }
-
-    pub fn title_manually_overridden(&self) -> bool {
-        self.title_manually_overridden
-    }
-
-    pub fn set_title_manually_overridden(&mut self, value: bool) {
-        self.title_manually_overridden = value;
     }
 
     pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {

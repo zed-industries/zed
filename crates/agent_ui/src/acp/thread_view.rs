@@ -723,7 +723,7 @@ impl AcpServerView {
                 });
         }
 
-        let mut subscriptions = vec![
+        let subscriptions = vec![
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.observe(&action_log, |_, _, cx| cx.notify()),
         ];
@@ -754,22 +754,6 @@ impl AcpServerView {
             })
             .detach();
         }
-
-        // Only create title editors for non-subagent threads.
-        let is_subagent = parent_id.is_some();
-        let title_editor = if !is_subagent
-            && thread.update(cx, |thread, cx| thread.can_set_title(cx))
-        {
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_text(thread.read(cx).title(), window, cx);
-                editor
-            });
-            subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
-            Some(editor)
-        } else {
-            None
-        };
 
         let profile_selector: Option<Rc<agent::NativeAgentConnection>> =
             connection.clone().downcast();
@@ -806,7 +790,6 @@ impl AcpServerView {
                 agent_display_name,
                 self.workspace.clone(),
                 entry_view_state,
-                title_editor,
                 config_options_view,
                 mode_selector,
                 model_selector,
@@ -984,20 +967,6 @@ impl AcpServerView {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
-            });
-        }
-    }
-
-    pub fn handle_title_editor_event(
-        &mut self,
-        title_editor: &Entity<Editor>,
-        event: &EditorEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.active_thread() {
-            active.update(cx, |active, cx| {
-                active.handle_title_editor_event(title_editor, event, window, cx);
             });
         }
     }
@@ -1184,22 +1153,14 @@ impl AcpServerView {
                 self.set_server_state(ServerState::LoadError(error.clone()), cx);
             }
             AcpThreadEvent::TitleUpdated => {
-                if !is_subagent {
-                    let title = thread.read(cx).title();
-                    let title_manually_overridden = thread.read(cx).title_manually_overridden();
-
-                    if !title_manually_overridden {
-                        if let Some(active_thread) = self.thread_view(&thread_id) {
-                            if let Some(title_editor) = active_thread.read(cx).title_editor.clone()
-                            {
-                                title_editor.update(cx, |editor, cx| {
-                                    if editor.text(cx) != title {
-                                        editor.set_text(title, window, cx);
-                                    }
-                                });
-                            }
+                let title = thread.read(cx).title();
+                if let Some(active_thread) = self.thread_view(&thread_id) {
+                    let title_editor = active_thread.read(cx).title_editor.clone();
+                    title_editor.update(cx, |editor, cx| {
+                        if editor.text(cx) != title {
+                            editor.set_text(title, window, cx);
                         }
-                    }
+                    });
                 }
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
@@ -5811,158 +5772,47 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_title_editor_initialization_does_not_set_manually_overridden(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
         init_test(cx);
 
         let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
 
-        // The title editor is initialized with set_text() which fires BufferEdited,
-        // but since the title matches what's in the model, title_manually_overridden
-        // should remain false.
-        let thread = active_thread(&thread_view, cx);
-        thread.read_with(cx, |view, cx| {
-            assert!(
-                !view.thread.read(cx).title_manually_overridden(),
-                "title_manually_overridden should be false after initialization"
-            );
-        });
-    }
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+        let thread = cx.read(|cx| active.read(cx).thread.clone());
 
-    #[gpui::test]
-    async fn test_title_editor_change_sets_manually_overridden(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-        let thread = active_thread(&thread_view, cx);
-
-        // Verify initially false
-        thread.read_with(cx, |view, cx| {
-            assert!(
-                !view.thread.read(cx).title_manually_overridden(),
-                "title_manually_overridden should be false initially"
-            );
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
         });
 
-        // Skip test if title_editor is not available (StubAgentConnection doesn't support it)
-        let title_editor = thread.read_with(cx, |view, _cx| view.title_editor.clone());
-        let Some(title_editor) = title_editor else {
-            // StubAgentConnection doesn't support set_title, so title_editor is None.
-            // We can still verify the flag works via direct model manipulation.
-            let acp_thread = thread.read_with(cx, |view, _cx| view.thread.clone());
-            acp_thread.update(cx, |thread, _cx| {
-                thread.set_title_manually_overridden(true);
-            });
-            acp_thread.read_with(cx, |thread, _cx| {
-                assert!(thread.title_manually_overridden());
-            });
-            return;
-        };
-
-        // Edit the title to something different
         title_editor.update_in(cx, |editor, window, cx| {
             editor.set_text("My Custom Title", window, cx);
         });
-
-        // Now the flag should be true
-        thread.read_with(cx, |view, cx| {
-            assert!(
-                view.thread.read(cx).title_manually_overridden(),
-                "title_manually_overridden should be true after user edit"
-            );
-            assert_eq!(view.thread.read(cx).title(), "My Custom Title");
-        });
-    }
-
-    #[gpui::test]
-    async fn test_auto_title_applied_when_not_manually_overridden(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-        let thread = active_thread(&thread_view, cx);
-        let acp_thread = thread.read_with(cx, |view, _cx| view.thread.clone());
-
-        // Verify flag is false
-        acp_thread.read_with(cx, |thread, _cx| {
-            assert!(!thread.title_manually_overridden());
-        });
-
-        // Simulate an auto-generated title update
-        acp_thread.update(cx, |thread, cx| {
-            let _ = thread.set_title("Auto Generated Title".into(), cx);
-        });
-
         cx.run_until_parked();
 
-        // Skip title editor assertion if not available
-        let title_editor = thread.read_with(cx, |view, _cx| view.title_editor.clone());
-        if let Some(title_editor) = title_editor {
-            // The title editor should be updated
-            title_editor.read_with(cx, |editor, cx| {
-                assert_eq!(editor.text(cx), "Auto Generated Title");
-            });
-        }
-
-        // Model should have the new title regardless
-        acp_thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.title(), "Auto Generated Title");
-        });
-    }
-
-    #[gpui::test]
-    async fn test_auto_title_skipped_when_manually_overridden(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
-
-        let thread = active_thread(&thread_view, cx);
-        let acp_thread = thread.read_with(cx, |view, _cx| view.thread.clone());
-
-        // Skip test if title_editor is not available
-        let title_editor = thread.read_with(cx, |view, _cx| view.title_editor.clone());
-        let Some(title_editor) = title_editor else {
-            // Test the model behavior directly without title editor
-            acp_thread.update(cx, |thread, _cx| {
-                thread.set_title_manually_overridden(true);
-            });
-            acp_thread.read_with(cx, |thread, _cx| {
-                assert!(thread.title_manually_overridden());
-            });
-            return;
-        };
-
-        // User edits the title
-        title_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("User Custom Title", window, cx);
-        });
-
-        // Verify flag is now true
-        acp_thread.read_with(cx, |thread, _cx| {
-            assert!(thread.title_manually_overridden());
-        });
-
-        // Simulate an auto-generated title update
-        acp_thread.update(cx, |thread, cx| {
-            let _ = thread.set_title("Auto Generated Title".into(), cx);
-        });
-
-        cx.run_until_parked();
-
-        // The title editor should NOT be updated - it should still show the user's title
         title_editor.read_with(cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "User Custom Title",
-                "Title editor should not be updated when manually overridden"
-            );
+            assert_eq!(editor.text(cx), "My Custom Title");
         });
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title().as_ref(), "My Custom Title");
+        });
+    }
 
-        // But the model should have the auto-generated title
-        acp_thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.title(), "Auto Generated Title");
+    #[gpui::test]
+    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
+
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.read_only(cx),
+                "Title editor should be read-only when the connection does not support set_title"
+            );
         });
     }
 }
