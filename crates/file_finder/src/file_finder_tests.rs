@@ -1767,6 +1767,118 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
 }
 
 #[gpui::test]
+async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_multiple_folders(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/my_project"),
+            json!({
+                "src": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/my_second_project"),
+            json!({
+                "src": {
+                    "third.rs": "// Third Rust file",
+                    "fourth.rs": "// Fourth Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [
+            path!("/my_project").as_ref(),
+            path!("/my_second_project").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        assert!(matches.len() >= 2, "Should have at least 2 history matches");
+
+        let separator = PathStyle::local().primary_separator();
+
+        let first_match = matches
+            .iter()
+            .find(|m| {
+                if let Match::History { path, .. } = m {
+                    path.project.path.file_name()
+                        .and_then(|n| Some(n.to_string()))
+                        .map_or(false, |name| name == "first.rs")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have history match for first.rs");
+
+        let third_match = matches
+            .iter()
+            .find(|m| {
+                if let Match::History { path, .. } = m {
+                    path.project.path.file_name()
+                        .and_then(|n| Some(n.to_string()))
+                        .map_or(false, |name| name == "third.rs")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have history match for third.rs");
+
+        let (_file_label, path_label) =
+            finder.delegate.labels_for_match(first_match, window, cx);
+        assert_eq!(
+            path_label.text(),
+            format!("my_project{separator}src{separator}"),
+            "With hide_root=true and multiple folders, history path label should include root name 'my_project'"
+        );
+
+        let (_file_label, path_label) =
+            finder.delegate.labels_for_match(third_match, window, cx);
+        assert_eq!(
+            path_label.text(),
+            format!("my_second_project{separator}src{separator}"),
+            "With hide_root=true and multiple folders, history path label should include root name 'my_second_project'"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
