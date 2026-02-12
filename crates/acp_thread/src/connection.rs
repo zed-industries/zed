@@ -727,6 +727,14 @@ mod test_support {
             }
         }
 
+        fn set_title(
+            &self,
+            _session_id: &acp::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionSetTitle>> {
+            Some(Rc::new(StubAgentSessionSetTitle))
+        }
+
         fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
@@ -737,6 +745,14 @@ mod test_support {
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+    }
+
+    struct StubAgentSessionSetTitle;
+
+    impl AgentSessionSetTitle for StubAgentSessionSetTitle {
+        fn run(&self, _title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
     }
 
