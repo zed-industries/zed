@@ -807,14 +807,11 @@ impl RemoteServerProjects {
     /// Used when suggesting dev container connection from toast notification.
     pub fn new_dev_container(
         fs: Arc<dyn Fs>,
+        configs: Vec<DevContainerConfig>,
         window: &mut Window,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let configs = workspace
-            .read_with(cx, |workspace, cx| find_devcontainer_configs(workspace, cx))
-            .unwrap_or_default();
-
         let initial_mode = if configs.len() > 1 {
             DevContainerCreationProgress::SelectingConfig
         } else {
