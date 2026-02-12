@@ -810,17 +810,13 @@ fn render_mermaid_diagram(
                     ),
                 )
                 .into_any(),
-            Err(error) => cx
+            Err(_) => cx
                 .with_common_p(div())
                 .px_3()
                 .py_3()
-                .bg(gpui::red())
+                .bg(cx.code_block_background_color)
                 .rounded_sm()
-                .child(
-                    div()
-                        .child(Label::new("Mermaid rendering error:").color(Color::Error))
-                        .child(div().mt_2().child(StyledText::new(error.to_string()))),
-                )
+                .child(StyledText::new(parsed.contents.contents.clone()))
                 .into_any(),
         }
     } else if let Some(fallback) = cached.and_then(|c| c.fallback_image.as_ref()) {
@@ -847,15 +843,7 @@ fn render_mermaid_diagram(
             .py_3()
             .bg(cx.code_block_background_color)
             .rounded_sm()
-            .child(
-                div()
-                    .child(Label::new("Rendering mermaid diagram..."))
-                    .child(
-                        div()
-                            .mt_2()
-                            .child(StyledText::new(parsed.contents.contents.clone())),
-                    ),
-            )
+            .child(Label::new("Rendering mermaid diagram..."))
             .into_any()
     }
 }
