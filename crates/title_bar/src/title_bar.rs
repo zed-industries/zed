@@ -41,10 +41,7 @@ use ui::{
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
-use workspace::{
-    ToggleWorktreeSecurity, Workspace,
-    notifications::{NotificationSource, NotifyResultExt},
-};
+use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
