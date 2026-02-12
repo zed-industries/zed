@@ -431,9 +431,6 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
-            if !agent_v2_enabled {
-                filter.hide_action_types(&[TypeId::of::<zed_actions::agent::ToggleAgentPane>()]);
-            }
         }
 
         if agent_v2_enabled {
