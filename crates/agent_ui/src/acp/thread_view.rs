@@ -2180,42 +2180,10 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_is_visible(&self, window: &Window, cx: &App) -> bool {
-        if window.is_window_active() {
-            let workspace_is_foreground = window
-                .root::<MultiWorkspace>()
-                .flatten()
-                .and_then(|mw| {
-                    let mw = mw.read(cx);
-                    self.workspace.upgrade().map(|ws| mw.workspace() == &ws)
-                })
-                .unwrap_or(true);
-
-            if workspace_is_foreground {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    return AgentPanel::is_visible(&workspace, cx);
-                }
-            }
-        }
-
-        false
-    }
-
-    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
-        if !window.is_window_active() {
-            return false;
-        }
-
-        let multi_workspace = window.root::<MultiWorkspace>().flatten();
-
-        if multi_workspace
-            .as_ref()
-            .is_some_and(|mw| mw.read(cx).is_sidebar_open())
-        {
-            return true;
-        }
-
-        let workspace_is_foreground = multi_workspace
+    fn agent_panel_visible(&self, window: &Window, cx: &App) -> bool {
+        let workspace_is_foreground = window
+            .root::<MultiWorkspace>()
+            .flatten()
             .and_then(|mw| {
                 let mw = mw.read(cx);
                 self.workspace.upgrade().map(|ws| mw.workspace() == &ws)
@@ -2231,9 +2199,24 @@ impl AcpServerView {
         false
     }
 
+    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+
+        let sidebar_open = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .is_some_and(|mw| mw.read(cx).is_sidebar_open());
+
+        sidebar_open || self.agent_panel_visible(window, cx)
+    }
+
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done && !self.agent_is_visible(window, cx) {
+        if settings.play_sound_when_agent_done
+            && !(window.is_window_active() && self.agent_panel_visible(window, cx))
+        {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
