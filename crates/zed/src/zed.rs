@@ -4886,6 +4886,7 @@ mod tests {
                 "project_search",
                 "project_symbols",
                 "projects",
+                "recent_projects",
                 "remote_debug",
                 "repl",
                 "rules_library",
