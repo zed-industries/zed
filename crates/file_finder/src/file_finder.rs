@@ -1219,19 +1219,23 @@ impl FileFinderDelegate {
                 return false;
             };
 
-            let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = project
+            let resolved_path = project
                 .update(cx, |this, cx| {
                     this.resolve_abs_file_path(query.path_query(), cx)
                 })
-                .await
-                .is_some();
+                .await;
 
-            if abs_file_exists {
+            if let Some(resolved_path) = resolved_path {
+                let abs_path_str = match &resolved_path {
+                    project::ResolvedPath::AbsPath { path, .. } => path.clone(),
+                    project::ResolvedPath::ProjectPath { .. } => query.path_query().to_string(),
+                };
+                let abs_path = Path::new(&abs_path_str);
+
                 project.update(cx, |project, cx| {
-                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                    if let Some((worktree, relative_path)) = project.find_worktree(abs_path, cx) {
                         path_matches.push(ProjectPanelOrdMatch(PathMatch {
                             score: 1.0,
                             positions: Vec::new(),
@@ -1245,6 +1249,8 @@ impl FileFinderDelegate {
                 });
             }
 
+            let found_match = !path_matches.is_empty();
+
             picker
                 .update_in(cx, |picker, _, cx| {
                     let picker_delegate = &mut picker.delegate;
@@ -1254,7 +1260,7 @@ impl FileFinderDelegate {
                     anyhow::Ok(())
                 })
                 .log_err();
-            abs_file_exists
+            found_match
         })
     }
 
