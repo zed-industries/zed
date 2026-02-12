@@ -3,11 +3,11 @@ use std::path::Path;
 use call::ActiveCall;
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git_ui::project_diff::ProjectDiff;
-use gpui::{TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
 use util::{path, rel_path::rel_path};
-use workspace::Workspace;
+use workspace::{MultiWorkspace, Workspace};
 
 //
 use crate::TestServer;
@@ -57,17 +57,25 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     cx_b.update(editor::init);
     cx_b.update(git_ui::init);
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let workspace_b = cx_b.add_window(|window, cx| {
-        Workspace::new(
-            None,
-            project_b.clone(),
-            client_b.app_state.clone(),
-            window,
-            cx,
-        )
+    let window_b = cx_b.add_window(|window, cx| {
+        let workspace = cx.new(|cx| {
+            Workspace::new(
+                None,
+                project_b.clone(),
+                client_b.app_state.clone(),
+                window,
+                cx,
+            )
+        });
+        MultiWorkspace::new(workspace, cx)
     });
-    let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
-    let workspace_b = workspace_b.root(cx_b).unwrap();
+    let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
+    let workspace_b = window_b
+        .root(cx_b)
+        .unwrap()
+        .read_with(cx_b, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
 
     cx_b.update(|window, cx| {
         window

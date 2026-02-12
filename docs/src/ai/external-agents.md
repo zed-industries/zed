@@ -1,3 +1,8 @@
+---
+title: Use Claude Code, Gemini CLI, and Codex in Zed
+description: Run Claude Code, Gemini CLI, Codex, and other AI coding agents directly in Zed via the Agent Client Protocol (ACP).
+---
+
 # External Agents
 
 Zed supports many external agents, including CLI-based ones, through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).

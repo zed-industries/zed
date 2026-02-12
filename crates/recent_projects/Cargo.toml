@@ -23,6 +23,7 @@ db.workspace = true
 dev_container.workspace = true
 editor.workspace = true
 extension_host.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -66,6 +67,7 @@ language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
+remote_connection = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }

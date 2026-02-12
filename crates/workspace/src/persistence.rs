@@ -8,6 +8,8 @@ use std::{
     sync::Arc,
 };
 
+use fs::Fs;
+
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet, IndexSet};
 use db::{
@@ -48,7 +50,7 @@ use model::{
     SerializedPaneGroup, SerializedWorkspace,
 };
 
-use self::model::{DockStructure, SerializedWorkspaceLocation};
+use self::model::{DockStructure, SerializedWorkspaceLocation, SessionWorkspace};
 
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
@@ -279,6 +281,64 @@ impl From<WindowBoundsJson> for WindowBounds {
             }),
         }
     }
+}
+
+fn multi_workspace_states() -> db::kvp::ScopedKeyValueStore<'static> {
+    KEY_VALUE_STORE.scoped("multi_workspace_state")
+}
+
+fn read_multi_workspace_state(window_id: WindowId) -> model::MultiWorkspaceState {
+    multi_workspace_states()
+        .read(&window_id.as_u64().to_string())
+        .log_err()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+pub async fn write_multi_workspace_state(window_id: WindowId, state: model::MultiWorkspaceState) {
+    if let Ok(json_str) = serde_json::to_string(&state) {
+        multi_workspace_states()
+            .write(window_id.as_u64().to_string(), json_str)
+            .await
+            .log_err();
+    }
+}
+
+pub fn read_serialized_multi_workspaces(
+    session_workspaces: Vec<model::SessionWorkspace>,
+) -> Vec<model::SerializedMultiWorkspace> {
+    let mut window_groups: Vec<Vec<model::SessionWorkspace>> = Vec::new();
+    let mut window_id_to_group: HashMap<WindowId, usize> = HashMap::default();
+
+    for session_workspace in session_workspaces {
+        match session_workspace.window_id {
+            Some(window_id) => {
+                let group_index = *window_id_to_group.entry(window_id).or_insert_with(|| {
+                    window_groups.push(Vec::new());
+                    window_groups.len() - 1
+                });
+                window_groups[group_index].push(session_workspace);
+            }
+            None => {
+                window_groups.push(vec![session_workspace]);
+            }
+        }
+    }
+
+    window_groups
+        .into_iter()
+        .map(|group| {
+            let window_id = group.first().and_then(|sw| sw.window_id);
+            let state = window_id
+                .map(read_multi_workspace_state)
+                .unwrap_or_default();
+            model::SerializedMultiWorkspace {
+                workspaces: group,
+                state,
+            }
+        })
+        .collect()
 }
 
 const DEFAULT_DOCK_STATE_KEY: &str = "default_dock_state";
@@ -1708,10 +1768,26 @@ impl WorkspaceDb {
         }
     }
 
+    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
+        let mut any_dir = false;
+        for path in paths {
+            match fs.metadata(path).await.ok().flatten() {
+                None => return false,
+                Some(meta) => {
+                    if meta.is_dir {
+                        any_dir = true;
+                    }
+                }
+            }
+        }
+        any_dir
+    }
+
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
+        fs: &dyn Fs,
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
@@ -1744,11 +1820,8 @@ impl WorkspaceDb {
             // If a local workspace points to WSL, this check will cause us to wait for the
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
-            if !has_wsl_path && paths.paths().iter().all(|path| path.exists()) {
-                // Only show directories in recent projects
-                if paths.paths().iter().any(|path| path.is_dir()) {
-                    result.push((id, SerializedWorkspaceLocation::Local, paths));
-                }
+            if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                result.push((id, SerializedWorkspaceLocation::Local, paths));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1760,65 +1833,67 @@ impl WorkspaceDb {
 
     pub async fn last_workspace(
         &self,
+        fs: &dyn Fs,
     ) -> Result<Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
-        Ok(self.recent_workspaces_on_disk().await?.into_iter().next())
+        Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last
     // session was closed (i.e. when Zed was quit).
     // If `last_session_window_order` is provided, the returned locations are ordered
     // according to that.
-    pub fn last_session_workspace_locations(
+    pub async fn last_session_workspace_locations(
         &self,
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+        fs: &dyn Fs,
+    ) -> Result<Vec<SessionWorkspace>> {
         let mut workspaces = Vec::new();
 
         for (workspace_id, paths, window_id, remote_connection_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
+            let window_id = window_id.map(WindowId::from);
+
             if let Some(remote_connection_id) = remote_connection_id {
-                workspaces.push((
+                workspaces.push(SessionWorkspace {
                     workspace_id,
-                    SerializedWorkspaceLocation::Remote(
+                    location: SerializedWorkspaceLocation::Remote(
                         self.remote_connection(remote_connection_id)?,
                     ),
                     paths,
-                    window_id.map(WindowId::from),
-                ));
+                    window_id,
+                });
             } else if paths.is_empty() {
                 // Empty workspace with items (drafts, files) - include for restoration
-                workspaces.push((
+                workspaces.push(SessionWorkspace {
                     workspace_id,
-                    SerializedWorkspaceLocation::Local,
+                    location: SerializedWorkspaceLocation::Local,
                     paths,
-                    window_id.map(WindowId::from),
-                ));
-            } else if paths.paths().iter().all(|path| path.exists())
-                && paths.paths().iter().any(|path| path.is_dir())
-            {
-                workspaces.push((
-                    workspace_id,
-                    SerializedWorkspaceLocation::Local,
-                    paths,
-                    window_id.map(WindowId::from),
-                ));
+                    window_id,
+                });
+            } else {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                    workspaces.push(SessionWorkspace {
+                        workspace_id,
+                        location: SerializedWorkspaceLocation::Local,
+                        paths,
+                        window_id,
+                    });
+                }
             }
         }
 
         if let Some(stack) = last_session_window_stack {
-            workspaces.sort_by_key(|(_, _, _, window_id)| {
-                window_id
+            workspaces.sort_by_key(|workspace| {
+                workspace
+                    .window_id
                     .and_then(|id| stack.iter().position(|&order_id| order_id == id))
                     .unwrap_or(usize::MAX)
             });
         }
 
-        Ok(workspaces
-            .into_iter()
-            .map(|(workspace_id, location, paths, _)| (workspace_id, location, paths))
-            .collect::<Vec<_>>())
+        Ok(workspaces)
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
@@ -2272,11 +2347,12 @@ pub fn delete_unloaded_items(
 mod tests {
     use super::*;
     use crate::persistence::model::{
-        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace, SessionWorkspace,
     };
     use gpui;
     use pretty_assertions::assert_eq;
     use remote::SshConnectionOptions;
+    use serde_json::json;
     use std::{thread, time::Duration};
 
     #[gpui::test]
@@ -3040,11 +3116,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations() {
+    async fn test_last_session_workspace_locations(cx: &mut gpui::TestAppContext) {
         let dir1 = tempfile::TempDir::with_prefix("dir1").unwrap();
         let dir2 = tempfile::TempDir::with_prefix("dir2").unwrap();
         let dir3 = tempfile::TempDir::with_prefix("dir3").unwrap();
         let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir1.path(), json!({})).await;
+        fs.insert_tree(dir2.path(), json!({})).await;
+        fs.insert_tree(dir3.path(), json!({})).await;
+        fs.insert_tree(dir4.path(), json!({})).await;
 
         let db =
             WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces").await;
@@ -3088,47 +3170,55 @@ mod tests {
         ]));
 
         let locations = db
-            .last_session_workspace_locations("one-session", stack)
+            .last_session_workspace_locations("one-session", stack, fs.as_ref())
+            .await
             .unwrap();
         assert_eq!(
             locations,
             [
-                (
-                    WorkspaceId(4),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir4.path()])
-                ),
-                (
-                    WorkspaceId(3),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir3.path()])
-                ),
-                (
-                    WorkspaceId(2),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir2.path()])
-                ),
-                (
-                    WorkspaceId(1),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir1.path()])
-                ),
-                (
-                    WorkspaceId(5),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir1.path(), dir2.path(), dir3.path()])
-                ),
-                (
-                    WorkspaceId(6),
-                    SerializedWorkspaceLocation::Local,
-                    PathList::new(&[dir4.path(), dir3.path(), dir2.path()])
-                ),
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(4),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir4.path()]),
+                    window_id: Some(WindowId::from(2u64)),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(3),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir3.path()]),
+                    window_id: Some(WindowId::from(8u64)),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(2),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir2.path()]),
+                    window_id: Some(WindowId::from(5u64)),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(1),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir1.path()]),
+                    window_id: Some(WindowId::from(9u64)),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(5),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir1.path(), dir2.path(), dir3.path()]),
+                    window_id: Some(WindowId::from(3u64)),
+                },
+                SessionWorkspace {
+                    workspace_id: WorkspaceId(6),
+                    location: SerializedWorkspaceLocation::Local,
+                    paths: PathList::new(&[dir4.path(), dir3.path(), dir2.path()]),
+                    window_id: Some(WindowId::from(4u64)),
+                },
             ]
         );
     }
 
     #[gpui::test]
-    async fn test_last_session_workspace_locations_remote() {
+    async fn test_last_session_workspace_locations_remote(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
         let db =
             WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces_remote")
                 .await;
@@ -3190,40 +3280,45 @@ mod tests {
         ]));
 
         let have = db
-            .last_session_workspace_locations("one-session", stack)
+            .last_session_workspace_locations("one-session", stack, fs.as_ref())
+            .await
             .unwrap();
         assert_eq!(have.len(), 4);
         assert_eq!(
             have[0],
-            (
-                WorkspaceId(4),
-                SerializedWorkspaceLocation::Remote(remote_connections[3].clone()),
-                PathList::default()
-            )
+            SessionWorkspace {
+                workspace_id: WorkspaceId(4),
+                location: SerializedWorkspaceLocation::Remote(remote_connections[3].clone()),
+                paths: PathList::default(),
+                window_id: Some(WindowId::from(2u64)),
+            }
         );
         assert_eq!(
             have[1],
-            (
-                WorkspaceId(3),
-                SerializedWorkspaceLocation::Remote(remote_connections[2].clone()),
-                PathList::default()
-            )
+            SessionWorkspace {
+                workspace_id: WorkspaceId(3),
+                location: SerializedWorkspaceLocation::Remote(remote_connections[2].clone()),
+                paths: PathList::default(),
+                window_id: Some(WindowId::from(8u64)),
+            }
         );
         assert_eq!(
             have[2],
-            (
-                WorkspaceId(2),
-                SerializedWorkspaceLocation::Remote(remote_connections[1].clone()),
-                PathList::default()
-            )
+            SessionWorkspace {
+                workspace_id: WorkspaceId(2),
+                location: SerializedWorkspaceLocation::Remote(remote_connections[1].clone()),
+                paths: PathList::default(),
+                window_id: Some(WindowId::from(5u64)),
+            }
         );
         assert_eq!(
             have[3],
-            (
-                WorkspaceId(1),
-                SerializedWorkspaceLocation::Remote(remote_connections[0].clone()),
-                PathList::default()
-            )
+            SessionWorkspace {
+                workspace_id: WorkspaceId(1),
+                location: SerializedWorkspaceLocation::Remote(remote_connections[0].clone()),
+                paths: PathList::default(),
+                window_id: Some(WindowId::from(9u64)),
+            }
         );
     }
 
@@ -3554,5 +3649,193 @@ mod tests {
         assert_eq!(retrieved.window_bounds.unwrap().0, window_bounds.0);
         assert!(retrieved.display.is_some());
         assert_eq!(retrieved.display.unwrap(), display_uuid);
+    }
+
+    #[gpui::test]
+    async fn test_last_session_workspace_locations_groups_by_window_id(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let dir1 = tempfile::TempDir::with_prefix("dir1").unwrap();
+        let dir2 = tempfile::TempDir::with_prefix("dir2").unwrap();
+        let dir3 = tempfile::TempDir::with_prefix("dir3").unwrap();
+        let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
+        let dir5 = tempfile::TempDir::with_prefix("dir5").unwrap();
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(dir1.path(), json!({})).await;
+        fs.insert_tree(dir2.path(), json!({})).await;
+        fs.insert_tree(dir3.path(), json!({})).await;
+        fs.insert_tree(dir4.path(), json!({})).await;
+        fs.insert_tree(dir5.path(), json!({})).await;
+
+        let db =
+            WorkspaceDb::open_test_db("test_last_session_workspace_locations_groups_by_window_id")
+                .await;
+
+        // Simulate two MultiWorkspace windows each containing two workspaces,
+        // plus one single-workspace window:
+        //   Window 10: workspace 1, workspace 2
+        //   Window 20: workspace 3, workspace 4
+        //   Window 30: workspace 5 (only one)
+        //
+        // On session restore, the caller should be able to group these by
+        // window_id to reconstruct the MultiWorkspace windows.
+        let workspaces_data: Vec<(i64, &Path, u64)> = vec![
+            (1, dir1.path(), 10),
+            (2, dir2.path(), 10),
+            (3, dir3.path(), 20),
+            (4, dir4.path(), 20),
+            (5, dir5.path(), 30),
+        ];
+
+        for (id, dir, window_id) in &workspaces_data {
+            db.save_workspace(SerializedWorkspace {
+                id: WorkspaceId(*id),
+                paths: PathList::new(&[*dir]),
+                location: SerializedWorkspaceLocation::Local,
+                center_group: Default::default(),
+                window_bounds: Default::default(),
+                display: Default::default(),
+                docks: Default::default(),
+                centered_layout: false,
+                session_id: Some("test-session".to_owned()),
+                breakpoints: Default::default(),
+                window_id: Some(*window_id),
+                user_toolchains: Default::default(),
+            })
+            .await;
+        }
+
+        let locations = db
+            .last_session_workspace_locations("test-session", None, fs.as_ref())
+            .await
+            .unwrap();
+
+        // All 5 workspaces should be returned with their window_ids.
+        assert_eq!(locations.len(), 5);
+
+        // Every entry should have a window_id so the caller can group them.
+        for session_workspace in &locations {
+            assert!(
+                session_workspace.window_id.is_some(),
+                "workspace {:?} missing window_id",
+                session_workspace.workspace_id
+            );
+        }
+
+        // Group by window_id, simulating what the restoration code should do.
+        let mut by_window: HashMap<WindowId, Vec<WorkspaceId>> = HashMap::default();
+        for session_workspace in &locations {
+            if let Some(window_id) = session_workspace.window_id {
+                by_window
+                    .entry(window_id)
+                    .or_default()
+                    .push(session_workspace.workspace_id);
+            }
+        }
+
+        // Should produce 3 windows, not 5.
+        assert_eq!(
+            by_window.len(),
+            3,
+            "Expected 3 window groups, got {}: {:?}",
+            by_window.len(),
+            by_window
+        );
+
+        // Window 10 should contain workspaces 1 and 2.
+        let window_10 = by_window.get(&WindowId::from(10u64)).unwrap();
+        assert_eq!(window_10.len(), 2);
+        assert!(window_10.contains(&WorkspaceId(1)));
+        assert!(window_10.contains(&WorkspaceId(2)));
+
+        // Window 20 should contain workspaces 3 and 4.
+        let window_20 = by_window.get(&WindowId::from(20u64)).unwrap();
+        assert_eq!(window_20.len(), 2);
+        assert!(window_20.contains(&WorkspaceId(3)));
+        assert!(window_20.contains(&WorkspaceId(4)));
+
+        // Window 30 should contain only workspace 5.
+        let window_30 = by_window.get(&WindowId::from(30u64)).unwrap();
+        assert_eq!(window_30.len(), 1);
+        assert!(window_30.contains(&WorkspaceId(5)));
+    }
+
+    #[gpui::test]
+    async fn test_read_serialized_multi_workspaces_with_state() {
+        use crate::persistence::model::MultiWorkspaceState;
+
+        // Write multi-workspace state for two windows via the scoped KVP.
+        let window_10 = WindowId::from(10u64);
+        let window_20 = WindowId::from(20u64);
+
+        write_multi_workspace_state(
+            window_10,
+            MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(2)),
+                sidebar_open: true,
+            },
+        )
+        .await;
+
+        write_multi_workspace_state(
+            window_20,
+            MultiWorkspaceState {
+                active_workspace_id: Some(WorkspaceId(3)),
+                sidebar_open: false,
+            },
+        )
+        .await;
+
+        // Build session workspaces: two in window 10, one in window 20, one with no window.
+        let session_workspaces = vec![
+            SessionWorkspace {
+                workspace_id: WorkspaceId(1),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/a"]),
+                window_id: Some(window_10),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(2),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/b"]),
+                window_id: Some(window_10),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(3),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/c"]),
+                window_id: Some(window_20),
+            },
+            SessionWorkspace {
+                workspace_id: WorkspaceId(4),
+                location: SerializedWorkspaceLocation::Local,
+                paths: PathList::new(&["/d"]),
+                window_id: None,
+            },
+        ];
+
+        let results = read_serialized_multi_workspaces(session_workspaces);
+
+        // Should produce 3 groups: window 10, window 20, and the orphan.
+        assert_eq!(results.len(), 3);
+
+        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        let group_10 = &results[0];
+        assert_eq!(group_10.workspaces.len(), 2);
+        assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
+        assert_eq!(group_10.state.sidebar_open, true);
+
+        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        let group_20 = &results[1];
+        assert_eq!(group_20.workspaces.len(), 1);
+        assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
+        assert_eq!(group_20.state.sidebar_open, false);
+
+        // Orphan group: no window_id, so state is default.
+        let group_none = &results[2];
+        assert_eq!(group_none.workspaces.len(), 1);
+        assert_eq!(group_none.state.active_workspace_id, None);
+        assert_eq!(group_none.state.sidebar_open, false);
     }
 }
