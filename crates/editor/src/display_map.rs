@@ -1705,7 +1705,6 @@ impl DisplaySnapshot {
         let inlay_snapshot = self.inlay_snapshot();
         inlay_snapshot
             .buffer_offset_to_inlay_ranges(range)
-            .into_iter()
             .map(|inlay_range| {
                 let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
                     let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
