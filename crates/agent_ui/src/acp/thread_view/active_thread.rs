@@ -176,7 +176,7 @@ pub struct AcpThreadView {
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
-    pub title_editor: Option<Entity<Editor>>,
+    pub title_editor: Entity<Editor>,
     pub config_options_view: Option<Entity<ConfigOptionsView>>,
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -266,7 +266,6 @@ impl AcpThreadView {
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
         entry_view_state: Entity<EntryViewState>,
-        title_editor: Option<Entity<Editor>>,
         config_options_view: Option<Entity<ConfigOptionsView>>,
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -331,6 +330,18 @@ impl AcpThreadView {
         let show_codex_windows_warning = cfg!(windows)
             && project.upgrade().is_some_and(|p| p.read(cx).is_local())
             && agent_name == "Codex";
+
+        let title_editor = {
+            let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_text(thread.read(cx).title(), window, cx);
+                editor.set_read_only(!can_edit);
+                editor
+            });
+            subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
+            editor
+        };
 
         subscriptions.push(cx.subscribe_in(
             &entry_view_state,
@@ -2303,7 +2314,6 @@ impl AcpThreadView {
             return None;
         };
 
-        let title = self.thread.read(cx).title();
         let server_view = self.server_view.clone();
 
         let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
@@ -2315,17 +2325,20 @@ impl AcpThreadView {
                 .pr_1p5()
                 .w_full()
                 .justify_between()
+                .gap_1()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background.opacity(0.2))
                 .child(
                     h_flex()
+                        .flex_1()
+                        .gap_2()
                         .child(
                             Icon::new(IconName::ForwardArrowUp)
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
-                        .child(Label::new(title).color(Color::Muted).ml_2().mr_1())
+                        .child(self.title_editor.clone())
                         .when(is_done, |this| {
                             this.child(Icon::new(IconName::Check).color(Color::Success))
                         }),

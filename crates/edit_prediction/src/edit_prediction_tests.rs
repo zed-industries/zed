@@ -1,11 +1,10 @@
 use super::*;
-use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string, zeta1::MAX_EVENT_TOKENS};
+use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string};
 use client::{UserStore, test::FakeServer};
-use clock::{FakeSystemClock, ReplicaId};
+use clock::FakeSystemClock;
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
-    EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
-    RejectEditPredictionsBody,
+    EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
@@ -26,7 +25,7 @@ use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
-use util::{path, rel_path::rel_path};
+use util::path;
 use uuid::Uuid;
 use zeta_prompt::ZetaPromptInput;
 
@@ -1424,8 +1423,6 @@ fn init_test_with_fake_client(
     })
 }
 
-const BSD_0_TXT: &str = include_str!("../license_examples/0bsd.txt");
-
 #[gpui::test]
 async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
@@ -1452,6 +1449,9 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
             excerpt_start_row: None,
+            excerpt_ranges: None,
+            preferred_model: None,
+            in_open_source_repo: false,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
@@ -1555,13 +1555,10 @@ async fn test_clean_up_diff(cx: &mut TestAppContext) {
                     }
                 "},
             indoc! {"
-                    <|editable_region_start|>
                     fn main() {
                         let word_1 = \"lorem\";
                         let range = word_1.len()..word_1.len();
                     }
-
-                    <|editable_region_end|>
                 "},
             cx,
         )
@@ -1582,12 +1579,9 @@ async fn test_clean_up_diff(cx: &mut TestAppContext) {
                     }
                 "},
             indoc! {"
-                    <|editable_region_start|>
                     fn main() {
                         let story = \"the quick brown fox jumps over the lazy dog\";
                     }
-
-                    <|editable_region_end|>
                 "},
             cx,
         )
@@ -1605,18 +1599,11 @@ async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
     init_test(cx);
 
     let buffer_content = "lorem\n";
-    let completion_response = indoc! {"
-            ```animals.js
-            <|start_of_file|>
-            <|editable_region_start|>
-            lorem
-            ipsum
-            <|editable_region_end|>
-            ```"};
+    let completion_response = "lorem\nipsum\n";
 
     assert_eq!(
         apply_edit_prediction(buffer_content, completion_response, cx).await,
-        "lorem\nipsum"
+        "lorem\nipsum\n"
     );
 }
 
@@ -1685,298 +1672,6 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
     });
 }
 
-#[gpui::test]
-async fn test_can_collect_data(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/project"), json!({ "LICENSE": BSD_0_TXT }))
-        .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/project/src/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Disabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_remote_file(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    let project = Project::test(fs.clone(), [], cx).await;
-
-    let buffer = cx.new(|_cx| {
-        Buffer::remote(
-            language::BufferId::new(1).unwrap(),
-            ReplicaId::new(1),
-            language::Capability::ReadWrite,
-            "fn main() {\n    println!(\"Hello\");\n}",
-        )
-    });
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_private_file(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            "LICENSE": BSD_0_TXT,
-            ".env": "SECRET_KEY=secret"
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/project/.env", cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_untitled_buffer(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    let project = Project::test(fs.clone(), [], cx).await;
-    let buffer = cx.new(|cx| Buffer::local("", cx));
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_when_closed_source(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/project"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/project/main.rs", cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_data_collection_status_changes_on_move(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/open_source_worktree"),
-        json!({ "LICENSE": BSD_0_TXT, "main.rs": "" }),
-    )
-    .await;
-    fs.insert_tree(path!("/closed_source_worktree"), json!({ "main.rs": "" }))
-        .await;
-
-    let project = Project::test(
-        fs.clone(),
-        [
-            path!("/open_source_worktree").as_ref(),
-            path!("/closed_source_worktree").as_ref(),
-        ],
-        cx,
-    )
-    .await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/open_source_worktree/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    let closed_source_file = project
-        .update(cx, |project, cx| {
-            let worktree2 = project
-                .worktree_for_root_name("closed_source_worktree", cx)
-                .unwrap();
-            worktree2.update(cx, |worktree2, cx| {
-                worktree2.load_file(rel_path("main.rs"), cx)
-            })
-        })
-        .await
-        .unwrap()
-        .file;
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.file_updated(closed_source_file, cx);
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-}
-
-#[gpui::test]
-async fn test_no_data_collection_for_events_in_uncollectable_buffers(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = project::FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/worktree1"),
-        json!({ "LICENSE": BSD_0_TXT, "main.rs": "", "other.rs": "" }),
-    )
-    .await;
-    fs.insert_tree(path!("/worktree2"), json!({ "private.rs": "" }))
-        .await;
-
-    let project = Project::test(
-        fs.clone(),
-        [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
-        cx,
-    )
-    .await;
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/worktree1/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-    let private_buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/worktree2/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let (ep_store, captured_request, _) = make_test_ep_store(&project, cx).await;
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.data_collection_choice = DataCollectionChoice::Enabled
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-
-    // this has a side effect of registering the buffer to watch for edits
-    run_edit_prediction(&private_buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-
-    private_buffer.update(cx, |private_buffer, cx| {
-        private_buffer.edit([(0..0, "An edit for the history!")], None, cx);
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        false
-    );
-
-    // make an edit that uses too many bytes, causing private_buffer edit to not be able to be
-    // included
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(
-                0..0,
-                " ".repeat(MAX_EVENT_TOKENS * cursor_excerpt::BYTES_PER_TOKEN_GUESS),
-            )],
-            None,
-            cx,
-        );
-    });
-
-    run_edit_prediction(&buffer, &project, &ep_store, cx).await;
-    assert_eq!(
-        captured_request.lock().clone().unwrap().can_collect_data,
-        true
-    );
-}
-
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -1992,7 +1687,7 @@ async fn apply_edit_prediction(
     let fs = project::FakeFs::new(cx.executor());
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
-    let (ep_store, _, response) = make_test_ep_store(&project, cx).await;
+    let (ep_store, response) = make_test_ep_store(&project, cx).await;
     *response.lock() = completion_response.to_string();
     let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, cx).await;
     buffer.update(cx, |buffer, cx| {
@@ -2021,28 +1716,13 @@ async fn run_edit_prediction(
 async fn make_test_ep_store(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
-) -> (
-    Entity<EditPredictionStore>,
-    Arc<Mutex<Option<PredictEditsBody>>>,
-    Arc<Mutex<String>>,
-) {
-    let default_response = indoc! {"
-            ```main.rs
-            <|start_of_file|>
-            <|editable_region_start|>
-            hello world
-            <|editable_region_end|>
-            ```"
-    };
-    let captured_request: Arc<Mutex<Option<PredictEditsBody>>> = Arc::new(Mutex::new(None));
-    let completion_response: Arc<Mutex<String>> =
-        Arc::new(Mutex::new(default_response.to_string()));
+) -> (Entity<EditPredictionStore>, Arc<Mutex<String>>) {
+    let default_response = "hello world\n".to_string();
+    let completion_response: Arc<Mutex<String>> = Arc::new(Mutex::new(default_response));
     let http_client = FakeHttpClient::create({
-        let captured_request = captured_request.clone();
         let completion_response = completion_response.clone();
         let mut next_request_id = 0;
         move |req| {
-            let captured_request = captured_request.clone();
             let completion_response = completion_response.clone();
             async move {
                 match (req.method(), req.uri().path()) {
@@ -2056,24 +1736,6 @@ async fn make_test_ep_store(
                             .into(),
                         )
                         .unwrap()),
-                    (&Method::POST, "/predict_edits/v2") => {
-                        let mut request_body = String::new();
-                        req.into_body().read_to_string(&mut request_body).await?;
-                        *captured_request.lock() =
-                            Some(serde_json::from_str(&request_body).unwrap());
-                        next_request_id += 1;
-                        Ok(http_client::Response::builder()
-                            .status(200)
-                            .body(
-                                serde_json::to_string(&PredictEditsResponse {
-                                    request_id: format!("request-{next_request_id}"),
-                                    output_excerpt: completion_response.lock().clone(),
-                                })
-                                .unwrap()
-                                .into(),
-                            )
-                            .unwrap())
-                    }
                     (&Method::POST, "/predict_edits/v3") => {
                         next_request_id += 1;
                         Ok(http_client::Response::builder()
@@ -2081,7 +1743,7 @@ async fn make_test_ep_store(
                             .body(
                                 serde_json::to_string(&PredictEditsV3Response {
                                     request_id: format!("request-{next_request_id}"),
-                                    output: "hello world".to_string(),
+                                    output: completion_response.lock().clone(),
                                 })
                                 .unwrap()
                                 .into(),
@@ -2120,7 +1782,7 @@ async fn make_test_ep_store(
         ep_store
     });
 
-    (ep_store, captured_request, completion_response)
+    (ep_store, completion_response)
 }
 
 fn to_completion_edits(
