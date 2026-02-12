@@ -2201,6 +2201,36 @@ impl AcpServerView {
         false
     }
 
+    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+
+        let multi_workspace = window.root::<MultiWorkspace>().flatten();
+
+        if multi_workspace
+            .as_ref()
+            .is_some_and(|mw| mw.read(cx).is_sidebar_open())
+        {
+            return true;
+        }
+
+        let workspace_is_foreground = multi_workspace
+            .and_then(|mw| {
+                let mw = mw.read(cx);
+                self.workspace.upgrade().map(|ws| mw.workspace() == &ws)
+            })
+            .unwrap_or(true);
+
+        if workspace_is_foreground {
+            if let Some(workspace) = self.workspace.upgrade() {
+                return AgentPanel::is_visible(&workspace, cx);
+            }
+        }
+
+        false
+    }
+
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
         if settings.play_sound_when_agent_done && !self.agent_is_visible(window, cx) {
@@ -2221,7 +2251,7 @@ impl AcpServerView {
 
         let settings = AgentSettings::get_global(cx);
 
-        let should_notify = !self.agent_is_visible(window, cx);
+        let should_notify = !self.agent_status_visible(window, cx);
 
         if !should_notify {
             return;
@@ -2325,7 +2355,7 @@ impl AcpServerView {
                     let pop_up_weak = pop_up.downgrade();
 
                     cx.observe_window_activation(window, move |this, window, cx| {
-                        if this.agent_is_visible(window, cx)
+                        if this.agent_status_visible(window, cx)
                             && let Some(pop_up) = pop_up_weak.upgrade()
                         {
                             pop_up.update(cx, |notification, cx| {
@@ -2334,6 +2364,30 @@ impl AcpServerView {
                         }
                     })
                 });
+
+            // If the user activates this workspace via the sidebar, dismiss the popup.
+            if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                let workspace_handle = self.workspace.clone();
+                let pop_up_weak = pop_up.downgrade();
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push(
+                        cx.observe(&multi_workspace, move |_this, multi_workspace, cx| {
+                            let is_active = workspace_handle
+                                .upgrade()
+                                .map(|ws| multi_workspace.read(cx).workspace() == &ws)
+                                .unwrap_or(false);
+                            if is_active {
+                                if let Some(pop_up) = pop_up_weak.upgrade() {
+                                    pop_up.update(cx, |notification, cx| {
+                                        notification.dismiss(cx);
+                                    });
+                                }
+                            }
+                        }),
+                    );
+            }
         }
     }
 
