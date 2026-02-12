@@ -238,7 +238,7 @@ mod tests {
                 cx,
             );
             thread.add_tool(crate::NowTool, None);
-            thread.add_tool(crate::ThinkingTool, None);
+            thread.add_tool(crate::WebSearchTool, None);
             thread
         })
     }
@@ -253,7 +253,7 @@ mod tests {
             let valid_tools = Some(vec!["now".to_string()]);
             assert!(SubagentTool::validate_allowed_tools(&valid_tools, &thread, cx).is_ok());
 
-            let both_tools = Some(vec!["now".to_string(), "thinking".to_string()]);
+            let both_tools = Some(vec!["now".to_string(), "web_search".to_string()]);
             assert!(SubagentTool::validate_allowed_tools(&both_tools, &thread, cx).is_ok());
         });
     }

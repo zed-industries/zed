@@ -1,3 +1,8 @@
+---
+title: AI Code Editor Documentation - Zed
+description: Docs for AI in Zed, the open-source AI code editor. Agentic coding, inline edits, AI code completion, and multi-model support.
+---
+
 # AI
 
 Zed integrates AI throughout the editor: agentic coding, inline transformations, edit prediction, and direct model conversations.
