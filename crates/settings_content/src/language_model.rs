@@ -63,6 +63,8 @@ pub struct AmazonBedrockSettingsContent {
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
     pub allow_global: Option<bool>,
+    /// Enable the 1M token extended context window beta for supported Anthropic models.
+    pub allow_extended_context: Option<bool>,
 }
 
 #[with_fallible_options]

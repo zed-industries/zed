@@ -12,7 +12,7 @@ use project::project_settings::ProjectSettings;
 use settings::Settings as _;
 use ui::{ButtonLike, CommonAnimationExt, ConfiguredApiCard, Vector, VectorName, prelude::*};
 use util::ResultExt as _;
-use workspace::{AppState, NotificationSource, Toast, Workspace, notifications::NotificationId};
+use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
@@ -35,9 +35,9 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
                 cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
             }
             Err(err) => cx.update(|window, cx| {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(&err, NotificationSource::Copilot, cx);
+                        workspace.show_error(&err, cx);
                     })
                 } else {
                     log::error!("{:?}", err);
@@ -82,17 +82,13 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
 fn copilot_toast(message: Option<&'static str>, window: &Window, cx: &mut App) {
     const NOTIFICATION_ID: NotificationId = NotificationId::unique::<CopilotStatusToast>();
 
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    let Some(workspace) = Workspace::for_window(window, cx) else {
         return;
     };
 
     cx.defer(move |cx| {
         workspace.update(cx, |workspace, cx| match message {
-            Some(message) => workspace.show_toast(
-                Toast::new(NOTIFICATION_ID, message),
-                NotificationSource::Copilot,
-                cx,
-            ),
+            Some(message) => workspace.show_toast(Toast::new(NOTIFICATION_ID, message), cx),
             None => workspace.dismiss_toast(&NOTIFICATION_ID, cx),
         });
     })

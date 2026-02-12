@@ -20,7 +20,7 @@ use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{DismissDecision, ModalView, Workspace};
+use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -41,7 +41,7 @@ pub fn toggle(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    let Some(workspace) = editor.read(cx).workspace() else {
         return;
     };
     if workspace.read(cx).active_modal::<OutlineView>(cx).is_some() {
@@ -453,7 +453,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[gpui::test]
     async fn test_outline_view_row_highlights(cx: &mut TestAppContext) {
@@ -481,7 +481,9 @@ mod tests {
         });
 
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -736,8 +738,9 @@ mod tests {
             },
         );
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = cx.read(|cx| multi_workspace.read(cx).workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -785,7 +788,7 @@ mod tests {
         let lsp_names = outline_names(&outline_view, cx);
         assert_eq!(
             lsp_names,
-            vec!["Foo", "bar", "lsp_only_field"],
+            vec!["struct Foo", "bar", "lsp_only_field"],
             "Step 2: LSP-provided symbols should be displayed"
         );
         assert_eq!(

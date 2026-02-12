@@ -414,9 +414,17 @@ impl NotebookEditor {
         });
 
         let kernel_task = match spec {
-            KernelSpecification::Jupyter(local_spec)
-            | KernelSpecification::PythonEnv(local_spec) => NativeRunningKernel::new(
+            KernelSpecification::Jupyter(local_spec) => NativeRunningKernel::new(
                 local_spec,
+                entity_id,
+                working_directory,
+                fs,
+                view,
+                window,
+                cx,
+            ),
+            KernelSpecification::PythonEnv(env_spec) => NativeRunningKernel::new(
+                env_spec.as_local_spec(),
                 entity_id,
                 working_directory,
                 fs,

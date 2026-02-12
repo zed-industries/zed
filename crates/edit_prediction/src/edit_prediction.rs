@@ -50,9 +50,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
-use workspace::notifications::{
-    ErrorMessagePrompt, NotificationId, NotificationSource, show_app_notification,
-};
+use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 pub mod cursor_excerpt;
 pub mod example_spec;
@@ -1993,7 +1991,6 @@ impl EditPredictionStore {
                         let error_message: SharedString = err.to_string().into();
                         show_app_notification(
                             NotificationId::unique::<ZedUpdateRequiredError>(),
-                            NotificationSource::Copilot,
                             cx,
                             move |cx| {
                                 cx.new(|cx| {

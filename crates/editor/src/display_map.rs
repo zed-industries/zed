@@ -105,6 +105,7 @@ use multi_buffer::{
 use project::project_settings::DiagnosticSeverity;
 use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
+use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent, Patch, ToOffset as _};
 use ui::{SharedString, px};
@@ -1692,6 +1693,38 @@ impl DisplaySnapshot {
         let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
+    }
+
+    /// Converts a buffer offset range into one or more `DisplayPoint` ranges
+    /// that cover only actual buffer text, excluding any inlay hint text that
+    /// falls within the range.
+    pub fn isomorphic_display_point_ranges_for_buffer_range(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> SmallVec<[Range<DisplayPoint>; 1]> {
+        let inlay_snapshot = self.inlay_snapshot();
+        inlay_snapshot
+            .buffer_offset_to_inlay_ranges(range)
+            .map(|inlay_range| {
+                let inlay_point_to_display_point = |inlay_point: InlayPoint, bias: Bias| {
+                    let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
+                    let tab_point = self.tab_snapshot().fold_point_to_tab_point(fold_point);
+                    let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
+                    let block_point = self.block_snapshot.to_block_point(wrap_point);
+                    DisplayPoint(block_point)
+                };
+
+                let start = inlay_point_to_display_point(
+                    inlay_snapshot.to_point(inlay_range.start),
+                    Bias::Left,
+                );
+                let end = inlay_point_to_display_point(
+                    inlay_snapshot.to_point(inlay_range.end),
+                    Bias::Left,
+                );
+                start..end
+            })
+            .collect()
     }
 
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
@@ -3955,5 +3988,89 @@ pub mod tests {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);
         });
+    }
+
+    #[gpui::test]
+    fn test_isomorphic_display_point_ranges_for_buffer_range(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local("let x = 5;\n", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let font_size = px(14.0);
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        // Without inlays, a buffer range maps to a single display range.
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(4)..MultiBufferOffset(9),
+        );
+        assert_eq!(ranges.len(), 1);
+        // "x = 5" is columns 4..9 with no inlays shifting anything.
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 4));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 9));
+
+        // Insert a 4-char inlay hint ": i32" at buffer offset 5 (after "x").
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                vec![Inlay::mock_hint(
+                    0,
+                    buffer_snapshot.anchor_after(MultiBufferOffset(5)),
+                    ": i32",
+                )],
+                cx,
+            );
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "let x: i32 = 5;\n");
+
+        // A buffer range [4..9] ("x = 5") now spans across the inlay.
+        // It should be split into two display ranges that skip the inlay text.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(4)..MultiBufferOffset(9),
+        );
+        assert_eq!(
+            ranges.len(),
+            2,
+            "expected the range to be split around the inlay, got: {:?}",
+            ranges,
+        );
+        // First sub-range: buffer [4, 5) → "x" at display columns 4..5
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 4));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
+        // Second sub-range: buffer [5, 9) → " = 5" at display columns 10..14
+        // (shifted right by the 5-char ": i32" inlay)
+        assert_eq!(ranges[1].start, DisplayPoint::new(DisplayRow(0), 10));
+        assert_eq!(ranges[1].end, DisplayPoint::new(DisplayRow(0), 14));
+
+        // A range entirely before the inlay is not split.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(0)..MultiBufferOffset(5),
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 0));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 5));
+
+        // A range entirely after the inlay is not split.
+        let ranges = snapshot.isomorphic_display_point_ranges_for_buffer_range(
+            MultiBufferOffset(5)..MultiBufferOffset(9),
+        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
+        assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
     }
 }

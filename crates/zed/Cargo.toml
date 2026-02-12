@@ -49,6 +49,7 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
+    "sidebar/test-support",
     "title_bar/test-support",
 ]
 
@@ -187,6 +188,7 @@ settings.workspace = true
 settings_profile_selector.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
+sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -249,9 +251,9 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
-title_bar = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }

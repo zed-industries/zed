@@ -638,6 +638,20 @@ impl Model {
         }
     }
 
+    pub fn supports_extended_context(&self) -> bool {
+        matches!(
+            self,
+            Model::ClaudeSonnet4
+                | Model::ClaudeSonnet4Thinking
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeOpus4_5
+                | Model::ClaudeOpus4_5Thinking
+                | Model::ClaudeOpus4_6
+                | Model::ClaudeOpus4_6Thinking
+        )
+    }
+
     pub fn cross_region_inference_id(
         &self,
         region: &str,

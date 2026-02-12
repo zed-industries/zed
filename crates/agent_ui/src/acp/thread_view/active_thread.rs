@@ -1441,7 +1441,6 @@ impl AcpThreadView {
                                     ));
                                 },
                             ),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });
@@ -1515,7 +1514,6 @@ impl AcpThreadView {
                                 "Thread synced with latest version",
                             )
                             .autohide(),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });
@@ -2308,6 +2306,8 @@ impl AcpThreadView {
         let title = self.thread.read(cx).title();
         let server_view = self.server_view.clone();
 
+        let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
+
         Some(
             h_flex()
                 .h(Tab::container_height(cx))
@@ -2316,9 +2316,20 @@ impl AcpThreadView {
                 .w_full()
                 .justify_between()
                 .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
+                .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background.opacity(0.2))
-                .child(Label::new(title).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .child(
+                            Icon::new(IconName::ForwardArrowUp)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(title).color(Color::Muted).ml_2().mr_1())
+                        .when(is_done, |this| {
+                            this.child(Icon::new(IconName::Check).color(Color::Success))
+                        }),
+                )
                 .child(
                     IconButton::new("minimize_subagent", IconName::Minimize)
                         .icon_size(IconSize::Small)
@@ -2771,18 +2782,25 @@ impl AcpThreadView {
 
         let thinking = thread.thinking_enabled();
 
-        let (tooltip_label, icon) = if thinking {
-            ("Disable Thinking Mode", IconName::ThinkingMode)
+        let (tooltip_label, icon, color) = if thinking {
+            (
+                "Disable Thinking Mode",
+                IconName::ThinkingMode,
+                Color::Muted,
+            )
         } else {
-            ("Enable Thinking Mode", IconName::ToolThink)
+            (
+                "Enable Thinking Mode",
+                IconName::ThinkingModeOff,
+                Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
+            )
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .toggle_state(thinking)
+            .icon_color(color)
             .tooltip(move |_, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
             })
@@ -3611,6 +3629,8 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message
             && editing_index < entry_ix
         {
+            let is_subagent = self.is_subagent();
+
             let backdrop = div()
                 .id(("backdrop", entry_ix))
                 .size_full()
@@ -3624,7 +3644,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .child(primary)
-                .child(backdrop)
+                .when(!is_subagent, |this| this.child(backdrop))
                 .into_any_element()
         } else {
             primary
@@ -5871,7 +5891,7 @@ impl AcpThreadView {
                 if is_canceled_or_failed {
                     "Subagent Canceled"
                 } else {
-                    "Spawning Subagent…"
+                    "Creating Subagent…"
                 }
                 .into()
             });

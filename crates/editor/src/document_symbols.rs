@@ -476,7 +476,7 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_editor(|editor, _window, _cx| {
-            assert_eq!(outline_symbol_names(editor), vec!["main"]);
+            assert_eq!(outline_symbol_names(editor), vec!["fn main"]);
         });
     }
 
@@ -533,7 +533,7 @@ mod tests {
         cx.update_editor(|editor, _window, _cx| {
             assert_eq!(
                 outline_symbol_names(editor),
-                vec!["Foo", "bar"],
+                vec!["struct Foo", "bar"],
                 "cursor is inside Foo > bar, so we expect the containing chain"
             );
         });
@@ -762,7 +762,7 @@ mod tests {
         cx.update_editor(|editor, _window, _cx| {
             assert_eq!(
                 outline_symbol_names(editor),
-                vec!["MyModule", "my_function"]
+                vec!["mod MyModule", "fn my_function"]
             );
         });
     }

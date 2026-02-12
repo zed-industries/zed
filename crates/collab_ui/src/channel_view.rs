@@ -22,7 +22,7 @@ use std::{
 };
 use ui::prelude::*;
 use util::ResultExt;
-use workspace::{CollaboratorId, NotificationSource, item::TabContentParams};
+use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent},
@@ -332,7 +332,6 @@ impl ChannelView {
                         NotificationId::unique::<CopyLinkForPositionToast>(),
                         "Link copied to clipboard",
                     ),
-                    NotificationSource::Collab,
                     cx,
                 );
             })

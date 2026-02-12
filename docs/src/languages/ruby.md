@@ -162,6 +162,8 @@ You can pass Ruby LSP configuration to `initialization_options`, e.g.
 }
 ```
 
+For full configuration options, see the [Ruby LSP website](https://shopify.github.io/ruby-lsp/editors.html).
+
 LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
 
 ```json [settings]
