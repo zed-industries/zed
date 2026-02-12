@@ -5504,25 +5504,31 @@ impl EditorElement {
             })
             .filter(|(_, status)| status.is_modified())
             .flat_map(|(word_diffs, _)| word_diffs)
-            .filter_map(|word_diff| {
-                let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
-                let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
-                let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+            .flat_map(|word_diff| {
+                let display_ranges = snapshot
+                    .display_snapshot
+                    .isomorphic_display_point_ranges_for_buffer_range(
+                        word_diff.start..word_diff.end,
+                    );
 
-                row_infos
-                    .get(start_row_offset)
-                    .and_then(|row_info| row_info.diff_status)
-                    .and_then(|diff_status| {
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => colors.version_control_word_added,
-                            DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                return None;
-                            }
-                        };
-                        Some((start_point..end_point, background_color))
-                    })
+                display_ranges.into_iter().filter_map(|range| {
+                    let start_row_offset = range.start.row().0.saturating_sub(start_row.0) as usize;
+
+                    let diff_status = row_infos
+                        .get(start_row_offset)
+                        .and_then(|row_info| row_info.diff_status)?;
+
+                    let background_color = match diff_status.kind {
+                        DiffHunkStatusKind::Added => colors.version_control_word_added,
+                        DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                        DiffHunkStatusKind::Modified => {
+                            debug_panic!("modified diff status for row info");
+                            return None;
+                        }
+                    };
+
+                    Some((range, background_color))
+                })
             });
 
         highlighted_ranges.extend(word_highlights);
