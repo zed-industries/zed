@@ -1,3 +1,8 @@
+---
+title: AI Agent Settings - Zed
+description: Customize Zed's AI agent: default models, temperature, tool approval, auto-run commands, notifications, and panel options.
+---
+
 # Agent Settings
 
 Settings for Zed's Agent Panel, including model selection, UI preferences, and tool permissions.

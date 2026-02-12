@@ -630,6 +630,7 @@ impl AcpThreadView {
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
+                let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
@@ -638,6 +639,7 @@ impl AcpThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             agent_name,
+                            connection,
                             window,
                             cx,
                         );
@@ -2767,18 +2769,25 @@ impl AcpThreadView {
 
         let thinking = thread.thinking_enabled();
 
-        let (tooltip_label, icon) = if thinking {
-            ("Disable Thinking Mode", IconName::ThinkingMode)
+        let (tooltip_label, icon, color) = if thinking {
+            (
+                "Disable Thinking Mode",
+                IconName::ThinkingMode,
+                Color::Muted,
+            )
         } else {
-            ("Enable Thinking Mode", IconName::ToolThink)
+            (
+                "Enable Thinking Mode",
+                IconName::ThinkingModeOff,
+                Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
+            )
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .toggle_state(thinking)
+            .icon_color(color)
             .tooltip(move |_, cx| {
                 Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
             })
@@ -6716,11 +6725,13 @@ impl AcpThreadView {
                             editor.set_message(message, window, cx);
                         });
                     }
+                    let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
                         AcpServerView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,
+                            connection,
                             window,
                             cx,
                         );
