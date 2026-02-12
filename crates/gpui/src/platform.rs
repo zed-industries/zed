@@ -519,6 +519,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
+    fn request_user_attention(&self, is_critical: bool);
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn background_appearance(&self) -> WindowBackgroundAppearance;
