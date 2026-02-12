@@ -488,11 +488,11 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
-/// The user's intent behind a given completion confirmation
+/// The user's intent behind a given completion confirmation.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
-    /// The user intends to 'commit' this result, if possible
-    /// completion confirmations should run side effects.
+    /// The user intends to 'commit' this result, if possible.
+    /// Completion confirmations should run side effects.
     ///
     /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
     Complete,
@@ -500,9 +500,9 @@ pub enum CompletionIntent {
     CompleteWithInsert,
     /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
     CompleteWithReplace,
-    /// The user intends to continue 'composing' this completion
-    /// completion confirmations should not run side effects and
-    /// let the user continue composing their action
+    /// The user intends to continue 'composing' this completion.
+    /// Completion confirmations should not run side effects and
+    /// let the user continue composing their action.
     Compose,
 }
 
@@ -540,7 +540,7 @@ pub struct Completion {
     /// Whether to adjust indentation (the default) or not.
     pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.
-    /// Returns, whether new completions should be retriggered after the current one.
+    /// Returns whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
@@ -668,7 +668,7 @@ impl std::fmt::Debug for Completion {
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
     pub display_options: CompletionDisplayOptions,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -688,7 +688,7 @@ impl CompletionDisplayOptions {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CoreCompletionResponse {
     pub completions: Vec<CoreCompletion>,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -2325,12 +2325,14 @@ impl Project {
     pub fn visibility_for_paths(
         &self,
         paths: &[PathBuf],
+        metadatas: &[Metadata],
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
         paths
             .iter()
-            .map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
+            .zip(metadatas)
+            .map(|(path, metadata)| self.visibility_for_path(path, metadata, exclude_sub_dirs, cx))
             .max()
             .flatten()
     }
@@ -2338,26 +2340,17 @@ impl Project {
     pub fn visibility_for_path(
         &self,
         path: &Path,
+        metadata: &Metadata,
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
         let path = SanitizedPath::new(path).as_path();
-        let path_style = self.path_style(cx);
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
-                let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
-                let is_dir = relative_path
-                    .as_ref()
-                    .and_then(|p| worktree.entry_for_path(p))
-                    .is_some_and(|e| e.is_dir());
-                // Don't exclude the worktree root itself, only actual subdirectories
-                let is_subdir = relative_path
-                    .as_ref()
-                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
-                let contains =
-                    relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
+                let abs_path = worktree.as_local()?.abs_path();
+                let contains = path == abs_path.as_ref()
+                    || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
                 contains.then(|| worktree.is_visible())
             })
             .max()

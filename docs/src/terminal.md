@@ -1,3 +1,8 @@
+---
+title: Built-in Terminal - Zed
+description: Zed's integrated terminal with multiple instances, custom shells, and deep editor integration.
+---
+
 # Terminal
 
 Zed includes a built-in terminal emulator that supports multiple terminal instances, custom shells, and deep integration with the editor.
