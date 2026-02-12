@@ -34,6 +34,7 @@ pub struct StatusBar {
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: Entity<Pane>,
     _observe_active_pane: Subscription,
+    workspace_sidebar_open: bool,
 }
 
 impl Render for StatusBar {
@@ -51,9 +52,10 @@ impl Render for StatusBar {
                     .when(!(tiling.bottom || tiling.right), |el| {
                         el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING)
                     })
-                    .when(!(tiling.bottom || tiling.left), |el| {
-                        el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
+                    .when(
+                        !(tiling.bottom || tiling.left) && !self.workspace_sidebar_open,
+                        |el| el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
                     // This border is to avoid a transparent gap in the rounded corners
                     .mb(px(-1.))
                     .border_b(px(1.0))
@@ -89,9 +91,15 @@ impl StatusBar {
             _observe_active_pane: cx.observe_in(active_pane, window, |this, _, window, cx| {
                 this.update_active_pane_item(window, cx)
             }),
+            workspace_sidebar_open: false,
         };
         this.update_active_pane_item(window, cx);
         this
+    }
+
+    pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.workspace_sidebar_open = open;
+        cx.notify();
     }
 
     pub fn add_left_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)

@@ -54,6 +54,9 @@ pub enum MentionUri {
     Fetch {
         url: Url,
     },
+    TerminalSelection {
+        line_count: u32,
+    },
 }
 
 impl MentionUri {
@@ -199,6 +202,12 @@ impl MentionUri {
                         abs_path: Some(path.into()),
                         line_range,
                     })
+                } else if path.starts_with("/agent/terminal-selection") {
+                    let line_count = single_query_param(&url, "lines")?
+                        .unwrap_or_else(|| "0".to_string())
+                        .parse::<u32>()
+                        .unwrap_or(0);
+                    Ok(Self::TerminalSelection { line_count })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -221,6 +230,13 @@ impl MentionUri {
             MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
+            MentionUri::TerminalSelection { line_count } => {
+                if *line_count == 1 {
+                    "Terminal (1 line)".to_string()
+                } else {
+                    format!("Terminal ({} lines)", line_count)
+                }
+            }
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
@@ -243,6 +259,7 @@ impl MentionUri {
             MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
+            MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
         }
@@ -337,6 +354,12 @@ impl MentionUri {
                 url
             }
             MentionUri::Fetch { url } => url.clone(),
+            MentionUri::TerminalSelection { line_count } => {
+                let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
+                url.query_pairs_mut()
+                    .append_pair("lines", &line_count.to_string());
+                url
+            }
         }
     }
 }
@@ -640,5 +663,24 @@ mod tests {
             }
             _ => panic!("Expected Selection variant"),
         }
+    }
+
+    #[test]
+    fn test_parse_terminal_selection_uri() {
+        let terminal_uri = "zed:///agent/terminal-selection?lines=42";
+        let parsed = MentionUri::parse(terminal_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::TerminalSelection { line_count } => {
+                assert_eq!(*line_count, 42);
+            }
+            _ => panic!("Expected TerminalSelection variant"),
+        }
+        assert_eq!(parsed.to_uri().to_string(), terminal_uri);
+        assert_eq!(parsed.name(), "Terminal (42 lines)");
+
+        // Test single line
+        let single_line_uri = "zed:///agent/terminal-selection?lines=1";
+        let parsed_single = MentionUri::parse(single_line_uri, PathStyle::local()).unwrap();
+        assert_eq!(parsed_single.name(), "Terminal (1 line)");
     }
 }

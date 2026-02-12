@@ -1,3 +1,8 @@
+---
+title: Helix Mode - Zed
+description: Helix-style keybindings and modal editing in Zed. Selection-first editing built on top of Vim mode.
+---
+
 # Helix Mode
 
 _Work in progress! Not all Helix keybindings are implemented yet._

@@ -22,6 +22,7 @@ test-support = [
 anyhow.workspace = true
 collections.workspace = true
 db.workspace = true
+feature_flags.workspace = true
 git.workspace = true
 git_ui.workspace = true
 gpui.workspace = true

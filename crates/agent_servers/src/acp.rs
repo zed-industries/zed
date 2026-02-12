@@ -148,6 +148,10 @@ impl AgentSessionList for AcpSessionList {
         Some(self.updates_rx.clone())
     }
 
+    fn notify_refresh(&self) {
+        self.notify_update();
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
@@ -361,7 +365,7 @@ impl AgentConnection for AcpConnection {
         self.telemetry_id.clone()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -377,9 +381,7 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(map_acp_error)?;
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) = config_state(response.modes, response.models, response.config_options);
 
             if let Some(default_mode) = self.default_mode.clone() {
                 if let Some(modes) = modes.as_ref() {
@@ -556,6 +558,7 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     self.server_name.clone(),
                     self.clone(),
                     project,
@@ -577,10 +580,6 @@ impl AgentConnection for AcpConnection {
                     config_options: config_options.map(ConfigOptions::new),
                 },
             );
-
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
 
             Ok(thread)
         })
@@ -617,6 +616,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,
@@ -638,7 +638,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let response = match self
                 .connection
                 .load_session(
@@ -654,17 +654,12 @@ impl AgentConnection for AcpConnection {
                 }
             };
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
-            }
-
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
             }
 
             Ok(thread)
@@ -695,6 +690,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,
@@ -716,7 +712,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let response = match self
                 .connection
                 .resume_session(
@@ -732,17 +728,12 @@ impl AgentConnection for AcpConnection {
                 }
             };
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
-            }
-
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
             }
 
             Ok(thread)
@@ -971,7 +962,6 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 }
 
 fn config_state(
-    cx: &App,
     modes: Option<acp::SessionModeState>,
     models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
@@ -980,9 +970,7 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if cx.has_flag::<AcpBetaFeatureFlag>()
-        && let Some(opts) = config_options
-    {
+    if let Some(opts) = config_options {
         return (None, None, Some(Rc::new(RefCell::new(opts))));
     }
 
@@ -1159,14 +1147,12 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let respect_always_allow_setting;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            respect_always_allow_setting = session.session_modes.is_none();
             thread = session.thread.clone();
         }
 
@@ -1176,7 +1162,6 @@ impl acp::Client for ClientDelegate {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
                 acp_thread::PermissionOptions::Flat(arguments.options),
-                respect_always_allow_setting,
                 cx,
             )
         })??;

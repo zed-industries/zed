@@ -48,6 +48,9 @@ use markdown::MarkdownView;
 mod table;
 use table::TableView;
 
+mod json;
+use json::JsonView;
+
 pub mod plain;
 use plain::TerminalOutput;
 
@@ -62,6 +65,7 @@ use settings::Settings;
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
         MimeType::DataTable(_) => 6,
+        MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
@@ -124,6 +128,10 @@ pub enum Output {
         content: Entity<MarkdownView>,
         display_id: Option<String>,
     },
+    Json {
+        content: Entity<JsonView>,
+        display_id: Option<String>,
+    },
     ClearOutputWaitMarker,
 }
 
@@ -158,8 +166,12 @@ impl Output {
                     traceback: traceback_lines,
                 }))
             }
-            Output::Message(_) | Output::ClearOutputWaitMarker => None,
-            Output::Image { .. } | Output::Table { .. } | Output::Markdown { .. } => None,
+            Output::Image { .. }
+            | Output::Markdown { .. }
+            | Output::Table { .. }
+            | Output::Json { .. } => None,
+            Output::Message(_) => None,
+            Output::ClearOutputWaitMarker => None,
         }
     }
 }
@@ -243,6 +255,11 @@ impl Output {
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
     ) -> impl IntoElement + use<> {
+        let max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -250,16 +267,26 @@ impl Output {
             Self::Image { content, .. } => Some(content.clone().into_any_element()),
             Self::Message(message) => Some(div().child(message.clone()).into_any_element()),
             Self::Table { content, .. } => Some(content.clone().into_any_element()),
+            Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
         };
 
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+
         h_flex()
             .id("output-content")
             .w_full()
+            .when_some(max_width, |this, max_w| this.max_w(max_w))
             .overflow_x_scroll()
             .items_start()
-            .child(div().flex_1().children(content))
+            .child(
+                div()
+                    .when(!needs_horizontal_scroll, |el| {
+                        el.flex_1().w_full().overflow_x_hidden()
+                    })
+                    .children(content),
+            )
             .children(match self {
                 Self::Plain { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
@@ -271,6 +298,9 @@ impl Output {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Image { content, .. } => {
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
+                }
+                Self::Json { content, .. } => {
                     Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::ErrorOutput(err) => Some(
@@ -347,6 +377,7 @@ impl Output {
             Output::Message(_) => None,
             Output::Table { display_id, .. } => display_id.clone(),
             Output::Markdown { display_id, .. } => display_id.clone(),
+            Output::Json { display_id, .. } => display_id.clone(),
             Output::ClearOutputWaitMarker => None,
         }
     }
@@ -358,6 +389,13 @@ impl Output {
         cx: &mut App,
     ) -> Self {
         match data.richest(rank_mime_type) {
+            Some(MimeType::Json(json_value)) => match JsonView::from_value(json_value.clone()) {
+                Ok(json_view) => Output::Json {
+                    content: cx.new(|_| json_view),
+                    display_id,
+                },
+                Err(_) => Output::Message("Failed to parse JSON".to_string()),
+            },
             Some(MimeType::Plain(text)) => Output::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,
@@ -608,6 +646,19 @@ impl ExecutionView {
     }
 }
 
+impl ExecutionView {
+    #[cfg(test)]
+    fn output_as_stream_text(&self, cx: &App) -> Option<String> {
+        self.outputs.iter().find_map(|output| {
+            if let Output::Stream { content } = output {
+                Some(content.read(cx).full_text())
+            } else {
+                None
+            }
+        })
+    }
+}
+
 impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match &self.status {
@@ -668,5 +719,312 @@ impl Render for ExecutionView {
                 _ => vec![],
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use runtimelib::{
+        ClearOutput, ErrorOutput, ExecutionState, JupyterMessageContent, MimeType, Status, Stdio,
+        StreamContent,
+    };
+    use settings::SettingsStore;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_rank_mime_type_ordering() {
+        let data_table = MimeType::DataTable(Box::default());
+        let json = MimeType::Json(serde_json::json!({}));
+        let png = MimeType::Png(String::new());
+        let jpeg = MimeType::Jpeg(String::new());
+        let markdown = MimeType::Markdown(String::new());
+        let plain = MimeType::Plain(String::new());
+
+        assert_eq!(rank_mime_type(&data_table), 6);
+        assert_eq!(rank_mime_type(&json), 5);
+        assert_eq!(rank_mime_type(&png), 4);
+        assert_eq!(rank_mime_type(&jpeg), 3);
+        assert_eq!(rank_mime_type(&markdown), 2);
+        assert_eq!(rank_mime_type(&plain), 1);
+
+        assert!(rank_mime_type(&data_table) > rank_mime_type(&json));
+        assert!(rank_mime_type(&json) > rank_mime_type(&png));
+        assert!(rank_mime_type(&png) > rank_mime_type(&jpeg));
+        assert!(rank_mime_type(&jpeg) > rank_mime_type(&markdown));
+        assert!(rank_mime_type(&markdown) > rank_mime_type(&plain));
+    }
+
+    #[test]
+    fn test_rank_mime_type_unsupported_returns_zero() {
+        let html = MimeType::Html(String::new());
+        let svg = MimeType::Svg(String::new());
+        let latex = MimeType::Latex(String::new());
+
+        assert_eq!(rank_mime_type(&html), 0);
+        assert_eq!(rank_mime_type(&svg), 0);
+        assert_eq!(rank_mime_type(&latex), 0);
+    }
+
+    async fn init_test(
+        cx: &mut TestAppContext,
+    ) -> (gpui::VisualTestContext, WeakEntity<workspace::Workspace>) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+        let fs = project::FakeFs::new(cx.background_executor.clone());
+        let project = project::Project::test(fs, [] as [&Path; 0], cx).await;
+        let window =
+            cx.add_window(|window, cx| workspace::MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let weak_workspace = workspace.downgrade();
+        let visual_cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        (visual_cx, weak_workspace)
+    }
+
+    fn create_execution_view(
+        cx: &mut gpui::VisualTestContext,
+        weak_workspace: WeakEntity<workspace::Workspace>,
+    ) -> Entity<ExecutionView> {
+        cx.update(|_window, cx| {
+            cx.new(|cx| ExecutionView::new(ExecutionStatus::Queued, weak_workspace, cx))
+        })
+    }
+
+    #[gpui::test]
+    async fn test_push_message_stream_content(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "hello world\n".to_string(),
+                });
+                view.push_message(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert_eq!(view.outputs.len(), 1);
+            assert!(matches!(view.outputs[0], Output::Stream { .. }));
+            let text = view.output_as_stream_text(cx);
+            assert!(text.is_some());
+            assert!(text.as_ref().is_some_and(|t| t.contains("hello world")));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_stream_appends(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message1 = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "first ".to_string(),
+                });
+                let message2 = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "second".to_string(),
+                });
+                view.push_message(&message1, window, cx);
+                view.push_message(&message2, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert_eq!(
+                view.outputs.len(),
+                1,
+                "consecutive streams should merge into one output"
+            );
+            let text = view.output_as_stream_text(cx);
+            assert!(text.as_ref().is_some_and(|t| t.contains("first ")));
+            assert!(text.as_ref().is_some_and(|t| t.contains("second")));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_error_output(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let message = JupyterMessageContent::ErrorOutput(ErrorOutput {
+                    ename: "NameError".to_string(),
+                    evalue: "name 'x' is not defined".to_string(),
+                    traceback: vec![
+                        "Traceback (most recent call last):".to_string(),
+                        "NameError: name 'x' is not defined".to_string(),
+                    ],
+                });
+                view.push_message(&message, window, cx);
+            });
+        });
+
+        cx.update(|_, cx| {
+            let view = execution_view.read(cx);
+            assert_eq!(view.outputs.len(), 1);
+            match &view.outputs[0] {
+                Output::ErrorOutput(error_view) => {
+                    assert_eq!(error_view.ename, "NameError");
+                    assert_eq!(error_view.evalue, "name 'x' is not defined");
+                }
+                other => panic!(
+                    "expected ErrorOutput, got {:?}",
+                    std::mem::discriminant(other)
+                ),
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_clear_output_immediate(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let stream = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "some output\n".to_string(),
+                });
+                view.push_message(&stream, window, cx);
+                assert_eq!(view.outputs.len(), 1);
+
+                let clear = JupyterMessageContent::ClearOutput(ClearOutput { wait: false });
+                view.push_message(&clear, window, cx);
+                assert_eq!(
+                    view.outputs.len(),
+                    0,
+                    "immediate clear should remove all outputs"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_clear_output_deferred(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let stream = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "old output\n".to_string(),
+                });
+                view.push_message(&stream, window, cx);
+                assert_eq!(view.outputs.len(), 1);
+
+                let clear = JupyterMessageContent::ClearOutput(ClearOutput { wait: true });
+                view.push_message(&clear, window, cx);
+                assert_eq!(view.outputs.len(), 2, "deferred clear adds a wait marker");
+                assert!(matches!(view.outputs[1], Output::ClearOutputWaitMarker));
+
+                let new_stream = JupyterMessageContent::StreamContent(StreamContent {
+                    name: Stdio::Stdout,
+                    text: "new output\n".to_string(),
+                });
+                view.push_message(&new_stream, window, cx);
+                assert_eq!(
+                    view.outputs.len(),
+                    1,
+                    "next output after wait marker should clear previous outputs"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_status_transitions(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                let busy = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Busy,
+                });
+                view.push_message(&busy, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::Executing));
+
+                let idle = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Idle,
+                });
+                view.push_message(&idle, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::Finished));
+
+                let starting = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Starting,
+                });
+                view.push_message(&starting, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::ConnectingToKernel));
+
+                let dead = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Dead,
+                });
+                view.push_message(&dead, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::Shutdown));
+
+                let restarting = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Restarting,
+                });
+                view.push_message(&restarting, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::Restarting));
+
+                let terminating = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Terminating,
+                });
+                view.push_message(&terminating, window, cx);
+                assert!(matches!(view.status, ExecutionStatus::ShuttingDown));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_push_message_status_idle_emits_finished_empty(cx: &mut TestAppContext) {
+        let (mut cx, workspace) = init_test(cx).await;
+        let execution_view = create_execution_view(&mut cx, workspace);
+
+        let emitted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let emitted_clone = emitted.clone();
+
+        cx.update(|_, cx| {
+            cx.subscribe(
+                &execution_view,
+                move |_, _event: &ExecutionViewFinishedEmpty, _cx| {
+                    emitted_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+            .detach();
+        });
+
+        cx.update(|window, cx| {
+            execution_view.update(cx, |view, cx| {
+                assert!(view.outputs.is_empty());
+                let idle = JupyterMessageContent::Status(Status {
+                    execution_state: ExecutionState::Idle,
+                });
+                view.push_message(&idle, window, cx);
+            });
+        });
+
+        assert!(
+            emitted.load(std::sync::atomic::Ordering::SeqCst),
+            "should emit ExecutionViewFinishedEmpty when idle with no outputs"
+        );
     }
 }

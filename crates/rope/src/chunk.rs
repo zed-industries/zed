@@ -501,7 +501,7 @@ impl<'a> ChunkSlice<'a> {
                     self.text
                 );
             }
-            return line.len();
+            return row_offset_range.end;
         }
 
         let mut offset = row_offset_range.start;
@@ -1175,5 +1175,20 @@ mod tests {
 
         assert_eq!((max_row, max_chars as u32), (longest_row, longest_chars));
         assert_eq!(chunk.tabs().collect::<Vec<_>>(), expected_tab_positions);
+    }
+
+    #[gpui::test]
+    fn test_point_utf16_to_offset_clips_to_correct_absolute_offset() {
+        let text = "abc\nde";
+        let chunk = Chunk::new(text);
+        let slice = chunk.as_slice();
+
+        // Clipping on row 0 (row_offset_range.start == 0, so relative == absolute)
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(0, 99), true), 3,);
+
+        // Clipping on row 1 — this is the case that was buggy.
+        // Row 1 starts at byte offset 4 ("de" is bytes 4..6), so the
+        // clipped result must be 6, not 2.
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(1, 99), true), 6,);
     }
 }
