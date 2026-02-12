@@ -17,10 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{
-    Divider, DividerColor, KeyBinding, ListItem, ListSubHeader, Tab, ThreadItem, Tooltip,
-    prelude::*,
-};
+use ui::{Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
