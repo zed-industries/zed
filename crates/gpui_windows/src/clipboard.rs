@@ -79,6 +79,7 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
                 ClipboardEntry::String(string) => write_string(string)?,
                 ClipboardEntry::Image(image) => write_image(image)?,
                 ClipboardEntry::ExternalPaths(_) => {}
+                ClipboardEntry::Urls(_) => {}
             }
         }
         Ok(())

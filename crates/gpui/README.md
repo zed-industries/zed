@@ -39,6 +39,36 @@ On macOS, GPUI uses Metal for rendering. In order to use Metal, you need to do t
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
   ```
 
+#### Windows ARM64
+
+On Windows ARM64, GPUI requires specific build environment setup:
+
+- Visual Studio 2022 with C++ workload, ARM64 tools, ClangCL component
+- LLVM with clang-cl in PATH
+- CMake 4.0+
+- Ninja
+- Rust toolchain (aarch64-pc-windows-msvc)
+
+Build script:
+
+```batch
+@echo off
+call "C:\Program Files\Microsoft Visual Studio\2022\Preview\VC\Auxiliary\Build\vcvarsall.bat" arm64
+set CMAKE_GENERATOR=Ninja
+set CC=clang-cl
+set CXX=clang-cl
+set AWS_LC_SYS_NO_ASM=1
+set RUSTFLAGS=-C link-arg=/NODEFAULTLIB:libcmt -C link-arg=/DEFAULTLIB:msvcrtd
+cargo run -p gpui --example external_drop
+```
+
+Environment variables explained:
+- `vcvarsall.bat arm64` - Sets Visual Studio build environment
+- `CMAKE_GENERATOR=Ninja` - Uses Ninja instead of Visual Studio generator
+- `CC=clang-cl`, `CXX=clang-cl` - Uses clang-cl compiler
+- `AWS_LC_SYS_NO_ASM=1` - Disables assembly in aws-lc-sys (debug builds only)
+- `RUSTFLAGS` - Forces dynamic CRT, prevents libcmt/msvcrtd conflict
+
 ## The Big Picture
 
 GPUI offers three different [registers](<https://en.wikipedia.org/wiki/Register_(sociolinguistics)>) depending on your needs:
@@ -64,3 +94,48 @@ In addition to the systems above, GPUI provides a range of smaller services that
 - The `[gpui::test]` macro provides a convenient way to write tests for your GPUI applications. Tests also have their own kind of context, a `TestAppContext` which provides ways of simulating common platform input. See `app::test_context` and `test` modules for more details.
 
 Currently, the best way to learn about these APIs is to read the Zed source code or drop a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples, and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
+
+## Drag and Drop
+
+GPUI supports configurable drag-and-drop from external sources. By default, windows accept file drops.
+
+### Configuring Drag Types
+
+```rust
+use gpui::{WindowOptions, DragType};
+use smallvec::smallvec;
+
+let options = WindowOptions {
+    drag_types: smallvec![DragType::Files, DragType::Urls],
+    ..Default::default()
+};
+```
+
+### Handling Drops
+
+```rust
+use gpui::{ExternalDrop, DropItem};
+
+div()
+    .on_drop(|drop: ExternalDrop, _window, _cx| {
+        for item in drop.items() {
+            match item {
+                DropItem::Path(path) => println!("File: {}", path.display()),
+                DropItem::Url(url) => println!("URL: {}", url),
+            }
+        }
+    })
+```
+
+### Using ExternalDrop for Drag and Drop
+
+For drag-and-drop handling, prefer `ExternalDrop` which supports both files and URLs:
+
+```rust
+.on_drop(|drop: ExternalDrop, _window, _cx| {
+    for path in drop.paths() { /* handle file paths */ }
+    for url in drop.urls() { /* handle URLs */ }
+})
+```
+
+Note: `ExternalPaths` remains available for clipboard operations via `ClipboardEntry::ExternalPaths`.

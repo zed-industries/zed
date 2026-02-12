@@ -91,12 +91,12 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowButtonLayout,
-    WindowParams, point, profiler, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, DropItem,
+    ExternalDrop, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
+    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
+    Size, TaskTiming, TouchPhase, WindowButtonLayout, WindowParams, point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -2230,22 +2230,30 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 }
                             };
 
-                            let paths: SmallVec<[_; 2]> = file_list
+                            let items: SmallVec<[DropItem; 2]> = file_list
                                 .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
+                                .filter_map(|line| Url::parse(line).log_err())
+                                .filter_map(|url| match url.scheme() {
+                                    "file" => url.to_file_path().log_err().map(DropItem::Path),
+                                    "http" | "https" => Some(DropItem::Url(url)),
+                                    _ => None,
+                                })
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 
                             // Prevent dropping text from other programs.
-                            if paths.is_empty() {
+                            if items.is_empty() {
                                 data_offer.destroy();
                                 return;
                             }
 
+                            let items = ExternalDrop(items);
+                            // Convert to legacy ExternalPaths for backwards compatibility
+                            #[allow(deprecated)]
                             let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                                 position,
-                                paths: gpui::ExternalPaths(paths),
+                                paths: items.to_external_paths(),
+                                items,
                             });
 
                             let client = this.get_client();
