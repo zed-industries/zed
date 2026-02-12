@@ -677,31 +677,34 @@ impl PickerDelegate for RecentProjectsDelegate {
     ) -> gpui::Task<()> {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
+        let is_empty_query = query.is_empty();
 
-        let folder_candidates: Vec<_> = self
-            .open_folders
-            .iter()
-            .enumerate()
-            .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
-            .collect();
+        let folder_matches = if self.open_folders.is_empty() {
+            Vec::new()
+        } else {
+            let candidates: Vec<_> = self
+                .open_folders
+                .iter()
+                .enumerate()
+                .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
+                .collect();
 
-        let folder_matches = smol::block_on(fuzzy::match_strings(
-            folder_candidates.as_slice(),
-            query,
-            smart_case,
-            true,
-            100,
-            &Default::default(),
-            cx.background_executor().clone(),
-        ));
+            smol::block_on(fuzzy::match_strings(
+                &candidates,
+                query,
+                smart_case,
+                true,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            ))
+        };
 
         let recent_candidates: Vec<_> = self
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths))| {
-                !self.is_current_workspace(*id, cx) && !self.is_open_folder(paths)
-            })
+            .filter(|(_, (id, _, paths))| self.is_valid_recent_candidate(*id, paths, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
                     .ordered_paths()
@@ -713,7 +716,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .collect();
 
         let mut recent_matches = smol::block_on(fuzzy::match_strings(
-            recent_candidates.as_slice(),
+            &recent_candidates,
             query,
             smart_case,
             true,
@@ -731,11 +734,9 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut entries = Vec::new();
 
         if !self.open_folders.is_empty() {
-            let matched_folders: Vec<_> = if query.is_empty() {
-                self.open_folders
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| (i, Vec::new()))
+            let matched_folders: Vec<_> = if is_empty_query {
+                (0..self.open_folders.len())
+                    .map(|i| (i, Vec::new()))
                     .collect()
             } else {
                 folder_matches
@@ -744,27 +745,23 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .collect()
             };
 
-            if !matched_folders.is_empty() {
-                for (index, positions) in matched_folders {
-                    entries.push(ProjectPickerEntry::OpenFolder { index, positions });
-                }
+            for (index, positions) in matched_folders {
+                entries.push(ProjectPickerEntry::OpenFolder { index, positions });
             }
         }
 
-        let has_recent = if query.is_empty() {
-            self.workspaces.iter().any(|(id, _, paths)| {
-                !self.is_current_workspace(*id, cx) && !self.is_open_folder(paths)
-            })
+        let has_recent_to_show = if is_empty_query {
+            !recent_candidates.is_empty()
         } else {
             !recent_matches.is_empty()
         };
 
-        if has_recent {
+        if has_recent_to_show {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
-            if query.is_empty() {
+
+            if is_empty_query {
                 for (id, (workspace_id, _, paths)) in self.workspaces.iter().enumerate() {
-                    if !self.is_current_workspace(*workspace_id, cx) && !self.is_open_folder(paths)
-                    {
+                    if self.is_valid_recent_candidate(*workspace_id, paths, cx) {
                         entries.push(ProjectPickerEntry::RecentProject(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -796,100 +793,105 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match self.filtered_entries.get(self.selected_index) {
             Some(ProjectPickerEntry::OpenFolder { index, .. }) => {
-                if let Some(folder) = self.open_folders.get(*index) {
-                    let worktree_id = folder.worktree_id;
-                    if let Some(workspace) = self.workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.set_active_worktree_override(Some(worktree_id), cx);
-                        });
-                    }
-                    cx.emit(DismissEvent);
+                let Some(folder) = self.open_folders.get(*index) else {
+                    return;
+                };
+                let worktree_id = folder.worktree_id;
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.set_active_worktree_override(Some(worktree_id), cx);
+                    });
                 }
+                cx.emit(DismissEvent);
             }
             Some(ProjectPickerEntry::RecentProject(selected_match)) => {
-                let selected_match = selected_match.clone();
-                if let Some(workspace) = self.workspace.upgrade() {
-                    let (
-                        candidate_workspace_id,
-                        candidate_workspace_location,
-                        candidate_workspace_paths,
-                    ) = &self.workspaces[selected_match.candidate_id];
-                    let replace_current_window = if self.create_new_window {
-                        secondary
-                    } else {
-                        !secondary
-                    };
-                    workspace.update(cx, |workspace, cx| {
-                        if workspace.database_id() == Some(*candidate_workspace_id) {
-                            return;
-                        }
-                        match candidate_workspace_location.clone() {
-                            SerializedWorkspaceLocation::Local => {
-                                let paths = candidate_workspace_paths.paths().to_vec();
-                                if replace_current_window {
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let continue_replacing = workspace
+                let Some(workspace) = self.workspace.upgrade() else {
+                    return;
+                };
+                let Some((
+                    candidate_workspace_id,
+                    candidate_workspace_location,
+                    candidate_workspace_paths,
+                )) = self.workspaces.get(selected_match.candidate_id)
+                else {
+                    return;
+                };
+
+                let replace_current_window = self.create_new_window == secondary;
+                let candidate_workspace_id = *candidate_workspace_id;
+                let candidate_workspace_location = candidate_workspace_location.clone();
+                let candidate_workspace_paths = candidate_workspace_paths.clone();
+
+                workspace.update(cx, |workspace, cx| {
+                    if workspace.database_id() == Some(candidate_workspace_id) {
+                        return;
+                    }
+                    match candidate_workspace_location {
+                        SerializedWorkspaceLocation::Local => {
+                            let paths = candidate_workspace_paths.paths().to_vec();
+                            if replace_current_window {
+                                cx.spawn_in(window, async move |workspace, cx| {
+                                    let continue_replacing = workspace
+                                        .update_in(cx, |workspace, window, cx| {
+                                            workspace.prepare_to_close(
+                                                CloseIntent::ReplaceWindow,
+                                                window,
+                                                cx,
+                                            )
+                                        })?
+                                        .await?;
+                                    if continue_replacing {
+                                        workspace
                                             .update_in(cx, |workspace, window, cx| {
-                                                workspace.prepare_to_close(
-                                                    CloseIntent::ReplaceWindow,
-                                                    window,
-                                                    cx,
+                                                workspace.open_workspace_for_paths(
+                                                    true, paths, window, cx,
                                                 )
                                             })?
-                                            .await?;
-                                        if continue_replacing {
-                                            workspace
-                                                .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        true, paths, window, cx,
-                                                    )
-                                                })?
-                                                .await
-                                        } else {
-                                            Ok(())
-                                        }
-                                    })
-                                } else {
-                                    workspace.open_workspace_for_paths(false, paths, window, cx)
-                                }
-                            }
-                            SerializedWorkspaceLocation::Remote(mut connection) => {
-                                let app_state = workspace.app_state().clone();
-                                let replace_window = if replace_current_window {
-                                    window.window_handle().downcast::<Workspace>()
-                                } else {
-                                    None
-                                };
-                                let open_options = OpenOptions {
-                                    replace_window,
-                                    ..Default::default()
-                                };
-                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
-                                    RemoteSettings::get_global(cx)
-                                        .fill_connection_options_from_settings(connection);
-                                };
-                                let paths = candidate_workspace_paths.paths().to_vec();
-                                cx.spawn_in(window, async move |_, cx| {
-                                    open_remote_project(
-                                        connection.clone(),
-                                        paths,
-                                        app_state,
-                                        open_options,
-                                        cx,
-                                    )
-                                    .await
+                                            .await
+                                    } else {
+                                        Ok(())
+                                    }
                                 })
+                            } else {
+                                workspace.open_workspace_for_paths(false, paths, window, cx)
                             }
                         }
-                        .detach_and_prompt_err(
-                            "Failed to open project",
-                            window,
-                            cx,
-                            |_, _, _| None,
-                        );
-                    });
-                    cx.emit(DismissEvent);
-                }
+                        SerializedWorkspaceLocation::Remote(mut connection) => {
+                            let app_state = workspace.app_state().clone();
+                            let replace_window = if replace_current_window {
+                                window.window_handle().downcast::<Workspace>()
+                            } else {
+                                None
+                            };
+                            let open_options = OpenOptions {
+                                replace_window,
+                                ..Default::default()
+                            };
+                            if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                                RemoteSettings::get_global(cx)
+                                    .fill_connection_options_from_settings(connection);
+                            };
+                            let paths = candidate_workspace_paths.paths().to_vec();
+                            cx.spawn_in(window, async move |_, cx| {
+                                open_remote_project(
+                                    connection.clone(),
+                                    paths,
+                                    app_state,
+                                    open_options,
+                                    cx,
+                                )
+                                .await
+                            })
+                        }
+                    }
+                    .detach_and_prompt_err(
+                        "Failed to open project",
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    );
+                });
+                cx.emit(DismissEvent);
             }
             _ => {}
         }
@@ -1006,9 +1008,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         }),
                                 )
                                 .when(!show_path, |this| {
-                                    this.tooltip(Tooltip::text(
-                                        path.to_string_lossy().to_string().clone(),
-                                    ))
+                                    this.tooltip(Tooltip::text(path.to_string_lossy().to_string()))
                                 }),
                         )
                         .map(|el| {
@@ -1110,7 +1110,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child({
-                                    let mut highlighted = highlighted_match.clone();
+                                    let mut highlighted = highlighted_match;
                                     if !self.render_paths {
                                         highlighted.paths.clear();
                                     }
@@ -1446,6 +1446,15 @@ impl RecentProjectsDelegate {
         }
 
         false
+    }
+
+    fn is_valid_recent_candidate(
+        &self,
+        workspace_id: WorkspaceId,
+        paths: &PathList,
+        cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        !self.is_current_workspace(workspace_id, cx) && !self.is_open_folder(paths)
     }
 }
 
