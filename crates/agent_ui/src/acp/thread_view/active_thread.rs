@@ -2316,6 +2316,8 @@ impl AcpThreadView {
 
         let server_view = self.server_view.clone();
 
+        let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
+
         Some(
             h_flex()
                 .h(Tab::container_height(cx))
@@ -2323,10 +2325,24 @@ impl AcpThreadView {
                 .pr_1p5()
                 .w_full()
                 .justify_between()
+                .gap_1()
                 .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
+                .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background.opacity(0.2))
-                .child(self.title_editor.clone())
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::ForwardArrowUp)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(self.title_editor.clone())
+                        .when(is_done, |this| {
+                            this.child(Icon::new(IconName::Check).color(Color::Success))
+                        }),
+                )
                 .child(
                     IconButton::new("minimize_subagent", IconName::Minimize)
                         .icon_size(IconSize::Small)
@@ -3626,6 +3642,8 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message
             && editing_index < entry_ix
         {
+            let is_subagent = self.is_subagent();
+
             let backdrop = div()
                 .id(("backdrop", entry_ix))
                 .size_full()
@@ -3639,7 +3657,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .child(primary)
-                .child(backdrop)
+                .when(!is_subagent, |this| this.child(backdrop))
                 .into_any_element()
         } else {
             primary
@@ -5886,7 +5904,7 @@ impl AcpThreadView {
                 if is_canceled_or_failed {
                     "Subagent Canceled"
                 } else {
-                    "Spawning Subagent…"
+                    "Creating Subagent…"
                 }
                 .into()
             });

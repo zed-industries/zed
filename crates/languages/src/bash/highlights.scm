@@ -46,6 +46,12 @@
 (function_definition name: (word) @function)
 (command_name (word) @function)
 
+(command
+  argument: [
+    (word) @variable.parameter
+    (_ (word) @variable.parameter)
+  ])
+
 [
   (file_descriptor)
   (number)

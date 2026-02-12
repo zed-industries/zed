@@ -540,6 +540,7 @@ impl Render for AddLlmProviderModal {
                                     .max_h(modal_max_height)
                                     .pl_3()
                                     .pr_4()
+                                    .pb_2()
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)

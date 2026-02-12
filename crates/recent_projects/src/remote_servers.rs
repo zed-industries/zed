@@ -44,7 +44,8 @@ use std::{
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar, prelude::*,
+    ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{
     ResultExt,
@@ -2749,31 +2750,15 @@ impl RemoteServerProjects {
         }
         let mut modal_section = modal_section.render(window, cx).into_any_element();
 
-        let (create_window, reuse_window) = if self.create_new_window {
-            (
-                window.keystroke_text_for(&menu::Confirm),
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-            )
-        } else {
-            (
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-                window.keystroke_text_for(&menu::Confirm),
-            )
-        };
-        let placeholder_text = Arc::from(format!(
-            "{reuse_window} reuses this window, {create_window} opens a new one",
-        ));
+        let is_project_selected = state.servers.iter().any(|server| match server {
+            RemoteEntry::Project { projects, .. } => projects
+                .iter()
+                .any(|(entry, _)| entry.focus_handle.contains_focused(window, cx)),
+            RemoteEntry::SshConfig { .. } => false,
+        });
 
         Modal::new("remote-projects", None)
-            .header(
-                ModalHeader::new()
-                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall))
-                    .child(
-                        Label::new(placeholder_text)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
+            .header(ModalHeader::new().headline("Remote Projects"))
             .section(
                 Section::new().padded(false).child(
                     v_flex()
@@ -2801,6 +2786,31 @@ impl RemoteServerProjects {
                         .vertical_scrollbar_for(&state.scroll_handle, window, cx),
                 ),
             )
+            .footer(ModalFooter::new().end_slot({
+                let confirm_button = |label: SharedString| {
+                    Button::new("select", label)
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        })
+                };
+
+                if is_project_selected {
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("open_new_window", "New Window")
+                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                }),
+                        )
+                        .child(confirm_button("Open".into()))
+                        .into_any_element()
+                } else {
+                    confirm_button("Select".into()).into_any_element()
+                }
+            }))
             .into_any_element()
     }
 

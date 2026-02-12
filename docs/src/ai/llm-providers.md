@@ -149,6 +149,27 @@ We will support Cross-Region inference for each of the models on a best-effort b
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
+#### Extended Context Window {#bedrock-extended-context}
+
+Anthropic models on Bedrock support a [1M token extended context window](https://docs.anthropic.com/en/docs/build-with-claude/extended-context) beta. To enable this feature, add `"allow_extended_context": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_extended_context": true
+    }
+  }
+}
+```
+
+When enabled, Zed will include the `anthropic_beta` field in requests to Bedrock, enabling the 1M token context window for supported Anthropic models such as Claude Sonnet 4.5 and Claude Opus 4.6.
+
+> **Note**: Extended context usage may incur additional API costs. Refer to your AWS Bedrock pricing for details.
+
 ### Anthropic {#anthropic}
 
 You can use Anthropic models by choosing them via the model dropdown in the Agent Panel.

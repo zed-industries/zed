@@ -158,7 +158,9 @@ pub fn zeta2_output_for_patch(
     }
 
     match version {
-        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211SeedCoder => {
             if !result.ends_with('\n') {
                 result.push('\n');
             }
