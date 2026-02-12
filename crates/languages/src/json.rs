@@ -341,12 +341,12 @@ fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>
             continue;
         };
 
-        if url.starts_with('/') || !url.starts_with(".") && !url.starts_with("~") {
+        if !url.starts_with(".") && !url.starts_with("~") {
             continue;
         }
 
         *url = delegate
-            .resolve_executable_path(url.clone().into())
+            .resolve_relative_path(url.clone().into())
             .to_string_lossy()
             .into_owned();
     }
