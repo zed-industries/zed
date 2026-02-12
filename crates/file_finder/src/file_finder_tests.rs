@@ -1619,6 +1619,17 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
 async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     app_state
         .fs
         .as_fake()
@@ -1698,6 +1709,59 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
             path_label.text(),
             format!("src{separator}"),
             "Queried history path label must not contain root name 'my_project'"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/my_project"),
+            json!({
+                "src": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/my_project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        let separator = PathStyle::local().primary_separator();
+
+        let (_file_label, path_label) = finder.delegate.labels_for_match(&matches[0], window, cx);
+        assert_eq!(
+            path_label.text(),
+            format!("my_project{separator}src{separator}"),
+            "With hide_root=false, history path label should include root name 'my_project'"
         );
     });
 }
