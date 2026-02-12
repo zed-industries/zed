@@ -11,31 +11,46 @@
 (variable_name) @variable
 
 [
+  "export"
+  "function"
+  "unset"
+  "local"
+  "declare"
+] @keyword
+
+[
   "case"
   "do"
   "done"
   "elif"
   "else"
   "esac"
-  "export"
   "fi"
   "for"
-  "function"
   "if"
   "in"
   "select"
   "then"
-  "unset"
   "until"
   "while"
-  "local"
-  "declare"
-] @keyword
+] @keyword.control
 
 (comment) @comment
 
+; Shebang
+((program
+  .
+  (comment) @keyword.directive)
+  (#match? @keyword.directive "^#![ \t]*/"))
+
 (function_definition name: (word) @function)
 (command_name (word) @function)
+
+(command
+  argument: [
+    (word) @variable.parameter
+    (_ (word) @variable.parameter)
+  ])
 
 [
   (file_descriptor)
@@ -101,3 +116,6 @@
   (command (_) @constant)
   (#match? @constant "^-")
 )
+
+(case_item value: (_) @string.regex)
+(special_variable_name) @variable.special

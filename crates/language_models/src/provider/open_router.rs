@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, LanguageModel, LanguageModelCompletionError,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
@@ -16,11 +16,12 @@ use open_router::{
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -180,8 +181,8 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         PROVIDER_NAME
     }
 
-    fn icon(&self) -> IconName {
-        IconName::AiOpenRouter
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -189,7 +190,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_router::Model::default_fast()))
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -273,12 +274,10 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         async move {
             let Some(api_key) = api_key else {
@@ -370,8 +369,8 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let request = self.stream_completion(request, cx);
+        let openrouter_request = into_open_router(request, &self.model, self.max_output_tokens());
+        let request = self.stream_completion(openrouter_request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))
@@ -385,15 +384,31 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> open_router::Request {
+    // Anthropic models via OpenRouter don't accept reasoning_details being echoed back
+    // in requests - it's an output-only field for them. However, Gemini models require
+    // the thought signatures to be echoed back for proper reasoning chain continuity.
+    // Note: OpenRouter's model API provides an `architecture.tokenizer` field (e.g. "Claude",
+    // "Gemini") which could replace this ID prefix check, but since this is the only place
+    // we need this distinction, we're just using this less invasive check instead.
+    // If we ever have a more formal distionction between the models in the future,
+    // we should revise this to use that instead.
+    let is_anthropic_model = model.id().starts_with("anthropic/");
+
     let mut messages = Vec::new();
     for message in request.messages {
-        let reasoning_details = message.reasoning_details.clone();
+        let reasoning_details_for_message = if is_anthropic_model {
+            None
+        } else {
+            message.reasoning_details.clone()
+        };
+
         for content in message.content {
             match content {
                 MessageContent::Text(text) => add_message_content_part(
                     open_router::MessagePart::Text { text },
                     message.role,
                     &mut messages,
+                    reasoning_details_for_message.clone(),
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
@@ -404,6 +419,7 @@ pub fn into_open_router(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details_for_message.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -419,21 +435,15 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(open_router::RequestMessage::Assistant {
-                        tool_calls,
-                        reasoning_details: existing_reasoning,
-                        ..
-                    }) = messages.last_mut()
+                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
                     {
                         tool_calls.push(tool_call);
-                        if existing_reasoning.is_none() && reasoning_details.is_some() {
-                            *existing_reasoning = reasoning_details.clone();
-                        }
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
-                            reasoning_details: reasoning_details.clone(),
+                            reasoning_details: reasoning_details_for_message.clone(),
                         });
                     }
                 }
@@ -509,6 +519,7 @@ fn add_message_content_part(
     new_part: open_router::MessagePart,
     role: Role,
     messages: &mut Vec<open_router::RequestMessage>,
+    reasoning_details: Option<serde_json::Value>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_router::RequestMessage::User { content }))
@@ -532,7 +543,7 @@ fn add_message_content_part(
                 Role::Assistant => open_router::RequestMessage::Assistant {
                     content: Some(open_router::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
-                    reasoning_details: None,
+                    reasoning_details,
                 },
                 Role::System => open_router::RequestMessage::System {
                     content: open_router::MessageContent::from(vec![new_part]),
@@ -647,7 +658,7 @@ impl OpenRouterEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -740,10 +751,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     let _ = task.await;
                 }
 
@@ -775,7 +783,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -788,7 +796,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -837,7 +845,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )

@@ -13,7 +13,7 @@ use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
-use ui::{ContextMenu, Divider, prelude::*, tooltip_container};
+use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -44,9 +44,18 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
+            let author_email = blame_entry.author_mail.as_ref().map(|email| {
+                SharedString::from(
+                    email
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .to_string(),
+                )
+            });
             Some(
                 CommitAvatar::new(
                     &blame_entry.sha.to_string().into(),
+                    author_email,
                     details.as_ref().and_then(|it| it.remote.as_ref()),
                 )
                 .render(window, cx),
@@ -186,8 +195,20 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or("<no name>".to_string())
             .into();
         let author_email = blame.author_mail.as_deref().unwrap_or_default();
-        let avatar = CommitAvatar::new(&sha, details.as_ref().and_then(|it| it.remote.as_ref()))
-            .render(window, cx);
+        let author_email_for_avatar = blame.author_mail.as_ref().map(|email| {
+            SharedString::from(
+                email
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string(),
+            )
+        });
+        let avatar = CommitAvatar::new(
+            &sha,
+            author_email_for_avatar,
+            details.as_ref().and_then(|it| it.remote.as_ref()),
+        )
+        .render(window, cx);
 
         let short_commit_id = sha
             .get(..8)
@@ -335,18 +356,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                     cx.stop_propagation();
                                                 }),
                                             )
+                                            .child(Divider::vertical())
                                             .child(
-                                                IconButton::new("copy-sha-button", IconName::Copy)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Muted)
-                                                    .on_click(move |_, _, cx| {
-                                                        cx.stop_propagation();
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(
-                                                                sha.to_string(),
-                                                            ),
-                                                        )
-                                                    }),
+                                                CopyButton::new("copy-blame-sha", sha.to_string())
+                                                    .tooltip_label("Copy SHA"),
                                             ),
                                     ),
                             ),

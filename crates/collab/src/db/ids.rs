@@ -2,6 +2,7 @@ use crate::Result;
 use rpc::proto;
 use sea_orm::{DbErr, entity::prelude::*};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[macro_export]
 macro_rules! id_type {
@@ -91,6 +92,39 @@ id_type!(RoomParticipantId);
 id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, DeriveValueType)]
+pub struct SharedThreadId(pub Uuid);
+
+impl SharedThreadId {
+    pub fn from_proto(id: String) -> Option<Self> {
+        Uuid::parse_str(&id).ok().map(SharedThreadId)
+    }
+
+    pub fn to_proto(self) -> String {
+        self.0.to_string()
+    }
+}
+
+impl sea_orm::TryFromU64 for SharedThreadId {
+    fn try_from_u64(_n: u64) -> std::result::Result<Self, DbErr> {
+        Err(DbErr::ConvertFromU64(
+            "SharedThreadId uses UUID and cannot be converted from u64",
+        ))
+    }
+}
+
+impl sea_orm::sea_query::Nullable for SharedThreadId {
+    fn null() -> Value {
+        Value::Uuid(None)
+    }
+}
+
+impl std::fmt::Display for SharedThreadId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// ChannelRole gives you permissions for both channels and calls.
 #[derive(

@@ -1,0 +1,43 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Feature Request
+
+        Welcome! 👋
+
+        If you are interested in proposing a new feature, improvement, or change to Zed, you are in the right place.
+
+        Use this template to suggest a new feature, improvement, or change.
+
+  - type: textarea
+    id: main
+    attributes:
+      label: Body
+      value: |
+        # What are you proposing?
+
+        Describe the feature, improvement, or change at a high level.
+
+        # Why does this matter?
+
+        What problem does this solve?
+
+        What becomes easier or possible?
+
+        # Are there any examples or context?
+
+        Screenshots, mockups, workflows, or examples from other tools.
+
+        # Possible approach
+
+        If you have ideas about how this could work, share them here.
+
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Learn more about how feature requests work in our
+        [Feature Request Guidelines](LINK_TO_GUIDE_HERE).

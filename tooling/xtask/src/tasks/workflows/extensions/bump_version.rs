@@ -1,14 +1,14 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, PullRequest, PullRequestType, Push, Run, Step, UsesJob,
-    Workflow, WorkflowDispatch,
+    Event, Expression, Input, Job, Level, Permissions, PullRequest, PullRequestType, Push, Run,
+    Step, UsesJob, Workflow, WorkflowDispatch,
 };
-use indexmap::IndexMap;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
+    extensions::WithAppSecrets,
     runners,
-    steps::{NamedJob, named},
-    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
+    steps::{CommonJobConditions, NamedJob, named},
+    vars::{JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) fn bump_version() -> Workflow {
@@ -40,6 +40,13 @@ pub(crate) fn call_bump_version(
             "github.event.action != 'labeled' || {} != 'patch'",
             bump_type.expr()
         )))
+        .permissions(
+            Permissions::default()
+                .contents(Level::Write)
+                .issues(Level::Write)
+                .pull_requests(Level::Write)
+                .actions(Level::Write),
+        )
         .uses(
             "zed-industries",
             "zed",
@@ -52,13 +59,7 @@ pub(crate) fn call_bump_version(
                 .add("bump-type", bump_type.to_string())
                 .add("force-bump", true),
         )
-        .secrets(IndexMap::from([
-            ("app-id".to_owned(), vars::ZED_ZIPPY_APP_ID.to_owned()),
-            (
-                "app-secret".to_owned(),
-                vars::ZED_ZIPPY_APP_PRIVATE_KEY.to_owned(),
-            ),
-        ]));
+        .with_app_secrets();
 
     named::job(job)
 }
@@ -66,7 +67,9 @@ pub(crate) fn call_bump_version(
 fn determine_bump_type() -> (NamedJob, StepOutput) {
     let (get_bump_type, output) = get_bump_type();
     let job = Job::default()
-        .runs_on(runners::LINUX_DEFAULT)
+        .with_repository_owner_guard()
+        .permissions(Permissions::default())
+        .runs_on(runners::LINUX_SMALL)
         .add_step(get_bump_type)
         .outputs([(output.name.to_owned(), output.to_string())]);
     (named::job(job), output)

@@ -20,11 +20,12 @@ use ui::{
     Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
     prelude::*,
 };
+use ui_input::ErasedEditor;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast};
+use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
 
 actions!(
     branch_picker,
@@ -35,14 +36,6 @@ actions!(
         FilterRemotes
     ]
 );
-
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(|workspace, branch: &zed_actions::git::Branch, window, cx| {
-        open(workspace, branch, window, cx);
-    });
-    workspace.register_action(switch);
-    workspace.register_action(checkout_branch);
-}
 
 pub fn checkout_branch(
     workspace: &mut Workspace,
@@ -69,31 +62,48 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let repository = workspace.project().read(cx).active_repository(cx);
-    let style = BranchListStyle::Modal;
+    let repository = resolve_active_repository(workspace, cx);
+
     workspace.toggle_modal(window, cx, |window, cx| {
-        BranchList::new(workspace_handle, repository, style, rems(34.), window, cx)
+        BranchList::new(
+            workspace_handle,
+            repository,
+            BranchListStyle::Modal,
+            rems(34.),
+            window,
+            cx,
+        )
     })
 }
 
 pub fn popover(
     workspace: WeakEntity<Workspace>,
+    modal_style: bool,
     repository: Option<Entity<Repository>>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<BranchList> {
+    let (style, width) = if modal_style {
+        (BranchListStyle::Modal, rems(34.))
+    } else {
+        (BranchListStyle::Popover, rems(20.))
+    };
+
     cx.new(|cx| {
-        let list = BranchList::new(
-            workspace,
-            repository,
-            BranchListStyle::Popover,
-            rems(20.),
-            window,
-            cx,
-        );
+        let list = BranchList::new(workspace, repository, style, width, window, cx);
         list.focus_handle(cx).focus(window, cx);
         list
     })
+}
+
+pub fn create_embedded(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    BranchList::new_embedded(workspace, repository, width, window, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,7 +116,8 @@ pub struct BranchList {
     width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Subscription,
+    _subscription: Option<Subscription>,
+    embedded: bool,
 }
 
 impl BranchList {
@@ -118,12 +129,29 @@ impl BranchList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut this = Self::new_inner(workspace, repository, style, width, false, window, cx);
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    fn new_inner(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        width: Rems,
+        embedded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let all_branches_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
-        let default_branch_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
@@ -179,25 +207,49 @@ impl BranchList {
         .detach_and_log_err(cx);
 
         let delegate = BranchListDelegate::new(workspace, repository, style, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
+
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
-
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
         });
 
         Self {
             picker,
             picker_focus_handle,
             width,
-            _subscription,
+            _subscription: None,
+            embedded,
         }
     }
 
-    fn handle_modifiers_changed(
+    fn new_embedded(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(
+            workspace,
+            repository,
+            BranchListStyle::Modal,
+            width,
+            true,
+            window,
+            cx,
+        );
+        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        }));
+        this
+    }
+
+    pub fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
         _: &mut Window,
@@ -207,7 +259,7 @@ impl BranchList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
-    fn handle_delete(
+    pub fn handle_delete(
         &mut self,
         _: &branch_picker::DeleteBranch,
         window: &mut Window,
@@ -220,7 +272,7 @@ impl BranchList {
         })
     }
 
-    fn handle_filter(
+    pub fn handle_filter(
         &mut self,
         _: &branch_picker::FilterRemotes,
         window: &mut Window,
@@ -252,10 +304,12 @@ impl Render for BranchList {
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_filter))
             .child(self.picker.clone())
-            .on_mouse_down_out({
-                cx.listener(move |this, _, window, cx| {
-                    this.picker.update(cx, |this, cx| {
-                        this.cancel(&Default::default(), window, cx);
+            .when(!self.embedded, |this| {
+                this.on_mouse_down_out({
+                    cx.listener(move |this, _, window, cx| {
+                        this.picker.update(cx, |this, cx| {
+                            this.cancel(&Default::default(), window, cx);
+                        })
                     })
                 })
             })
@@ -390,7 +444,7 @@ impl BranchListDelegate {
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name, base_branch)
-            })?
+            })
             .await??;
 
             Ok(())
@@ -437,11 +491,11 @@ impl BranchListDelegate {
                 Entry::Branch { branch, .. } => match branch.remote_name() {
                     Some(remote_name) => {
                         is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))?
+                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
                             .await?
                     }
                     None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))?
+                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
                             .await?
                     }
                 },
@@ -532,11 +586,12 @@ impl PickerDelegate for BranchListDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let focus_handle = self.focus_handle.clone();
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
 
         v_flex()
             .when(
@@ -756,7 +811,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 let branch = branch.clone();
                 cx.spawn(async move |_, cx| {
-                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                    repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))
                         .await??;
 
                     anyhow::Ok(())
@@ -1240,12 +1295,14 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
         });
     }
 
@@ -1291,13 +1348,17 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
-        let branch_list = workspace
-            .update(cx, |workspace, window, cx| {
+        let branch_list = window_handle
+            .update(cx, |_multi_workspace, window, cx| {
                 cx.new(|cx| {
                     let mut delegate = BranchListDelegate::new(
-                        workspace.weak_handle(),
+                        workspace.downgrade(),
                         repository,
                         BranchListStyle::Modal,
                         cx,
@@ -1317,13 +1378,14 @@ mod tests {
                         picker,
                         picker_focus_handle,
                         width: rems(34.),
-                        _subscription,
+                        _subscription: Some(_subscription),
+                        embedded: false,
                     }
                 })
             })
             .unwrap();
 
-        let cx = VisualTestContext::from_window(*workspace, cx);
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         (branch_list, cx)
     }
@@ -1426,7 +1488,6 @@ mod tests {
         cx.spawn(async move |mut cx| {
             for branch in branch_names {
                 repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
-                    .unwrap()
                     .await
                     .unwrap()
                     .unwrap();
@@ -1491,7 +1552,6 @@ mod tests {
                 repo.update(&mut cx, |repo, _| {
                     repo.create_remote(branch, String::from("test"))
                 })
-                .unwrap()
                 .await
                 .unwrap()
                 .unwrap();

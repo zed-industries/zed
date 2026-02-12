@@ -12,6 +12,7 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::{
     paths::{PathMatcher, PathStyle},
@@ -273,6 +274,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: NodeRuntime,
+        _: Duration,
         _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -286,6 +288,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
+        request_timeout: Duration,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
@@ -310,6 +313,7 @@ impl Prettier {
             arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
             env: None,
         };
+
         let server = LanguageServer::new(
             Arc::new(parking_lot::Mutex::new(None)),
             server_id,
@@ -324,12 +328,12 @@ impl Prettier {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(false, cx);
+                let params = server.default_initialize_params(false, false, cx);
                 let configuration = lsp::DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
-                executor.spawn(server.initialize(params, configuration.into(), cx))
-            })?
+                executor.spawn(server.initialize(params, configuration.into(), request_timeout, cx))
+            })
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {
@@ -344,6 +348,7 @@ impl Prettier {
         buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
+        request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
         match self {
@@ -475,15 +480,15 @@ impl Prettier {
                                 ignore_path,
                             },
                         })
-                })?
+                })
                 .context("building prettier request")?;
 
                 let response = local
                     .server
-                    .request::<Format>(params)
+                    .request::<Format>(params, request_timeout)
                     .await
                     .into_response()?;
-                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
+                let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx));
                 Ok(diff_task.await)
             }
             #[cfg(any(test, feature = "test-support"))]
@@ -520,16 +525,16 @@ impl Prettier {
                         }
                         None => panic!("Should not format buffer without a language with prettier"),
                     }
-                })??
+                })?
                 .await),
         }
     }
 
-    pub async fn clear_cache(&self) -> anyhow::Result<()> {
+    pub async fn clear_cache(&self, request_timeout: Duration) -> anyhow::Result<()> {
         match self {
             Self::Real(local) => local
                 .server
-                .request::<ClearCache>(())
+                .request::<ClearCache>((), request_timeout)
                 .await
                 .into_response()
                 .context("prettier clear cache"),

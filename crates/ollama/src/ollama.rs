@@ -1,4 +1,5 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context, Result};
+
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};

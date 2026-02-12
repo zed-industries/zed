@@ -6,6 +6,15 @@ use async_zip::base::read;
 use futures::AsyncSeek;
 use futures::{AsyncRead, io::BufReader};
 
+fn archive_path_is_normal(filename: &str) -> bool {
+    Path::new(filename).components().all(|c| {
+        matches!(
+            c,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    })
+}
+
 #[cfg(windows)]
 pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
     let mut reader = read::stream::ZipFileReader::new(BufReader::new(reader));
@@ -17,12 +26,17 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
     while let Some(mut item) = reader.next_with_entry().await? {
         let entry_reader = item.reader_mut();
         let entry = entry_reader.entry();
-        let path = destination.join(
-            entry
-                .filename()
-                .as_str()
-                .context("reading zip entry file name")?,
-        );
+        let filename = entry
+            .filename()
+            .as_str()
+            .context("reading zip entry file name")?;
+
+        if !archive_path_is_normal(filename) {
+            reader = item.skip().await.context("reading next zip entry")?;
+            continue;
+        }
+
+        let path = destination.join(filename);
 
         if entry
             .dir()
@@ -79,12 +93,16 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
         .canonicalize()
         .unwrap_or_else(|_| destination.to_path_buf());
     for (i, entry) in reader.file().entries().to_vec().into_iter().enumerate() {
-        let path = destination.join(
-            entry
-                .filename()
-                .as_str()
-                .context("reading zip entry file name")?,
-        );
+        let filename = entry
+            .filename()
+            .as_str()
+            .context("reading zip entry file name")?;
+
+        if !archive_path_is_normal(filename) {
+            continue;
+        }
+
+        let path = destination.join(filename);
 
         if entry
             .dir()
@@ -109,7 +127,9 @@ pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
                 .await
                 .with_context(|| format!("extracting into file {path:?}"))?;
 
-            if let Some(perms) = entry.unix_permissions() {
+            if let Some(perms) = entry.unix_permissions()
+                && perms != 0o000
+            {
                 use std::os::unix::fs::PermissionsExt;
                 let permissions = std::fs::Permissions::from_mode(u32::from(perms));
                 file.set_permissions(permissions)
@@ -132,7 +152,8 @@ mod tests {
 
     use super::*;
 
-    async fn compress_zip(src_dir: &Path, dst: &Path) -> Result<()> {
+    #[allow(unused_variables)]
+    async fn compress_zip(src_dir: &Path, dst: &Path, keep_file_permissions: bool) -> Result<()> {
         let mut out = smol::fs::File::create(dst).await?;
         let mut writer = ZipFileWriter::new(&mut out);
 
@@ -155,8 +176,8 @@ mod tests {
                     ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = std::fs::metadata(path)?;
-                let perms = metadata.permissions().mode() as u16;
-                builder = builder.unix_permissions(perms);
+                let perms = keep_file_permissions.then(|| metadata.permissions().mode() as u16);
+                builder = builder.unix_permissions(perms.unwrap_or_default());
                 writer.write_entry_whole(builder, &data).await?;
             }
             #[cfg(not(unix))]
@@ -206,7 +227,9 @@ mod tests {
         let zip_file = test_dir.path().join("test.zip");
 
         smol::block_on(async {
-            compress_zip(test_dir.path(), &zip_file).await.unwrap();
+            compress_zip(test_dir.path(), &zip_file, true)
+                .await
+                .unwrap();
             let reader = read_archive(&zip_file).await;
 
             let dir = tempfile::tempdir().unwrap();
@@ -237,7 +260,9 @@ mod tests {
 
             // Create zip
             let zip_file = test_dir.path().join("test.zip");
-            compress_zip(test_dir.path(), &zip_file).await.unwrap();
+            compress_zip(test_dir.path(), &zip_file, true)
+                .await
+                .unwrap();
 
             // Extract to new location
             let extract_dir = tempfile::tempdir().unwrap();
@@ -249,6 +274,109 @@ mod tests {
             assert!(extracted_path.exists());
             let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
             assert_eq!(extracted_perms.mode() & 0o777, 0o755);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_sets_default_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        smol::block_on(async {
+            let test_dir = tempfile::tempdir().unwrap();
+            let file_path = test_dir.path().join("my_script");
+
+            std::fs::write(&file_path, "#!/bin/bash\necho 'Hello'").unwrap();
+            // The permissions will be shaped by the umask in the test environment
+            let original_perms = std::fs::metadata(&file_path).unwrap().permissions();
+
+            // Create zip
+            let zip_file = test_dir.path().join("test.zip");
+            compress_zip(test_dir.path(), &zip_file, false)
+                .await
+                .unwrap();
+
+            // Extract to new location
+            let extract_dir = tempfile::tempdir().unwrap();
+            let reader = read_archive(&zip_file).await;
+            extract_zip(extract_dir.path(), reader).await.unwrap();
+
+            // Permissions were not stored, so will be whatever the umask generates
+            // by default for new files. This should match what we saw when we previously wrote
+            // the file.
+            let extracted_path = extract_dir.path().join("my_script");
+            assert!(extracted_path.exists());
+            let extracted_perms = std::fs::metadata(&extracted_path).unwrap().permissions();
+            assert_eq!(
+                extracted_perms.mode(),
+                original_perms.mode(),
+                "Expected matching Unix file mode for unzipped file without keep_file_permissions"
+            );
+            assert_eq!(
+                extracted_perms, original_perms,
+                "Expected default set of permissions for unzipped file without keep_file_permissions"
+            );
+        });
+    }
+
+    #[test]
+    fn test_archive_path_is_normal_rejects_traversal() {
+        assert!(!archive_path_is_normal("../parent.txt"));
+        assert!(!archive_path_is_normal("foo/../../grandparent.txt"));
+        assert!(!archive_path_is_normal("/tmp/absolute.txt"));
+
+        assert!(archive_path_is_normal("foo/bar.txt"));
+        assert!(archive_path_is_normal("foo/bar/baz.txt"));
+        assert!(archive_path_is_normal("./foo/bar.txt"));
+        assert!(archive_path_is_normal("normal.txt"));
+    }
+
+    async fn build_zip_with_entries(entries: &[(&str, &[u8])]) -> Cursor<Vec<u8>> {
+        let mut buf = Cursor::new(Vec::new());
+        let mut writer = ZipFileWriter::new(&mut buf);
+        for (name, data) in entries {
+            let builder = ZipEntryBuilder::new((*name).into(), async_zip::Compression::Stored);
+            writer.write_entry_whole(builder, data).await.unwrap();
+        }
+        writer.close().await.unwrap();
+        buf.set_position(0);
+        buf
+    }
+
+    #[test]
+    fn test_extract_zip_skips_path_traversal_entries() {
+        smol::block_on(async {
+            let base_dir = tempfile::tempdir().unwrap();
+            let extract_dir = base_dir.path().join("subdir");
+            std::fs::create_dir_all(&extract_dir).unwrap();
+
+            let absolute_target = base_dir.path().join("absolute.txt");
+            let reader = build_zip_with_entries(&[
+                ("normal.txt", b"normal file"),
+                ("subdir/nested.txt", b"nested file"),
+                ("../parent.txt", b"parent file"),
+                ("foo/../../grandparent.txt", b"grandparent file"),
+                (absolute_target.to_str().unwrap(), b"absolute file"),
+            ])
+            .await;
+
+            extract_zip(&extract_dir, reader).await.unwrap();
+
+            assert_file_content(&extract_dir.join("normal.txt"), "normal file");
+            assert_file_content(&extract_dir.join("subdir/nested.txt"), "nested file");
+
+            assert!(
+                !base_dir.path().join("parent.txt").exists(),
+                "parent traversal entry should have been skipped"
+            );
+            assert!(
+                !base_dir.path().join("grandparent.txt").exists(),
+                "nested traversal entry should have been skipped"
+            );
+            assert!(
+                !absolute_target.exists(),
+                "absolute path entry should have been skipped"
+            );
         });
     }
 }

@@ -1,12 +1,11 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix,
-    runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression},
     vars::{self, PathCondition},
 };
 
@@ -32,28 +31,22 @@ pub(crate) fn run_tests() -> Workflow {
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
-    let should_build_nix = PathCondition::new(
-        "run_nix",
-        r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
-    );
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
-        &should_build_nix,
         &should_run_tests,
     ]);
 
-    let check_style = check_style();
-    let run_tests_linux = run_platform_tests(Platform::Linux);
-    let call_autofix = call_autofix(&check_style, &run_tests_linux);
-
     let mut jobs = vec![
         orchestrate,
-        check_style,
+        check_style(),
+        should_run_tests.guard(clippy(Platform::Windows)),
+        should_run_tests.guard(clippy(Platform::Linux)),
+        should_run_tests.guard(clippy(Platform::Mac)),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_tests_linux),
+        should_run_tests.guard(run_platform_tests(Platform::Linux)),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
@@ -61,22 +54,6 @@ pub(crate) fn run_tests() -> Workflow {
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
-        should_build_nix.guard(build_nix(
-            Platform::Linux,
-            Arch::X86_64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
-        should_build_nix.guard(build_nix(
-            Platform::Mac,
-            Arch::AARCH64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
     ];
     let tests_pass = tests_pass(&jobs);
 
@@ -110,12 +87,19 @@ pub(crate) fn run_tests() -> Workflow {
             workflow
         })
         .add_job(tests_pass.name, tests_pass.job)
-        .add_job(call_autofix.name, call_autofix.job)
 }
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, true)
+}
+
+pub fn orchestrate_without_package_filter(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, false)
+}
+
+fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -144,6 +128,69 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     "#});
 
     let mut outputs = IndexMap::new();
+
+    if include_package_filter {
+        script.push_str(indoc::indoc! {r#"
+        # Check for changes that require full rebuild (no filter)
+        # Direct pushes to main/stable/preview always run full suite
+        if [ -z "$GITHUB_BASE_REF" ]; then
+          echo "Not a PR, running full test suite"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/|Cargo\.(toml|lock)$)'; then
+          echo "Toolchain, cargo config, or root Cargo files changed, will run all tests"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        else
+          # Extract changed directories from file paths
+          CHANGED_DIRS=$(echo "$CHANGED_FILES" | \
+            grep -oP '^(crates|tooling)/\K[^/]+' | \
+            sort -u || true)
+
+          # Build directory-to-package mapping using cargo metadata
+          DIR_TO_PKG=$(cargo metadata --format-version=1 --no-deps 2>/dev/null | \
+            jq -r '.packages[] | select(.manifest_path | test("crates/|tooling/")) | "\(.manifest_path | capture("(crates|tooling)/(?<dir>[^/]+)") | .dir)=\(.name)"')
+
+          # Map directory names to package names
+          FILE_CHANGED_PKGS=""
+          for dir in $CHANGED_DIRS; do
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            if [ -n "$pkg" ]; then
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
+            else
+              # Fall back to directory name if no mapping found
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
+            fi
+          done
+          FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
+
+          # If assets/ changed, add crates that depend on those assets
+          if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+          fi
+
+          # Combine all changed packages
+          ALL_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' || true)
+
+          if [ -z "$ALL_CHANGED_PKGS" ]; then
+            echo "No package changes detected, will run all tests"
+            echo "changed_packages=" >> "$GITHUB_OUTPUT"
+          else
+            # Build nextest filterset with rdeps for each package
+            FILTERSET=$(echo "$ALL_CHANGED_PKGS" | \
+              sed 's/.*/rdeps(&)/' | \
+              tr '\n' '|' | \
+              sed 's/|$//')
+            echo "Changed packages filterset: $FILTERSET"
+            echo "changed_packages=$FILTERSET" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+    "#});
+
+        outputs.insert(
+            "changed_packages".to_owned(),
+            format!("${{{{ steps.{}.outputs.changed_packages }}}}", step_name),
+        );
+    }
 
     for rule in rules {
         assert!(
@@ -176,12 +223,7 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
             "fetch-depth",
             "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
         )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }
@@ -226,8 +268,6 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
-pub const STYLE_FAILED_OUTPUT: &str = "style_failed";
-
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
@@ -245,54 +285,10 @@ fn check_style() -> NamedJob {
             .add_step(steps::setup_pnpm())
             .add_step(steps::prettier())
             .add_step(steps::cargo_fmt())
-            .add_step(steps::record_style_failure())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos())
-            .outputs([(
-                STYLE_FAILED_OUTPUT.to_owned(),
-                format!(
-                    "${{{{ steps.{}.outputs.failed == 'true' }}}}",
-                    steps::RECORD_STYLE_FAILURE_STEP_ID
-                ),
-            )]),
+            .add_step(check_for_typos()),
     )
-}
-
-fn call_autofix(check_style: &NamedJob, run_tests_linux: &NamedJob) -> NamedJob {
-    fn dispatch_autofix(run_tests_linux_name: &str) -> Step<Run> {
-        let clippy_failed_expr = format!(
-            "needs.{}.outputs.{} == 'true'",
-            run_tests_linux_name, CLIPPY_FAILED_OUTPUT
-        );
-        named::bash(format!(
-            "gh workflow run autofix_pr.yml -f pr_number=${{{{ github.event.pull_request.number }}}} -f run_clippy=${{{{ {} }}}}",
-            clippy_failed_expr
-        ))
-        .add_env(("GITHUB_TOKEN", "${{ steps.get-app-token.outputs.token }}"))
-    }
-
-    let style_failed_expr = format!(
-        "needs.{}.outputs.{} == 'true'",
-        check_style.name, STYLE_FAILED_OUTPUT
-    );
-    let clippy_failed_expr = format!(
-        "needs.{}.outputs.{} == 'true'",
-        run_tests_linux.name, CLIPPY_FAILED_OUTPUT
-    );
-    let (authenticate, _token) = steps::authenticate_as_zippy();
-
-    let job = Job::default()
-        .runs_on(runners::LINUX_SMALL)
-        .cond(Expression::new(format!(
-            "always() && ({} || {}) && github.event_name == 'pull_request' && github.actor != 'zed-zippy[bot]'",
-            style_failed_expr, clippy_failed_expr
-        )))
-        .needs(vec![check_style.name.clone(), run_tests_linux.name.clone()])
-        .add_step(authenticate)
-        .add_step(dispatch_autofix(&run_tests_linux.name));
-
-    named::job(job)
 }
 
 fn check_dependencies() -> NamedJob {
@@ -349,15 +345,49 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
+            .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(steps::script("cargo build -p collab"))
             .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
-pub const CLIPPY_FAILED_OUTPUT: &str = "clippy_failed";
+pub(crate) fn clippy(platform: Platform) -> NamedJob {
+    let runner = match platform {
+        Platform::Windows => runners::WINDOWS_DEFAULT,
+        Platform::Linux => runners::LINUX_DEFAULT,
+        Platform::Mac => runners::MAC_DEFAULT,
+    };
+    NamedJob {
+        name: format!("clippy_{platform}"),
+        job: release_job(&[])
+            .runs_on(runner)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(platform))
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
+            .when(
+                platform == Platform::Linux,
+                steps::install_linux_dependencies,
+            )
+            .add_step(steps::setup_sccache(platform))
+            .add_step(steps::clippy(platform))
+            .add_step(steps::show_sccache_stats(platform)),
+    }
+}
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, true)
+}
+
+pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, false)
+}
+
+fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -367,35 +397,47 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Name("5432:5432".into())])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+            )
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
+            .add_step(steps::setup_sccache(platform))
             .add_step(steps::setup_node())
-            .add_step(steps::clippy(platform))
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::record_clippy_failure())
-            })
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::cargo_install_nextest())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::clear_target_dir_if_large(platform))
-            .add_step(steps::cargo_nextest(platform))
-            .add_step(steps::cleanup_cargo_config(platform))
-            .when(platform == Platform::Linux, |job| {
-                job.outputs([(
-                    CLIPPY_FAILED_OUTPUT.to_owned(),
-                    format!(
-                        "${{{{ steps.{}.outputs.failed == 'true' }}}}",
-                        steps::RECORD_CLIPPY_FAILURE_STEP_ID
-                    ),
-                )])
-            }),
+            .when(filter_packages, |job| {
+                job.add_step(
+                    steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),
+                )
+            })
+            .when(!filter_packages, |job| {
+                job.add_step(steps::cargo_nextest(platform))
+            })
+            .add_step(steps::show_sccache_stats(platform))
+            .add_step(steps::cleanup_cargo_config(platform)),
     }
 }
 
@@ -458,7 +500,9 @@ fn doctests() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(run_doctests())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
@@ -513,6 +557,7 @@ fn check_docs() -> NamedJob {
                 lychee_link_check("./docs/src/**/*"), // check markdown links
             )
             .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/generate-action-metadata"))
             .add_step(install_mdbook())
             .add_step(build_docs())
             .add_step(

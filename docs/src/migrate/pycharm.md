@@ -164,7 +164,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For Python, Z
 
 - **basedpyright** (default) — Fast type checking and completions
 - **Ruff** (default) — Linting and formatting
-- **Ty** — Up-and-coming language server from Astral, built for speed
+- **ty** — Up-and-coming language server from Astral, built for speed
 - **Pyright** — Microsoft's type checker
 - **PyLSP** — Plugin-based server with tool integrations
 
@@ -430,7 +430,7 @@ Options are `"off"`, `"basic"`, `"standard"` (default), `"strict"`, or `"all"`.
 
 Now that you're set up, here are some resources to help you get the most out of Zed:
 
-- [Configuring Zed](../configuring-zed.md) — Customize settings, themes, and editor behavior
+- [All Settings](../reference/all-settings.md) — Customize settings, themes, and editor behavior
 - [Key Bindings](../key-bindings.md) — Learn how to customize and extend your keymap
 - [Tasks](../tasks.md) — Set up build and run commands for your projects
 - [AI Features](../ai/overview.md) — Explore Zed's AI capabilities beyond code completion

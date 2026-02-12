@@ -1,17 +1,11 @@
 #[cfg(test)]
 mod file_finder_tests;
-#[cfg(test)]
-mod open_path_prompt_tests;
-
-pub mod file_finder_settings;
-mod open_path_prompt;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
@@ -19,12 +13,14 @@ use gpui::{
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
     Window, actions, rems,
 };
-use open_path_prompt::OpenPathPrompt;
+use open_path_prompt::{
+    OpenPathPrompt,
+    file_finder_settings::{FileFinderSettings, FileFinderWidth},
+};
 use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
-use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -51,6 +47,7 @@ use workspace::{
     ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
     notifications::NotifyResultExt, pane,
 };
+use zed_actions::search::ToggleIncludeIgnored;
 
 actions!(
     file_finder,
@@ -983,12 +980,12 @@ impl FileFinderDelegate {
                     .collect::<Vec<_>>();
                 let worktree_count = available_worktree.len();
                 let mut expect_worktree = available_worktree.first().cloned();
-                for worktree in available_worktree {
+                for worktree in &available_worktree {
                     let worktree_root = worktree.read(cx).root_name();
                     if worktree_count > 1 {
                         if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
                             query_path = Cow::Owned(suffix.to_owned());
-                            expect_worktree = Some(worktree);
+                            expect_worktree = Some(worktree.clone());
                             break;
                         }
                     }
@@ -996,7 +993,13 @@ impl FileFinderDelegate {
 
                 if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
                     let worktree_id = project.worktree_id;
-                    expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                    let focused_file_in_available_worktree = available_worktree
+                        .iter()
+                        .any(|wt| wt.read(cx).id() == worktree_id);
+
+                    if focused_file_in_available_worktree {
+                        expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                    }
                 }
 
                 if let Some(worktree) = expect_worktree {
@@ -1225,35 +1228,27 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = if let Ok(task) = project.update(cx, |this, cx| {
-                this.resolve_abs_file_path(query.path_query(), cx)
-            }) {
-                task.await.is_some()
-            } else {
-                false
-            };
+            let abs_file_exists = project
+                .update(cx, |this, cx| {
+                    this.resolve_abs_file_path(query.path_query(), cx)
+                })
+                .await
+                .is_some();
 
             if abs_file_exists {
-                let update_result = project
-                    .update(cx, |project, cx| {
-                        if let Some((worktree, relative_path)) =
-                            project.find_worktree(query_path, cx)
-                        {
-                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                score: 1.0,
-                                positions: Vec::new(),
-                                worktree_id: worktree.read(cx).id().to_usize(),
-                                path: relative_path,
-                                path_prefix: RelPath::empty().into(),
-                                is_dir: false, // File finder doesn't support directories
-                                distance_to_relative_ancestor: usize::MAX,
-                            }));
-                        }
-                    })
-                    .log_err();
-                if update_result.is_none() {
-                    return abs_file_exists;
-                }
+                project.update(cx, |project, cx| {
+                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                            score: 1.0,
+                            positions: Vec::new(),
+                            worktree_id: worktree.read(cx).id().to_usize(),
+                            path: relative_path,
+                            path_prefix: RelPath::empty().into(),
+                            is_dir: false, // File finder doesn't support directories
+                            distance_to_relative_ancestor: usize::MAX,
+                        }));
+                    }
+                });
             }
 
             picker
@@ -1577,9 +1572,12 @@ impl PickerDelegate for FileFinderDelegate {
                 .unwrap_or(0)
                 .saturating_sub(1);
             let finder = self.file_finder.clone();
+            let workspace = self.workspace.clone();
 
-            cx.spawn_in(window, async move |_, cx| {
-                let item = open_task.await.notify_async_err(cx)?;
+            cx.spawn_in(window, async move |_, mut cx| {
+                let item = open_task
+                    .await
+                    .notify_workspace_async_err(workspace, &mut cx)?;
                 if let Some(row) = row
                     && let Some(active_editor) = item.downcast::<Editor>()
                 {
@@ -1760,16 +1758,19 @@ impl PickerDelegate for FileFinderDelegate {
                                                 menu.context(focus_handle)
                                                     .action(
                                                         "Split Left",
-                                                        pane::SplitLeft.boxed_clone(),
+                                                        pane::SplitLeft::default().boxed_clone(),
                                                     )
                                                     .action(
                                                         "Split Right",
-                                                        pane::SplitRight.boxed_clone(),
+                                                        pane::SplitRight::default().boxed_clone(),
                                                     )
-                                                    .action("Split Up", pane::SplitUp.boxed_clone())
+                                                    .action(
+                                                        "Split Up",
+                                                        pane::SplitUp::default().boxed_clone(),
+                                                    )
                                                     .action(
                                                         "Split Down",
-                                                        pane::SplitDown.boxed_clone(),
+                                                        pane::SplitDown::default().boxed_clone(),
                                                     )
                                             }
                                         }))

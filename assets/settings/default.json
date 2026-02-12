@@ -26,11 +26,6 @@
   // 5. "SublimeText"
   // 6. "TextMate"
   "base_keymap": "VSCode",
-  // Features that can be globally enabled or disabled
-  "features": {
-    // Which edit prediction provider to use.
-    "edit_prediction_provider": "zed",
-  },
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
@@ -126,6 +121,7 @@
   // over symbols in the editor.
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
+  // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
@@ -169,6 +165,15 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // The text rendering mode to use.
+  // May take 3 values:
+  //  1. Use platform default behavior:
+  //         "text_rendering_mode": "platform_default"
+  //  2. Use subpixel (ClearType-style) text rendering:
+  //         "text_rendering_mode": "subpixel"
+  //  3. Use grayscale text rendering:
+  //         "text_rendering_mode": "grayscale"
+  "text_rendering_mode": "platform_default",
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
@@ -284,6 +289,12 @@
   // 4. Never show the scrollbar:
   //    "never" (default)
   "completion_menu_scrollbar": "never",
+  // Whether to align detail text in code completions context menus left or right.
+  "completion_detail_alignment": "left",
+  // How to display diffs in the editor.
+  //
+  // Default: split
+  "diff_view_style": "split",
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -475,6 +486,18 @@
     //
     // You need to rejoin a call for this setting to apply
     "experimental.legacy_audio_compatible": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific output audio device.
+    // `null` means use system default.
+    // Any unrecognized output device will fall back to system default.
+    "experimental.output_audio_device": null,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific input audio device.
+    // `null` means use system default.
+    // Any unrecognized input device will fall back to system default.
+    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -720,6 +743,8 @@
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
+    // Whether to show folder names with bold text in the project panel.
+    "bold_folder_labels": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.
@@ -902,8 +927,6 @@
     "inline_assistant_use_streaming_tools": true,
     // Whether the agent is enabled.
     "enabled": true,
-    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
-    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -922,6 +945,8 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-sonnet-4",
+      // Whether thinking is enabled.
+      "enable_thinking": false,
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -945,13 +970,49 @@
       //   "temperature": 1.0
       // }
     ],
-    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    // Permission rules for tool actions.
     //
-    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
-    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
-    "always_allow_tool_actions": false,
+    // The "default" setting applies when no tool-specific rules match.
+    // For external agents that define their own permission modes,
+    // "deny" and "confirm" still take precedence — the external agent's
+    // permission system is only used when Zed would allow the action.
+    //
+    // Per-tool regex patterns ("tools" below) match against tool input text
+    // (commands, paths, URLs, etc.). For `copy_path` and `move_path`,
+    // patterns are matched independently against each path (source and
+    // destination).
+    "tool_permissions": {
+      // Global default permission when no tool-specific rules match.
+      // "allow" - Auto-approve without prompting
+      // "deny" - Auto-reject
+      // "confirm" - Always prompt (default)
+      "default": "confirm",
+      // Per-tool permission rules. Regex patterns match against tool input text.
+      // The per-tool "default" also applies to MCP tools.
+      // Each tool can have its own default and regex patterns.
+      "tools": {
+        // "terminal": {
+        //   "default": "confirm",
+        //   "always_confirm": [
+        //     // Destructive git operations
+        //     { "pattern": "git\\s+(reset|clean)\\s+--hard" },
+        //     { "pattern": "git\\s+push\\s+(-f|--force)" },
+        //   ],
+        // },
+        // "edit_file": {
+        //   "default": "confirm",
+        //   "always_deny": [
+        //     // Secrets and credentials
+        //     { "pattern": "\\.env($|\\.)" },
+        //     { "pattern": "secrets?/" },
+        //     { "pattern": "\\.pem$" },
+        //     { "pattern": "\\.key$" },
+        //   ],
+        // },
+      },
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
-    "single_file_review": true,
+    "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
     "default_profile": "write",
@@ -976,6 +1037,7 @@
           "save_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "terminal": true,
           "thinking": true,
           "web_search": true,
@@ -995,6 +1057,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "subagent": true,
           "thinking": true,
           "web_search": true,
         },
@@ -1025,6 +1088,11 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
+    // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
+    //
+    // Default: true
+    "cancel_generation_on_terminal_stop": true,
     // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     //
     // Default: false
@@ -1033,6 +1101,10 @@
     //
     // Default: 4
     "message_editor_min_lines": 4,
+    // Whether to show turn statistics (elapsed time during generation, final turn duration).
+    //
+    // Default: false
+    "show_turn_stats": false,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1045,6 +1117,30 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+  // Controls how semantic tokens from language servers are used for syntax highlighting.
+  //
+  // Options:
+  // - "off": Do not request semantic tokens from language servers.
+  // - "combined": Use LSP semantic tokens together with tree-sitter highlighting as base.
+  // - "full": Use LSP semantic tokens exclusively to highlight the text, tree-sitter syntax highlighting is off.
+  //
+  // May require language server restart to properly apply.
+  "semantic_tokens": "off",
+
+  // Controls whether folding ranges from language servers are used instead of
+  // tree-sitter and indent-based folding.
+  //
+  // Options:
+  // - "off": Use tree-sitter and indent-based folding (default).
+  // - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+  "document_folding_ranges": "off",
+
+  // Controls the source of document symbols used for outlines and breadcrumbs.
+  //
+  // Options:
+  // - "off": Use tree-sitter queries to compute document symbols (default).
+  // - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+  "document_symbols": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.
@@ -1068,6 +1164,10 @@
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
     "show_tab_bar_buttons": true,
+    // Whether or not to show pinned tabs in a separate row.
+    // When enabled, pinned tabs appear in a top row and unpinned tabs in a bottom row.
+    // When disabled, all tabs appear in a single row (default behavior).
+    "show_pinned_tabs_in_separate_row": false,
   },
   // Settings related to the editor's tabs
   "tabs": {
@@ -1178,6 +1278,10 @@
   "remove_trailing_whitespace_on_save": true,
   // Whether to start a new line with a comment when a previous line is a comment as well.
   "extend_comment_on_newline": true,
+  // Whether to continue markdown lists when pressing enter.
+  "extend_list_on_newline": true,
+  // Whether to indent list items when pressing tab after a list marker.
+  "indent_list_on_tab": true,
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
@@ -1269,6 +1373,8 @@
     // Whether to show the project diagnostics button in the status bar.
     "button": true,
     // Whether to show warnings or not by default.
+    //
+    // Default: true
     "include_warnings": true,
     // Settings for using LSP pull diagnostics mechanism in Zed.
     "lsp_pull_diagnostics": {
@@ -1304,6 +1410,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
     "**/.repo",
     "**/CVS",
     "**/.DS_Store",
@@ -1319,8 +1426,19 @@
   // Globs to match files that will be considered "hidden". These files can be hidden from the
   // project panel by toggling the "hide_hidden" setting.
   "hidden_files": ["**/.*"],
+  // Globs to match files that will be opened as read-only. You can still view these files,
+  // but cannot edit them. This is useful for generated files or external dependencies.
+  "read_only_files": [],
   // Git gutter behavior configuration.
   "git": {
+    // Global switch to enable or disable all git integration features.
+    // If set to true, disables all git integration features.
+    // If set to false, individual git integration features below will be independently enabled or disabled.
+    "disable_git": false,
+    // Whether to enable git status tracking.
+    "enable_status": true,
+    // Whether to enable git diff display.
+    "enable_diff": true,
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
     //      "git_gutter": "tracked_files"
@@ -1382,6 +1500,8 @@
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
   "edit_predictions": {
+    // Which edit prediction provider to use.
+    "provider": "zed",
     // A list of globs representing files that edit predictions should be disabled for.
     // There's a sensible default list of globs already included.
     // Any addition to this list will be merged with the default list.
@@ -1411,16 +1531,30 @@
     //   "enterprise_uri": "",
     //   "proxy": "",
     //   "proxy_no_verify": false
+    //   "enable_next_edit_suggestions": true
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
+      "enable_next_edit_suggestions": true,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+    },
+    "sweep": {
+      // When enabled, Sweep will not store edit prediction inputs or outputs.
+      // When disabled, Sweep may collect data including buffer contents,
+      // diagnostics, file paths, repository names, and generated predictions
+      // to improve the service.
+      "privacy_mode": false,
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
     // This setting has no effect if globally disabled.
@@ -1446,6 +1580,8 @@
     "cursor_position_button": true,
     // Whether to show active line endings button in the status bar.
     "line_endings_button": false,
+    // Control when to show the active encoding in the status bar.
+    "active_encoding_button": "non_utf8",
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1471,15 +1607,18 @@
     // Default height when the terminal is docked to the bottom.
     "default_height": 320,
     // What working directory to use when launching the terminal.
-    // May take 4 values:
-    // 1. Use the current file's project directory. Fallback to the
+    // May take 5 values:
+    // 1. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "working_directory": "current_file_directory"
+    // 2. Use the current file's project directory. Fallback to the
     //    first project directory strategy if unsuccessful
     //      "working_directory": "current_project_directory"
-    // 2. Use the first project in this workspace's directory
+    // 3. Use the first project in this workspace's directory
     //      "working_directory": "first_project_directory"
-    // 3. Always use this platform's home directory (if we can find it)
+    // 4. Always use this platform's home directory (if we can find it)
     //     "working_directory": "always_home"
-    // 4. Always use a specific directory. This value will be shell expanded.
+    // 5. Always use a specific directory. This value will be shell expanded.
     //    If this path is not a valid directory the terminal will default to
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
@@ -2123,6 +2262,46 @@
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
     "button": true,
+    // The maximum amount of time to wait for responses from language servers, in seconds.
+    // A value of 0 will result in no timeout being applied.
+    //
+    // Default: 120
+    "request_timeout": 120,
+    "notifications": {
+      // Timeout in milliseconds for automatically dismissing language server notifications.
+      // Set to 0 to disable auto-dismiss.
+      "dismiss_timeout_ms": 5000,
+    },
+    // Rules for highlighting semantic tokens. User-defined rules are prepended to the default
+    // rules (viewable via "Show Default Semantic Token Rules"), so they take precedence.
+    //
+    // Each `rule` has the following properties:
+    // - `token_type`: The LSP semantic token type to customize. If omitted, the rule matches all token types.
+    // - `token_modifiers`: A list of LSP semantic token modifiers to match. All modifiers must be present
+    //    to match.
+    // - `style`: A list of styles from the current syntax theme to use. The first style found is used. Any
+    //    settings below override that style.
+    // - `foreground_color`: The foreground color to use for the token type, in hex format (e.g., "#ff0000").
+    // - `background_color`: The background color to use for the token type, in hex format.
+    // - `underline`: A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
+    // - `strikethrough`: A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
+    // - `font_weight`: One of "normal", "bold".
+    // - `font_style`: One of "normal", "italic".
+    //
+    // The first matching rule for a token is applied. Because user-defined rules are prepended to the
+    // default rules, a token can be entirely disabled by adding an empty rule that matches it.
+    //
+    // Example: Highlight unresolved references in red and bold:
+    // "semantic_token_rules": [
+    //   {
+    //     "token_type": "unresolvedReference",
+    //     "foreground_color": "#c93f3f",
+    //     "font_weight": "bold"
+    //   }
+    // ]
+    //
+    // Default rules are viewable via the "zed: show default semantic token rules" action.
+    "semantic_token_rules": [],
   },
   // Jupyter settings
   "jupyter": {
@@ -2142,6 +2321,12 @@
     // Maximum number of lines to keep in REPL's scrollback buffer.
     // Clamped with [4, 256] range.
     "max_lines": 32,
+    // Maximum number of lines of output to display before scrolling.
+    // Set to 0 to disable output height limits.
+    "output_max_height_lines": 0,
+    // Maximum number of columns of output to display before scaling images.
+    // Set to 0 to disable output width limits.
+    "output_max_width_columns": 0,
   },
   // Vim settings
   "vim": {
@@ -2149,13 +2334,18 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
-    // Cursor shape for the each mode.
-    // Specify the mode as the key and the shape as the value.
-    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // Cursor shape for each mode.
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {},
+    "cursor_shape": {
+      "normal": "block",
+      "replace": "underline",
+      "visual": "block",
+      // Set to "inherit" to use the editor's cursor_shape.
+      "insert": "inherit",
+    },
   },
   // Which-key popup settings
   "which_key": {
@@ -2218,7 +2408,7 @@
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
   //   - "proxy": "http://127.0.0.1:10809"
-  "proxy": null,
+  "proxy": "",
   // Set to configure aliases for the command palette.
   // When typing a query which is a key of this object, the value will be used instead.
   //
@@ -2245,6 +2435,17 @@
   "ssh_connections": [],
   // Whether to read ~/.ssh/config for ssh connection sources.
   "read_ssh_config": true,
+  // Default timeout in seconds for all context server tool calls.
+  // Individual servers can override this in their configuration.
+  // Examples:
+  // "context_servers": {
+  //   "my-stdio-server": {
+  //     "command": "/path/to/server",
+  //     "timeout": 120  // Override: 2 minutes for this server
+  //   },
+  // }
+  // Default: 60
+  "context_server_timeout": 60,
   // Configures context servers for use by the agent.
   "context_servers": {},
   // Configures agent servers available in the agent panel.

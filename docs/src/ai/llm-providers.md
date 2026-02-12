@@ -1,3 +1,8 @@
+---
+title: LLM Providers - Use Your Own API Keys in Zed
+description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, and more.
+---
+
 # LLM Providers
 
 To use AI in Zed, you need to have at least one large language model provider set up.
@@ -6,7 +11,7 @@ You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-If you already have an API key for an existing LLM provider, like Anthropic or OpenAI, you can add them to Zed and use the full power of the Agent Panel **_for free_**.
+If you already have an API key for a provider like Anthropic or OpenAI, you can add it to Zed. No Zed subscription required.
 
 To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
 
@@ -14,7 +19,7 @@ To add an existing API key to a given provider, go to the Agent Panel settings (
 
 ## Supported Providers
 
-Zed offers an extensive list of "use your own key" LLM providers
+Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
@@ -59,7 +64,7 @@ Your IAM policy should look similar to:
 }
 ```
 
-With that done, choose one of the two authentication methods:
+With that done, choose one of the three authentication methods:
 
 #### Authentication via Named Profile (Recommended)
 
@@ -86,6 +91,27 @@ To do this:
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
+
+#### Authentication via Bedrock API Key
+
+Amazon Bedrock also supports [API Keys](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html), which authenticate directly without requiring IAM users or named profiles.
+
+1. Create an API Key in the [Amazon Bedrock Console](https://console.aws.amazon.com/bedrock/)
+2. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
+3. Enter your Bedrock API key in the **API Key** field and select your **Region**
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "api_key",
+      "region": "your-aws-region"
+    }
+  }
+}
+```
+
+The API key itself is stored securely in your OS keychain, not in your settings file.
 
 #### Cross-Region Inference
 
@@ -122,6 +148,27 @@ All data will be transmitted encrypted across Amazon's secure network.
 We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+#### Extended Context Window {#bedrock-extended-context}
+
+Anthropic models on Bedrock support a [1M token extended context window](https://docs.anthropic.com/en/docs/build-with-claude/extended-context) beta. To enable this feature, add `"allow_extended_context": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_extended_context": true
+    }
+  }
+}
+```
+
+When enabled, Zed will include the `anthropic_beta` field in requests to Bedrock, enabling the 1M token context window for supported Anthropic models such as Claude Sonnet 4.5 and Claude Opus 4.6.
+
+> **Note**: Extended context usage may incur additional API costs. Refer to your AWS Bedrock pricing for details.
 
 ### Anthropic {#anthropic}
 
@@ -427,7 +474,7 @@ If the model is tagged with `vision` in the Ollama catalog, set this option and 
 
 In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to remote Ollama instances. API keys are required for authentication.
 
-One such service is [Ollama Turbo])(https://ollama.com/turbo). To configure Zed to use Ollama turbo:
+One such service is [Ollama Turbo](https://ollama.com/turbo). To configure Zed to use Ollama Turbo:
 
 1. Sign in to your Ollama account and subscribe to Ollama Turbo
 2. Visit [ollama.com/settings/keys](https://ollama.com/settings/keys) and create an API key
@@ -469,6 +516,14 @@ To use alternate models, perhaps a preview release, or if you wish to control th
           "name": "gpt-4o-2024-08-06",
           "display_name": "GPT 4o Summer 2024",
           "max_tokens": 128000
+        },
+        {
+          "name": "gpt-5-codex",
+          "display_name": "GPT-5 Codex",
+          "max_tokens": 128000,
+          "capabilities": {
+            "chat_completions": false
+          }
         }
       ]
     }
@@ -478,7 +533,10 @@ To use alternate models, perhaps a preview release, or if you wish to control th
 
 You must provide the model's context window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
 
-OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+OpenAI `o1` and `o`-class models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+
+If a model does not support the `/chat/completions` endpoint (for example `gpt-5-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
+
 Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible {#openai-api-compatible}
@@ -525,6 +583,9 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `images`: false (does not support image inputs)
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
+- `chat_completions`: true (calls the `/chat/completions` endpoint)
+
+If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
