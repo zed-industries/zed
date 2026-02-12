@@ -1027,6 +1027,7 @@ impl Thread {
                 acp::ToolCallUpdateFields::new()
                     .status(status)
                     .raw_output(output),
+                None,
             );
             return;
         };
