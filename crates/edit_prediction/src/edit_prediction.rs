@@ -231,7 +231,11 @@ pub enum UserActionType {
 pub struct StoredEvent {
     pub event: Arc<zeta_prompt::Event>,
     pub old_snapshot: TextBufferSnapshot,
+    // was_near_predecessor: bool,
 }
+
+// last_event:  {E, predicted: false (elsewhere)}
+// events:      {ABCD, predicted: false}
 
 struct ProjectState {
     events: VecDeque<StoredEvent>,
@@ -1140,6 +1144,41 @@ impl EditPredictionStore {
 
         if let Some(event) = project_state.last_event.take() {
             if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
+
+                let mut next_old_event = None;
+                let mut mergeable_count = 0;
+                let mut merged_edit_range = Anchor::MAX..Anchor::MIN;
+                for old_event in events.iter().rev() {
+                    if let Some(next_old_event) = &next_old_event &&
+                        !old_event.can_merge(&next_old_event, &new_snapshot)
+                    {
+                        break;
+                    }
+                    mergeable_count += 1;
+                    mergeable_edit_range.start = mergeable_edit_range.start.min(old_event.edit_range.start);
+                    mergeable_edit_range.end = mergeable_edit_range.end.max(old_event.edit_range.end);
+                    next_old_event = Some(old_event);
+                }
+
+                if mergeable_count > 1 {
+                    let events_to_merge = &events[events.len() - mergeable_count];
+                    let diff = compute_diff_between_snapshots(&events_to_merge[0].old_snapshot, &event.old_snapshot)?;
+                    let merged_event = StoredEvent {
+                        event: Arc::new(zeta_prompt::Event::BufferChange {
+                            old_path: events_to_merge[0].event.old_path,
+                            path: events_to_merge[0].event.path,
+                            diff,
+                            in_open_source_repo: events_to_merge[0].event.in_open_source_repo,
+                            predicted: events_to_merge.iter().all(|e| e.event.predicted),
+                        }),
+                        old_snapshot: events_to_merge[0].old_snapshot.clone(),
+                        edit_range: merged_edit_range,
+                    };
+
+                    events.truncate(events.len() - mergeable_count);
+                    events.push_back(merged_event);
+                }
+
                 if events.len() + 1 >= EVENT_COUNT_MAX {
                     events.pop_front();
                 }
