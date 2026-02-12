@@ -21,6 +21,7 @@ use picker::{Picker, PickerDelegate};
 use project::{
     PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
 };
+use project_panel::project_panel_settings::ProjectPanelSettings;
 use settings::Settings;
 use std::{
     borrow::Cow,
@@ -1048,8 +1049,13 @@ impl FileFinderDelegate {
 
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
-                    } else if worktree.is_some() {
-                        let full_path = entry_path.project.path.clone();
+                    } else if let Some(worktree) = worktree {
+                        let project_panel_settings = ProjectPanelSettings::get_global(cx);
+                        let mut full_path =
+                            worktree.read(cx).root_name().join(&entry_path.project.path);
+                        if project_panel_settings.hide_root {
+                            full_path = entry_path.project.path.clone();
+                        }
                         let mut components = full_path.components();
                         let filename = components.next_back().unwrap_or("");
                         let prefix = components.rest();

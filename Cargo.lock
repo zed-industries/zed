@@ -6283,6 +6283,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "project_panel",
  "serde",
  "serde_json",
  "settings",
