@@ -4,11 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
-<<<<<<< HEAD
 pub mod pdf;
-mod shell_parser;
-=======
->>>>>>> main
 mod templates;
 #[cfg(test)]
 mod tests;
