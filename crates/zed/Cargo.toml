@@ -153,6 +153,7 @@ line_ending_selector.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
+mermaid_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
 miniprofiler_ui.workspace = true

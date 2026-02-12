@@ -726,4 +726,18 @@ pub mod preview {
             ]
         );
     }
+
+    pub mod mermaid {
+        use gpui::actions;
+
+        actions!(
+            mermaid,
+            [
+                /// Opens a Mermaid diagram preview for the current file.
+                OpenPreview,
+                /// Opens a Mermaid diagram preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
 }

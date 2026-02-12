@@ -605,6 +605,14 @@
     },
   },
   {
+    "context": "Editor && (extension == mmd || extension == mermaid)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "mermaid::OpenPreviewToTheSide",
+      "cmd-shift-v": "mermaid::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
