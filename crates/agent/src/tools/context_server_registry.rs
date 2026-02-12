@@ -385,7 +385,7 @@ impl AnyAgentTool for ContextServerTool {
             if response.is_error == Some(true) {
                 let error_message: String =
                     response.content.iter().filter_map(|c| c.text()).collect();
-                bail!(error_message);
+                anyhow::bail!(error_message);
             }
 
             let mut result = String::new();
