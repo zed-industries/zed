@@ -1616,6 +1616,93 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/my_project"),
+            json!({
+                "src": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/my_project").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        assert!(matches.len() >= 2);
+
+        for m in matches.iter() {
+            if let Match::History { panel_match, .. } = m {
+                assert!(
+                    panel_match.is_none(),
+                    "History items with no query should not have a panel match"
+                );
+            }
+        }
+
+        let separator = PathStyle::local().primary_separator();
+
+        let (file_label, path_label) = finder.delegate.labels_for_match(&matches[0], window, cx);
+        assert_eq!(file_label.text(), "second.rs");
+        assert_eq!(
+            path_label.text(),
+            format!("src{separator}"),
+            "History path label must not contain root name 'my_project'"
+        );
+
+        let (file_label, path_label) = finder.delegate.labels_for_match(&matches[1], window, cx);
+        assert_eq!(file_label.text(), "first.rs");
+        assert_eq!(
+            path_label.text(),
+            format!("src{separator}"),
+            "History path label must not contain root name 'my_project'"
+        );
+    });
+
+    // Now type a query so history items get panel_match populated,
+    // and verify labels stay consistent with the no-query case.
+    let picker = active_file_picker(&workspace, cx);
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches("first".to_string(), window, cx)
+        })
+        .await;
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        let history_match = matches
+            .iter()
+            .find(|m| matches!(m, Match::History { .. }))
+            .expect("Should have a history match for 'first'");
+
+        let (file_label, path_label) = finder.delegate.labels_for_match(history_match, window, cx);
+        assert_eq!(file_label.text(), "first.rs");
+        let separator = PathStyle::local().primary_separator();
+        assert_eq!(
+            path_label.text(),
+            format!("src{separator}"),
+            "Queried history path label must not contain root name 'my_project'"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 

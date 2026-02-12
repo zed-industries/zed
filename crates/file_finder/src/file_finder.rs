@@ -1048,7 +1048,7 @@ impl FileFinderDelegate {
 
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
-                    } else if let Some(_) = worktree {
+                    } else if worktree.is_some() {
                         let full_path = entry_path.project.path.clone();
                         let mut components = full_path.components();
                         let filename = components.next_back().unwrap_or("");
