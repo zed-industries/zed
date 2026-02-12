@@ -72,11 +72,19 @@ pub fn assign_kernelspec(
     Ok(())
 }
 
+pub enum ReplRunMode {
+    Line,
+    Cell,
+    Above,
+    All,
+}
+
 pub fn run(
     editor: WeakEntity<Editor>,
     move_down: bool,
     window: &mut Window,
     cx: &mut App,
+    repl_run_mode: ReplRunMode,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {
@@ -101,7 +109,7 @@ pub fn run(
     };
 
     let (runnable_ranges, next_cell_point) =
-        runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx);
+        runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx, repl_run_mode);
 
     for runnable_range in runnable_ranges {
         let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
@@ -372,13 +380,11 @@ fn jupytext_cells(
         .map(|comment_prefix| format!("{comment_prefix}%%"))
         .collect::<Vec<_>>();
 
-    let mut snippet_start_row = None;
     loop {
         if jupytext_prefixes
             .iter()
             .any(|prefix| buffer.contains_str_at(Point::new(current_row, 0), prefix))
         {
-            snippet_start_row = Some(current_row);
             break;
         } else if current_row > 0 {
             current_row -= 1;
@@ -387,6 +393,7 @@ fn jupytext_cells(
         }
     }
 
+    let snippet_start_row = Some(current_row);
     let mut snippets = Vec::new();
     if let Some(mut snippet_start_row) = snippet_start_row {
         for current_row in range.start.row + 1..=buffer.max_point().row {
@@ -420,6 +427,7 @@ fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
     cx: &mut App,
+    repl_run_mode: ReplRunMode,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language()
         && language.name() == "Markdown".into()
@@ -427,12 +435,55 @@ fn runnable_ranges(
         return (markdown_code_blocks(buffer, range, cx), None);
     }
 
-    let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
-    if !jupytext_snippets.is_empty() {
-        return (jupytext_snippets, next_cursor);
-    }
+    let snippet_range;
 
-    let snippet_range = cell_range(buffer, range.start.row, range.end.row);
+    match repl_run_mode {
+        ReplRunMode::Line => {
+            snippet_range = cell_range(buffer, range.start.row, range.end.row);
+        }
+        ReplRunMode::Cell => {
+            let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
+            if !jupytext_snippets.is_empty() {
+                return (jupytext_snippets, next_cursor);
+            } else {
+                // func jupytext_cells search jupytext_prefixes backward
+                // if no cell, return empty
+                return (Vec::new(), None);
+            }
+        }
+        ReplRunMode::Above => {
+            let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, Point::new(0, 0)..Point::new(range.start.row, 0));
+            if !jupytext_snippets.is_empty() {
+                if jupytext_snippets.len() > 1 {
+                    // return all cells above exclude the current cell.
+                    return (jupytext_snippets[0..jupytext_snippets.len()-1].to_vec(), next_cursor);
+                }
+                else{
+                    // either the cursor is in the first cell or there's no cell in whole file, run codes above cursor, exclude the current line.
+                    if range.start.row > 0 {
+                        snippet_range = cell_range(buffer, 0, range.start.row-1);
+                    } else {
+                        // cursor is in the first line, return empty
+                        return (Vec::new(), None);
+                    }
+                }
+            } else {
+                // func jupytext_cells search jupytext_prefixes backward
+                // if no cell, return empty
+                return (Vec::new(), None);
+            }
+        }
+        ReplRunMode::All => {
+            let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, Point::new(0, 0)..Point::new(buffer.max_point().row, 0));
+            if !jupytext_snippets.is_empty() {
+                return (jupytext_snippets, next_cursor);
+            } else {
+                // func jupytext_cells search jupytext_prefixes backward
+                // if no cell, return empty
+                return (Vec::new(), None);
+            }
+        }
+    }
 
     // Check if the snippet range is entirely blank, if so, skip forward to find code
     let is_blank =
@@ -556,7 +607,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Single-point selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -564,7 +615,7 @@ mod tests {
         assert_eq!(snippets, vec!["print(1 + 1)"]);
 
         // Multi-line selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -577,7 +628,7 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0), cx, ReplRunMode::Line);
 
         let snippets = snippets
             .into_iter()
@@ -585,6 +636,20 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             snippets,
+            vec![indoc! { r#"
+                print(1 + 1)
+                print(2 + 2)
+
+                print(4 + 4)"# }]
+        );
+
+        // Run cell mode without jupytext_prefixes, run all codes as cell.
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0,5)..Point::new(5,0), cx, ReplRunMode::Cell);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets,
             vec![indoc! { r#"
                 print(1 + 1)
                 print(2 + 2)
@@ -630,7 +695,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Jupytext snippet surrounding an empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx, ReplRunMode::Cell);
 
         let snippets = snippets
             .into_iter()
@@ -646,7 +711,7 @@ mod tests {
         );
 
         // Jupytext snippets intersecting a non-empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2), cx, ReplRunMode::Cell);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -751,7 +816,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -796,7 +861,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -835,7 +900,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -877,7 +942,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Selection on blank line should skip to next non-blank cell
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -900,7 +965,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx, ReplRunMode::Line);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -920,7 +985,203 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, ReplRunMode::Line);
         assert!(snippets.is_empty());
+    } 
+    
+    #[gpui::test]
+    fn test_run_all_and_run_above_with_cells(cx: &mut App) {
+        // Create a test language
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+        
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)
+                    
+                    # %% [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+    
+                    # %%
+                    print(3 + 3)
+                    print(4 + 4)
+    
+                    print(5 + 5)
+    
+    
+    
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+        
+        // Test for repl: run all with cells
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, ReplRunMode::All);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)"#
+                },
+                indoc! { r#"
+                    # %% [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)"#
+                },
+                indoc! { r#"
+                    # %%
+                    print(3 + 3)
+                    print(4 + 4)
+
+                    print(5 + 5)"#
+                }
+            ]
+        );
+        
+        // Test for repl: run above with cells
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(10, 0)..Point::new(10, 3), cx, ReplRunMode::Above);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)"#
+                },
+                indoc! { r#"
+                    # %% [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)"#
+                }
+            ]
+        );
+        
+        // Test forrepl: run above in first cell
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx, ReplRunMode::Above);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)"#
+                }
+            ]
+        );
+    } 
+        
+    #[gpui::test]
+    fn test_run_all_and_run_above_without_cells(cx: &mut App) {
+        // Create a test language
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+                
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)
+                    
+                    # [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+    
+                    # 
+                    print(3 + 3)
+                    print(4 + 4)
+    
+                    print(5 + 5)
+    
+    
+    
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+        
+        // Test for repl: run all without cells
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx, ReplRunMode::All);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)
+                    
+                    # [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+    
+                    # 
+                    print(3 + 3)
+                    print(4 + 4)
+    
+                    print(5 + 5)"#
+                }
+            ]
+        );
+        
+        // Test for repl: run above without cells
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(10, 0)..Point::new(10, 3), cx, ReplRunMode::Above);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            snippets,
+            vec![
+                indoc! { r#"
+                    # Hello!
+                    print("before first cell", 0)
+                    
+                    # [markdown]
+                    # This is some arithmetic
+                    print(1 + 1)
+                    print(2 + 2)
+    
+                    # 
+                    print(3 + 3)"#
+                } 
+            ]
+        );
     }
 }
