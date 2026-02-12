@@ -3,8 +3,8 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    Action, App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable,
-    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -12,6 +12,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
+use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
@@ -20,10 +21,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
-use title_bar::platform_title_bar::PlatformTitleBar;
-use ui::{Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
+use workspace::{MultiWorkspace, Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -82,29 +83,26 @@ pub fn open_rules_library(
     let store = PromptStore::global(cx);
     cx.spawn(async move |cx| {
         // We query windows in spawn so that all windows have been returned to GPUI
-        let existing_window = cx
-            .update(|cx| {
-                let existing_window = cx
-                    .windows()
-                    .into_iter()
-                    .find_map(|window| window.downcast::<RulesLibrary>());
-                if let Some(existing_window) = existing_window {
-                    existing_window
-                        .update(cx, |rules_library, window, cx| {
-                            if let Some(prompt_to_select) = prompt_to_select {
-                                rules_library.load_rule(prompt_to_select, true, window, cx);
-                            }
-                            window.activate_window()
-                        })
-                        .ok();
+        let existing_window = cx.update(|cx| {
+            let existing_window = cx
+                .windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<RulesLibrary>());
+            if let Some(existing_window) = existing_window {
+                existing_window
+                    .update(cx, |rules_library, window, cx| {
+                        if let Some(prompt_to_select) = prompt_to_select {
+                            rules_library.load_rule(prompt_to_select, true, window, cx);
+                        }
+                        window.activate_window()
+                    })
+                    .ok();
 
-                    Some(existing_window)
-                } else {
-                    None
-                }
-            })
-            .ok()
-            .flatten();
+                Some(existing_window)
+            } else {
+                None
+            }
+        });
 
         if let Some(existing_window) = existing_window {
             return Ok(existing_window);
@@ -151,7 +149,7 @@ pub fn open_rules_library(
                     })
                 },
             )
-        })?
+        })
     })
 }
 
@@ -206,13 +204,8 @@ impl PickerDelegate for RulePickerDelegate {
         self.filtered_entries.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
-        let text = if self.store.read(cx).prompt_count() == 0 {
-            "No rules.".into()
-        } else {
-            "No rules found matching your search.".into()
-        };
-        Some(text)
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No rules found matching your search.".into())
     }
 
     fn selected_index(&self) -> usize {
@@ -453,10 +446,12 @@ impl PickerDelegate for RulePickerDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
+
         h_flex()
             .py_1()
             .px_1p5()
@@ -680,13 +675,13 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(default_content) = prompt_id.default_content() else {
+        let Some(built_in) = prompt_id.as_built_in() else {
             return;
         };
 
         if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
             rule_editor.body_editor.update(cx, |editor, cx| {
-                editor.set_text(default_content, window, cx);
+                editor.set_text(built_in.default_content(), window, cx);
             });
         }
     }
@@ -720,7 +715,7 @@ impl RulesLibrary {
             if focus {
                 rule_editor
                     .body_editor
-                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
+                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx));
             }
             self.set_active_rule(Some(prompt_id), window, cx);
         } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
@@ -763,7 +758,7 @@ impl RulesLibrary {
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
-                                window.focus(&editor.focus_handle(cx));
+                                window.focus(&editor.focus_handle(cx), cx);
                             }
                             editor
                         });
@@ -939,7 +934,7 @@ impl RulesLibrary {
         if let Some(active_rule) = self.active_rule_id {
             self.rule_editors[&active_rule]
                 .body_editor
-                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
+                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx));
             cx.stop_propagation();
         }
     }
@@ -973,12 +968,14 @@ impl RulesLibrary {
                 .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
-                if let Some(workspace) = window.downcast::<Workspace>() {
-                    let panel = workspace
-                        .update(cx, |workspace, window, cx| {
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                    let panel = multi_workspace
+                        .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();
-                            self.inline_assist_delegate
-                                .focus_agent_panel(workspace, window, cx)
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                self.inline_assist_delegate
+                                    .focus_agent_panel(workspace, window, cx)
+                            })
                         })
                         .ok();
                     if panel == Some(true) {
@@ -991,27 +988,27 @@ impl RulesLibrary {
 
     fn move_down_from_title(
         &mut self,
-        _: &editor::actions::MoveDown,
+        _: &zed_actions::editor::MoveDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(rule_id) = self.active_rule_id
             && let Some(rule_editor) = self.rule_editors.get(&rule_id)
         {
-            window.focus(&rule_editor.body_editor.focus_handle(cx));
+            window.focus(&rule_editor.body_editor.focus_handle(cx), cx);
         }
     }
 
     fn move_up_from_body(
         &mut self,
-        _: &editor::actions::MoveUp,
+        _: &zed_actions::editor::MoveUp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(rule_id) = self.active_rule_id
             && let Some(rule_editor) = self.rule_editors.get(&rule_id)
         {
-            window.focus(&rule_editor.title_editor.focus_handle(cx));
+            window.focus(&rule_editor.title_editor.focus_handle(cx), cx);
         }
     }
 
@@ -1097,7 +1094,6 @@ impl RulesLibrary {
                                     thread_id: None,
                                     prompt_id: None,
                                     intent: None,
-                                    mode: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
@@ -1109,6 +1105,7 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
+                                    thinking_effort: None,
                                 },
                                 cx,
                             )
@@ -1308,8 +1305,8 @@ impl RulesLibrary {
                         .size_full()
                         .relative()
                         .overflow_hidden()
-                        .on_click(cx.listener(move |_, _, window, _| {
-                            window.focus(&focus_handle);
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            window.focus(&focus_handle, cx);
                         }))
                         .child(
                             h_flex()
@@ -1428,34 +1425,11 @@ impl Render for RulesLibrary {
                             this.border_t_1().border_color(cx.theme().colors().border)
                         })
                         .child(self.render_rule_list(cx))
-                        .map(|el| {
-                            if self.store.read(cx).prompt_count() == 0 {
-                                el.child(
-                                    v_flex()
-                                        .h_full()
-                                        .flex_1()
-                                        .items_center()
-                                        .justify_center()
-                                        .border_l_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .bg(cx.theme().colors().editor_background)
-                                        .child(
-                                            Button::new("create-rule", "New Rule")
-                                                .style(ButtonStyle::Outlined)
-                                                .key_binding(KeyBinding::for_action(&NewRule, cx))
-                                                .on_click(|_, window, cx| {
-                                                    window
-                                                        .dispatch_action(NewRule.boxed_clone(), cx)
-                                                }),
-                                        ),
-                                )
-                            } else {
-                                el.child(self.render_active_rule(cx))
-                            }
-                        }),
+                        .child(self.render_active_rule(cx)),
                 ),
             window,
             cx,
+            Tiling::default(),
         )
     }
 }

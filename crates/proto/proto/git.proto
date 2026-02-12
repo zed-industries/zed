@@ -283,6 +283,7 @@ message CommitFile {
     string path = 1;
     optional string old_text = 2;
     optional string new_text = 3;
+    bool is_binary = 4;
 }
 
 message GitReset {
@@ -413,6 +414,7 @@ message Push {
     string branch_name = 5;
     optional PushOptions options = 6;
     uint64 askpass_id = 7;
+    string remote_branch_name = 8;
 
     enum PushOptions {
         SET_UPSTREAM = 0;

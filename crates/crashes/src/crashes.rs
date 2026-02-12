@@ -96,6 +96,8 @@ pub async fn init(crash_init: InitCrashHandler) {
             break;
         }
         elapsed += retry_frequency;
+        // Crash reporting is called outside of gpui in the remote server right now
+        #[allow(clippy::disallowed_methods)]
         smol::Timer::after(retry_frequency).await;
     }
     let client = maybe_client.unwrap();
@@ -138,6 +140,8 @@ pub async fn init(crash_init: InitCrashHandler) {
 
     loop {
         client.ping().ok();
+        // Crash reporting is called outside of gpui in the remote server right now
+        #[allow(clippy::disallowed_methods)]
         smol::Timer::after(Duration::from_secs(10)).await;
     }
 }

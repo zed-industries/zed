@@ -1,5 +1,5 @@
 use crate::handle_open_request;
-use crate::restorable_workspace_locations;
+use crate::restore_or_create_workspace;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -13,29 +13,31 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use git_ui::file_diff_view::FileDiffView;
+use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{SshSettings, open_remote_project};
+use recent_projects::{RemoteSettings, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use ui::SharedString;
 use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -47,7 +49,12 @@ pub enum OpenRequestKind {
     Extension {
         extension_id: String,
     },
-    AgentPanel,
+    AgentPanel {
+        initial_prompt: Option<String>,
+    },
+    SharedAgentThread {
+        session_id: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -58,6 +65,12 @@ pub enum OpenRequestKind {
         /// `None` opens settings without navigating to a specific path.
         setting_path: Option<String>,
     },
+    GitClone {
+        repo_url: SharedString,
+    },
+    GitCommit {
+        sha: String,
+    },
 }
 
 impl OpenRequest {
@@ -65,6 +78,7 @@ impl OpenRequest {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
+        this.diff_all = request.diff_all;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -98,8 +112,16 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if url == "zed://agent" {
-                this.kind = Some(OpenRequestKind::AgentPanel);
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
+            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
+                if uuid::Uuid::parse_str(session_id_str).is_ok() {
+                    this.kind = Some(OpenRequestKind::SharedAgentThread {
+                        session_id: session_id_str.to_string(),
+                    });
+                } else {
+                    log::error!("Invalid session ID in URL: {}", session_id_str);
+                }
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -110,6 +132,10 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
+            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+                this.parse_git_clone_url(clone_path)?
+            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+                this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(zed_link) = parse_zed_link(&url, cx) {
@@ -138,6 +164,59 @@ impl OpenRequest {
         }
     }
 
+    fn parse_agent_url(&mut self, agent_path: &str) {
+        // Format: "" or "?prompt=<text>"
+        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(key, value)| (key == "prompt").then_some(value))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into_owned())
+        });
+        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
+    }
+
+    fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
+        // Format: /?repo=<url> or ?repo=<url>
+        let clone_path = clone_path.strip_prefix('/').unwrap_or(clone_path);
+
+        let query = clone_path
+            .strip_prefix('?')
+            .context("invalid git clone url: missing query string")?;
+
+        let repo_url = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git clone url: missing repo query parameter")?
+            .to_string()
+            .into();
+
+        self.kind = Some(OpenRequestKind::GitClone { repo_url });
+
+        Ok(())
+    }
+
+    fn parse_git_commit_url(&mut self, commit_path: &str) -> Result<()> {
+        // Format: <sha>?repo=<path>
+        let (sha, query) = commit_path
+            .split_once('?')
+            .context("invalid git commit url: missing query string")?;
+        anyhow::ensure!(!sha.is_empty(), "invalid git commit url: missing sha");
+
+        let repo = url::form_urlencoded::parse(query.as_bytes())
+            .find_map(|(key, value)| (key == "repo").then_some(value))
+            .filter(|s| !s.is_empty())
+            .context("invalid git commit url: missing repo query parameter")?
+            .to_string();
+
+        self.open_paths.push(repo);
+
+        self.kind = Some(OpenRequestKind::GitCommit {
+            sha: sha.to_string(),
+        });
+
+        Ok(())
+    }
+
     fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
@@ -151,7 +230,7 @@ impl OpenRequest {
             "cannot open both local and ssh paths"
         );
         let mut connection_options =
-            SshSettings::get_global(cx).connection_options_for(host, port, username);
+            RemoteSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
@@ -176,6 +255,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub diff_all: bool,
     pub wsl: Option<String>,
 }
 
@@ -252,11 +332,12 @@ fn connect_to_cli(
 pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     diff_paths: &[[String; 2]],
+    diff_all: bool,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<(
-    WindowHandle<Workspace>,
+    WindowHandle<MultiWorkspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
 )> {
     let mut caret_positions = HashMap::default();
@@ -276,18 +357,34 @@ pub async fn open_paths_with_positions(
         })
         .collect::<Vec<_>>();
 
-    let (workspace, mut items) = cx
-        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))?
+    let (multi_workspace, mut items) = cx
+        .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
-    for diff_pair in diff_paths {
-        let old_path = Path::new(&diff_pair[0]).canonicalize()?;
-        let new_path = Path::new(&diff_pair[1]).canonicalize()?;
-        if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) && let Some(diff_view) = diff_view.await.log_err()
-        {
-            items.push(Some(Ok(Box::new(diff_view))))
+    if diff_all && !diff_paths.is_empty() {
+        if let Ok(diff_view) = multi_workspace.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                MultiDiffView::open(diff_paths.to_vec(), workspace, window, cx)
+            })
+        }) {
+            if let Some(diff_view) = diff_view.await.log_err() {
+                items.push(Some(Ok(Box::new(diff_view))));
+            }
+        }
+    } else {
+        let workspace_weak = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+            multi_workspace.workspace().downgrade()
+        })?;
+        for diff_pair in diff_paths {
+            let old_path = Path::new(&diff_pair[0]).canonicalize()?;
+            let new_path = Path::new(&diff_pair[1]).canonicalize()?;
+            if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
+                FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
+            }) {
+                if let Some(diff_view) = diff_view.await.log_err() {
+                    items.push(Some(Ok(Box::new(diff_view))))
+                }
+            }
         }
     }
 
@@ -303,7 +400,7 @@ pub async fn open_paths_with_positions(
             continue;
         };
         if let Some(active_editor) = item.downcast::<Editor>() {
-            workspace
+            multi_workspace
                 .update(cx, |_, window, cx| {
                     active_editor.update(cx, |editor, cx| {
                         editor.go_to_singleton_buffer_point(point, window, cx);
@@ -313,7 +410,7 @@ pub async fn open_paths_with_positions(
         }
     }
 
-    Ok((workspace, items))
+    Ok((multi_workspace, items))
 }
 
 pub async fn handle_cli_connection(
@@ -327,6 +424,7 @@ pub async fn handle_cli_connection(
                 urls,
                 paths,
                 diff_paths,
+                diff_all,
                 wait,
                 wsl,
                 open_new_workspace,
@@ -340,6 +438,7 @@ pub async fn handle_cli_connection(
                             RawOpenRequest {
                                 urls,
                                 diff_paths,
+                                diff_all,
                                 wsl,
                             },
                             cx,
@@ -357,14 +456,14 @@ pub async fn handle_cli_connection(
                                 responses.send(CliResponse::Exit { status: 1 }).log_err();
                             }
                         };
-                    })
-                    .log_err();
+                    });
                     return;
                 }
 
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
+                    diff_all,
                     open_new_workspace,
                     reuse,
                     &responses,
@@ -385,6 +484,7 @@ pub async fn handle_cli_connection(
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     responses: &IpcSender<CliResponse>,
@@ -393,27 +493,24 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let grouped_locations = if paths.is_empty() && diff_paths.is_empty() {
-        // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
-        if open_new_workspace == Some(true) {
+    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
+        return restore_or_create_workspace(app_state, cx).await;
+    }
+
+    let grouped_locations: Vec<(SerializedWorkspaceLocation, PathList)> =
+        if paths.is_empty() && diff_paths.is_empty() {
             Vec::new()
         } else {
-            restorable_workspace_locations(cx, &app_state)
-                .await
-                .unwrap_or_default()
-        }
-    } else {
-        vec![(
-            SerializedWorkspaceLocation::Local,
-            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
-        )]
-    };
+            vec![(
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
+            )]
+        };
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-            cx.update(|cx| show_onboarding_view(app_state, cx).detach())
-                .log_err();
+            cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
         else {
@@ -426,8 +523,7 @@ async fn open_workspaces(
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 })
                 .detach();
-            })
-            .log_err();
+            });
         }
     } else {
         // If there are paths to open, open a workspace for each grouping of paths
@@ -445,6 +541,7 @@ async fn open_workspaces(
                     let workspace_failed_to_open = open_local_workspace(
                         workspace_paths,
                         diff_paths.clone(),
+                        diff_all,
                         open_new_workspace,
                         reuse,
                         wait,
@@ -463,9 +560,9 @@ async fn open_workspaces(
                     let app_state = app_state.clone();
                     if let RemoteConnectionOptions::Ssh(options) = &mut connection {
                         cx.update(|cx| {
-                            SshSettings::get_global(cx)
+                            RemoteSettings::get_global(cx)
                                 .fill_connection_options_from_settings(options)
-                        })?;
+                        });
                     }
                     cx.spawn(async move |cx| {
                         open_remote_project(
@@ -492,6 +589,7 @@ async fn open_workspaces(
 async fn open_local_workspace(
     workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
+    diff_all: bool,
     open_new_workspace: Option<bool>,
     reuse: bool,
     wait: bool,
@@ -507,9 +605,7 @@ async fn open_local_workspace(
     let (open_new_workspace, replace_window) = if reuse {
         (
             Some(true),
-            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next())
-                .ok()
-                .flatten(),
+            cx.update(|cx| workspace::local_workspace_windows(cx).into_iter().next()),
         )
     } else {
         (open_new_workspace, None)
@@ -518,6 +614,7 @@ async fn open_local_workspace(
     let (workspace, items) = match open_paths_with_positions(
         &paths_with_position,
         &diff_paths,
+        diff_all,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
@@ -573,14 +670,14 @@ async fn open_local_workspace(
                 if wait {
                     let (release_tx, release_rx) = oneshot::channel();
                     item_release_futures.push(release_rx);
-                    subscriptions.push(cx.update(|cx| {
+                    subscriptions.push(Ok(cx.update(|cx| {
                         item.on_release(
                             cx,
                             Box::new(move |_| {
                                 release_tx.send(()).ok();
                             }),
                         )
-                    }));
+                    })));
                 }
             }
             Some(Err(err)) => {
@@ -656,7 +753,7 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, task::Poll};
     use util::path;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -689,6 +786,86 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_parse_git_commit_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        // Test basic git commit URL
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?repo=path/to/repo".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "abc123");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        // Verify path was added to open_paths for workspace routing
+        assert_eq!(request.open_paths, vec!["path/to/repo"]);
+
+        // Test with URL encoded path
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/def456?repo=path%20with%20spaces".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind.unwrap() {
+            OpenRequestKind::GitCommit { sha } => {
+                assert_eq!(sha, "def456");
+            }
+            _ => panic!("expected GitCommit variant"),
+        }
+        assert_eq!(request.open_paths, vec!["path with spaces"]);
+
+        // Test with empty path
+        cx.update(|cx| {
+            assert!(
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec!["zed://git/commit/abc123?repo=".into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo")
+            );
+        });
+
+        // Test error case: missing SHA
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://git/commit/abc123?foo=bar".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing repo query parameter")
+        );
+    }
+
+    #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -712,10 +889,12 @@ mod tests {
         open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_none())
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_none())
+                });
             })
             .unwrap();
 
@@ -723,9 +902,11 @@ mod tests {
         open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                });
             })
             .unwrap();
 
@@ -740,12 +921,14 @@ mod tests {
 
         assert_eq!(cx.windows().len(), 2);
 
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some());
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }
@@ -777,6 +960,7 @@ mod tests {
                 let errored = open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     None,
                     false,
                     true,
@@ -820,10 +1004,12 @@ mod tests {
         open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_item_as::<Editor>(cx).is_some())
+        let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.active_item_as::<Editor>(cx).is_some())
+                });
             })
             .unwrap();
 
@@ -832,10 +1018,12 @@ mod tests {
         open_workspace_file(path!("/root/file6.txt"), Some(false), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
-        workspace_1
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 2, "Workspace should have two items");
+        multi_workspace_1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 2, "Workspace should have two items");
+                });
             })
             .unwrap();
 
@@ -844,11 +1032,13 @@ mod tests {
         open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
-        let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
-        workspace_2
-            .update(cx, |workspace, _, cx| {
-                let items = workspace.items(cx).collect::<Vec<_>>();
-                assert_eq!(items.len(), 1, "Workspace should have two items");
+        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
+        multi_workspace_2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let items = workspace.items(cx).collect::<Vec<_>>();
+                    assert_eq!(items.len(), 1, "Workspace should have two items");
+                });
             })
             .unwrap();
     }
@@ -868,6 +1058,7 @@ mod tests {
                 open_local_workspace(
                     workspace_paths,
                     vec![],
+                    false,
                     open_new_workspace,
                     false,
                     false,
@@ -941,6 +1132,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths,
                         vec![],
+                        false,
                         None,
                         false,
                         false,
@@ -965,6 +1157,7 @@ mod tests {
                     open_local_workspace(
                         workspace_paths_reuse,
                         vec![],
+                        false,
                         None, // open_new_workspace will be overridden by reuse logic
                         true, // reuse = true
                         false,
@@ -979,6 +1172,82 @@ mod tests {
             .await;
 
         assert!(!errored_reuse);
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_without_slash(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone?repo=https://github.com/zed-industries/zed.git".into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_git_clone_url_with_encoding(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![
+                        "zed://git/clone/?repo=https%3A%2F%2Fgithub.com%2Fzed-industries%2Fzed.git"
+                            .into(),
+                    ],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::GitClone { repo_url }) => {
+                assert_eq!(repo_url, "https://github.com/zed-industries/zed.git");
+            }
+            _ => panic!("Expected GitClone kind"),
+        }
     }
 
     #[gpui::test]
@@ -1038,7 +1307,8 @@ mod tests {
                 |mut cx| async move {
                     open_local_workspace(
                         workspace_paths_1,
-                        vec![],
+                        Vec::new(),
+                        false,
                         None,
                         false,
                         false,
@@ -1064,7 +1334,8 @@ mod tests {
                 |mut cx| async move {
                     open_local_workspace(
                         workspace_paths_2,
-                        vec![],
+                        Vec::new(),
+                        false,
                         Some(true), // Force new window
                         false,
                         false,
@@ -1109,7 +1380,8 @@ mod tests {
                 |mut cx| async move {
                     open_local_workspace(
                         workspace_paths_add,
-                        vec![],
+                        Vec::new(),
+                        false,
                         Some(false), // --add flag: open_new_workspace = Some(false)
                         false,
                         false,

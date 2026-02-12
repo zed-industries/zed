@@ -10,6 +10,7 @@ use collections::HashMap;
 use http_client::HttpClient;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
@@ -39,6 +40,7 @@ pub struct ContextServer {
     id: ContextServerId,
     client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
     configuration: ContextServerTransport,
+    request_timeout: Option<Duration>,
 }
 
 impl ContextServer {
@@ -54,6 +56,7 @@ impl ContextServer {
                 command,
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
+            request_timeout: None,
         }
     }
 
@@ -63,6 +66,7 @@ impl ContextServer {
         headers: HashMap<String, String>,
         http_client: Arc<dyn HttpClient>,
         executor: gpui::BackgroundExecutor,
+        request_timeout: Option<Duration>,
     ) -> Result<Self> {
         let transport = match endpoint.scheme() {
             "http" | "https" => {
@@ -73,14 +77,23 @@ impl ContextServer {
             }
             _ => anyhow::bail!("unsupported MCP url scheme {}", endpoint.scheme()),
         };
-        Ok(Self::new(id, transport))
+        Ok(Self::new_with_timeout(id, transport, request_timeout))
     }
 
     pub fn new(id: ContextServerId, transport: Arc<dyn crate::transport::Transport>) -> Self {
+        Self::new_with_timeout(id, transport, None)
+    }
+
+    pub fn new_with_timeout(
+        id: ContextServerId,
+        transport: Arc<dyn crate::transport::Transport>,
+        request_timeout: Option<Duration>,
+    ) -> Self {
         Self {
             id,
             client: RwLock::new(None),
             configuration: ContextServerTransport::Custom(transport),
+            request_timeout,
         }
     }
 
@@ -113,7 +126,7 @@ impl ContextServer {
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
                 transport.clone(),
-                None,
+                self.request_timeout,
                 cx.clone(),
             )?,
         })

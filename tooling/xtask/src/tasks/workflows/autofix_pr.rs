@@ -18,6 +18,12 @@ pub fn autofix_pr() -> Workflow {
                 .add_input(pr_number.name, pr_number.input())
                 .add_input(run_clippy.name, run_clippy.input()),
         ))
+        .concurrency(
+            Concurrency::new(Expression::new(format!(
+                "${{{{ github.workflow }}}}-{pr_number}"
+            )))
+            .cancel_in_progress(true),
+        )
         .add_job(run_autofix.name.clone(), run_autofix.job)
         .add_job(commit_changes.name, commit_changes.job)
 }
@@ -53,8 +59,28 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
+    fn install_cargo_machete() -> Step<Use> {
+        named::uses(
+            "clechasseur",
+            "rs-cargo",
+            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+        )
+        .add_with(("command", "install"))
+        .add_with(("args", "cargo-machete@0.7.0"))
+    }
+
     fn run_cargo_fmt() -> Step<Run> {
         named::bash("cargo fmt --all")
+    }
+
+    fn run_cargo_fix() -> Step<Run> {
+        named::bash(
+            "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
+        )
+    }
+
+    fn run_cargo_machete_fix() -> Step<Run> {
+        named::bash("cargo machete --fix")
     }
 
     fn run_clippy_fix() -> Step<Run> {
@@ -93,9 +119,12 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
+            .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(run_cargo_machete_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
-            .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
@@ -103,19 +132,6 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
 }
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
-    fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-        let step = named::uses(
-            "actions",
-            "create-github-app-token",
-            "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
-        )
-        .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
-        .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-        .id("get-app-token");
-        let output = StepOutput::new(&step, "token");
-        (step, output)
-    }
-
     fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
         named::bash(&format!("gh pr checkout {pr_number}")).add_env(("GITHUB_TOKEN", token))
     }
@@ -142,7 +158,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy();
 
     named::job(
         Job::default()

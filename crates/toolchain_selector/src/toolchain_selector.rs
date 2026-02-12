@@ -1,9 +1,9 @@
 mod active_toolchain;
 
 pub use active_toolchain::ActiveToolchain;
+use anyhow::Context as _;
 use convert_case::Casing as _;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -12,6 +12,7 @@ use gpui::{
     actions, pulsating_between,
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
+use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
@@ -62,6 +63,7 @@ struct AddToolchainState {
     language_name: LanguageName,
     root_path: ProjectPath,
     weak: WeakEntity<ToolchainSelector>,
+    worktree_root_path: Arc<Path>,
 }
 
 struct ScopePickerState {
@@ -80,7 +82,7 @@ enum PathInputState {
 
 enum AddState {
     Path {
-        picker: Entity<Picker<file_finder::OpenPathDelegate>>,
+        picker: Entity<Picker<open_path_prompt::OpenPathDelegate>>,
         error: Option<Arc<str>>,
         input_state: PathInputState,
         _subscription: Subscription,
@@ -99,16 +101,38 @@ impl AddToolchainState {
         root_path: ProjectPath,
         window: &mut Window,
         cx: &mut Context<ToolchainSelector>,
-    ) -> Entity<Self> {
+    ) -> anyhow::Result<Entity<Self>> {
         let weak = cx.weak_entity();
-
-        cx.new(|cx| {
+        let worktree_root_path = project
+            .read(cx)
+            .worktree_for_id(root_path.worktree_id, cx)
+            .map(|worktree| worktree.read(cx).abs_path())
+            .context("Could not find worktree")?;
+        Ok(cx.new(|cx| {
             let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
-            let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
+            let path_style = project.read(cx).path_style(cx);
+            let picker = cx.new(|cx| {
+                let picker = Picker::uniform_list(lister, window, cx);
+                let mut worktree_root = worktree_root_path.to_string_lossy().into_owned();
+                worktree_root.push_str(path_style.primary_separator());
+                picker.set_query(&worktree_root, window, cx);
+                picker
+            });
+
+            let weak_toolchain_selector = weak.clone();
+            let window_handle = window.window_handle();
             Self {
                 state: AddState::Path {
-                    _subscription: cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
-                        cx.stop_propagation();
+                    _subscription: cx.subscribe(&picker, move |_, _, _: &DismissEvent, cx| {
+                        if let Some(toolchain_selector) = weak_toolchain_selector.upgrade() {
+                            window_handle
+                                .update(cx, |_, window, cx| {
+                                    toolchain_selector.update(cx, |this, cx| {
+                                        this.cancel(&menu::Cancel, window, cx);
+                                    });
+                                })
+                                .ok();
+                        }
                     }),
                     picker,
                     error: None,
@@ -118,8 +142,9 @@ impl AddToolchainState {
                 language_name,
                 root_path,
                 weak,
+                worktree_root_path,
             }
-        })
+        }))
     }
 
     fn create_path_browser_delegate(
@@ -199,7 +224,7 @@ impl AddToolchainState {
                 let toolchain = project
                     .update(cx, |this, cx| {
                         this.resolve_toolchain(path.clone(), language_name, cx)
-                    })?
+                    })
                     .await;
                 let Ok(toolchain) = toolchain else {
                     // Go back to the path input state
@@ -218,26 +243,28 @@ impl AddToolchainState {
                                 Self::create_path_browser_delegate(this.project.clone(), cx);
                             picker.update(cx, |picker, cx| {
                                 *picker = Picker::uniform_list(delegate, window, cx);
-                                picker.set_query(
-                                    Arc::from(path.to_string_lossy().as_ref()),
-                                    window,
-                                    cx,
-                                );
+                                picker.set_query(path.to_string_lossy().as_ref(), window, cx);
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
-                            this.focus_handle(cx).focus(window);
+                            this.focus_handle(cx).focus(window, cx);
                         }
                     });
                     return Err(anyhow::anyhow!("Failed to resolve toolchain"));
                 };
                 let resolved_toolchain_path = project.read_with(cx, |this, cx| {
                     this.find_project_path(&toolchain.path.as_ref(), cx)
-                })?;
+                });
 
                 // Suggest a default scope based on the applicability.
                 let scope = if let Some(project_path) = resolved_toolchain_path {
                     if !root_path.path.as_ref().is_empty() && project_path.starts_with(&root_path) {
-                        ToolchainScope::Subproject(root_path.worktree_id, root_path.path)
+                        let worktree_root_path = project
+                            .read_with(cx, |this, cx| {
+                                this.worktree_for_id(root_path.worktree_id, cx)
+                                    .map(|worktree| worktree.read(cx).abs_path())
+                            })
+                            .context("Could not find a worktree with a given worktree ID")?;
+                        ToolchainScope::Subproject(worktree_root_path, root_path.path)
                     } else {
                         ToolchainScope::Project
                     }
@@ -260,7 +287,7 @@ impl AddToolchainState {
                         toolchain,
                         scope_picker,
                     };
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                 });
 
                 Result::<_, anyhow::Error>::Ok(())
@@ -333,7 +360,7 @@ impl AddToolchainState {
         });
         _ = self.weak.update(cx, |this, cx| {
             this.state = State::Search((this.create_search_state)(window, cx));
-            this.focus_handle(cx).focus(window);
+            this.focus_handle(cx).focus(window, cx);
             cx.notify();
         });
     }
@@ -367,7 +394,6 @@ impl Focusable for State {
 impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let weak = self.weak.upgrade();
         let label = SharedString::new_static("Add");
 
         v_flex()
@@ -378,16 +404,6 @@ impl Render for AddToolchainState {
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_lg()
-            .when_some(weak, |this, weak| {
-                this.on_action(window.listener_for(
-                    &weak,
-                    |this: &mut ToolchainSelector, _: &menu::Cancel, window, cx| {
-                        this.state = State::Search((this.create_search_state)(window, cx));
-                        this.state.focus_handle(cx).focus(window);
-                        cx.notify();
-                    },
-                ))
-            })
             .on_action(cx.listener(Self::confirm_toolchain))
             .map(|this| match &self.state {
                 AddState::Path { picker, .. } => this.child(picker.clone()),
@@ -400,7 +416,7 @@ impl Render for AddToolchainState {
                         ToolchainScope::Global,
                         ToolchainScope::Project,
                         ToolchainScope::Subproject(
-                            self.root_path.worktree_id,
+                            self.worktree_root_path.clone(),
                             self.root_path.path.clone(),
                         ),
                     ];
@@ -594,7 +610,7 @@ impl ToolchainSelector {
                         language_name.clone(),
                         cx,
                     )
-                })?
+                })
                 .await;
             workspace
                 .update_in(cx, |this, window, cx| {
@@ -693,7 +709,7 @@ impl ToolchainSelector {
         cx: &mut Context<Self>,
     ) {
         if matches!(self.state, State::Search(_)) {
-            self.state = State::AddToolchain(AddToolchainState::new(
+            let Ok(state) = AddToolchainState::new(
                 self.project.clone(),
                 self.language_name.clone(),
                 ProjectPath {
@@ -702,9 +718,25 @@ impl ToolchainSelector {
                 },
                 window,
                 cx,
-            ));
-            self.state.focus_handle(cx).focus(window);
+            ) else {
+                return;
+            };
+            self.state = State::AddToolchain(state);
+            self.state.focus_handle(cx).focus(window, cx);
             cx.notify();
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.state {
+            State::Search(_) => {
+                cx.emit(DismissEvent);
+            }
+            State::AddToolchain(_) => {
+                self.state = State::Search((self.create_search_state)(window, cx));
+                self.state.focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }
         }
     }
 }
@@ -717,6 +749,7 @@ impl Render for ToolchainSelector {
         v_flex()
             .key_context(key_context)
             .w(rems(34.))
+            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::handle_add_toolchain))
             .child(self.state.clone().render(window, cx))
     }
@@ -769,7 +802,6 @@ impl ToolchainSelectorDelegate {
                     .read_with(cx, |this, _| {
                         Project::toolchain_metadata(this.languages().clone(), language_name.clone())
                     })
-                    .ok()?
                     .await?;
                 let relative_path = this
                     .update(cx, |this, cx| {
@@ -798,7 +830,6 @@ impl ToolchainSelectorDelegate {
                             cx,
                         )
                     })
-                    .ok()?
                     .await?;
                 let pretty_path = {
                     if relative_path.is_empty() {
@@ -899,11 +930,17 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             {
                 let workspace = self.workspace.clone();
                 let worktree_id = self.worktree_id;
+                let worktree_abs_path_root = self.worktree_abs_path_root.clone();
                 let path = self.relative_path.clone();
                 let relative_path = self.relative_path.clone();
                 cx.spawn_in(window, async move |_, cx| {
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, relative_path, toolchain.clone())
+                        .set_toolchain(
+                            workspace_id,
+                            worktree_abs_path_root,
+                            relative_path,
+                            toolchain.clone(),
+                        )
                         .await
                         .log_err();
                     workspace

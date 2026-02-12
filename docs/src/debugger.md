@@ -1,3 +1,8 @@
+---
+title: Debugger - Zed
+description: Debug code in Zed with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
+---
+
 # Debugger
 
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
@@ -198,7 +203,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 1. Statement - The step should allow the program to run until the current statement has finished executing.
    The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
-   For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
+   For example `for(int i = 0; i < 10; i++)` could be considered to have 3 statements `int i = 0`, `i < 10`, and `i++`.
 
 ```json [settings]
 {

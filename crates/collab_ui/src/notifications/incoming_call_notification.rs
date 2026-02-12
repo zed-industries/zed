@@ -1,11 +1,10 @@
 use crate::notification_window_options;
-use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{App, WindowHandle, prelude::*};
 
 use std::sync::{Arc, Weak};
-use ui::{Button, Label, prelude::*};
+use ui::{CollabNotification, prelude::*};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -24,27 +23,20 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
             }
 
             if let Some(incoming_call) = incoming_call {
-                let unique_screens = cx.update(|cx| cx.displays()).unwrap();
+                let unique_screens = cx.update(|cx| cx.displays());
                 let window_size = gpui::Size {
                     width: px(400.),
                     height: px(72.),
                 };
 
                 for screen in unique_screens {
-                    if let Some(options) = cx
-                        .update(|cx| notification_window_options(screen, window_size, cx))
-                        .log_err()
-                    {
-                        let window = cx
-                            .open_window(options, |_, cx| {
-                                cx.new(|_| {
-                                    IncomingCallNotification::new(
-                                        incoming_call.clone(),
-                                        app_state.clone(),
-                                    )
-                                })
-                            })
-                            .unwrap();
+                    let options =
+                        cx.update(|cx| notification_window_options(screen, window_size, cx));
+                    if let Ok(window) = cx.open_window(options, |_, cx| {
+                        cx.new(|_| {
+                            IncomingCallNotification::new(incoming_call.clone(), app_state.clone())
+                        })
+                    }) {
                         notification_windows.push(window);
                     }
                 }
@@ -88,8 +80,7 @@ impl IncomingCallNotificationState {
                             )
                             .detach_and_log_err(cx);
                         }
-                    })
-                    .log_err();
+                    });
                 }
                 anyhow::Ok(())
             })
@@ -126,10 +117,10 @@ impl Render for IncomingCallNotification {
                     move |_, _, cx| state.respond(false, cx)
                 }),
             )
-            .child(v_flex().overflow_hidden().child(Label::new(format!(
+            .child(Label::new(format!(
                 "{} is sharing a project in Zed",
                 self.state.call.calling_user.github_login
-            )))),
+            ))),
         )
     }
 }

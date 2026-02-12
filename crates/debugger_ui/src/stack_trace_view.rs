@@ -1,10 +1,13 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
 use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
-    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
+    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, HighlightKey,
+    MultiBuffer, RowHighlightOptions, SelectionEffects, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
@@ -147,7 +150,7 @@ impl StackTraceView {
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_task.take();
         self.editor.update(cx, |editor, cx| {
-            editor.clear_highlights::<DebugStackFrameLine>(cx)
+            editor.clear_highlights(HighlightKey::DebugStackFrameLine, cx)
         });
 
         let stack_frames = self
@@ -183,13 +186,13 @@ impl StackTraceView {
                     .await?;
 
                 let project_path = ProjectPath {
-                    worktree_id: worktree.read_with(cx, |tree, _| tree.id())?,
+                    worktree_id: worktree.read_with(cx, |tree, _| tree.id()),
                     path: relative_path,
                 };
 
                 if let Some(buffer) = this
                     .read_with(cx, |this, _| this.project.clone())?
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
                     .await
                     .log_err()
                 {
@@ -333,7 +336,7 @@ impl Item for StackTraceView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -436,8 +439,8 @@ impl Item for StackTraceView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(cx)
     }
 
     fn added_to_workspace(
