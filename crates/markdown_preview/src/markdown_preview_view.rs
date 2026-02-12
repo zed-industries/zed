@@ -1,5 +1,4 @@
 use std::cmp::min;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
@@ -20,7 +19,7 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
-use crate::markdown_renderer::{CachedMermaidDiagram, CheckboxClickedEvent, MermaidDiagramCache};
+use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -40,7 +39,7 @@ pub struct MarkdownPreviewView {
     selected_block: usize,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
-    mermaid_cache: MermaidDiagramCache,
+    mermaid_state: MermaidState,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
 }
@@ -216,7 +215,7 @@ impl MarkdownPreviewView {
                 contents: None,
                 list_state,
                 language_registry,
-                mermaid_cache: Default::default(),
+                mermaid_state: Default::default(),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -349,12 +348,8 @@ impl MarkdownPreviewView {
             });
             let contents = parsing_task.await;
 
-            view.update(cx, |this, cx| {
-                MarkdownPreviewView::render_mermaid_diagrams(&contents, &mut this.mermaid_cache, cx)
-            })
-            .ok();
-
             view.update(cx, move |view, cx| {
+                view.mermaid_state.update(&contents, cx);
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
@@ -427,25 +422,6 @@ impl MarkdownPreviewView {
         }
 
         block_index.unwrap_or_default()
-    }
-
-    fn render_mermaid_diagrams(
-        parsed: &ParsedMarkdown,
-        cache: &mut MermaidDiagramCache,
-        cx: &mut Context<Self>,
-    ) {
-        use crate::markdown_elements::ParsedMarkdownElement;
-
-        let mut referenced_keys = HashSet::new();
-        for element in parsed.children.iter() {
-            if let ParsedMarkdownElement::MermaidDiagram(mermaid) = element {
-                referenced_keys.insert(mermaid.contents.clone());
-                cache
-                    .entry(mermaid.contents.clone())
-                    .or_insert_with(|| CachedMermaidDiagram::new(mermaid.contents.clone(), cx));
-            }
-        }
-        cache.retain(|k, _| referenced_keys.contains(k));
     }
 
     fn should_apply_padding_between(
@@ -601,7 +577,7 @@ impl Render for MarkdownPreviewView {
 
                             let mut render_cx = RenderContext::new(
                                 Some(this.workspace.clone()),
-                                &this.mermaid_cache,
+                                &this.mermaid_state,
                                 window,
                                 cx,
                             )

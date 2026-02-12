@@ -43,17 +43,84 @@ impl CheckboxClickedEvent {
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
 
-pub(crate) type MermaidDiagramCache =
-    HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
+type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
+
+#[derive(Default)]
+pub(crate) struct MermaidState {
+    cache: MermaidDiagramCache,
+    order: Vec<ParsedMarkdownMermaidDiagramContents>,
+}
+
+impl MermaidState {
+    fn get_fallback_image(
+        idx: usize,
+        new_order: &[ParsedMarkdownMermaidDiagramContents],
+        old_order: &[ParsedMarkdownMermaidDiagramContents],
+        cache: &MermaidDiagramCache,
+    ) -> Option<Arc<RenderImage>> {
+        old_order
+            .get(idx)
+            // Only use fallback if the old content no longer exists in the document.
+            .filter(|old_content| !new_order.contains(old_content))
+            .and_then(|old_content| cache.get(old_content))
+            .and_then(|old_cached| {
+                old_cached
+                    .render_image
+                    .get()
+                    .and_then(|result| result.as_ref().ok().cloned())
+                    // Chain fallbacks for rapid edits.
+                    .or_else(|| old_cached.fallback_image.clone())
+            })
+    }
+
+    pub(crate) fn update(
+        &mut self,
+        parsed: &ParsedMarkdown,
+        cx: &mut Context<MarkdownPreviewView>,
+    ) {
+        use crate::markdown_elements::ParsedMarkdownElement;
+        use std::collections::HashSet;
+
+        let new_order: Vec<_> = parsed
+            .children
+            .iter()
+            .filter_map(|el| {
+                if let ParsedMarkdownElement::MermaidDiagram(m) = el {
+                    Some(m.contents.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut referenced_keys = HashSet::new();
+        for (idx, new_content) in new_order.iter().enumerate() {
+            referenced_keys.insert(new_content.clone());
+            if !self.cache.contains_key(new_content) {
+                let fallback = Self::get_fallback_image(idx, &new_order, &self.order, &self.cache);
+
+                self.cache.insert(
+                    new_content.clone(),
+                    CachedMermaidDiagram::new(new_content.clone(), fallback, cx),
+                );
+            }
+        }
+
+        self.cache.retain(|k, _| referenced_keys.contains(k));
+        self.order = new_order;
+    }
+}
 
 pub(crate) struct CachedMermaidDiagram {
     pub(crate) render_image: Arc<OnceLock<anyhow::Result<Arc<RenderImage>>>>,
+    pub(crate) fallback_image: Option<Arc<RenderImage>>,
     _task: Task<()>,
 }
 
 impl CachedMermaidDiagram {
     pub(crate) fn new(
         contents: ParsedMarkdownMermaidDiagramContents,
+        fallback_image: Option<Arc<RenderImage>>,
         cx: &mut Context<MarkdownPreviewView>,
     ) -> Self {
         let result = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
@@ -78,6 +145,7 @@ impl CachedMermaidDiagram {
 
         Self {
             render_image: result,
+            fallback_image,
             _task,
         }
     }
@@ -102,13 +170,13 @@ pub struct RenderContext<'a> {
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
     is_last_child: bool,
-    mermaid_diagram_cache: &'a MermaidDiagramCache,
+    mermaid_state: &'a MermaidState,
 }
 
 impl<'a> RenderContext<'a> {
     pub(crate) fn new(
         workspace: Option<WeakEntity<Workspace>>,
-        mermaid_diagram_cache: &'a MermaidDiagramCache,
+        mermaid_state: &'a MermaidState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -141,7 +209,7 @@ impl<'a> RenderContext<'a> {
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
             is_last_child: false,
-            mermaid_diagram_cache,
+            mermaid_state,
         }
     }
 
@@ -704,12 +772,10 @@ fn render_mermaid_diagram(
     parsed: &ParsedMarkdownMermaidDiagram,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    if let Some(cached) = cx
-        .mermaid_diagram_cache
-        .get(&parsed.contents)
-        .and_then(|v| v.render_image.get())
-    {
-        match cached {
+    let cached = cx.mermaid_state.cache.get(&parsed.contents);
+
+    if let Some(result) = cached.and_then(|c| c.render_image.get()) {
+        match result {
             Ok(render_image) => cx
                 .with_common_p(div())
                 .px_3()
@@ -741,6 +807,24 @@ fn render_mermaid_diagram(
                 )
                 .into_any(),
         }
+    } else if let Some(fallback) = cached.and_then(|c| c.fallback_image.as_ref()) {
+        cx.with_common_p(div())
+            .px_3()
+            .py_3()
+            .bg(cx.code_block_background_color)
+            .rounded_sm()
+            .child(
+                div().w_full().child(
+                    img(ImageSource::Render(fallback.clone()))
+                        .max_w_full()
+                        .with_fallback(|| {
+                            div()
+                                .child(Label::new("Failed to load mermaid diagram"))
+                                .into_any_element()
+                        }),
+                ),
+            )
+            .into_any()
     } else {
         cx.with_common_p(div())
             .px_3()
