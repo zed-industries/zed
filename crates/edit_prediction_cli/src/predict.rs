@@ -159,6 +159,7 @@ pub async fn run_prediction(
                                     expected_output: String::new(),
                                     rejected_output: None,
                                     provider,
+                                    prefill: None,
                                 });
                             }
                         }

@@ -2956,12 +2956,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
-    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool, None));
+    thread.update(cx, |thread, _cx| thread.add_tool(EchoTool, None));
     let fake_model = model.as_fake();
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Think"], cx)
+            thread.send(UserMessageId::new(), ["Echo something"], cx)
         })
         .unwrap();
     cx.run_until_parked();
@@ -2971,7 +2971,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
-            name: ThinkingTool::NAME.into(),
+            name: EchoTool::NAME.into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: false,
@@ -2980,11 +2980,11 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     ));
 
     // Input streaming completed
-    let input = json!({ "content": "Thinking hard!" });
+    let input = json!({ "text": "Hello!" });
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
-            name: "thinking".into(),
+            name: "echo".into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: true,
@@ -2997,13 +2997,9 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(
         tool_call,
-        acp::ToolCall::new("1", "Thinking")
-            .kind(acp::ToolKind::Think)
+        acp::ToolCall::new("1", "Echo")
             .raw_input(json!({}))
-            .meta(acp::Meta::from_iter([(
-                "tool_name".into(),
-                "thinking".into()
-            )]))
+            .meta(acp::Meta::from_iter([("tool_name".into(), "echo".into())]))
     );
     let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
@@ -3011,9 +3007,9 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         acp::ToolCallUpdate::new(
             "1",
             acp::ToolCallUpdateFields::new()
-                .title("Thinking")
-                .kind(acp::ToolKind::Think)
-                .raw_input(json!({ "content": "Thinking hard!"}))
+                .title("Echo")
+                .kind(acp::ToolKind::Other)
+                .raw_input(json!({ "text": "Hello!"}))
         )
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -3029,17 +3025,9 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         update,
         acp::ToolCallUpdate::new(
             "1",
-            acp::ToolCallUpdateFields::new().content(vec!["Thinking hard!".into()])
-        )
-    );
-    let update = expect_tool_call_update_fields(&mut events).await;
-    assert_eq!(
-        update,
-        acp::ToolCallUpdate::new(
-            "1",
             acp::ToolCallUpdateFields::new()
                 .status(acp::ToolCallStatus::Completed)
-                .raw_output("Finished thinking.")
+                .raw_output("Hello!")
         )
     );
 }
@@ -3340,7 +3328,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             ToolRequiringPermission::NAME: true,
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
-                            ThinkingTool::NAME: true,
                             (TerminalTool::NAME): true,
                         }
                     }

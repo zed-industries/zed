@@ -1,3 +1,8 @@
+---
+title: Billing - Zed AI
+description: Manage Zed AI billing, payment methods, invoices, threshold billing, and sales tax information.
+---
+
 # Billing
 
 We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card or other supported payment method.

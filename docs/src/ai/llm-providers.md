@@ -1,3 +1,8 @@
+---
+title: LLM Providers - Use Your Own API Keys in Zed
+description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, and more.
+---
+
 # LLM Providers
 
 To use AI in Zed, you need to have at least one large language model provider set up.
