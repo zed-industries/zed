@@ -1,3 +1,8 @@
+---
+title: AI Models and Pricing - Zed
+description: AI models available via Zed Pro including Claude, GPT-5, Gemini, and Grok. Pricing, context windows, and tool call support.
+---
+
 # Models
 
 Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly.

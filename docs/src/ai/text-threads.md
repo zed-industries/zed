@@ -1,3 +1,8 @@
+---
+title: AI Chat in Your Editor - Zed Text Threads
+description: Chat with LLMs directly in your editor with Zed's text threads. Full control over context, message roles, and slash commands.
+---
+
 # Text Threads
 
 ## Overview {#overview}

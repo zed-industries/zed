@@ -17,7 +17,6 @@ mod save_file_tool;
 mod streaming_edit_file_tool;
 mod subagent_tool;
 mod terminal_tool;
-mod thinking_tool;
 mod web_search_tool;
 
 use crate::AgentTool;
@@ -42,7 +41,6 @@ pub use save_file_tool::*;
 pub use streaming_edit_file_tool::*;
 pub use subagent_tool::*;
 pub use terminal_tool::*;
-pub use thinking_tool::*;
 pub use web_search_tool::*;
 
 macro_rules! tools {
@@ -130,6 +128,5 @@ tools! {
     SaveFileTool,
     SubagentTool,
     TerminalTool,
-    ThinkingTool,
     WebSearchTool,
 }
