@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{StreamExt as _, stream::FuturesOrdered};
+use futures::future::join_all;
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -290,27 +290,25 @@ fn deserialize_terminal_views(
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
 ) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
-    let deserialized_items = item_ids
-        .iter()
-        .map(|item_id| {
-            cx.update(|window, cx| {
-                TerminalView::deserialize(
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    *item_id,
-                    window,
-                    cx,
-                )
-            })
-            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+    let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
+        cx.update(|window, cx| {
+            TerminalView::deserialize(
+                project.clone(),
+                workspace.clone(),
+                workspace_id,
+                *item_id,
+                window,
+                cx,
+            )
         })
-        .collect::<FuturesOrdered<_>>();
+        .ok()
+    }));
     async move {
         deserialized_items
-            .filter_map(|item| async { item.log_err() })
-            .collect()
             .await
+            .into_iter()
+            .filter_map(|item| item.log_err())
+            .collect()
     }
 }
 
