@@ -2180,20 +2180,12 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_panel_visible(
-        &self,
-        multi_workspace: Option<&Entity<MultiWorkspace>>,
-        cx: &App,
-    ) -> bool {
+    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
 
-        let workspace_is_foreground = multi_workspace
-            .map(|mw| mw.read(cx).workspace() == &workspace)
-            .unwrap_or(true);
-
-        workspace_is_foreground && AgentPanel::is_visible(&workspace, cx)
+        multi_workspace.read(cx).workspace() == &workspace && AgentPanel::is_visible(&workspace, cx)
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
@@ -2201,22 +2193,21 @@ impl AcpServerView {
             return false;
         }
 
-        let multi_workspace = window.root::<MultiWorkspace>().flatten();
+        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
+            return false;
+        };
 
-        let sidebar_open = multi_workspace
-            .as_ref()
-            .is_some_and(|mw| mw.read(cx).is_sidebar_open());
-
-        sidebar_open || self.agent_panel_visible(multi_workspace.as_ref(), cx)
+        multi_workspace.read(cx).is_sidebar_open() || self.agent_panel_visible(&multi_workspace, cx)
     }
 
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        let multi_workspace = window.root::<MultiWorkspace>().flatten();
-        if settings.play_sound_when_agent_done
-            && !(window.is_window_active()
-                && self.agent_panel_visible(multi_workspace.as_ref(), cx))
-        {
+        let visible = window.is_window_active()
+            && window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .is_some_and(|mw| self.agent_panel_visible(&mw, cx));
+        if settings.play_sound_when_agent_done && !visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
