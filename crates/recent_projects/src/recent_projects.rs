@@ -34,7 +34,7 @@ pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, WorktreeId};
 
-use dev_container::find_devcontainer_configs;
+use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
     ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -354,9 +354,19 @@ pub fn init(cx: &mut App) {
 
             let fs = workspace.project().read(cx).fs().clone();
             let configs = find_devcontainer_configs(workspace, cx);
+            let app_state = workspace.app_state().clone();
+            let dev_container_context = DevContainerContext::from_workspace(workspace, cx);
             let handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteServerProjects::new_dev_container(fs, configs, window, handle, cx)
+                RemoteServerProjects::new_dev_container(
+                    fs,
+                    configs,
+                    app_state,
+                    dev_container_context,
+                    window,
+                    handle,
+                    cx,
+                )
             });
         });
     });
