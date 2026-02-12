@@ -149,10 +149,7 @@ pub use workspace_settings::{
 use zed_actions::{
     Spawn,
     feedback::FileBugReport,
-    theme_mode::{
-        SetDarkGlobal, SetDarkWorkspace, SetLightGlobal, SetLightWorkspace, SetSystemGlobal,
-        SetSystemWorkspace,
-    },
+    theme_mode::{SetDark, SetLight, SetSystem},
 };
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
@@ -7174,7 +7171,7 @@ impl Workspace {
 
     fn set_theme_mode_light_workspace(
         &mut self,
-        _: &SetLightWorkspace,
+        _: &SetLight,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7187,7 +7184,7 @@ impl Workspace {
 
     fn set_theme_mode_dark_workspace(
         &mut self,
-        _: &SetDarkWorkspace,
+        _: &SetDark,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7200,7 +7197,7 @@ impl Workspace {
 
     fn set_theme_mode_system_workspace(
         &mut self,
-        _: &SetSystemWorkspace,
+        _: &SetSystem,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7213,7 +7210,7 @@ impl Workspace {
 
     fn set_theme_mode_light_global(
         &mut self,
-        _: &SetLightGlobal,
+        _: &SetLight,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7226,7 +7223,7 @@ impl Workspace {
 
     fn set_theme_mode_dark_global(
         &mut self,
-        _: &SetDarkGlobal,
+        _: &SetDark,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7235,7 +7232,7 @@ impl Workspace {
 
     fn set_theme_mode_system_global(
         &mut self,
-        _: &SetSystemGlobal,
+        _: &SetSystem,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
