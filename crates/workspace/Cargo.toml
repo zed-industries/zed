@@ -19,6 +19,7 @@ test-support = [
     "http_client/test-support",
     "db/test-support",
     "project/test-support",
+    "remote/test-support",
     "session/test-support",
     "settings/test-support",
     "gpui/test-support",
@@ -35,14 +36,17 @@ clock.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
+markdown.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true

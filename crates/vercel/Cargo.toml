@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/vercel.rs"
+test = false
 
 [features]
 default = []

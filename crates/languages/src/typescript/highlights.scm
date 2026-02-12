@@ -2,6 +2,40 @@
 
 (identifier) @variable
 
+(call_expression
+  function: (member_expression
+    object: (identifier) @type
+    (#any-of?
+      @type
+      "Promise"
+      "Array"
+      "Object"
+      "Map"
+      "Set"
+      "WeakMap"
+      "WeakSet"
+      "Date"
+      "Error"
+      "TypeError"
+      "RangeError"
+      "SyntaxError"
+      "ReferenceError"
+      "EvalError"
+      "URIError"
+      "RegExp"
+      "Function"
+      "Number"
+      "String"
+      "Boolean"
+      "Symbol"
+      "BigInt"
+      "Proxy"
+      "ArrayBuffer"
+      "DataView"
+    )
+  )
+)
+
 ; Special identifiers
 
 (type_annotation) @type
@@ -64,10 +98,27 @@
        (statement_block) @nested
      ])))
 
+; Inline type imports: import { type Foo } or import { type Foo as Bar }
 (import_specifier
   "type"
   name: (identifier) @type
+)
+
+(import_specifier
+  "type"
   alias: (identifier) @type
+)
+
+; Full type imports: import type { Foo } or import type { Foo as Bar }
+(import_statement
+  "type"
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @type
+      )
+    )
+  )
 )
 
 (import_statement
@@ -75,7 +126,6 @@
   (import_clause
     (named_imports
       (import_specifier
-        name: (identifier) @type
         alias: (identifier) @type
       )
     )
@@ -104,6 +154,12 @@
 (call_expression
   function: (member_expression
     property: [(property_identifier) (private_property_identifier)] @function.method))
+
+(new_expression
+  constructor: (identifier) @type)
+
+(nested_type_identifier
+  module: (identifier) @type)
 
 ; Function and method definitions
 
@@ -343,27 +399,18 @@
   "as"
   "async"
   "await"
-  "class"
-  "const"
   "debugger"
   "declare"
   "default"
   "delete"
-  "enum"
-  "export"
   "extends"
-  "from"
-  "function"
   "get"
   "implements"
-  "import"
   "in"
   "infer"
   "instanceof"
-  "interface"
   "is"
   "keyof"
-  "let"
   "module"
   "namespace"
   "new"
@@ -377,13 +424,28 @@
   "set"
   "static"
   "target"
-  "type"
   "typeof"
   "using"
-  "var"
   "void"
   "with"
 ] @keyword
+
+[
+  "const"
+  "let"
+  "var"
+  "function"
+  "class"
+  "enum"
+  "interface"
+  "type"
+] @keyword.declaration
+
+[
+  "export"
+  "from"
+  "import"
+] @keyword.import
 
 [
   "break"

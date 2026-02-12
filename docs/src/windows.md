@@ -6,6 +6,14 @@ Get the latest stable builds via [the download page](https://zed.dev/download). 
 
 You can also build zed from source, see [these docs](https://zed.dev/docs/development/windows) for instructions.
 
+### Package managers
+
+Additionally, you can install Zed using winget:
+
+```sh
+winget install -e --id ZedIndustries.Zed
+```
+
 ## Uninstall
 
 - Installed via installer: Use `Settings` → `Apps` → `Installed apps`, search for Zed, and click Uninstall.

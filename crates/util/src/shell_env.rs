@@ -132,7 +132,7 @@ async fn spawn_and_read_fd(
 #[cfg(windows)]
 async fn capture_windows(
     shell_path: &Path,
-    _args: &[String],
+    args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;
@@ -141,17 +141,17 @@ async fn capture_windows(
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
-    if let ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish | ShellKind::Xonsh =
-        shell_kind
-    {
-        return Err(anyhow::anyhow!("unsupported shell kind"));
-    }
     let mut cmd = crate::command::new_smol_command(shell_path);
+    cmd.args(args);
     let cmd = match shell_kind {
-        ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish | ShellKind::Xonsh => {
-            unreachable!()
-        }
-        ShellKind::Posix => cmd.args([
+        ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Fish
+        | ShellKind::Xonsh
+        | ShellKind::Posix => cmd.args([
+            "-l",
+            "-i",
             "-c",
             &format!(
                 "cd '{}'; '{}' --printenv",
@@ -159,7 +159,7 @@ async fn capture_windows(
                 zed_path.display()
             ),
         ]),
-        ShellKind::PowerShell => cmd.args([
+        ShellKind::PowerShell | ShellKind::Pwsh => cmd.args([
             "-NonInteractive",
             "-NoProfile",
             "-Command",

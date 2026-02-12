@@ -12,7 +12,11 @@ pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
+pub mod batches;
+
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
+
+pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -74,6 +78,23 @@ pub enum Model {
         alias = "claude-opus-4-5-thinking-latest"
     )]
     ClaudeOpus4_5Thinking,
+    #[serde(rename = "claude-opus-4-6", alias = "claude-opus-4-6-latest")]
+    ClaudeOpus4_6,
+    #[serde(
+        rename = "claude-opus-4-6-thinking",
+        alias = "claude-opus-4-6-thinking-latest"
+    )]
+    ClaudeOpus4_6Thinking,
+    #[serde(
+        rename = "claude-opus-4-6-1m-context",
+        alias = "claude-opus-4-6-1m-context-latest"
+    )]
+    ClaudeOpus4_6_1mContext,
+    #[serde(
+        rename = "claude-opus-4-6-1m-context-thinking",
+        alias = "claude-opus-4-6-1m-context-thinking-latest"
+    )]
+    ClaudeOpus4_6_1mContextThinking,
     #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
     ClaudeSonnet4,
     #[serde(
@@ -89,6 +110,16 @@ pub enum Model {
         alias = "claude-sonnet-4-5-thinking-latest"
     )]
     ClaudeSonnet4_5Thinking,
+    #[serde(
+        rename = "claude-sonnet-4-5-1m-context",
+        alias = "claude-sonnet-4-5-1m-context-latest"
+    )]
+    ClaudeSonnet4_5_1mContext,
+    #[serde(
+        rename = "claude-sonnet-4-5-1m-context-thinking",
+        alias = "claude-sonnet-4-5-1m-context-thinking-latest"
+    )]
+    ClaudeSonnet4_5_1mContextThinking,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
     #[serde(
@@ -138,6 +169,22 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
+        if id.starts_with("claude-opus-4-6-1m-context-thinking") {
+            return Ok(Self::ClaudeOpus4_6_1mContextThinking);
+        }
+
+        if id.starts_with("claude-opus-4-6-1m-context") {
+            return Ok(Self::ClaudeOpus4_6_1mContext);
+        }
+
+        if id.starts_with("claude-opus-4-6-thinking") {
+            return Ok(Self::ClaudeOpus4_6Thinking);
+        }
+
+        if id.starts_with("claude-opus-4-6") {
+            return Ok(Self::ClaudeOpus4_6);
+        }
+
         if id.starts_with("claude-opus-4-5-thinking") {
             return Ok(Self::ClaudeOpus4_5Thinking);
         }
@@ -160,6 +207,14 @@ impl Model {
 
         if id.starts_with("claude-opus-4") {
             return Ok(Self::ClaudeOpus4);
+        }
+
+        if id.starts_with("claude-sonnet-4-5-1m-context-thinking") {
+            return Ok(Self::ClaudeSonnet4_5_1mContextThinking);
+        }
+
+        if id.starts_with("claude-sonnet-4-5-1m-context") {
+            return Ok(Self::ClaudeSonnet4_5_1mContext);
         }
 
         if id.starts_with("claude-sonnet-4-5-thinking") {
@@ -225,10 +280,18 @@ impl Model {
             Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking-latest",
             Self::ClaudeOpus4_5 => "claude-opus-4-5-latest",
             Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking-latest",
+            Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
+            Self::ClaudeOpus4_6Thinking => "claude-opus-4-6-thinking-latest",
+            Self::ClaudeOpus4_6_1mContext => "claude-opus-4-6-1m-context-latest",
+            Self::ClaudeOpus4_6_1mContextThinking => "claude-opus-4-6-1m-context-thinking-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
             Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-thinking-latest",
+            Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-1m-context-latest",
+            Self::ClaudeSonnet4_5_1mContextThinking => {
+                "claude-sonnet-4-5-1m-context-thinking-latest"
+            }
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Self::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
             Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
@@ -248,8 +311,15 @@ impl Model {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
             Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
             Self::ClaudeOpus4_5 | Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-20251101",
+            Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking => "claude-opus-4-6",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
-            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-20250929",
+            Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking => "claude-sonnet-4-5-20250929",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
             Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => "claude-haiku-4-5-20251001",
@@ -269,10 +339,16 @@ impl Model {
             Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
             Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
+            Self::ClaudeOpus4_6 => "Claude Opus 4.6",
+            Self::ClaudeOpus4_6Thinking => "Claude Opus 4.6 Thinking",
+            Self::ClaudeOpus4_6_1mContext => "Claude Opus 4.6 (1M context)",
+            Self::ClaudeOpus4_6_1mContextThinking => "Claude Opus 4.6 Thinking (1M context)",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
+            Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context)",
+            Self::ClaudeSonnet4_5_1mContextThinking => "Claude Sonnet 4.5 Thinking (1M context)",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
@@ -296,10 +372,16 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::Claude3_5Sonnet
             | Self::ClaudeHaiku4_5
             | Self::ClaudeHaiku4_5Thinking
@@ -327,6 +409,8 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
@@ -340,27 +424,37 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
+            Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
+            Self::Claude3_5Sonnet | Self::Claude3_5Haiku => 8_192,
             Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_1Thinking => 32_000,
+            Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
-            | Self::Claude3_5Sonnet
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku => 8_192,
-            Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => 64_000,
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeHaiku4_5Thinking => 64_000,
+            Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking => 128_000,
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
@@ -376,10 +470,16 @@ impl Model {
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -401,8 +501,11 @@ impl Model {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_6_1mContext
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4_5_1mContext
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::ClaudeHaiku4_5
@@ -413,8 +516,11 @@ impl Model {
             Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5Thinking
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_6_1mContextThinking
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
@@ -427,6 +533,12 @@ impl Model {
         let mut headers = vec![];
 
         match self {
+            Self::ClaudeOpus4_6_1mContext
+            | Self::ClaudeOpus4_6_1mContextThinking
+            | Self::ClaudeSonnet4_5_1mContext
+            | Self::ClaudeSonnet4_5_1mContextThinking => {
+                headers.push(CONTEXT_1M_BETA_HEADER.to_string());
+            }
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
                 // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
                 // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
@@ -465,6 +577,7 @@ impl Model {
     }
 }
 
+/// Generate completion with streaming.
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -475,6 +588,101 @@ pub async fn stream_completion(
     stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
         .map(|output| output.0)
+}
+
+/// Generate completion without streaming.
+pub async fn non_streaming_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    beta_headers: Option<String>,
+) -> Result<Response, AnthropicError> {
+    let (mut response, rate_limits) =
+        send_request(client, api_url, api_key, &request, beta_headers).await?;
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(AnthropicError::ReadResponse)?;
+
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
+    } else {
+        Err(handle_error_response(response, rate_limits).await)
+    }
+}
+
+async fn send_request(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: impl Serialize,
+    beta_headers: Option<String>,
+) -> Result<(http::Response<AsyncBody>, RateLimitInfo), AnthropicError> {
+    let uri = format!("{api_url}/v1/messages");
+
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Anthropic-Version", "2023-06-01")
+        .header("X-Api-Key", api_key.trim())
+        .header("Content-Type", "application/json");
+
+    if let Some(beta_headers) = beta_headers {
+        request_builder = request_builder.header("Anthropic-Beta", beta_headers);
+    }
+
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
+    let request = request_builder
+        .body(AsyncBody::from(serialized_request))
+        .map_err(AnthropicError::BuildRequestBody)?;
+
+    let response = client
+        .send(request)
+        .await
+        .map_err(AnthropicError::HttpSend)?;
+
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
+
+    Ok((response, rate_limits))
+}
+
+async fn handle_error_response(
+    mut response: http::Response<AsyncBody>,
+    rate_limits: RateLimitInfo,
+) -> AnthropicError {
+    if response.status().as_u16() == 529 {
+        return AnthropicError::ServerOverloaded {
+            retry_after: rate_limits.retry_after,
+        };
+    }
+
+    if let Some(retry_after) = rate_limits.retry_after {
+        return AnthropicError::RateLimit { retry_after };
+    }
+
+    let mut body = String::new();
+    let read_result = response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(AnthropicError::ReadResponse);
+
+    if let Err(err) = read_result {
+        return err;
+    }
+
+    match serde_json::from_str::<Event>(&body) {
+        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(_) | Err(_) => AnthropicError::HttpResponseError {
+            status_code: response.status(),
+            message: body,
+        },
+    }
 }
 
 /// An individual rate limit.
@@ -580,30 +788,10 @@ pub async fn stream_completion_with_rate_limit_info(
         base: request,
         stream: true,
     };
-    let uri = format!("{api_url}/v1/messages");
 
-    let mut request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Anthropic-Version", "2023-06-01")
-        .header("X-Api-Key", api_key.trim())
-        .header("Content-Type", "application/json");
+    let (response, rate_limits) =
+        send_request(client, api_url, api_key, &request, beta_headers).await?;
 
-    if let Some(beta_headers) = beta_headers {
-        request_builder = request_builder.header("Anthropic-Beta", beta_headers);
-    }
-
-    let serialized_request =
-        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let request = request_builder
-        .body(AsyncBody::from(serialized_request))
-        .map_err(AnthropicError::BuildRequestBody)?;
-
-    let mut response = client
-        .send(request)
-        .await
-        .map_err(AnthropicError::HttpSend)?;
-    let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         let stream = reader
@@ -622,27 +810,8 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
-    } else if response.status().as_u16() == 529 {
-        Err(AnthropicError::ServerOverloaded {
-            retry_after: rate_limits.retry_after,
-        })
-    } else if let Some(retry_after) = rate_limits.retry_after {
-        Err(AnthropicError::RateLimit { retry_after })
     } else {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(AnthropicError::ReadResponse)?;
-
-        match serde_json::from_str::<Event>(&body) {
-            Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
-                status_code: response.status(),
-                message: body,
-            }),
-        }
+        Err(handle_error_response(response, rate_limits).await)
     }
 }
 
@@ -772,6 +941,22 @@ pub enum ToolChoice {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
     Enabled { budget_tokens: Option<u32> },
+    Adaptive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, EnumString)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputConfig {
+    pub effort: Option<Effort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -796,6 +981,8 @@ pub struct Request {
     pub system: Option<StringOrContents>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_config: Option<OutputConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_sequences: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -977,6 +1164,71 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
         .0
         .parse()
         .ok()
+}
+
+/// Request body for the token counting API.
+/// Similar to `Request` but without `max_tokens` since it's not needed for counting.
+#[derive(Debug, Serialize)]
+pub struct CountTokensRequest {
+    pub model: String,
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+/// Response from the token counting API.
+#[derive(Debug, Deserialize)]
+pub struct CountTokensResponse {
+    pub input_tokens: u64,
+}
+
+/// Count the number of tokens in a message without creating it.
+pub async fn count_tokens(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+) -> Result<CountTokensResponse, AnthropicError> {
+    let uri = format!("{api_url}/v1/messages/count_tokens");
+
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Anthropic-Version", "2023-06-01")
+        .header("X-Api-Key", api_key.trim())
+        .header("Content-Type", "application/json");
+
+    let serialized_request =
+        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
+    let http_request = request_builder
+        .body(AsyncBody::from(serialized_request))
+        .map_err(AnthropicError::BuildRequestBody)?;
+
+    let mut response = client
+        .send(http_request)
+        .await
+        .map_err(AnthropicError::HttpSend)?;
+
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
+
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(AnthropicError::ReadResponse)?;
+
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
+    } else {
+        Err(handle_error_response(response, rate_limits).await)
+    }
 }
 
 #[test]

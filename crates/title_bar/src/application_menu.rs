@@ -1,12 +1,7 @@
-use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, actions};
 use settings::Settings;
 
-#[cfg(not(target_os = "macos"))]
-use gpui::{Action, actions};
-
-#[cfg(not(target_os = "macos"))]
 use schemars::JsonSchema;
-#[cfg(not(target_os = "macos"))]
 use serde::Deserialize;
 
 use smallvec::SmallVec;
@@ -14,18 +9,23 @@ use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 
 use crate::title_bar_settings::TitleBarSettings;
 
-#[cfg(not(target_os = "macos"))]
 actions!(
     app_menu,
     [
-        /// Navigates to the menu item on the right.
+        /// Activates the menu on the right in the client-side application menu.
+        ///
+        /// Does not apply to platform menu bars (e.g. on macOS).
         ActivateMenuRight,
-        /// Navigates to the menu item on the left.
+        /// Activates the menu on the left in the client-side application menu.
+        ///
+        /// Does not apply to platform menu bars (e.g. on macOS).
         ActivateMenuLeft
     ]
 );
 
-#[cfg(not(target_os = "macos"))]
+/// Opens the named menu in the client-side application menu.
+///
+/// Does not apply to platform menu bars (e.g. on macOS).
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Default, Action)]
 #[action(namespace = app_menu)]
 pub struct OpenApplicationMenu(String);
@@ -151,10 +151,10 @@ impl ApplicationMenu {
 
         // Application menu must have same ids as first menu item in standard menu
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })
@@ -184,10 +184,10 @@ impl ApplicationMenu {
             .collect();
 
         div()
-            .id(SharedString::from(format!("{}-menu-item", menu_name)))
+            .id(format!("{}-menu-item", menu_name))
             .occlude()
             .child(
-                PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
+                PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
                         Self::build_menu_from_items(entry.clone(), window, cx).into()
                     })

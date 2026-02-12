@@ -13,7 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-test-support = ["multi_buffer/test-support"]
+test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
 
 [dependencies]
 agent_settings.workspace = true
@@ -43,12 +43,14 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
-recent_projects.workspace = true
+prompt_store.workspace = true
+remote_connection.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 telemetry.workspace = true
@@ -56,6 +58,7 @@ theme.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
@@ -74,10 +77,12 @@ gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+remote_connection = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

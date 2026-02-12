@@ -27,6 +27,7 @@ collections.workspace = true
 credentials_provider.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -53,7 +54,7 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
-tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
+tokio-socks.workspace = true
 tokio.workspace = true
 url.workspace = true
 util.workspace = true

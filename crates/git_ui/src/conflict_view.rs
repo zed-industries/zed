@@ -111,6 +111,7 @@ fn excerpt_for_buffer_updated(
     );
 }
 
+#[ztracing::instrument(skip_all)]
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
     let Some(project) = editor.project() else {
         return;
@@ -166,6 +167,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
     editor.remove_blocks(removed_block_ids, None, cx);
 }
 
+#[ztracing::instrument(skip_all)]
 fn conflicts_updated(
     editor: &mut Editor,
     conflict_set: Entity<ConflictSet>,
@@ -311,6 +313,7 @@ fn conflicts_updated(
     }
 }
 
+#[ztracing::instrument(skip_all)]
 fn update_conflict_highlighting(
     editor: &mut Editor,
     conflict: &ConflictRegion,
@@ -372,7 +375,7 @@ fn render_conflict_buttons(
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
-            Button::new("head", "Use HEAD")
+            Button::new("head", format!("Use {}", conflict.ours_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -392,7 +395,7 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            Button::new("origin", "Use Origin")
+            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -484,24 +487,16 @@ pub(crate) fn resolve_conflict(
         else {
             return;
         };
-        let Some(save) = project
-            .update(cx, |project, cx| {
-                if multibuffer.read(cx).all_diff_hunks_expanded() {
-                    project.save_buffer(buffer.clone(), cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
-            })
-            .ok()
-        else {
-            return;
-        };
+        let save = project.update(cx, |project, cx| {
+            if multibuffer.read(cx).all_diff_hunks_expanded() {
+                project.save_buffer(buffer.clone(), cx)
+            } else {
+                Task::ready(Ok(()))
+            }
+        });
         if save.await.log_err().is_none() {
             let open_path = maybe!({
-                let path = buffer
-                    .read_with(cx, |buffer, cx| buffer.project_path(cx))
-                    .ok()
-                    .flatten()?;
+                let path = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_path_preview(path, None, false, false, false, window, cx)

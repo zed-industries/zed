@@ -388,6 +388,7 @@ mod tests {
 
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use project::WorktreeId;
     use rand::Rng as _;
     use serde_json::json;
     use settings::SettingsStore;
@@ -735,6 +736,8 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
+            WorktreeId::from_proto(0),
             &mut cx.to_async(),
         )
         .await
@@ -758,6 +761,8 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
+            WorktreeId::from_proto(0),
             &mut cx.to_async(),
         )
         .await
@@ -816,6 +821,8 @@ mod tests {
             true,
             fs.clone(),
             Default::default(),
+            true,
+            WorktreeId::from_proto(0),
             &mut cx.to_async(),
         )
         .await

@@ -4,15 +4,13 @@
 
 use std::ops::Range;
 
-use crate::Editor;
+use crate::{Editor, HighlightKey};
 use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use itertools::Itertools;
 use language::language_settings;
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
-
-struct ColorizedBracketsHighlight;
 
 impl Editor {
     pub(crate) fn colorize_brackets(&mut self, invalidate: bool, cx: &mut Context<Editor>) {
@@ -45,7 +43,7 @@ impl Editor {
 
         let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (excerpt_id, (buffer, buffer_version, buffer_range))| {
+            |mut acc, (excerpt_id, (buffer, _, buffer_range))| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -62,7 +60,7 @@ impl Editor {
                     let brackets_by_accent = buffer_snapshot
                         .fetch_bracket_ranges(
                             buffer_range.start..buffer_range.end,
-                            Some((&buffer_version, fetched_chunks)),
+                            Some(fetched_chunks),
                         )
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
@@ -135,7 +133,7 @@ impl Editor {
         );
 
         if invalidate {
-            self.clear_highlights::<ColorizedBracketsHighlight>(cx);
+            self.clear_highlights_with(|key| matches!(key, HighlightKey::ColorizeBracket(_)), cx);
         }
 
         let editor_background = cx.theme().colors().editor_background;
@@ -147,8 +145,8 @@ impl Editor {
                 ..HighlightStyle::default()
             };
 
-            self.highlight_text_key::<ColorizedBracketsHighlight>(
-                accent_number,
+            self.highlight_text_key(
+                HighlightKey::ColorizeBracket(accent_number),
                 bracket_highlights,
                 style,
                 true,
@@ -186,7 +184,7 @@ mod tests {
     use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
     use theme::ThemeStyleContent;
-    use ui::SharedString;
+
     use util::{path, post_inc};
 
     #[gpui::test]
@@ -345,6 +343,119 @@ where
 "#,
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth, again"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_markdown_brackets_in_multiple_hunks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(markdown_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        let rows = 100;
+        let footer = "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n";
+
+        let simple_brackets = (0..rows).map(|_| "ˇ[]\n").collect::<String>();
+        let simple_brackets_highlights = (0..rows).map(|_| "«1[]1»\n").collect::<String>();
+        cx.set_state(&simple_brackets);
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{simple_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Simple bracket pairs should be colored"
+        );
+
+        let paired_brackets = (0..rows).map(|_| "ˇ[]()\n").collect::<String>();
+        let paired_brackets_highlights = (0..rows).map(|_| "«1[]1»«1()1»\n").collect::<String>();
+        cx.set_state(&paired_brackets);
+        // Wait for reparse to complete after content change
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            // Force invalidation of bracket cache after reparse
+            editor.colorize_brackets(true, cx);
+        });
+        // Scroll to beginning to fetch first chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        // Scroll to end to fetch remaining chunks
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            format!("{paired_brackets_highlights}\n{footer}"),
+            bracket_colors_markup(&mut cx),
+            "Paired bracket pairs should be colored"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_bracket_colorization_after_language_swap(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+
+        let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+        language_registry.add(markdown_lang());
+        language_registry.add(rust_lang());
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language_registry(language_registry.clone());
+            buffer.set_language(Some(markdown_lang()), cx);
+        });
+
+        cx.set_state(indoc! {r#"
+            fn main() {
+                let v: Vec<Stringˇ> = vec![];
+            }
+        "#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"fn main«1()1» «1{
+    let v: Vec<String> = vec!«2[]2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "Markdown does not colorize <> brackets"
+        );
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            r#"fn main«1()1» «1{
+    let v: Vec«2<String>2» = vec!«2[]2»;
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+"#,
+            &bracket_colors_markup(&mut cx),
+            "After switching to Rust, <> brackets are now colorized"
         );
     }
 
@@ -936,7 +1047,7 @@ mod foo «1{
         let actual_ranges = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
 
         let mut highlighted_brackets = HashMap::default();
@@ -964,7 +1075,7 @@ mod foo «1{
         let ranges_after_scrolling = cx.update_editor(|editor, window, cx| {
             editor
                 .snapshot(window, cx)
-                .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)))
         });
         let new_last_bracket = ranges_after_scrolling
             .iter()
@@ -992,7 +1103,9 @@ mod foo «1{
             let colored_brackets = cx.update_editor(|editor, window, cx| {
                 editor
                     .snapshot(window, cx)
-                    .all_text_highlight_ranges::<ColorizedBracketsHighlight>()
+                    .all_text_highlight_ranges(|key| {
+                        matches!(key, HighlightKey::ColorizeBracket(_))
+                    })
             });
             for (color, range) in colored_brackets.clone() {
                 assert!(
@@ -1249,8 +1362,8 @@ mod foo «1{
                         theme.to_string(),
                         ThemeStyleContent {
                             accents: vec![
-                                AccentContent(Some(SharedString::new("#ff0000"))),
-                                AccentContent(Some(SharedString::new("#0000ff"))),
+                                AccentContent(Some("#ff0000".to_string())),
+                                AccentContent(Some("#0000ff".to_string())),
                             ],
                             ..ThemeStyleContent::default()
                         },
@@ -1318,7 +1431,8 @@ mod foo «1{
             offset
         }
 
-        let actual_ranges = snapshot.all_text_highlight_ranges::<ColorizedBracketsHighlight>();
+        let actual_ranges = snapshot
+            .all_text_highlight_ranges(|key| matches!(key, HighlightKey::ColorizeBracket(_)));
         let editor_text = snapshot.text();
 
         let mut next_index = 1;

@@ -161,7 +161,7 @@ impl RelPath {
         false
     }
 
-    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self> {
+    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self, StripPrefixError> {
         if other.is_empty() {
             return Ok(self);
         }
@@ -172,7 +172,7 @@ impl RelPath {
                 return Ok(Self::empty());
             }
         }
-        Err(anyhow!("failed to strip prefix: {other:?} from {self:?}"))
+        Err(StripPrefixError)
     }
 
     pub fn len(&self) -> usize {
@@ -250,6 +250,9 @@ impl RelPath {
         Path::new(&self.0)
     }
 }
+
+#[derive(Debug)]
+pub struct StripPrefixError;
 
 impl ToOwned for RelPath {
     type Owned = RelPathBuf;

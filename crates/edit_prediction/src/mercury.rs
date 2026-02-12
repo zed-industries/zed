@@ -1,56 +1,55 @@
-use anyhow::{Context as _, Result};
-use cloud_llm_client::predict_edits_v3::Event;
-use credentials_provider::CredentialsProvider;
-use edit_prediction_context::RelatedFile;
-use futures::{AsyncReadExt as _, FutureExt, future::Shared};
-use gpui::{
-    App, AppContext as _, Entity, Task,
-    http_client::{self, AsyncBody, Method},
-};
-use language::{Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToPoint as _};
-use project::{Project, ProjectPath};
-use std::{
-    collections::VecDeque, fmt::Write as _, mem, ops::Range, path::Path, sync::Arc, time::Instant,
-};
-
 use crate::{
-    EditPredictionId, EditPredictionInputs, open_ai_response::text_from_response,
-    prediction::EditPredictionResult,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
+    prediction::EditPredictionResult, zeta1::compute_edits,
 };
+use anyhow::{Context as _, Result};
+use cloud_llm_client::EditPredictionRejectReason;
+use futures::AsyncReadExt as _;
+use gpui::{
+    App, AppContext as _, Entity, Global, SharedString, Task,
+    http_client::{self, AsyncBody, HttpClient, Method},
+};
+use language::{OffsetRangeExt as _, ToOffset, ToPoint as _};
+use language_model::{ApiKeyState, EnvVar, env_var};
+use release_channel::AppVersion;
+use serde::Serialize;
+use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+
+use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
+const MAX_REWRITE_TOKENS: usize = 150;
+const MAX_CONTEXT_TOKENS: usize = 350;
 
 pub struct Mercury {
-    pub api_token: Shared<Task<Option<String>>>,
+    pub api_token: Entity<ApiKeyState>,
 }
 
 impl Mercury {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         Mercury {
-            api_token: load_api_token(cx).shared(),
+            api_token: mercury_api_token(cx),
         }
     }
 
-    pub fn set_api_token(&mut self, api_token: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.api_token = Task::ready(api_token.clone()).shared();
-        store_api_token_in_keychain(api_token, cx)
-    }
-
-    pub fn request_prediction(
+    pub(crate) fn request_prediction(
         &self,
-        _project: &Entity<Project>,
-        active_buffer: &Entity<Buffer>,
-        snapshot: BufferSnapshot,
-        position: language::Anchor,
-        events: Vec<Arc<Event>>,
-        _recent_paths: &VecDeque<ProjectPath>,
-        related_files: Vec<RelatedFile>,
-        _diagnostic_search_range: Range<Point>,
+        EditPredictionModelInput {
+            buffer,
+            snapshot,
+            position,
+            events,
+            related_files,
+            debug_tx,
+            ..
+        }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let Some(api_token) = self.api_token.clone().now_or_never().flatten() else {
+        self.api_token.update(cx, |key_state, cx| {
+            _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
+        });
+        let Some(api_token) = self.api_token.read(cx).key(&MERCURY_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
         let full_path: Arc<Path> = snapshot
@@ -62,6 +61,7 @@ impl Mercury {
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
         let buffer_snapshotted_at = Instant::now();
+        let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
             let (editable_range, context_range) =
@@ -72,38 +72,46 @@ impl Mercury {
                     MAX_REWRITE_TOKENS,
                 );
 
-            let offset_range = editable_range.to_offset(&snapshot);
-            let prompt = build_prompt(
-                &events,
-                &related_files,
-                &snapshot,
+            let related_files = crate::filter_redundant_excerpts(
+                related_files,
                 full_path.as_ref(),
-                cursor_point,
-                editable_range,
-                context_range.clone(),
+                context_range.start.row..context_range.end.row,
             );
 
-            let inputs = EditPredictionInputs {
-                events: events,
-                included_files: vec![cloud_llm_client::predict_edits_v3::RelatedFile {
-                    path: full_path.clone(),
-                    max_row: cloud_llm_client::predict_edits_v3::Line(snapshot.max_point().row),
-                    excerpts: vec![cloud_llm_client::predict_edits_v3::Excerpt {
-                        start_line: cloud_llm_client::predict_edits_v3::Line(
-                            context_range.start.row,
-                        ),
-                        text: snapshot
-                            .text_for_range(context_range.clone())
-                            .collect::<String>()
-                            .into(),
-                    }],
-                }],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    column: cursor_point.column,
-                    line: cloud_llm_client::predict_edits_v3::Line(cursor_point.row),
-                },
+            let context_offset_range = context_range.to_offset(&snapshot);
+            let context_start_row = context_range.start.row;
+
+            let editable_offset_range = editable_range.to_offset(&snapshot);
+
+            let inputs = zeta_prompt::ZetaPromptInput {
+                events,
+                related_files,
+                cursor_offset_in_excerpt: cursor_point.to_offset(&snapshot)
+                    - context_offset_range.start,
                 cursor_path: full_path.clone(),
+                cursor_excerpt: snapshot
+                    .text_for_range(context_range)
+                    .collect::<String>()
+                    .into(),
+                editable_range_in_excerpt: (editable_offset_range.start
+                    - context_offset_range.start)
+                    ..(editable_offset_range.end - context_offset_range.start),
+                excerpt_start_row: Some(context_start_row),
             };
+
+            let prompt = build_prompt(&inputs);
+
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionStarted(
+                        EditPredictionStartedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            prompt: Some(prompt.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
 
             let request_body = open_ai::Request {
                 model: "mercury-coder".into(),
@@ -160,6 +168,18 @@ impl Mercury {
             let id = mem::take(&mut response.id);
             let response_str = text_from_response(response).unwrap_or_default();
 
+            if let Some(debug_tx) = &debug_tx {
+                debug_tx
+                    .unbounded_send(DebugEvent::EditPredictionFinished(
+                        EditPredictionFinishedDebugEvent {
+                            buffer: active_buffer.downgrade(),
+                            model_output: Some(response_str.clone()),
+                            position,
+                        },
+                    ))
+                    .ok();
+            }
+
             let response_str = response_str.strip_prefix("```\n").unwrap_or(&response_str);
             let response_str = response_str.strip_suffix("\n```").unwrap_or(&response_str);
 
@@ -168,25 +188,18 @@ impl Mercury {
 
             if response_str != NO_PREDICTION_OUTPUT {
                 let old_text = snapshot
-                    .text_for_range(offset_range.clone())
+                    .text_for_range(editable_offset_range.clone())
                     .collect::<String>();
-                edits.extend(
-                    language::text_diff(&old_text, &response_str)
-                        .into_iter()
-                        .map(|(range, text)| {
-                            (
-                                snapshot.anchor_after(offset_range.start + range.start)
-                                    ..snapshot.anchor_before(offset_range.start + range.end),
-                                text,
-                            )
-                        }),
+                edits = compute_edits(
+                    old_text,
+                    &response_str,
+                    editable_offset_range.start,
+                    &snapshot,
                 );
             }
 
             anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
         });
-
-        let buffer = active_buffer.clone();
 
         cx.spawn(async move |cx| {
             let (id, edits, old_snapshot, response_received_at, inputs) =
@@ -197,6 +210,7 @@ impl Mercury {
                     &buffer,
                     &old_snapshot,
                     edits.into(),
+                    None,
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
@@ -208,15 +222,7 @@ impl Mercury {
     }
 }
 
-fn build_prompt(
-    events: &[Arc<Event>],
-    related_files: &[RelatedFile],
-    cursor_buffer: &BufferSnapshot,
-    cursor_buffer_path: &Path,
-    cursor_point: Point,
-    editable_range: Range<Point>,
-    context_range: Range<Point>,
-) -> String {
+fn build_prompt(inputs: &ZetaPromptInput) -> String {
     const RECENTLY_VIEWED_SNIPPETS_START: &str = "<|recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPETS_END: &str = "<|/recently_viewed_code_snippets|>\n";
     const RECENTLY_VIEWED_SNIPPET_START: &str = "<|recently_viewed_code_snippet|>\n";
@@ -237,16 +243,16 @@ fn build_prompt(
         &mut prompt,
         RECENTLY_VIEWED_SNIPPETS_START..RECENTLY_VIEWED_SNIPPETS_END,
         |prompt| {
-            for related_file in related_files {
+            for related_file in inputs.related_files.iter() {
                 for related_excerpt in &related_file.excerpts {
                     push_delimited(
                         prompt,
                         RECENTLY_VIEWED_SNIPPET_START..RECENTLY_VIEWED_SNIPPET_END,
                         |prompt| {
                             prompt.push_str(CODE_SNIPPET_FILE_PATH_PREFIX);
-                            prompt.push_str(related_file.path.path.as_unix_str());
+                            prompt.push_str(related_file.path.to_string_lossy().as_ref());
                             prompt.push('\n');
-                            prompt.push_str(&related_excerpt.text.to_string());
+                            prompt.push_str(related_excerpt.text.as_ref());
                         },
                     );
                 }
@@ -259,21 +265,22 @@ fn build_prompt(
         CURRENT_FILE_CONTENT_START..CURRENT_FILE_CONTENT_END,
         |prompt| {
             prompt.push_str(CURRENT_FILE_PATH_PREFIX);
-            prompt.push_str(cursor_buffer_path.as_os_str().to_string_lossy().as_ref());
+            prompt.push_str(inputs.cursor_path.as_os_str().to_string_lossy().as_ref());
             prompt.push('\n');
 
-            let prefix_range = context_range.start..editable_range.start;
-            let suffix_range = editable_range.end..context_range.end;
-
-            prompt.extend(cursor_buffer.text_for_range(prefix_range));
+            prompt.push_str(&inputs.cursor_excerpt[0..inputs.editable_range_in_excerpt.start]);
             push_delimited(prompt, CODE_TO_EDIT_START..CODE_TO_EDIT_END, |prompt| {
-                let range_before_cursor = editable_range.start..cursor_point;
-                let range_after_cursor = cursor_point..editable_range.end;
-                prompt.extend(cursor_buffer.text_for_range(range_before_cursor));
+                prompt.push_str(
+                    &inputs.cursor_excerpt
+                        [inputs.editable_range_in_excerpt.start..inputs.cursor_offset_in_excerpt],
+                );
                 prompt.push_str(CURSOR_TAG);
-                prompt.extend(cursor_buffer.text_for_range(range_after_cursor));
+                prompt.push_str(
+                    &inputs.cursor_excerpt
+                        [inputs.cursor_offset_in_excerpt..inputs.editable_range_in_excerpt.end],
+                );
             });
-            prompt.extend(cursor_buffer.text_for_range(suffix_range));
+            prompt.push_str(&inputs.cursor_excerpt[inputs.editable_range_in_excerpt.end..]);
         },
     );
 
@@ -281,8 +288,8 @@ fn build_prompt(
         &mut prompt,
         EDIT_DIFF_HISTORY_START..EDIT_DIFF_HISTORY_END,
         |prompt| {
-            for event in events {
-                writeln!(prompt, "{event}").unwrap();
+            for event in inputs.events.iter() {
+                zeta_prompt::write_event(prompt, &event);
             }
         },
     );
@@ -293,48 +300,113 @@ fn build_prompt(
 fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(&mut String)) {
     prompt.push_str(delimiters.start);
     cb(prompt);
+    prompt.push('\n');
     prompt.push_str(delimiters.end);
 }
 
-pub const MERCURY_CREDENTIALS_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
+pub const MERCURY_CREDENTIALS_URL: SharedString =
+    SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
+pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
-pub fn load_api_token(cx: &App) -> Task<Option<String>> {
-    if let Some(api_token) = std::env::var("MERCURY_AI_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Task::ready(Some(api_token));
+struct GlobalMercuryApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalMercuryApiKey {}
+
+pub fn mercury_api_token(cx: &mut App) -> Entity<ApiKeyState> {
+    if let Some(global) = cx.try_global::<GlobalMercuryApiKey>() {
+        return global.0.clone();
     }
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
-    cx.spawn(async move |cx| {
-        let (_, credentials) = credentials_provider
-            .read_credentials(MERCURY_CREDENTIALS_URL, &cx)
-            .await
-            .ok()??;
-        String::from_utf8(credentials).ok()
+    let entity =
+        cx.new(|_| ApiKeyState::new(MERCURY_CREDENTIALS_URL, MERCURY_TOKEN_ENV_VAR.clone()));
+    cx.set_global(GlobalMercuryApiKey(entity.clone()));
+    entity
+}
+
+pub fn load_mercury_api_token(cx: &mut App) -> Task<Result<(), language_model::AuthenticateError>> {
+    mercury_api_token(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx)
     })
 }
 
-fn store_api_token_in_keychain(api_token: Option<String>, cx: &App) -> Task<Result<()>> {
-    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+const FEEDBACK_API_URL: &str = "https://api-feedback.inceptionlabs.ai/feedback";
 
-    cx.spawn(async move |cx| {
-        if let Some(api_token) = api_token {
-            credentials_provider
-                .write_credentials(
-                    MERCURY_CREDENTIALS_URL,
-                    MERCURY_CREDENTIALS_USERNAME,
-                    api_token.as_bytes(),
-                    cx,
-                )
-                .await
-                .context("Failed to save Mercury API token to system keychain")
-        } else {
-            credentials_provider
-                .delete_credentials(MERCURY_CREDENTIALS_URL, cx)
-                .await
-                .context("Failed to delete Mercury API token from system keychain")
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MercuryUserAction {
+    Accept,
+    Reject,
+    Ignore,
+}
+
+#[derive(Serialize)]
+struct FeedbackRequest {
+    request_id: SharedString,
+    provider_name: &'static str,
+    user_action: MercuryUserAction,
+    provider_version: String,
+}
+
+pub(crate) fn edit_prediction_accepted(
+    prediction_id: EditPredictionId,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    send_feedback(prediction_id, MercuryUserAction::Accept, http_client, cx);
+}
+
+pub(crate) fn edit_prediction_rejected(
+    prediction_id: EditPredictionId,
+    was_shown: bool,
+    reason: EditPredictionRejectReason,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    if !was_shown {
+        return;
+    }
+    let action = match reason {
+        EditPredictionRejectReason::Rejected => MercuryUserAction::Reject,
+        EditPredictionRejectReason::Discarded => MercuryUserAction::Ignore,
+        _ => return,
+    };
+    send_feedback(prediction_id, action, http_client, cx);
+}
+
+fn send_feedback(
+    prediction_id: EditPredictionId,
+    action: MercuryUserAction,
+    http_client: Arc<dyn HttpClient>,
+    cx: &App,
+) {
+    let request_id = prediction_id.0;
+    let app_version = AppVersion::global(cx);
+    cx.background_spawn(async move {
+        let body = FeedbackRequest {
+            request_id,
+            provider_name: "zed",
+            user_action: action,
+            provider_version: app_version.to_string(),
+        };
+
+        let request = http_client::Request::builder()
+            .uri(FEEDBACK_API_URL)
+            .method(Method::POST)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(serde_json::to_vec(&body)?))?;
+
+        let response = http_client.send(request).await?;
+        if !response.status().is_success() {
+            anyhow::bail!("Feedback API returned status: {}", response.status());
         }
+
+        log::debug!(
+            "Mercury feedback sent: request_id={}, action={:?}",
+            body.request_id,
+            body.user_action
+        );
+
+        anyhow::Ok(())
     })
+    .detach_and_log_err(cx);
 }
