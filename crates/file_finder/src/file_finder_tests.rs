@@ -1282,7 +1282,9 @@ async fn test_create_file_focused_file_not_belong_to_available_worktrees(cx: &mu
     )
     .await;
 
-    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
     let (worktree_id_a, worktree_id_b) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
