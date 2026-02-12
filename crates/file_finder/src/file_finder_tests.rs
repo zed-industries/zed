@@ -1261,7 +1261,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_create_file_focused_file_not_belong_to_available_worktrees(cx: &mut TestAppContext) {
+async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
         .fs
