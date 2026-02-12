@@ -1304,6 +1304,7 @@ fn build_example_from_snowflake(
             excerpt_start_row: None,
             events,
             related_files,
+            in_open_source_repo: input.in_open_source_repo,
         }),
         telemetry: Some(TelemetrySource {
             request_id,
