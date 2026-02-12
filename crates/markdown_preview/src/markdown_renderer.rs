@@ -13,8 +13,8 @@ use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
     HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
-    ParentElement, Render, Resource, SharedString, Styled, StyledText, Task, TextStyle, WeakEntity,
-    Window, div, img, rems,
+    ParentElement, Render, RenderImage, Resource, SharedString, Styled, StyledText, Task,
+    TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -47,7 +47,7 @@ pub(crate) type MermaidDiagramCache =
     HashMap<ParsedMarkdownMermaidDiagramContents, CachedMermaidDiagram>;
 
 pub(crate) struct CachedMermaidDiagram {
-    pub(crate) svg_contents: Arc<OnceLock<anyhow::Result<String>>>,
+    pub(crate) render_image: Arc<OnceLock<anyhow::Result<Arc<RenderImage>>>>,
     _task: Task<()>,
 }
 
@@ -56,13 +56,20 @@ impl CachedMermaidDiagram {
         contents: ParsedMarkdownMermaidDiagramContents,
         cx: &mut Context<MarkdownPreviewView>,
     ) -> Self {
-        let result = Arc::new(OnceLock::<anyhow::Result<String>>::new());
-        let _contents = result.clone();
+        let result = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
+        let result_clone = result.clone();
+        let svg_renderer = cx.svg_renderer();
+
         let _task = cx.spawn(async move |this, cx| {
             let value = cx
-                .background_spawn(async move { mermaid_rs_renderer::render(&contents.contents) })
+                .background_spawn(async move {
+                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    svg_renderer
+                        .render_single_frame(svg_string.as_bytes(), 1.0, true)
+                        .map_err(|e| anyhow::anyhow!("{}", e))
+                })
                 .await;
-            let _ = _contents.set(value);
+            let _ = result_clone.set(value);
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -70,7 +77,7 @@ impl CachedMermaidDiagram {
         });
 
         Self {
-            svg_contents: result,
+            render_image: result,
             _task,
         }
     }
@@ -700,10 +707,10 @@ fn render_mermaid_diagram(
     if let Some(cached) = cx
         .mermaid_diagram_cache
         .get(&parsed.contents)
-        .and_then(|v| v.svg_contents.get())
+        .and_then(|v| v.render_image.get())
     {
         match cached {
-            Ok(svg_contents) => cx
+            Ok(render_image) => cx
                 .with_common_p(div())
                 .px_3()
                 .py_3()
@@ -711,16 +718,13 @@ fn render_mermaid_diagram(
                 .rounded_sm()
                 .child(
                     div().w_full().child(
-                        img(ImageSource::Image(Arc::new(gpui::Image::from_bytes(
-                            gpui::ImageFormat::Svg,
-                            svg_contents.as_bytes().to_owned(),
-                        ))))
-                        .max_w_full()
-                        .with_fallback(|| {
-                            div()
-                                .child(Label::new("Failed to load mermaid diagram"))
-                                .into_any_element()
-                        }),
+                        img(ImageSource::Render(render_image.clone()))
+                            .max_w_full()
+                            .with_fallback(|| {
+                                div()
+                                    .child(Label::new("Failed to load mermaid diagram"))
+                                    .into_any_element()
+                            }),
                     ),
                 )
                 .into_any(),
