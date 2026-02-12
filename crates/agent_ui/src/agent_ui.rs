@@ -539,7 +539,7 @@ mod tests {
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
-        DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting, Settings, SettingsStore,
+        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
     };
 
     #[gpui::test]
@@ -558,7 +558,6 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
-            agents_panel_dock: DockSide::Left,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
