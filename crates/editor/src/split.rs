@@ -5450,4 +5450,67 @@ mod tests {
             Some(5)
         );
     }
+
+    #[gpui::test]
+    async fn test_edit_spanning_excerpt_boundaries_then_resplit(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+        let current_text = base_text.clone();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![
+                    Point::new(0, 0)..Point::new(3, 3),
+                    Point::new(5, 0)..Point::new(8, 3),
+                    Point::new(10, 0)..Point::new(11, 3),
+                ],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 0)..Point::new(10, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.unsplit(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.split(window, cx);
+        });
+
+        cx.run_until_parked();
+    }
 }
