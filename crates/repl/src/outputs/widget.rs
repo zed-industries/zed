@@ -157,8 +157,7 @@ impl WidgetStore {
 
         for (model_id, html) in needed {
             let markdown_text = convert_html_to_markdown_string(&html);
-            let markdown_entity =
-                cx.new(|cx| Markdown::new(markdown_text.into(), None, None, cx));
+            let markdown_entity = cx.new(|cx| Markdown::new(markdown_text.into(), None, None, cx));
             self.markdown_views.insert(model_id, markdown_entity);
         }
     }
@@ -405,8 +404,7 @@ fn convert_html_to_markdown_string(html: &str) -> String {
         Rc::new(RefCell::new(html_md::CodeHandler)),
     ];
 
-    convert_html_to_markdown(html.as_bytes(), &mut handlers)
-        .unwrap_or_else(|_| html.to_string())
+    convert_html_to_markdown(html.as_bytes(), &mut handlers).unwrap_or_else(|_| html.to_string())
 }
 
 const IPY_MODEL_PREFIX: &str = "IPY_MODEL_";
