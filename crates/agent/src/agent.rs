@@ -16,6 +16,7 @@ use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
+pub use shell_command_parser::extract_commands;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;
@@ -1038,9 +1039,7 @@ impl NativeAgentConnection {
                                 context: _,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
-                                        tool_call, options, true, cx,
-                                    )
+                                    thread.request_tool_call_authorization(tool_call, options, cx)
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected(

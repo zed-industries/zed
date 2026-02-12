@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "action_log",
  "agent-client-protocol",
- "agent_settings",
  "anyhow",
  "base64 0.22.1",
  "buffer_diff",
@@ -3761,7 +3760,6 @@ name = "copilot_chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "collections",
  "dirs 4.0.0",
  "fs",
@@ -11372,6 +11370,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "lsp",
  "menu",
  "ordered-float 2.10.1",
  "picker",
@@ -11403,6 +11402,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "lsp",
  "menu",
  "outline",
  "pretty_assertions",
@@ -14870,7 +14870,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
- "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -21030,7 +21030,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.224.0"
+version = "0.225.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

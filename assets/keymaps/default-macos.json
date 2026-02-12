@@ -288,6 +288,7 @@
       "cmd-alt-l": "agent::OpenRulesLibrary",
       "cmd-alt-p": "agent::ManageProfiles",
       "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "cmd-shift-j": "agent::ToggleNavigationMenu",

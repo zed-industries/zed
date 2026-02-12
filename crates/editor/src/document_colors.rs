@@ -139,7 +139,7 @@ impl LspColorData {
 }
 
 impl Editor {
-    pub(super) fn refresh_colors_for_visible_range(
+    pub(super) fn refresh_document_colors(
         &mut self,
         buffer_id: Option<BufferId>,
         _: &Window,

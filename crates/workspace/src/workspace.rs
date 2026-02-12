@@ -1474,6 +1474,7 @@ impl Workspace {
                 cx,
             );
             center_pane.set_can_split(Some(Arc::new(|_, _, _, _| true)));
+            center_pane.set_should_display_welcome_page(true);
             center_pane
         });
         cx.subscribe_in(&center_pane, window, Self::handle_pane_event)

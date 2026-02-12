@@ -490,6 +490,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
         .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
+        .add_basic_renderer::<settings::DiffViewStyle>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
@@ -542,6 +543,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         // please semicolon stay on next line
         ;
 }

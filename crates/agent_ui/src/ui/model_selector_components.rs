@@ -204,14 +204,12 @@ impl RenderOnce for ModelSelectorFooter {
 
 #[derive(IntoElement)]
 pub struct ModelSelectorTooltip {
-    focus_handle: FocusHandle,
     show_cycle_row: bool,
 }
 
 impl ModelSelectorTooltip {
-    pub fn new(focus_handle: FocusHandle) -> Self {
+    pub fn new() -> Self {
         Self {
-            focus_handle,
             show_cycle_row: true,
         }
     }
@@ -231,11 +229,7 @@ impl RenderOnce for ModelSelectorTooltip {
                     .gap_2()
                     .justify_between()
                     .child(Label::new("Change Model"))
-                    .child(KeyBinding::for_action_in(
-                        &ToggleModelSelector,
-                        &self.focus_handle,
-                        cx,
-                    )),
+                    .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
             )
             .when(self.show_cycle_row, |this| {
                 this.child(
@@ -246,11 +240,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
                         .child(Label::new("Cycle Favorited Models"))
-                        .child(KeyBinding::for_action_in(
-                            &CycleFavoriteModels,
-                            &self.focus_handle,
-                            cx,
-                        )),
+                        .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })
     }

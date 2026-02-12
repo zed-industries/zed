@@ -93,7 +93,7 @@ pub enum IconName {
     DebugStepOver,
     Diff,
     DiffSplit,
-    DiffStacked,
+    DiffUnified,
     Disconnected,
     Download,
     EditorAtom,
