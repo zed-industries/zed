@@ -4,7 +4,10 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use fs::Fs;
 
@@ -30,7 +33,7 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, WorktreeId};
-use std::{path::Path, sync::Arc};
+
 use ui::{
     ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, PopoverMenu,
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
