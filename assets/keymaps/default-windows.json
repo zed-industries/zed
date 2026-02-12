@@ -404,7 +404,7 @@
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-r": "search::ToggleRegex",, // vscode
+      "alt-r": "search::ToggleRegex", // vscode
     },
   },
   {
@@ -429,7 +429,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-r": "search::ToggleRegex",, // vscode
+      "alt-r": "search::ToggleRegex", // vscode
     },
   },
   {
