@@ -1050,12 +1050,11 @@ impl FileFinderDelegate {
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
                     } else if let Some(worktree) = worktree {
-                        let project_panel_settings = ProjectPanelSettings::get_global(cx);
-                        let mut full_path =
-                            worktree.read(cx).root_name().join(&entry_path.project.path);
-                        if project_panel_settings.hide_root {
-                            full_path = entry_path.project.path.clone();
-                        }
+                        let full_path = if ProjectPanelSettings::get_global(cx).hide_root {
+                            entry_path.project.path.clone()
+                        } else {
+                            worktree.read(cx).root_name().join(&entry_path.project.path)
+                        };
                         let mut components = full_path.components();
                         let filename = components.next_back().unwrap_or("");
                         let prefix = components.rest();
