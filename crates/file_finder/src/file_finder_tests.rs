@@ -1261,7 +1261,9 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(cx: &mut TestAppContext) {
+async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(
+    cx: &mut TestAppContext,
+) {
     let app_state = init_test(cx);
     app_state
         .fs
@@ -1336,8 +1338,8 @@ async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(cx
 
         assert!(
             project_path.worktree_id == worktree_id_a || project_path.worktree_id == worktree_id_b,
-            "New file should be created in one of the available worktrees (A or B), "
-                "not in a directory derived from the external file. Got worktree_id: {:?}",
+            "New file should be created in one of the available worktrees (A or B), \
+                not in a directory derived from the external file. Got worktree_id: {:?}",
             project_path.worktree_id
         );
 
