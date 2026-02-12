@@ -408,6 +408,14 @@ impl AgentServerStore {
             .get::<AllAgentServersSettings>(None)
             .clone();
 
+        // If we don't have agents from the registry loaded yet, trigger a
+        // refresh, which will cause this function to be called again
+        if new_settings.has_registry_agents()
+            && let Some(registry) = AgentRegistryStore::try_global(cx)
+        {
+            registry.update(cx, |registry, cx| registry.refresh_if_stale(cx));
+        }
+
         self.external_agents.clear();
         self.external_agents.insert(
             GEMINI_NAME.into(),
@@ -2249,6 +2257,15 @@ pub struct AllAgentServersSettings {
     pub codex: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<String, CustomAgentServerSettings>,
 }
+
+impl AllAgentServersSettings {
+    pub fn has_registry_agents(&self) -> bool {
+        self.custom
+            .values()
+            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }))
+    }
+}
+
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     pub path: Option<PathBuf>,

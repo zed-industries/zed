@@ -223,6 +223,8 @@ impl HeadlessProject {
             lsp_store
         });
 
+        AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
+
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store = AgentServerStore::local(
                 node_runtime.clone(),
@@ -324,8 +326,6 @@ impl HeadlessProject {
         GitStore::init(&session);
         AgentServerStore::init_headless(&session);
         ContextServerStore::init_headless(&session);
-
-        AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
 
         HeadlessProject {
             next_entry_id: Default::default(),

@@ -11,7 +11,7 @@ use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 use settings::Settings;
 
-use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
+use crate::agent_server_store::AllAgentServersSettings;
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
@@ -129,12 +129,7 @@ impl AgentRegistryStore {
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        let has_registry_agents_in_settings = AllAgentServersSettings::get_global(cx)
-            .custom
-            .values()
-            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
-
-        if has_registry_agents_in_settings {
+        if AllAgentServersSettings::get_global(cx).has_registry_agents() {
             store.update(cx, |store, cx| {
                 if store.agents.is_empty() {
                     store.refresh(cx);
