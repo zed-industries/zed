@@ -325,6 +325,22 @@ pub mod feedback {
     );
 }
 
+pub mod theme_mode {
+    use gpui::actions;
+
+    actions!(
+        theme_mode,
+        [
+            /// Changes the theme mode to light (only applies when using dynamic theme selection).
+            SetLight,
+            /// Changes the theme mode to dark (only applies when using dynamic theme selection).
+            SetDark,
+            /// Changes the theme mode to system (only applies when using dynamic theme selection).
+            SetSystem
+        ]
+    );
+}
+
 pub mod theme_selector {
     use gpui::Action;
     use schemars::JsonSchema;

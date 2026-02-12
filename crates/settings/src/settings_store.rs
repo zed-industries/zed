@@ -1679,6 +1679,184 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_theme_mode_actions_update_settings_in_dynamic_theme_selection(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "system",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::Light);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "light",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "light",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::Dark);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "dark",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "dark",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::System);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "dynamic": {
+                            "mode": "system",
+                            "light": "One Light",
+                            "dark": "One Dark"
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_theme_mode_actions_noop_in_static_theme_selection(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::Light);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::Dark);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update(
+            &mut store,
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                theme::set_mode(settings, settings::ThemeAppearanceMode::System);
+            },
+            r#"{
+                "theme": {
+                    "theme": {
+                        "static": "One Dark"
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+    }
+
     #[track_caller]
     fn check_settings_update(
         store: &mut SettingsStore,
