@@ -7,7 +7,6 @@ use std::convert::TryFrom;
 use strum::EnumIter;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
-pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -155,15 +154,15 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::CodestralLatest => 256000,
-            Self::MistralLargeLatest => 131000,
+            Self::MistralLargeLatest => 256000,
             Self::MistralMediumLatest => 128000,
             Self::MistralSmallLatest => 32000,
-            Self::MagistralMediumLatest => 40000,
-            Self::MagistralSmallLatest => 40000,
+            Self::MagistralMediumLatest => 128000,
+            Self::MagistralSmallLatest => 128000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
-            Self::DevstralMediumLatest => 128000,
-            Self::DevstralSmallLatest => 262144,
+            Self::DevstralMediumLatest => 256000,
+            Self::DevstralSmallLatest => 256000,
             Self::Pixtral12BLatest => 128000,
             Self::PixtralLargeLatest => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,

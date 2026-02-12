@@ -162,6 +162,8 @@ You can pass Ruby LSP configuration to `initialization_options`, e.g.
 }
 ```
 
+For full configuration options, see the [Ruby LSP website](https://shopify.github.io/ruby-lsp/editors.html).
+
 LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
 
 ```json [settings]
@@ -258,17 +260,10 @@ To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your
 
 ## Using the Tailwind CSS Language Server with Ruby
 
-It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in Ruby and ERB files.
-
-In order to do that, you need to configure the language server so that it knows about where to look for CSS classes in Ruby/ERB files by adding the following to your `settings.json`:
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in Ruby/ERB files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
 
 ```json [settings]
 {
-  "languages": {
-    "Ruby": {
-      "language_servers": ["tailwindcss-language-server", "..."]
-    }
-  },
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
@@ -281,7 +276,7 @@ In order to do that, you need to configure the language server so that it knows 
 }
 ```
 
-With these settings you will get completions for Tailwind CSS classes in HTML attributes inside ERB files and inside Ruby/ERB strings that are coming after a `class:` key. Examples:
+With these settings, you will get completions for Tailwind CSS classes in HTML attributes inside ERB files and inside Ruby/ERB strings that are coming after a `class:` key. Examples:
 
 ```rb
 # Ruby file:

@@ -788,7 +788,7 @@ mod test {
 
         let (view, cx) = cx.add_window_view(|window, cx| {
             let focus_handle = cx.focus_handle();
-            window.focus(&focus_handle);
+            window.focus(&focus_handle, cx);
             TestView {
                 scroll_handle: UniformListScrollHandle::new(),
                 index: 0,

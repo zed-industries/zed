@@ -42,6 +42,8 @@ smol.workspace = true
 take-until.workspace = true
 tempfile.workspace = true
 unicase.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
 util_macros = { workspace = true, optional = true }
 walkdir.workspace = true
 which.workspace = true

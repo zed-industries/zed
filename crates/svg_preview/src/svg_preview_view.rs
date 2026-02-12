@@ -196,7 +196,7 @@ impl SvgPreviewView {
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .is_some_and(|file| {
-                file.path()
+                std::path::Path::new(file.file_name(cx))
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             })

@@ -12,7 +12,7 @@ use windows::Win32::{
             RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-        Ole::{CF_HDROP, CF_UNICODETEXT},
+        Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT},
     },
     UI::Shell::{DragQueryFileW, HDROP},
 };
@@ -47,6 +47,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
+    formats_map.insert(CF_DIB.0 as u32, ClipboardFormatType::Image);
     formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
     formats_map
 });
@@ -339,8 +340,53 @@ fn read_metadata_from_clipboard() -> Option<String> {
 }
 
 fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
+    // Handle CF_DIB format specially - it's raw bitmap data that needs conversion
+    if format == CF_DIB.0 as u32 {
+        return read_image_for_type(format, ImageFormat::Bmp, Some(convert_dib_to_bmp));
+    }
     let image_format = format_number_to_image_format(format)?;
-    read_image_for_type(format, *image_format)
+    read_image_for_type::<fn(&[u8]) -> Option<Vec<u8>>>(format, *image_format, None)
+}
+
+/// Convert DIB data to BMP file format.
+/// DIB is essentially BMP without a file header, so we just need to add the 14-byte BITMAPFILEHEADER.
+fn convert_dib_to_bmp(dib_data: &[u8]) -> Option<Vec<u8>> {
+    if dib_data.len() < 40 {
+        return None;
+    }
+
+    let file_size = 14 + dib_data.len() as u32;
+    // Calculate pixel data offset
+    let header_size = u32::from_le_bytes(dib_data[0..4].try_into().ok()?);
+    let bit_count = u16::from_le_bytes(dib_data[14..16].try_into().ok()?);
+    let compression = u32::from_le_bytes(dib_data[16..20].try_into().ok()?);
+
+    // Calculate color table size
+    let color_table_size = if bit_count <= 8 {
+        let colors_used = u32::from_le_bytes(dib_data[32..36].try_into().ok()?);
+        let num_colors = if colors_used == 0 {
+            1u32 << bit_count
+        } else {
+            colors_used
+        };
+        num_colors * 4
+    } else if compression == 3 {
+        12 // BI_BITFIELDS
+    } else {
+        0
+    };
+
+    let pixel_data_offset = 14 + header_size + color_table_size;
+
+    // Build BITMAPFILEHEADER (14 bytes)
+    let mut bmp_data = Vec::with_capacity(file_size as usize);
+    bmp_data.extend_from_slice(b"BM"); // Signature
+    bmp_data.extend_from_slice(&file_size.to_le_bytes()); // File size
+    bmp_data.extend_from_slice(&[0u8; 4]); // Reserved
+    bmp_data.extend_from_slice(&pixel_data_offset.to_le_bytes()); // Pixel data offset
+    bmp_data.extend_from_slice(dib_data); // DIB data
+
+    Some(bmp_data)
 }
 
 #[inline]
@@ -348,12 +394,23 @@ fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFor
     IMAGE_FORMATS_MAP.get(&format_number)
 }
 
-fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
+fn read_image_for_type<F>(
+    format_number: u32,
+    format: ImageFormat,
+    convert: Option<F>,
+) -> Option<ClipboardEntry>
+where
+    F: FnOnce(&[u8]) -> Option<Vec<u8>>,
+{
     let (bytes, id) = with_clipboard_data(format_number, |data_ptr, size| {
-        let bytes = unsafe { std::slice::from_raw_parts(data_ptr as *mut u8 as _, size).to_vec() };
+        let raw_bytes = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) };
+        let bytes = match convert {
+            Some(converter) => converter(raw_bytes)?,
+            None => raw_bytes.to_vec(),
+        };
         let id = hash(&bytes);
-        (bytes, id)
-    })?;
+        Some((bytes, id))
+    })??;
     Some(ClipboardEntry::Image(Image { format, bytes, id }))
 }
 

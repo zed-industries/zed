@@ -3,9 +3,9 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 
 use git::{
-    GitHostingProviderRegistry, GitRemote, Oid,
-    blame::{Blame, BlameEntry, ParsedCommitMessage},
-    parse_git_remote_url,
+    GitHostingProviderRegistry, Oid,
+    blame::{Blame, BlameEntry},
+    commit::ParsedCommitMessage,
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
@@ -489,6 +489,7 @@ impl GitBlame {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
@@ -511,6 +512,8 @@ impl GitBlame {
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
+                let span = ztracing::debug_span!("for each chunk of buffers");
+                let _enter = span.enter();
                 let blame = cx.update(|cx| {
                     buffers
                         .iter()
@@ -525,12 +528,7 @@ impl GitBlame {
                                 .git_store()
                                 .read(cx)
                                 .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-                                .and_then(|(repo, _)| {
-                                    repo.read(cx)
-                                        .remote_upstream_url
-                                        .clone()
-                                        .or(repo.read(cx).remote_origin_url.clone())
-                                });
+                                .and_then(|(repo, _)| repo.read(cx).default_remote_url());
                             let blame_buffer = project
                                 .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx));
                             Ok(async move {
@@ -538,9 +536,9 @@ impl GitBlame {
                             })
                         })
                         .collect::<Result<Vec<_>>>()
-                })??;
+                })?;
                 let provider_registry =
-                    cx.update(|cx| GitHostingProviderRegistry::default_global(cx))?;
+                    cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
                 let (results, errors) = cx
                     .background_spawn({
                         async move {
@@ -554,13 +552,19 @@ impl GitBlame {
                                             entries,
                                             snapshot.max_point().row,
                                         );
-                                        let commit_details = parse_commit_messages(
-                                            messages,
-                                            remote_url,
-                                            provider_registry.clone(),
-                                        )
-                                        .await;
-
+                                        let commit_details = messages
+                                            .into_iter()
+                                            .map(|(oid, message)| {
+                                                let parsed_commit_message =
+                                                    ParsedCommitMessage::parse(
+                                                        oid.to_string(),
+                                                        message,
+                                                        remote_url.as_deref(),
+                                                        Some(provider_registry.clone()),
+                                                    );
+                                                (oid, parsed_commit_message)
+                                            })
+                                            .collect();
                                         res.push((
                                             id,
                                             snapshot,
@@ -606,20 +610,23 @@ impl GitBlame {
                 cx.notify();
                 if !all_errors.is_empty() {
                     this.project.update(cx, |_, cx| {
+                        let all_errors = all_errors
+                            .into_iter()
+                            .map(|e| format!("{e:#}"))
+                            .dedup()
+                            .collect::<Vec<_>>();
+                        let all_errors = all_errors.join(", ");
                         if this.user_triggered {
-                            log::error!("failed to get git blame data: {all_errors:?}");
-                            let notification = all_errors
-                                .into_iter()
-                                .format_with(",", |e, f| f(&format_args!("{:#}", e)))
-                                .to_string();
+                            log::error!("failed to get git blame data: {all_errors}");
                             cx.emit(project::Event::Toast {
                                 notification_id: "git-blame".into(),
-                                message: notification,
+                                message: all_errors,
+                                link: None,
                             });
                         } else {
                             // If we weren't triggered by a user, we just log errors in the background, instead of sending
                             // notifications.
-                            log::debug!("failed to get git blame data: {all_errors:?}");
+                            log::debug!("failed to get git blame data: {all_errors}");
                         }
                     })
                 }
@@ -678,55 +685,6 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
     }
 
     entries
-}
-
-async fn parse_commit_messages(
-    messages: impl IntoIterator<Item = (Oid, String)>,
-    remote_url: Option<String>,
-    provider_registry: Arc<GitHostingProviderRegistry>,
-) -> HashMap<Oid, ParsedCommitMessage> {
-    let mut commit_details = HashMap::default();
-
-    let parsed_remote_url = remote_url
-        .as_deref()
-        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
-
-    for (oid, message) in messages {
-        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
-            Some(provider.build_commit_permalink(
-                git_remote,
-                git::BuildCommitPermalinkParams {
-                    sha: oid.to_string().as_str(),
-                },
-            ))
-        } else {
-            None
-        };
-
-        let remote = parsed_remote_url
-            .as_ref()
-            .map(|(provider, remote)| GitRemote {
-                host: provider.clone(),
-                owner: remote.owner.clone().into(),
-                repo: remote.repo.clone().into(),
-            });
-
-        let pull_request = parsed_remote_url
-            .as_ref()
-            .and_then(|(provider, remote)| provider.extract_pull_request(remote, &message));
-
-        commit_details.insert(
-            oid,
-            ParsedCommitMessage {
-                message: message.into(),
-                permalink,
-                remote,
-                pull_request,
-            },
-        );
-    }
-
-    commit_details
 }
 
 #[cfg(test)]
@@ -831,7 +789,8 @@ mod tests {
             project::Event::Toast {
                 notification_id: "git-blame".into(),
                 message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
-                    .to_string()
+                    .to_string(),
+                link: None
             }
         );
 

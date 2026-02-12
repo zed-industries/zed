@@ -47,14 +47,22 @@ impl MultiBuffer {
         self.excerpts_by_path.keys()
     }
 
+    pub fn excerpts_for_path(&self, path: &PathKey) -> impl '_ + Iterator<Item = ExcerptId> {
+        self.excerpts_by_path
+            .get(path)
+            .map(|excerpts| excerpts.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+    }
+
+    pub fn path_for_excerpt(&self, excerpt: ExcerptId) -> Option<PathKey> {
+        self.paths_by_excerpt.get(&excerpt).cloned()
+    }
+
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
-        }
-        if let Some(follower) = &self.follower {
-            follower.update(cx, |follower, cx| {
-                follower.remove_excerpts_for_path(path, cx);
-            });
         }
     }
 
@@ -278,7 +286,7 @@ impl MultiBuffer {
         (result, added_a_new_excerpt)
     }
 
-    fn update_path_excerpts(
+    pub fn update_path_excerpts(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,

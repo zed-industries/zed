@@ -1,10 +1,16 @@
-use crate::{AgentTool, ToolCallEventStream};
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
+};
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_paths};
 use agent_client_protocol::ToolKind;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use futures::FutureExt as _;
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{path::Path, sync::Arc};
 use util::markdown::MarkdownInlineCode;
 
@@ -52,9 +58,7 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "move_path"
-    }
+    const NAME: &'static str = "move_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move
@@ -89,30 +93,74 @@ impl AgentTool for MovePathTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        let rename_task = self.project.update(cx, |project, cx| {
-            match project
-                .find_project_path(&input.source_path, cx)
-                .and_then(|project_path| project.entry_for_path(&project_path, cx))
-            {
-                Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.rename_entry(entity.id, project_path, cx),
-                    None => Task::ready(Err(anyhow!(
-                        "Destination path {} was outside the project.",
-                        input.destination_path
-                    ))),
-                },
-                None => Task::ready(Err(anyhow!(
-                    "Source path {} was not found in the project.",
-                    input.source_path
-                ))),
-            }
-        });
+        let settings = AgentSettings::get_global(cx);
 
-        cx.background_spawn(async move {
-            let _ = rename_task.await.with_context(|| {
+        let paths = vec![input.source_path.clone(), input.destination_path.clone()];
+        let decision = decide_permission_for_paths(Self::NAME, &paths, settings);
+        if let ToolPermissionDecision::Deny(reason) = decision {
+            return Task::ready(Err(anyhow!("{}", reason)));
+        }
+
+        let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
+            || (matches!(decision, ToolPermissionDecision::Allow)
+                && (is_sensitive_settings_path(Path::new(&input.source_path))
+                    || is_sensitive_settings_path(Path::new(&input.destination_path))));
+
+        let authorize = if needs_confirmation {
+            let src = MarkdownInlineCode(&input.source_path);
+            let dest = MarkdownInlineCode(&input.destination_path);
+            let context = crate::ToolPermissionContext {
+                tool_name: Self::NAME.to_string(),
+                input_values: vec![input.source_path.clone(), input.destination_path.clone()],
+            };
+            let title = format!("Move {src} to {dest}");
+            let settings_kind = sensitive_settings_kind(Path::new(&input.source_path))
+                .or_else(|| sensitive_settings_kind(Path::new(&input.destination_path)));
+            let title = match settings_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
+            };
+            Some(event_stream.authorize(title, context, cx))
+        } else {
+            None
+        };
+
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            if let Some(authorize) = authorize {
+                authorize.await?;
+            }
+
+            let rename_task = project.update(cx, |project, cx| {
+                match project
+                    .find_project_path(&input.source_path, cx)
+                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
+                {
+                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
+                        Some(project_path) => Ok(project.rename_entry(entity.id, project_path, cx)),
+                        None => Err(anyhow!(
+                            "Destination path {} was outside the project.",
+                            input.destination_path
+                        )),
+                    },
+                    None => Err(anyhow!(
+                        "Source path {} was not found in the project.",
+                        input.source_path
+                    )),
+                }
+            })?;
+
+            let result = futures::select! {
+                result = rename_task.fuse() => result,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    anyhow::bail!("Move cancelled by user");
+                }
+            };
+            result.with_context(|| {
                 format!("Moving {} to {}", input.source_path, input.destination_path)
             })?;
             Ok(format!(

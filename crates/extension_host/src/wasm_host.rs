@@ -11,7 +11,7 @@ use extension::{
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
     WorktreeDelegate,
 };
-use fs::{Fs, normalize_path};
+use fs::Fs;
 use futures::future::LocalBoxFuture;
 use futures::{
     Future, FutureExt, StreamExt as _,
@@ -21,7 +21,7 @@ use futures::{
     },
     future::BoxFuture,
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, Task, Timer};
+use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -535,14 +535,15 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
             // not have a dedicated thread just for this. If it becomes an issue, we can consider
             // creating a separate thread for epoch interruption.
             let engine_ref = engine.weak();
+            let executor2 = executor.clone();
             executor
                 .spawn(async move {
                     // Somewhat arbitrary interval, as it isn't a guaranteed interval.
                     // But this is a rough upper bound for how long the extension execution can block on
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
-                    let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while (timer.next().await).is_some() {
+                    loop {
+                        executor2.timer(EPOCH_INTERVAL).await;
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;
@@ -604,15 +605,28 @@ impl WasmHost {
         let this = self.clone();
         let manifest = manifest.clone();
         let executor = cx.background_executor().clone();
-        let load_extension_task = async move {
-            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
-            let component = Component::from_binary(&this.engine, &wasm_bytes)
-                .context("failed to compile wasm component")?;
+        // Parse version and compile component on gpui's background executor.
+        // These are cpu-bound operations that don't require a tokio runtime.
+        let compile_task = {
+            let manifest_id = manifest.id.clone();
+            let engine = this.engine.clone();
+
+            executor.spawn(async move {
+                let zed_api_version = parse_wasm_extension_version(&manifest_id, &wasm_bytes)?;
+                let component = Component::from_binary(&engine, &wasm_bytes)
+                    .context("failed to compile wasm component")?;
+
+                anyhow::Ok((zed_api_version, component))
+            })
+        };
+
+        let load_extension = |zed_api_version: Version, component| async move {
+            let wasi_ctx = this.build_wasi_ctx(&manifest).await?;
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    ctx: this.build_wasi_ctx(&manifest).await?,
+                    ctx: wasi_ctx,
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
@@ -661,12 +675,18 @@ impl WasmHost {
                 zed_api_version,
             ))
         };
+
         cx.spawn(async move |cx| {
+            let (zed_api_version, component) = compile_task.await?;
+
+            // Run wasi-dependent operations on tokio.
+            // wasmtime_wasi internally uses tokio for I/O operations.
             let (extension_task, manifest, work_dir, tx, zed_api_version) =
-                cx.background_executor().spawn(load_extension_task).await?;
-            // we need to run run the task in a tokio context as wasmtime_wasi may
-            // call into tokio, accessing its runtime handle when we trigger the `engine.increment_epoch()` above.
-            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task)?);
+                gpui_tokio::Tokio::spawn(cx, load_extension(zed_api_version, component)).await??;
+
+            // Run the extension message loop on tokio since extension
+            // calls may invoke wasi functions that require a tokio runtime.
+            let task = Arc::new(gpui_tokio::Tokio::spawn(cx, extension_task));
 
             Ok(WasmExtension {
                 manifest,
@@ -702,14 +722,57 @@ impl WasmHost {
         Ok(ctx.build())
     }
 
-    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
-        let extension_work_dir = self.work_dir.join(id.as_ref());
-        let path = normalize_path(&extension_work_dir.join(path));
+    pub async fn writeable_path_from_extension(
+        &self,
+        id: &Arc<str>,
+        path: &Path,
+    ) -> Result<PathBuf> {
+        let canonical_work_dir = self
+            .fs
+            .canonicalize(&self.work_dir)
+            .await
+            .with_context(|| format!("canonicalizing work dir {:?}", self.work_dir))?;
+        let extension_work_dir = canonical_work_dir.join(id.as_ref());
+
+        let absolute = if path.is_relative() {
+            extension_work_dir.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        let normalized = util::paths::normalize_lexically(&absolute)
+            .map_err(|_| anyhow!("path {path:?} escapes its parent"))?;
+
+        // Canonicalize the nearest existing ancestor to resolve any symlinks
+        // in the on-disk portion of the path. Components beyond that ancestor
+        // are re-appended, which lets this work for destinations that don't
+        // exist yet (e.g. nested directories created by tar extraction).
+        let mut existing = normalized.as_path();
+        let mut tail_components = Vec::new();
+        let canonical_prefix = loop {
+            match self.fs.canonicalize(existing).await {
+                Ok(canonical) => break canonical,
+                Err(_) => {
+                    if let Some(file_name) = existing.file_name() {
+                        tail_components.push(file_name.to_owned());
+                    }
+                    existing = existing
+                        .parent()
+                        .context(format!("cannot resolve path {path:?}"))?;
+                }
+            }
+        };
+
+        let mut resolved = canonical_prefix;
+        for component in tail_components.into_iter().rev() {
+            resolved.push(component);
+        }
+
         anyhow::ensure!(
-            path.starts_with(&extension_work_dir),
-            "cannot write to path {path:?}",
+            resolved.starts_with(&extension_work_dir),
+            "cannot write to path {resolved:?}",
         );
-        Ok(path)
+        Ok(resolved)
     }
 }
 
@@ -898,5 +961,121 @@ impl CacheStore for IncrementalCompilationCache {
     fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
         self.cache.insert(key.to_vec(), value);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use node_runtime::NodeRuntime;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            extension::init(cx);
+            gpui_tokio::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_writeable_path_rejects_escape_attempts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/work",
+            json!({
+                "test-extension": {
+                    "legit.txt": "legitimate content"
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree("/outside", json!({ "secret.txt": "sensitive data" }))
+            .await;
+        fs.insert_symlink("/work/test-extension/escape", PathBuf::from("/outside"))
+            .await;
+
+        let host = cx.update(|cx| {
+            WasmHost::new(
+                fs.clone(),
+                FakeHttpClient::with_200_response(),
+                NodeRuntime::unavailable(),
+                Arc::new(ExtensionHostProxy::default()),
+                PathBuf::from("/work"),
+                cx,
+            )
+        });
+
+        let extension_id: Arc<str> = "test-extension".into();
+
+        // A path traversing through a symlink that points outside the work dir
+        // must be rejected. Canonicalization resolves the symlink before the
+        // prefix check, so this is caught.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/escape/secret.txt"),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "symlink escape should be rejected, but got: {result:?}",
+        );
+
+        // A path using `..` to escape the extension work dir must be rejected.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/../../outside/secret.txt"),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "parent traversal escape should be rejected, but got: {result:?}",
+        );
+
+        // A legitimate path within the extension work dir should succeed.
+        let result = host
+            .writeable_path_from_extension(
+                &extension_id,
+                Path::new("/work/test-extension/legit.txt"),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "legitimate path should be accepted, but got: {result:?}",
+        );
+
+        // A relative path with non-existent intermediate directories should
+        // succeed, mirroring the integration test pattern where an extension
+        // downloads a tar to e.g. "gleam-v1.2.3" (creating the directory)
+        // and then references "gleam-v1.2.3/gleam" inside it.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("new-dir/nested/binary"))
+            .await;
+        assert!(
+            result.is_ok(),
+            "relative path with non-existent parents should be accepted, but got: {result:?}",
+        );
+
+        // A symlink deeper than the immediate parent must still be caught.
+        // Here "escape" is a symlink to /outside, so "escape/deep/file.txt"
+        // has multiple non-existent components beyond the symlink.
+        let result = host
+            .writeable_path_from_extension(&extension_id, Path::new("escape/deep/nested/file.txt"))
+            .await;
+        assert!(
+            result.is_err(),
+            "symlink escape through deep non-existent path should be rejected, but got: {result:?}",
+        );
     }
 }
