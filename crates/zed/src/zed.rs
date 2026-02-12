@@ -4787,7 +4787,6 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
-                "agents",
                 "app_menu",
                 "assistant",
                 "assistant2",
