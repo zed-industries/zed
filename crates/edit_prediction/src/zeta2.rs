@@ -16,7 +16,7 @@ use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{
     CURSOR_MARKER, EditPredictionModelKind, ZetaFormat, clean_zeta2_model_output,
-    format_zeta_prompt, get_prefill,
+    format_zeta_prompt, get_prefill, prompt_input_contains_special_tokens,
 };
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
@@ -84,6 +84,10 @@ pub fn request_prediction_with_zeta2(
                 preferred_model,
                 is_open_source,
             );
+
+            if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
+                return Ok((None, None));
+            }
 
             if let Some(debug_tx) = &debug_tx {
                 let prompt = format_zeta_prompt(&prompt_input, zeta_version);
