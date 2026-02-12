@@ -9,6 +9,11 @@ use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
 
+/// Use up to this amount of the editable region for prefill.
+/// Larger values may result in more robust generation, but
+/// this region becomes non-editable.
+pub const PREFILL_RATIO: f64 = 0.1; // 10%
+
 fn estimate_tokens(bytes: usize) -> usize {
     bytes / 3
 }
@@ -46,6 +51,7 @@ pub enum ZetaFormat {
     V0114180EditableRegion,
     V0120GitMergeMarkers,
     V0131GitMergeMarkersPrefix,
+    V0211Prefill,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -170,7 +176,7 @@ fn format_zeta_prompt_with_budget(
         ZetaFormat::V0120GitMergeMarkers => {
             v0120_git_merge_markers::write_cursor_excerpt_section(&mut cursor_section, input)
         }
-        ZetaFormat::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
             v0131_git_merge_markers_prefix::write_cursor_excerpt_section(&mut cursor_section, input)
         }
     }
@@ -191,6 +197,17 @@ fn format_zeta_prompt_with_budget(
     prompt.push_str(&edit_history_section);
     prompt.push_str(&cursor_section);
     prompt
+}
+
+pub fn get_prefill(input: &ZetaPromptInput, format: ZetaFormat) -> String {
+    match format {
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix => String::new(),
+        ZetaFormat::V0211Prefill => v0211_prefill::get_prefill(input),
+    }
 }
 
 fn format_edit_history_within_budget(events: &[Arc<Event>], max_tokens: usize) -> String {
@@ -493,6 +510,41 @@ pub mod v0131_git_merge_markers_prefix {
         }
 
         prompt.push_str("<|fim_middle|>");
+    }
+}
+
+pub mod v0211_prefill {
+    use super::*;
+
+    pub fn get_prefill(input: &ZetaPromptInput) -> String {
+        let editable_region = &input.cursor_excerpt
+            [input.editable_range_in_excerpt.start..input.editable_range_in_excerpt.end];
+
+        let prefill_len = (editable_region.len() as f64 * PREFILL_RATIO) as usize;
+        let prefill_len = editable_region.floor_char_boundary(prefill_len);
+
+        // Find a token boundary to avoid splitting tokens in the prefill.
+        // In Qwen2.5-Coder, \n is always the END of a token (e.g. `;\n`,
+        // ` {\n`), and \n\n / \n\n\n are single tokens, so we must include
+        // the \n and consume any consecutive \n characters after it.
+        let prefill = &editable_region[..prefill_len];
+        match prefill.rfind('\n') {
+            Some(pos) => {
+                let mut end = pos + 1;
+                while end < editable_region.len()
+                    && editable_region.as_bytes().get(end) == Some(&b'\n')
+                {
+                    end += 1;
+                }
+                editable_region[..end].to_string()
+            }
+            // No newline found. Fall back to splitting before the last space
+            // (word-level boundary)
+            None => match prefill.rfind(' ') {
+                Some(pos) => prefill[..pos].to_string(),
+                None => prefill.to_string(),
+            },
+        }
     }
 }
 
