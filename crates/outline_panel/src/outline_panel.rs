@@ -7985,8 +7985,8 @@ search: | Field          | Meaning              «  »|"
             },
         );
 
-        let workspace = add_outline_panel(&project, cx).await;
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
@@ -7995,7 +7995,7 @@ search: | Field          | Meaning              «  »|"
         });
 
         let _editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/root/src/lib.rs")),
                     OpenOptions {
@@ -8006,7 +8006,6 @@ search: | Field          | Meaning              «  »|"
                     cx,
                 )
             })
-            .unwrap()
             .await
             .expect("Failed to open Rust source file")
             .downcast::<Editor>()

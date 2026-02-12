@@ -779,8 +779,10 @@ mod tests {
         let fs = project::FakeFs::new(cx.background_executor.clone());
         let project = project::Project::test(fs, [] as [&Path; 0], cx).await;
         let window =
-            cx.add_window(|window, cx| workspace::Workspace::test_new(project, window, cx));
-        let workspace = window.root(cx).expect("workspace should exist");
+            cx.add_window(|window, cx| workspace::MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
         let weak_workspace = workspace.downgrade();
         let visual_cx = gpui::VisualTestContext::from_window(window.into(), cx);
         (visual_cx, weak_workspace)
