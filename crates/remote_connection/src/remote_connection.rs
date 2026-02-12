@@ -187,8 +187,11 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Wsl(options) => {
                 (options.distro_name.clone(), None, true, false)
             }
-            &RemoteConnectionOptions::Docker(_) => todo!(),
-            &RemoteConnectionOptions::Mock(_) => todo!(),
+            RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(options) => {
+                (format!("mock-{}", options.id), None, false, false)
+            }
         };
         Self {
             prompt: cx.new(|cx| {
