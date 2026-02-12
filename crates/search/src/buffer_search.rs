@@ -3617,7 +3617,6 @@ mod tests {
     async fn test_search_on_input_setting(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
 
-        // Test with search_on_input disabled
         update_search_settings(
             SearchSettings {
                 button: true,
@@ -3633,7 +3632,6 @@ mod tests {
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.show(window, cx);
-            // Simulate typing in the query editor
             search_bar.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(
@@ -3645,7 +3643,6 @@ mod tests {
             });
         });
 
-        // With search_on_input disabled, typing should not trigger a search immediately
         cx.background_executor.run_until_parked();
 
         editor.update_in(cx, |editor, window, cx| {
@@ -3656,7 +3653,6 @@ mod tests {
             );
         });
 
-        // Test with search_on_input enabled
         update_search_settings(
             SearchSettings {
                 button: true,
@@ -3682,7 +3678,6 @@ mod tests {
             .await
             .unwrap();
 
-        // With search_on_input enabled, search should execute and show highlights
         editor.update_in(cx, |editor, window, cx| {
             let highlights = display_points_of(editor.all_text_background_highlights(window, cx));
             assert_eq!(

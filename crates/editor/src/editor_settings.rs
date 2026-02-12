@@ -175,7 +175,7 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
-    /// Show search results on input by default.
+    /// Whether to search on input.
     pub search_on_input: bool,
 }
 

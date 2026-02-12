@@ -37,8 +37,6 @@ actions!(
         ToggleCaseSensitive,
         /// Toggles regular expression mode.
         ToggleRegex,
-        /// Toggles search on input mode.
-        ToggleSearchOnInput,
         /// Toggles the replace interface.
         ToggleReplace,
         /// Toggles searching within selection only.
@@ -117,7 +115,6 @@ impl SearchOption {
             SearchOption::CaseSensitive => ui::IconName::CaseSensitive,
             SearchOption::IncludeIgnored => ui::IconName::Sliders,
             SearchOption::Regex => ui::IconName::Regex,
-            SearchOption::SearchOnInput => ui::IconName::Eye,
             _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
@@ -128,7 +125,6 @@ impl SearchOption {
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,
             SearchOption::Regex => &ToggleRegex,
-            SearchOption::SearchOnInput => &ToggleSearchOnInput,
             _ => panic!("{self:?} is not a toggle action"),
         }
     }
