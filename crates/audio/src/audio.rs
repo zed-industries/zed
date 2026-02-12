@@ -400,7 +400,11 @@ pub struct AudioDeviceInfo {
 
 impl AudioDeviceInfo {
     pub fn matches_input(&self, is_input: bool) -> bool {
-        is_input == self.desc.supports_input()
+        if is_input {
+            self.desc.supports_input()
+        } else {
+            self.desc.supports_output()
+        }
     }
 
     pub fn matches(&self, id: &DeviceId, is_input: bool) -> bool {
