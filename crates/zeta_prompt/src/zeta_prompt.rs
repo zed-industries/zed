@@ -233,7 +233,9 @@ fn resolve_cursor_region(
         ),
         ZetaFormat::V0114180EditableRegion
         | ZetaFormat::V0120GitMergeMarkers
-        | ZetaFormat::V0131GitMergeMarkersPrefix => (
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder => (
             ranges.editable_180.clone(),
             ranges.editable_180_context_350.clone(),
         ),
@@ -293,7 +295,15 @@ fn format_zeta_prompt_with_budget(
             )
         }
         ZetaFormat::V0211SeedCoder => {
-            return seed_coder::format_prompt_with_budget(input, max_tokens);
+            return seed_coder::format_prompt_with_budget(
+                path,
+                context,
+                &editable_range,
+                cursor_offset,
+                &input.events,
+                &input.related_files,
+                max_tokens,
+            );
         }
     }
 
@@ -728,16 +738,25 @@ pub mod seed_coder {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
-    pub fn format_prompt_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
-        let suffix_section = build_suffix_section(input);
-        let cursor_prefix_section = build_cursor_prefix_section(input);
+    pub fn format_prompt_with_budget(
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let suffix_section = build_suffix_section(context, editable_range);
+        let cursor_prefix_section =
+            build_cursor_prefix_section(path, context, editable_range, cursor_offset);
 
         let suffix_tokens = estimate_tokens(suffix_section.len());
         let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len());
         let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
 
         let edit_history_section = super::format_edit_history_within_budget(
-            &input.events,
+            events,
             FILE_MARKER,
             "edit_history",
             budget_after_cursor,
@@ -746,7 +765,7 @@ pub mod seed_coder {
         let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
 
         let related_files_section = super::format_related_files_within_budget(
-            &input.related_files,
+            related_files,
             FILE_MARKER,
             budget_after_edit_history,
         );
@@ -767,32 +786,31 @@ pub mod seed_coder {
         prompt
     }
 
-    fn build_suffix_section(input: &ZetaPromptInput) -> String {
+    fn build_suffix_section(context: &str, editable_range: &Range<usize>) -> String {
         let mut section = String::new();
         section.push_str(FIM_SUFFIX);
-        section.push_str(&input.cursor_excerpt[input.editable_range_in_excerpt.end..]);
+        section.push_str(&context[editable_range.end..]);
         if !section.ends_with('\n') {
             section.push('\n');
         }
         section
     }
 
-    fn build_cursor_prefix_section(input: &ZetaPromptInput) -> String {
+    fn build_cursor_prefix_section(
+        path: &Path,
+        context: &str,
+        editable_range: &Range<usize>,
+        cursor_offset: usize,
+    ) -> String {
         let mut section = String::new();
-        let path_str = input.cursor_path.to_string_lossy();
+        let path_str = path.to_string_lossy();
         write!(section, "{}{}\n", FILE_MARKER, path_str).ok();
 
-        section.push_str(&input.cursor_excerpt[..input.editable_range_in_excerpt.start]);
+        section.push_str(&context[..editable_range.start]);
         section.push_str(START_MARKER);
-        section.push_str(
-            &input.cursor_excerpt
-                [input.editable_range_in_excerpt.start..input.cursor_offset_in_excerpt],
-        );
+        section.push_str(&context[editable_range.start..cursor_offset]);
         section.push_str(CURSOR_MARKER);
-        section.push_str(
-            &input.cursor_excerpt
-                [input.cursor_offset_in_excerpt..input.editable_range_in_excerpt.end],
-        );
+        section.push_str(&context[cursor_offset..editable_range.end]);
         if !section.ends_with('\n') {
             section.push('\n');
         }
