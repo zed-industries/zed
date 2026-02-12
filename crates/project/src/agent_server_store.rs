@@ -562,7 +562,7 @@ impl AgentServerStore {
                 CustomAgentServerSettings::Registry { env, .. } => {
                     let Some(agent) = registry_agents_by_id.get(name) else {
                         if registry_store.is_some() {
-                            log::warn!("Registry agent '{}' not found in ACP registry", name);
+                            log::debug!("Registry agent '{}' not found in ACP registry", name);
                         }
                         continue;
                     };
