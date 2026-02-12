@@ -31,12 +31,6 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 const LANE_WIDTH: Pixels = px(16.0);
@@ -46,12 +40,16 @@ const LINE_WIDTH: Pixels = px(1.5);
 actions!(
     git_graph,
     [
-        /// Opens the Git Graph panel.
-        Open,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
     ]
 );
+
+pub struct GitGraphFeatureFlag;
+
+impl FeatureFlag for GitGraphFeatureFlag {
+    const NAME: &'static str = "git-graph";
+}
 
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
@@ -509,7 +507,7 @@ pub fn init(cx: &mut App) {
                 |div| {
                     let workspace = workspace.weak_handle();
 
-                    div.on_action(move |_: &Open, window, cx| {
+                    div.on_action(move |_: &git_ui::git_panel::Open, window, cx| {
                         workspace
                             .update(cx, |workspace, cx| {
                                 let existing = workspace.items_of_type::<GitGraph>(cx).next();
