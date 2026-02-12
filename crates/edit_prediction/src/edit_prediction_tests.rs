@@ -593,6 +593,236 @@ fn render_events(events: &[StoredEvent]) -> String {
         .join("\n---\n")
 }
 
+fn render_events_with_predicted(events: &[StoredEvent]) -> Vec<(&str, bool)> {
+    events
+        .iter()
+        .map(|e| {
+            let zeta_prompt::Event::BufferChange {
+                diff, predicted, ..
+            } = e.event.as_ref();
+            (diff.as_str(), *predicted)
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn test_predicted_flag_on_accepted_prediction(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "fn main() {\n    println!(\"hello\");\n}\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // User edit: not predicted
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(12..12, "    let x = 1;\n")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(rendered.len(), 1);
+    assert_eq!(rendered[0].1, false, "User edit should not be predicted");
+
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            let offset = Point::new(3, 0).to_offset(buffer);
+            buffer.edit(vec![(offset..offset, "fn helper() {}\n")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(
+        rendered.len(),
+        2,
+        "User edit and predicted edit should be separate events"
+    );
+    assert_eq!(
+        rendered[0].1, false,
+        "First event (user edit) should not be predicted"
+    );
+    assert_eq!(
+        rendered[1].1, true,
+        "Second event (accepted prediction) should be predicted"
+    );
+}
+
+#[gpui::test]
+async fn test_predicted_flag_coalescing_boundary(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 1\nline 2\nline 3\nline 4\nline 5\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // User edit on line 1
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LINE ONE")], None, cx);
+    });
+
+    // Another user edit on line 2 (nearby, would normally coalesce)
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(1, 0).to_offset(buffer);
+        let end = Point::new(1, 6).to_offset(buffer);
+        buffer.edit(vec![(offset..end, "LINE TWO")], None, cx);
+    });
+
+    // These two user edits should coalesce into one event
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(
+        rendered.len(),
+        1,
+        "Two nearby user edits should coalesce into one event"
+    );
+    assert_eq!(
+        rendered[0].1, false,
+        "Coalesced user edits should not be predicted"
+    );
+
+    // Now simulate accepting a prediction on line 3 (nearby, would normally coalesce)
+    // but because the source changes, it should NOT coalesce.
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            let offset = Point::new(2, 0).to_offset(buffer);
+            let end = Point::new(2, 6).to_offset(buffer);
+            buffer.edit(vec![(offset..end, "LINE THREE")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(
+        rendered.len(),
+        2,
+        "Predicted edit should break coalescing even when nearby"
+    );
+    assert_eq!(rendered[0].1, false, "First event should be user edit");
+    assert_eq!(rendered[1].1, true, "Second event should be predicted");
+
+    // A subsequent user edit on line 4 (nearby to the predicted edit) should also
+    // break coalescing, producing a third event.
+    buffer.update(cx, |buffer, cx| {
+        let offset = Point::new(3, 0).to_offset(buffer);
+        let end = Point::new(3, 6).to_offset(buffer);
+        buffer.edit(vec![(offset..end, "LINE FOUR")], None, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(
+        rendered.len(),
+        3,
+        "User edit after predicted edit should break coalescing"
+    );
+    assert_eq!(rendered[0].1, false, "First event should be user edit");
+    assert_eq!(rendered[1].1, true, "Second event should be predicted");
+    assert_eq!(rendered[2].1, false, "Third event should be user edit");
+}
+
+#[gpui::test]
+async fn test_predicted_edits_coalesce_with_each_other(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "aaa\nbbb\nccc\nddd\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // Two consecutive predicted edits on nearby lines should coalesce
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(vec![(0..3, "AAA")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    ep_store.update(cx, |ep_store, cx| {
+        buffer.update(cx, |buffer, cx| {
+            let offset = Point::new(1, 0).to_offset(buffer);
+            let end = Point::new(1, 3).to_offset(buffer);
+            buffer.edit(vec![(offset..end, "BBB")], None, cx);
+        });
+        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    let rendered = render_events_with_predicted(&events);
+    assert_eq!(
+        rendered.len(),
+        1,
+        "Two nearby predicted edits should coalesce"
+    );
+    assert_eq!(
+        rendered[0].1, true,
+        "Coalesced predicted edits should be predicted"
+    );
+}
+
 #[gpui::test]
 async fn test_empty_prediction(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);

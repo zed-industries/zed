@@ -430,6 +430,7 @@ struct LastEvent {
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
     edit_range: Option<Range<Anchor>>,
+    predicted: bool,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
 }
@@ -465,8 +466,7 @@ impl LastEvent {
                     path,
                     diff,
                     in_open_source_repo,
-                    // TODO: Actually detect if this edit was predicted or not
-                    predicted: false,
+                    predicted: self.predicted,
                 }),
                 old_snapshot: self.old_snapshot.clone(),
             })
@@ -484,6 +484,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             edit_range: None,
+            predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -494,6 +495,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             edit_range: None,
+            predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -1011,7 +1013,7 @@ impl EditPredictionStore {
                                 if let language::BufferEvent::Edited = event
                                     && let Some(project) = project.upgrade()
                                 {
-                                    this.report_changes_for_buffer(&buffer, &project, cx);
+                                    this.report_changes_for_buffer(&buffer, &project, false, cx);
                                 }
                             }
                         }),
@@ -1032,6 +1034,7 @@ impl EditPredictionStore {
         &mut self,
         buffer: &Entity<Buffer>,
         project: &Entity<Project>,
+        is_predicted: bool,
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
@@ -1099,7 +1102,10 @@ impl EditPredictionStore {
                 == last_event.new_snapshot.remote_id()
                 && old_snapshot.version == last_event.new_snapshot.version;
 
+            let prediction_source_changed = is_predicted != last_event.predicted;
+
             let should_coalesce = is_next_snapshot_of_same_buffer
+                && !prediction_source_changed
                 && edit_range
                     .as_ref()
                     .zip(last_event.edit_range.as_ref())
@@ -1147,6 +1153,7 @@ impl EditPredictionStore {
             old_snapshot,
             new_snapshot,
             edit_range,
+            predicted: is_predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
         });
@@ -1193,11 +1200,18 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
+        let Some(current_prediction) = self
+            .projects
+            .get_mut(&project.entity_id())
+            .and_then(|project_state| project_state.current_prediction.take())
+        else {
             return;
         };
 
-        let Some(current_prediction) = project_state.current_prediction.take() else {
+        self.report_changes_for_buffer(&current_prediction.prediction.buffer, project, true, cx);
+
+        // can't hold &mut project_state ref across report_changes_for_buffer_call
+        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
 
