@@ -3629,6 +3629,8 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message
             && editing_index < entry_ix
         {
+            let is_subagent = self.is_subagent();
+
             let backdrop = div()
                 .id(("backdrop", entry_ix))
                 .size_full()
@@ -3642,7 +3644,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .child(primary)
-                .child(backdrop)
+                .when(!is_subagent, |this| this.child(backdrop))
                 .into_any_element()
         } else {
             primary
