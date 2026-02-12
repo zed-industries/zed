@@ -404,7 +404,7 @@ async fn test_absolute_path_lookup(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            home_dir.as_ref(),
+            home_dir.as_path(),
             json!({
                 "a": {
                     "file1.txt": "",
@@ -416,7 +416,7 @@ async fn test_absolute_path_lookup(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), [home_dir.as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [home_dir.as_path()], cx).await;
     let (picker, _, cx) = build_find_picker(project, cx);
 
     // Test cases: (query, expected_matches, description)
