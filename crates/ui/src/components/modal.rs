@@ -369,7 +369,7 @@ impl RenderOnce for Section {
                             div()
                                 .flex()
                                 .flex_1()
-                                .pb_4()
+                                .pb_2()
                                 .size_full()
                                 .children(self.children),
                         ),
@@ -379,7 +379,7 @@ impl RenderOnce for Section {
                 .w_full()
                 .flex_1()
                 .gap_y(DynamicSpacing::Base04.rems(cx))
-                .pb_4()
+                .pb_2()
                 .when(self.padded, |this| {
                     this.px(DynamicSpacing::Base06.rems(cx) + DynamicSpacing::Base06.rems(cx))
                 })
