@@ -11,6 +11,7 @@ use editor::{
     scroll::{Autoscroll, ScrollAnchor},
 };
 use file_icons::FileIcons;
+
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
@@ -22,6 +23,7 @@ use gpui::{
     uniform_list,
 };
 use itertools::Itertools;
+use language::language_settings::language_settings;
 use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
@@ -126,7 +128,7 @@ pub struct OutlinePanel {
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
     reveal_selection_task: Task<anyhow::Result<()>>,
-    outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
+    outline_fetch_tasks: HashMap<BufferId, Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries: Vec<CachedEntry>,
     filter_editor: Entity<Editor>,
@@ -698,11 +700,10 @@ impl OutlinePanel {
         };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = Self::new(workspace, window, cx);
+            let panel = Self::new(workspace, serialized_panel.as_ref(), window, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width.map(|px| px.round());
-                    panel.active = serialized_panel.active.unwrap_or(false);
                     cx.notify();
                 });
             }
@@ -712,6 +713,7 @@ impl OutlinePanel {
 
     fn new(
         workspace: &mut Workspace,
+        serialized: Option<&SerializedOutlinePanel>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -769,10 +771,12 @@ impl OutlinePanel {
 
             let mut outline_panel_settings = *OutlinePanelSettings::get_global(cx);
             let mut current_theme = ThemeSettings::get_global(cx).clone();
+            let mut document_symbols_by_buffer = HashMap::default();
             let settings_subscription =
                 cx.observe_global_in::<SettingsStore>(window, move |outline_panel, window, cx| {
                     let new_settings = OutlinePanelSettings::get_global(cx);
                     let new_theme = ThemeSettings::get_global(cx);
+                    let mut outlines_invalidated = false;
                     if &current_theme != new_theme {
                         outline_panel_settings = *new_settings;
                         current_theme = new_theme.clone();
@@ -781,6 +785,7 @@ impl OutlinePanel {
                                 excerpt.invalidate_outlines();
                             }
                         }
+                        outlines_invalidated = true;
                         let update_cached_items = outline_panel.update_non_fs_items(window, cx);
                         if update_cached_items {
                             outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
@@ -837,13 +842,50 @@ impl OutlinePanel {
                             cx.notify();
                         }
                     }
+
+                    if !outlines_invalidated {
+                        let new_document_symbols = outline_panel
+                            .excerpts
+                            .keys()
+                            .filter_map(|buffer_id| {
+                                let buffer = outline_panel
+                                    .project
+                                    .read(cx)
+                                    .buffer_for_id(*buffer_id, cx)?;
+                                let buffer = buffer.read(cx);
+                                let doc_symbols = language_settings(
+                                    buffer.language().map(|l| l.name()),
+                                    buffer.file(),
+                                    cx,
+                                )
+                                .document_symbols;
+                                Some((*buffer_id, doc_symbols))
+                            })
+                            .collect();
+                        if new_document_symbols != document_symbols_by_buffer {
+                            document_symbols_by_buffer = new_document_symbols;
+                            for excerpts in outline_panel.excerpts.values_mut() {
+                                for excerpt in excerpts.values_mut() {
+                                    excerpt.invalidate_outlines();
+                                }
+                            }
+                            let update_cached_items = outline_panel.update_non_fs_items(window, cx);
+                            if update_cached_items {
+                                outline_panel.update_cached_entries(
+                                    Some(UPDATE_DEBOUNCE),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }
                 });
 
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut outline_panel = Self {
                 mode: ItemsDisplayMode::Outline,
-                active: false,
+                active: serialized.and_then(|s| s.active).unwrap_or(false),
                 pinned: false,
                 workspace: workspace_handle,
                 project,
@@ -3413,68 +3455,56 @@ impl OutlinePanel {
             return;
         }
 
-        let syntax_theme = cx.theme().syntax().clone();
         let first_update = Arc::new(AtomicBool::new(true));
-        for (buffer_id, (buffer_snapshot, excerpt_ranges)) in excerpt_fetch_ranges {
-            for (excerpt_id, excerpt_range) in excerpt_ranges {
-                let syntax_theme = syntax_theme.clone();
-                let buffer_snapshot = buffer_snapshot.clone();
-                let first_update = first_update.clone();
-                self.outline_fetch_tasks.insert(
-                    (buffer_id, excerpt_id),
-                    cx.spawn_in(window, async move |outline_panel, cx| {
-                        let buffer_language = buffer_snapshot.language().cloned();
-                        let fetched_outlines = cx
-                            .background_spawn(async move {
-                                let mut outlines = buffer_snapshot.outline_items_containing(
-                                    excerpt_range.context,
-                                    false,
-                                    Some(&syntax_theme),
-                                );
-                                outlines.retain(|outline| {
-                                    buffer_language.is_none()
-                                        || buffer_language.as_ref()
-                                            == buffer_snapshot.language_at(outline.range.start)
-                                });
+        for (buffer_id, (_buffer_snapshot, excerpt_ranges)) in excerpt_fetch_ranges {
+            let outline_task = self.active_editor().map(|editor| {
+                editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx))
+            });
 
-                                let outlines_with_children = outlines
-                                    .windows(2)
-                                    .filter_map(|window| {
-                                        let current = &window[0];
-                                        let next = &window[1];
-                                        if next.depth > current.depth {
-                                            Some((current.range.clone(), current.depth))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<HashSet<_>>();
+            let excerpt_ids = excerpt_ranges.keys().copied().collect::<Vec<_>>();
+            let first_update = first_update.clone();
 
-                                (outlines, outlines_with_children)
-                            })
-                            .await;
+            self.outline_fetch_tasks.insert(
+                buffer_id,
+                cx.spawn_in(window, async move |outline_panel, cx| {
+                    let Some(outline_task) = outline_task else {
+                        return;
+                    };
+                    let fetched_outlines = outline_task.await;
+                    let outlines_with_children = fetched_outlines
+                        .windows(2)
+                        .filter_map(|window| {
+                            let current = &window[0];
+                            let next = &window[1];
+                            if next.depth > current.depth {
+                                Some((current.range.clone(), current.depth))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<HashSet<_>>();
 
-                        let (fetched_outlines, outlines_with_children) = fetched_outlines;
+                    outline_panel
+                        .update_in(cx, |outline_panel, window, cx| {
+                            let pending_default_depth =
+                                outline_panel.pending_default_expansion_depth.take();
 
-                        outline_panel
-                            .update_in(cx, |outline_panel, window, cx| {
-                                let pending_default_depth =
-                                    outline_panel.pending_default_expansion_depth.take();
+                            let debounce =
+                                if first_update.fetch_and(false, atomic::Ordering::AcqRel) {
+                                    None
+                                } else {
+                                    Some(UPDATE_DEBOUNCE)
+                                };
 
-                                let debounce =
-                                    if first_update.fetch_and(false, atomic::Ordering::AcqRel) {
-                                        None
-                                    } else {
-                                        Some(UPDATE_DEBOUNCE)
-                                    };
-
+                            for excerpt_id in &excerpt_ids {
                                 if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
                                     .or_default()
-                                    .get_mut(&excerpt_id)
+                                    .get_mut(excerpt_id)
                                 {
-                                    excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
+                                    excerpt.outlines =
+                                        ExcerptOutlines::Outlines(fetched_outlines.clone());
 
                                     if let Some(default_depth) = pending_default_depth
                                         && let ExcerptOutlines::Outlines(outlines) =
@@ -3494,22 +3524,20 @@ impl OutlinePanel {
                                                 outline_panel.collapsed_entries.insert(
                                                     CollapsedEntry::Outline(
                                                         buffer_id,
-                                                        excerpt_id,
+                                                        *excerpt_id,
                                                         outline.range.clone(),
                                                     ),
                                                 );
                                             });
                                     }
-
-                                    // Even if no outlines to check, we still need to update cached entries
-                                    // to show the outline entries that were just fetched
-                                    outline_panel.update_cached_entries(debounce, window, cx);
                                 }
-                            })
-                            .ok();
-                    }),
-                );
-            }
+                            }
+
+                            outline_panel.update_cached_entries(debounce, window, cx);
+                        })
+                        .ok();
+                }),
+            );
         }
     }
 
@@ -5297,6 +5325,22 @@ fn subscribe_for_editor_events(
                         outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                     }
                 }
+                EditorEvent::OutlineSymbolsChanged => {
+                    for excerpts in outline_panel.excerpts.values_mut() {
+                        for excerpt in excerpts.values_mut() {
+                            excerpt.invalidate_outlines();
+                        }
+                    }
+                    if matches!(
+                        outline_panel.selected_entry(),
+                        Some(PanelEntry::Outline(..)),
+                    ) {
+                        outline_panel.selected_entry.invalidate();
+                    }
+                    if outline_panel.update_non_fs_items(window, cx) {
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                    }
+                }
                 EditorEvent::TitleChanged => {
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
@@ -5332,8 +5376,8 @@ impl GenerationState {
 #[cfg(test)]
 mod tests {
     use db::indoc;
-    use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::rust_lang;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
+    use language::{self, FakeLspAdapter, rust_lang};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::{
@@ -5341,6 +5385,7 @@ mod tests {
         project_search::{self, perform_project_search},
     };
     use serde_json::json;
+    use smol::stream::StreamExt as _;
     use util::path;
     use workspace::{OpenOptions, OpenVisible, ToolbarItemView};
 
@@ -7867,6 +7912,220 @@ search: | Field          | Meaning        «  »      |
 search: | Field          | Meaning          «  »    |
 search: | Field          | Meaning            «  »  |
 search: | Field          | Meaning              «  »|"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_outline_panel_lsp_document_symbols(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let root = path!("/root");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({
+                "src": {
+                    "lib.rs": "struct Foo {\n    bar: u32,\n    baz: String,\n}\n",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
+        let language_registry = project.read_with(cx, |project, _| {
+            project.languages().add(rust_lang());
+            project.languages().clone()
+        });
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(|fake_language_server| {
+                    fake_language_server
+                        .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                            move |_, _| async move {
+                                #[allow(deprecated)]
+                                Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                                    lsp::DocumentSymbol {
+                                        name: "Foo".to_string(),
+                                        detail: None,
+                                        kind: lsp::SymbolKind::STRUCT,
+                                        tags: None,
+                                        deprecated: None,
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(3, 1),
+                                        ),
+                                        selection_range: lsp::Range::new(
+                                            lsp::Position::new(0, 7),
+                                            lsp::Position::new(0, 10),
+                                        ),
+                                        children: Some(vec![
+                                            lsp::DocumentSymbol {
+                                                name: "bar".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 13),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(1, 4),
+                                                    lsp::Position::new(1, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                            lsp::DocumentSymbol {
+                                                name: "lsp_only_field".to_string(),
+                                                detail: None,
+                                                kind: lsp::SymbolKind::FIELD,
+                                                tags: None,
+                                                deprecated: None,
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 15),
+                                                ),
+                                                selection_range: lsp::Range::new(
+                                                    lsp::Position::new(2, 4),
+                                                    lsp::Position::new(2, 7),
+                                                ),
+                                                children: None,
+                                            },
+                                        ]),
+                                    },
+                                ])))
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        cx.update(|window, cx| {
+            outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.set_active(true, window, cx)
+            });
+        });
+
+        let _editor = workspace
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/src/lib.rs")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .expect("Failed to open Rust source file")
+            .downcast::<Editor>()
+            .expect("Should open an editor for Rust source file");
+        let _fake_language_server = fake_language_servers.next().await.unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        // Step 1: tree-sitter outlines by default
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Foo  <==== selected
+  outline: bar
+  outline: baz"
+                ),
+                "Step 1: tree-sitter outlines should be displayed by default"
+            );
+        });
+
+        // Step 2: Switch to LSP document symbols
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(
+                cx,
+                |store: &mut settings::SettingsStore, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.project.all_languages.defaults.document_symbols =
+                            Some(settings::DocumentSymbols::On);
+                    });
+                },
+            );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: Foo  <==== selected
+  outline: bar
+  outline: lsp_only_field"
+                ),
+                "Step 2: After switching to LSP, should see LSP-provided symbols"
+            );
+        });
+
+        // Step 3: Switch back to tree-sitter
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(
+                cx,
+                |store: &mut settings::SettingsStore, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.project.all_languages.defaults.document_symbols =
+                            Some(settings::DocumentSymbols::Off);
+                    });
+                },
+            );
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Foo  <==== selected
+  outline: bar
+  outline: baz"
+                ),
+                "Step 3: tree-sitter outlines should be restored"
             );
         });
     }

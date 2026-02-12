@@ -1726,6 +1726,7 @@ mod tests {
     use super::*;
     use crate::Keep;
     use acp_thread::AgentConnection as _;
+    use agent_settings::AgentSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1889,7 +1890,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
+    async fn test_single_file_review_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1897,6 +1898,14 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut agent_settings = store.get::<AgentSettings>(None).clone();
+                agent_settings.single_file_review = true;
+                store.override_global(agent_settings);
+            });
         });
 
         let fs = FakeFs::new(cx.executor());

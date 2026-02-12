@@ -22,7 +22,7 @@ use ui::{
 };
 use workspace::{
     Item, ItemHandle, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    notifications::NotificationId,
+    notifications::{NotificationId, NotificationSource},
 };
 
 const MAX_EVENTS: usize = 10_000;
@@ -37,7 +37,7 @@ pub fn init(cx: &mut App) {
 
                     cx.subscribe(&telemetry_log, |workspace, _, event, cx| {
                         let TelemetryLogEvent::ShowToast(toast) = event;
-                        workspace.show_toast(toast.clone(), cx);
+                        workspace.show_toast(toast.clone(), NotificationSource::System, cx);
                     })
                     .detach();
 

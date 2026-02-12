@@ -12,6 +12,7 @@
 pub mod clangd_ext;
 mod code_lens;
 mod document_colors;
+mod document_symbols;
 mod folding_ranges;
 mod inlay_hints;
 pub mod json_language_server_ext;
@@ -23,6 +24,7 @@ pub mod vue_language_server_ext;
 
 use self::code_lens::CodeLensData;
 use self::document_colors::DocumentColorData;
+use self::document_symbols::DocumentSymbolsData;
 use self::inlay_hints::BufferInlayHints;
 use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
@@ -3910,6 +3912,7 @@ pub struct BufferLspData {
     code_lens: Option<CodeLensData>,
     semantic_tokens: Option<SemanticTokensData>,
     folding_ranges: Option<FoldingRangeData>,
+    document_symbols: Option<DocumentSymbolsData>,
     inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<LspKey, HashMap<RowChunk, LspRequestId>>,
@@ -3929,6 +3932,7 @@ impl BufferLspData {
             code_lens: None,
             semantic_tokens: None,
             folding_ranges: None,
+            document_symbols: None,
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
@@ -3955,6 +3959,10 @@ impl BufferLspData {
 
         if let Some(folding_ranges) = &mut self.folding_ranges {
             folding_ranges.ranges.remove(&for_server);
+        }
+
+        if let Some(document_symbols) = &mut self.document_symbols {
+            document_symbols.remove_server_data(for_server);
         }
     }
 
@@ -8799,6 +8807,18 @@ impl LspStore {
                     sender_id,
                     lsp_request_id,
                     get_folding_ranges,
+                    None,
+                    &mut cx,
+                )
+                .await?;
+            }
+            Request::GetDocumentSymbols(get_document_symbols) => {
+                Self::query_lsp_locally::<GetDocumentSymbols>(
+                    lsp_store,
+                    server_id,
+                    sender_id,
+                    lsp_request_id,
+                    get_document_symbols,
                     None,
                     &mut cx,
                 )

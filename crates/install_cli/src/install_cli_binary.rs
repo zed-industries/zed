@@ -5,7 +5,7 @@ use release_channel::ReleaseChannel;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use util::ResultExt;
-use workspace::notifications::{DetachAndPromptErr, NotificationId};
+use workspace::notifications::{DetachAndPromptErr, NotificationId, NotificationSource};
 use workspace::{Toast, Workspace};
 
 actions!(
@@ -91,6 +91,7 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
                         ReleaseChannel::global(cx).display_name()
                     ),
                 ),
+                NotificationSource::Cli,
                 cx,
             )
         })?;

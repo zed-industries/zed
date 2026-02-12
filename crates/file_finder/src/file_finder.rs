@@ -44,8 +44,10 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace, item::PreviewTabsSettings,
-    notifications::NotifyResultExt, pane,
+    ModalView, OpenOptions, OpenVisible, SplitDirection, Workspace,
+    item::PreviewTabsSettings,
+    notifications::{NotificationSource, NotifyResultExt},
+    pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -1568,7 +1570,9 @@ impl PickerDelegate for FileFinderDelegate {
             let finder = self.file_finder.clone();
 
             cx.spawn_in(window, async move |_, cx| {
-                let item = open_task.await.notify_async_err(cx)?;
+                let item = open_task
+                    .await
+                    .notify_async_err(NotificationSource::File, cx)?;
                 if let Some(row) = row
                     && let Some(active_editor) = item.downcast::<Editor>()
                 {

@@ -36,7 +36,10 @@ use std::{
 use text::OffsetRangeExt;
 use ui::{Disclosure, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic, rel_path::RelPath};
-use workspace::{Workspace, notifications::NotifyResultExt as _};
+use workspace::{
+    Workspace,
+    notifications::{NotificationSource, NotifyResultExt as _},
+};
 
 use crate::ui::MentionCrease;
 
@@ -298,7 +301,7 @@ impl MentionSet {
 
         // Notify the user if we failed to load the mentioned context
         cx.spawn_in(window, async move |this, cx| {
-            let result = task.await.notify_async_err(cx);
+            let result = task.await.notify_async_err(NotificationSource::Agent, cx);
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
@@ -718,7 +721,11 @@ pub(crate) async fn insert_images_as_context(
             mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
         });
 
-        if task.await.notify_async_err(cx).is_none() {
+        if task
+            .await
+            .notify_async_err(NotificationSource::Agent, cx)
+            .is_none()
+        {
             editor.update(cx, |editor, cx| {
                 editor.edit([(start_anchor..end_anchor, "")], cx);
             });

@@ -52,7 +52,9 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::{RangeExt, ResultExt, maybe};
-use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
+use workspace::{
+    ItemHandle, NotificationSource, Toast, Workspace, dock::Panel, notifications::NotificationId,
+};
 use zed_actions::agent::OpenSettings;
 
 pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
@@ -1835,7 +1837,11 @@ impl InlineAssist {
                                         assist_id.0,
                                     );
 
-                                    workspace.show_toast(Toast::new(id, error), cx);
+                                    workspace.show_toast(
+                                        Toast::new(id, error),
+                                        NotificationSource::Agent,
+                                        cx,
+                                    );
                                 })
                             } else {
                                 #[cfg(any(test, feature = "test-support"))]

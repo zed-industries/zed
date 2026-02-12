@@ -11370,6 +11370,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "lsp",
  "menu",
  "ordered-float 2.10.1",
  "picker",
@@ -11401,6 +11402,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "lsp",
  "menu",
  "outline",
  "pretty_assertions",
@@ -21002,7 +21004,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.224.0"
+version = "0.225.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

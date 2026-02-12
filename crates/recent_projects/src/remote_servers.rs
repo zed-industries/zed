@@ -9,6 +9,7 @@ use dev_container::{
     DevContainerConfig, find_devcontainer_configs, start_dev_container_with_config,
 };
 use editor::Editor;
+use workspace::notifications::NotificationSource;
 
 use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
@@ -2375,6 +2376,7 @@ impl RemoteServerProjects {
                                     notification,
                                 )
                                 .autohide(),
+                                NotificationSource::Remote,
                                 cx,
                             );
                         })

@@ -92,7 +92,7 @@ pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
-use collections::{HashMap, HashSet, IndexSet, hash_map};
+use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
     WeakEntity,
@@ -106,7 +106,7 @@ use project::project_settings::DiagnosticSeverity;
 use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch};
+use text::{BufferId, LineIndent, Patch, ToOffset as _};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
@@ -1040,8 +1040,7 @@ impl DisplayMap {
 
     /// Removes all LSP folding-range creases for a single buffer.
     pub(super) fn clear_lsp_folding_ranges(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if let hash_map::Entry::Occupied(entry) = self.lsp_folding_crease_ids.entry(buffer_id) {
-            let old_ids = entry.remove();
+        if let Some(old_ids) = self.lsp_folding_crease_ids.remove(&buffer_id) {
             let snapshot = self.buffer.read(cx).snapshot(cx);
             self.crease_map.remove(old_ids, &snapshot);
         }
@@ -1879,6 +1878,97 @@ impl DisplaySnapshot {
             }
             .highlight_invisibles(editor_style)
         })
+    }
+
+    /// Returns combined highlight styles (tree-sitter syntax + semantic tokens)
+    /// for a byte range within the specified buffer.
+    /// Returned ranges are 0-based relative to `buffer_range.start`.
+    pub(super) fn combined_highlights(
+        &self,
+        buffer_id: BufferId,
+        buffer_range: Range<usize>,
+        syntax_theme: &theme::SyntaxTheme,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
+        let multibuffer = self.buffer_snapshot();
+
+        let multibuffer_range = multibuffer
+            .excerpts()
+            .find_map(|(excerpt_id, buffer, range)| {
+                if buffer.remote_id() != buffer_id {
+                    return None;
+                }
+                let context_start = range.context.start.to_offset(buffer);
+                let context_end = range.context.end.to_offset(buffer);
+                if buffer_range.start < context_start || buffer_range.end > context_end {
+                    return None;
+                }
+                let start_anchor = buffer.anchor_before(buffer_range.start);
+                let end_anchor = buffer.anchor_after(buffer_range.end);
+                let mb_range =
+                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
+                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
+            });
+
+        let Some(multibuffer_range) = multibuffer_range else {
+            // Range is outside all excerpts (e.g. symbol name not in a
+            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
+            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
+                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
+            });
+            let Some(buffer_snapshot) = buffer_snapshot else {
+                return Vec::new();
+            };
+            let mut highlights = Vec::new();
+            let mut offset = 0usize;
+            for chunk in buffer_snapshot.chunks(buffer_range, true) {
+                let chunk_len = chunk.text.len();
+                if chunk_len == 0 {
+                    continue;
+                }
+                if let Some(style) = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(syntax_theme))
+                {
+                    highlights.push((offset..offset + chunk_len, style));
+                }
+                offset += chunk_len;
+            }
+            return highlights;
+        };
+
+        let chunks = custom_highlights::CustomHighlightsChunks::new(
+            multibuffer_range,
+            true,
+            None,
+            Some(&self.semantic_token_highlights),
+            multibuffer,
+        );
+
+        let mut highlights = Vec::new();
+        let mut offset = 0usize;
+        for chunk in chunks {
+            let chunk_len = chunk.text.len();
+            if chunk_len == 0 {
+                continue;
+            }
+
+            let syntax_style = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(syntax_theme));
+            let overlay_style = chunk.highlight_style;
+
+            let combined = match (syntax_style, overlay_style) {
+                (Some(syntax), Some(overlay)) => Some(syntax.highlight(overlay)),
+                (some @ Some(_), None) | (None, some @ Some(_)) => some,
+                (None, None) => None,
+            };
+
+            if let Some(style) = combined {
+                highlights.push((offset..offset + chunk_len, style));
+            }
+            offset += chunk_len;
+        }
+        highlights
     }
 
     #[instrument(skip_all)]

@@ -18,7 +18,10 @@ use std::{
 };
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
+use workspace::{
+    ModalView, OpenOptions, OpenVisible, Workspace,
+    notifications::{NotificationSource, NotifyResultExt},
+};
 
 #[derive(Eq, Hash, PartialEq)]
 struct ScopeName(Cow<'static, str>);
@@ -93,7 +96,7 @@ fn open_folder(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    fs::create_dir_all(snippets_dir()).notify_err(workspace, cx);
+    fs::create_dir_all(snippets_dir()).notify_err(workspace, NotificationSource::Editor, cx);
     cx.open_with_system(snippets_dir().borrow());
 }
 
