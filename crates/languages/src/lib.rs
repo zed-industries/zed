@@ -5,7 +5,7 @@ use project::Fs;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
-use settings::SettingsStore;
+use settings::{SemanticTokenRules, SettingsStore};
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{ResultExt, asset_str};
@@ -28,6 +28,7 @@ mod package_json;
 mod python;
 mod rust;
 mod tailwind;
+mod tailwindcss;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -101,6 +102,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
+    let tailwindcss_adapter = Arc::new(tailwindcss::TailwindCssLspAdapter::new(node.clone()));
     let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new(fs.clone()));
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(
         node.clone(),
@@ -181,12 +183,14 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
+            ..Default::default()
         },
         LanguageInfo {
             name: "rust",
             adapters: vec![rust_lsp_adapter],
             context: Some(rust_context_provider),
             manifest_name: Some(SharedString::new_static("Cargo.toml").into()),
+            semantic_token_rules: Some(rust::semantic_token_rules()),
             ..Default::default()
         },
         LanguageInfo {
@@ -240,6 +244,8 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             registration.context,
             registration.toolchain,
             registration.manifest_name,
+            registration.semantic_token_rules,
+            cx,
         );
     }
 
@@ -260,6 +266,10 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     languages.register_available_lsp_adapter(
         LanguageServerName("tailwindcss-language-server".into()),
         tailwind_adapter.clone(),
+    );
+    languages.register_available_lsp_adapter(
+        LanguageServerName("tailwindcss-intellisense-css".into()),
+        tailwindcss_adapter,
     );
     languages.register_available_lsp_adapter(
         LanguageServerName("eslint".into()),
@@ -320,7 +330,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                             )
                             .log_err();
                     });
-                })?;
+                });
                 prev_language_settings = language_settings;
             }
         }
@@ -343,6 +353,7 @@ struct LanguageInfo {
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
+    semantic_token_rules: Option<SemanticTokenRules>,
 }
 
 fn register_language(
@@ -352,8 +363,15 @@ fn register_language(
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
+    semantic_token_rules: Option<SemanticTokenRules>,
+    cx: &mut App,
 ) {
     let config = load_config(name);
+    if let Some(rules) = &semantic_token_rules {
+        SettingsStore::update_global(cx, |store, _| {
+            store.set_language_semantic_token_rules(config.name.0.clone(), rules.clone());
+        });
+    }
     for adapter in adapters {
         languages.register_lsp_adapter(config.name.clone(), adapter);
     }

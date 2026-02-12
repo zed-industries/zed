@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -142,6 +142,11 @@ pub enum Operator {
     HelixPrevious {
         around: bool,
     },
+    HelixSurroundAdd,
+    HelixSurroundReplace {
+        replaced_char: Option<char>,
+    },
+    HelixSurroundDelete,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -726,12 +731,16 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(workspace) = window.downcast::<Workspace>() {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                Vim::update_globals(cx, |globals, cx| {
-                                    globals.register_workspace(workspace, cx)
-                                });
+                    if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                        multi_workspace
+                            .update(cx, |multi_workspace, _, cx| {
+                                for workspace in multi_workspace.workspaces() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Vim::update_globals(cx, |globals, cx| {
+                                            globals.register_workspace(workspace, cx)
+                                        });
+                                    });
+                                }
                             })
                             .ok();
                     }
@@ -990,7 +999,7 @@ impl Clone for ReplayableAction {
     }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default, Debug)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
@@ -999,6 +1008,7 @@ pub struct SearchState {
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
     pub helix_select: bool,
+    pub _dismiss_subscription: Option<gpui::Subscription>,
 }
 
 impl Operator {
@@ -1043,6 +1053,9 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixSurroundAdd => "helix_ms",
+            Operator::HelixSurroundReplace { .. } => "helix_mr",
+            Operator::HelixSurroundDelete => "helix_md",
         }
     }
 
@@ -1067,6 +1080,14 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixSurroundAdd => "ms".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: None,
+            } => "mr".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: Some(c),
+            } => format!("mr{}", c),
+            Operator::HelixSurroundDelete => "md".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1111,6 +1132,9 @@ impl Operator {
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
+            Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
         }
     }
 
@@ -1136,7 +1160,10 @@ impl Operator {
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }
-            | Operator::HelixPrevious { .. } => true,
+            | Operator::HelixPrevious { .. }
+            | Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }

@@ -1,5 +1,13 @@
-use gpui::{Action, FocusHandle, prelude::*};
-use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
+use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use zed_actions::agent::ToggleModelSelector;
+
+use crate::CycleFavoriteModels;
+
+enum ModelIcon {
+    Name(IconName),
+    Path(SharedString),
+}
 
 #[derive(IntoElement)]
 pub struct ModelSelectorHeader {
@@ -39,9 +47,12 @@ impl RenderOnce for ModelSelectorHeader {
 pub struct ModelSelectorListItem {
     index: usize,
     title: SharedString,
-    icon: Option<IconName>,
+    icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
+    is_latest: bool,
+    is_favorite: bool,
+    on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl ModelSelectorListItem {
@@ -52,11 +63,19 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
+            is_latest: false,
+            is_favorite: false,
+            on_toggle_favorite: None,
         }
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
-        self.icon = Some(icon);
+        self.icon = Some(ModelIcon::Name(icon));
+        self
+    }
+
+    pub fn icon_path(mut self, path: SharedString) -> Self {
+        self.icon = Some(ModelIcon::Path(path));
         self
     }
 
@@ -69,6 +88,24 @@ impl ModelSelectorListItem {
         self.is_focused = is_focused;
         self
     }
+
+    pub fn is_latest(mut self, is_latest: bool) -> Self {
+        self.is_latest = is_latest;
+        self
+    }
+
+    pub fn is_favorite(mut self, is_favorite: bool) -> Self {
+        self.is_favorite = is_favorite;
+        self
+    }
+
+    pub fn on_toggle_favorite(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_toggle_favorite = Some(Box::new(handler));
+        self
+    }
 }
 
 impl RenderOnce for ModelSelectorListItem {
@@ -78,6 +115,8 @@ impl RenderOnce for ModelSelectorListItem {
         } else {
             Color::Muted
         };
+
+        let is_favorite = self.is_favorite;
 
         ListItem::new(self.index)
             .inset(true)
@@ -89,19 +128,36 @@ impl RenderOnce for ModelSelectorListItem {
                     .gap_1p5()
                     .when_some(self.icon, |this, icon| {
                         this.child(
-                            Icon::new(icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small),
+                            match icon {
+                                ModelIcon::Name(icon_name) => Icon::new(icon_name),
+                                ModelIcon::Path(icon_path) => Icon::from_external_svg(icon_path),
+                            }
+                            .color(model_icon_color)
+                            .size(IconSize::Small),
                         )
                     })
-                    .child(Label::new(self.title).truncate()),
+                    .child(Label::new(self.title).truncate())
+                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest"))),
             )
             .end_slot(div().pr_2().when(self.is_selected, |this| {
-                this.child(
-                    Icon::new(IconName::Check)
-                        .color(Color::Accent)
-                        .size(IconSize::Small),
-                )
+                this.child(Icon::new(IconName::Check).color(Color::Accent))
+            }))
+            .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
+                |this, handle_click| {
+                    let (icon, color, tooltip) = if is_favorite {
+                        (IconName::StarFilled, Color::Accent, "Unfavorite Model")
+                    } else {
+                        (IconName::Star, Color::Default, "Favorite Model")
+                    };
+                    this.child(
+                        IconButton::new(("toggle-favorite", self.index), icon)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .icon_color(color)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text(tooltip))
+                            .on_click(move |event, window, cx| (handle_click)(event, window, cx)),
+                    )
+                }
             }))
     }
 }
@@ -143,5 +199,49 @@ impl RenderOnce for ModelSelectorFooter {
                         window.dispatch_action(action.boxed_clone(), cx);
                     }),
             )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ModelSelectorTooltip {
+    show_cycle_row: bool,
+}
+
+impl ModelSelectorTooltip {
+    pub fn new() -> Self {
+        Self {
+            show_cycle_row: true,
+        }
+    }
+
+    pub fn show_cycle_row(mut self, show: bool) -> Self {
+        self.show_cycle_row = show;
+        self
+    }
+}
+
+impl RenderOnce for ModelSelectorTooltip {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new("Change Model"))
+                    .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
+            )
+            .when(self.show_cycle_row, |this| {
+                this.child(
+                    h_flex()
+                        .pt_1()
+                        .gap_2()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .justify_between()
+                        .child(Label::new("Cycle Favorited Models"))
+                        .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
+                )
+            })
     }
 }

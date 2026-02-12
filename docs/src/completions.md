@@ -1,3 +1,8 @@
+---
+title: Code Completions - Zed
+description: Zed's code completions from language servers and edit predictions. Configure autocomplete behavior, snippets, and documentation display.
+---
+
 # Completions
 
 Zed supports two sources for completions:
@@ -14,6 +19,10 @@ When there is an appropriate language server available, Zed will provide complet
 ```
 
 You can manually trigger completions with `ctrl-space` or by triggering the `editor::ShowCompletions` action from the command palette.
+
+> Note: Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
+> Open **System Settings** > **Keyboard** > **Keyboard Shortcut**s >
+> **Input Sources** and uncheck **Select the previous input source**.
 
 For more information, see:
 

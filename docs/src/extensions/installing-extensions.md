@@ -17,4 +17,4 @@ This directory contains two subdirectories:
 
 ## Auto installing
 
-To automate extension installation/uninstallation see the docs for [auto_install_extensions](../configuring-zed.md#auto-install-extensions).
+To automate extension installation/uninstallation see the docs for [auto_install_extensions](../reference/all-settings.md#auto-install-extensions).

@@ -369,7 +369,7 @@ fn collect_files(
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
                         let mut output = SlashCommandOutput::default();
-                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
                         append_buffer_to_output(
                             &snapshot,
                             Some(path_including_worktree_name.display(path_style).as_ref()),

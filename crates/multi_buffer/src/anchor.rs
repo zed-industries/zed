@@ -4,14 +4,26 @@ use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use language::Point;
 use std::{
     cmp::Ordering,
-    ops::{AddAssign, Range, Sub},
+    ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::Bias;
 
+/// A stable reference to a position within a [`MultiBuffer`](super::MultiBuffer).
+///
+/// Unlike simple offsets, anchors remain valid as the text is edited, automatically
+/// adjusting to reflect insertions and deletions around them.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Anchor {
+    /// Identifies which excerpt within the multi-buffer this anchor belongs to.
+    /// A multi-buffer can contain multiple excerpts from different buffers.
     pub excerpt_id: ExcerptId,
+    /// The position within the excerpt's underlying buffer. This is a stable
+    /// reference that remains valid as the buffer text is edited.
     pub text_anchor: text::Anchor,
+    /// When present, indicates this anchor points into deleted text within an
+    /// expanded diff hunk. The anchor references a position in the diff base
+    /// (original) text rather than the current buffer text. This is used when
+    /// displaying inline diffs where deleted lines are shown.
     pub diff_base_anchor: Option<text::Anchor>,
 }
 
@@ -111,8 +123,8 @@ impl Anchor {
                     .get(&excerpt.buffer_id)
                     .map(|diff| diff.base_text())
             {
-                let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
-                let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
+                let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
+                let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
                 return match (self_anchor, other_anchor) {
                     (Some(a), Some(b)) => a.cmp(&b, base_text),
                     (Some(_), None) => match other.text_anchor.bias {
@@ -146,7 +158,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_left(base_text);
                     }
@@ -169,7 +181,7 @@ impl Anchor {
                         .diffs
                         .get(&excerpt.buffer_id)
                         .map(|diff| diff.base_text())
-                        && a.buffer_id == Some(base_text.remote_id())
+                        && a.is_valid(&base_text)
                     {
                         return a.bias_right(base_text);
                     }
@@ -185,7 +197,9 @@ impl Anchor {
         D: MultiBufferDimension
             + Ord
             + Sub<Output = D::TextDimension>
-            + AddAssign<D::TextDimension>,
+            + Sub<D::TextDimension, Output = D>
+            + AddAssign<D::TextDimension>
+            + Add<D::TextDimension, Output = D>,
         D::TextDimension: Sub<Output = D::TextDimension> + Ord,
     {
         snapshot.summary_for_anchor(self)

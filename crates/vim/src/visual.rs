@@ -218,7 +218,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -302,7 +302,7 @@ impl Vim {
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        let text_layout_details = editor.text_layout_details(window);
+        let text_layout_details = editor.text_layout_details(window, cx);
         editor.change_selections(Default::default(), window, cx, |s| {
             let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);
@@ -522,12 +522,16 @@ impl Vim {
                                             selection.start = original_point.to_display_point(map)
                                         }
                                     } else {
-                                        selection.end = movement::saturating_right(
-                                            map,
-                                            original_point.to_display_point(map),
-                                        );
-                                        if original_point.column > 0 {
-                                            selection.reversed = true
+                                        let original_display_point =
+                                            original_point.to_display_point(map);
+                                        if selection.end <= original_display_point {
+                                            selection.end = movement::saturating_right(
+                                                map,
+                                                original_display_point,
+                                            );
+                                            if original_point.column > 0 {
+                                                selection.reversed = true
+                                            }
                                         }
                                     }
                                 }

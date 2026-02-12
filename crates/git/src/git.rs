@@ -23,6 +23,7 @@ pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
 pub const INDEX_LOCK: &str = "index.lock";
+pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
     git,

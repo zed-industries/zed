@@ -43,7 +43,7 @@ use crate::{
 };
 use crate::{CodeActionSource, EditorSettings};
 use collections::{HashSet, VecDeque};
-use settings::{Settings, SnippetSortOrder};
+use settings::{CompletionDetailAlignment, Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -51,6 +51,8 @@ pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 pub const COMPLETION_MENU_MIN_WIDTH: Pixels = px(280.);
 pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
+pub const CODE_ACTION_MENU_MIN_WIDTH: Pixels = px(220.);
+pub const CODE_ACTION_MENU_MAX_WIDTH: Pixels = px(540.);
 
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
@@ -179,7 +181,7 @@ impl CodeContextMenu {
     ) -> Option<AnyElement> {
         match self {
             CodeContextMenu::Completions(menu) => menu.render_aside(max_size, window, cx),
-            CodeContextMenu::CodeActions(_) => None,
+            CodeContextMenu::CodeActions(menu) => menu.render_aside(max_size, window, cx),
         }
     }
 
@@ -784,6 +786,8 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let show_completion_documentation = self.show_completion_documentation;
+        let completion_detail_alignment =
+            EditorSettings::get_global(cx).completion_detail_alignment;
         let widest_completion_ix = if self.display_options.dynamic_width {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
@@ -837,6 +841,7 @@ impl CompletionsMenu {
                         };
 
                         let filter_start = completion.label.filter_range.start;
+
                         let highlights = gpui::combine_highlights(
                             mat.ranges().map(|range| {
                                 (
@@ -878,8 +883,58 @@ impl CompletionsMenu {
                             }),
                         );
 
-                        let completion_label = StyledText::new(completion.label.text.clone())
-                            .with_default_highlights(&style.text, highlights);
+                        let highlights: Vec<_> = highlights.collect();
+
+                        let filter_range = &completion.label.filter_range;
+                        let full_text = &completion.label.text;
+
+                        let main_text: String = full_text[filter_range.clone()].to_string();
+                        let main_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                if range.end <= filter_range.start
+                                    || range.start >= filter_range.end
+                                {
+                                    return None;
+                                }
+                                let clamped_start =
+                                    range.start.max(filter_range.start) - filter_range.start;
+                                let clamped_end =
+                                    range.end.min(filter_range.end) - filter_range.start;
+                                Some((clamped_start..clamped_end, (*highlight)))
+                            })
+                            .collect();
+                        let main_label = StyledText::new(main_text)
+                            .with_default_highlights(&style.text, main_highlights);
+
+                        let suffix_text: String = full_text[filter_range.end..].to_string();
+                        let suffix_highlights: Vec<_> = highlights
+                            .iter()
+                            .filter_map(|(range, highlight)| {
+                                if range.end <= filter_range.end {
+                                    return None;
+                                }
+                                let shifted_start = range.start.saturating_sub(filter_range.end);
+                                let shifted_end = range.end - filter_range.end;
+                                Some((shifted_start..shifted_end, (*highlight)))
+                            })
+                            .collect();
+                        let suffix_label = if !suffix_text.is_empty() {
+                            Some(
+                                StyledText::new(suffix_text)
+                                    .with_default_highlights(&style.text, suffix_highlights),
+                            )
+                        } else {
+                            None
+                        };
+
+                        let left_aligned_suffix =
+                            matches!(completion_detail_alignment, CompletionDetailAlignment::Left);
+
+                        let right_aligned_suffix = matches!(
+                            completion_detail_alignment,
+                            CompletionDetailAlignment::Right,
+                        );
 
                         let documentation_label = match documentation {
                             Some(CompletionDocumentation::SingleLine(text))
@@ -891,7 +946,7 @@ impl CompletionsMenu {
                                     None
                                 } else {
                                     Some(
-                                        Label::new(text.clone())
+                                        Label::new(text.trim().to_string())
                                             .ml_4()
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
@@ -940,7 +995,24 @@ impl CompletionsMenu {
                                         }
                                     }))
                                     .start_slot::<AnyElement>(start_slot)
-                                    .child(h_flex().overflow_hidden().child(completion_label))
+                                    .child(
+                                        h_flex()
+                                            .min_w_0()
+                                            .w_full()
+                                            .when(left_aligned_suffix, |this| this.justify_start())
+                                            .when(right_aligned_suffix, |this| {
+                                                this.justify_between()
+                                            })
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .whitespace_nowrap()
+                                                    .child(main_label),
+                                            )
+                                            .when_some(suffix_label, |this, suffix| {
+                                                this.child(div().truncate().child(suffix))
+                                            }),
+                                    )
                                     .end_slot::<Label>(documentation_label),
                             )
                     })
@@ -1419,31 +1491,19 @@ pub enum CodeActionsItem {
 }
 
 impl CodeActionsItem {
-    fn as_task(&self) -> Option<&ResolvedTask> {
-        let Self::Task(_, task) = self else {
-            return None;
-        };
-        Some(task)
-    }
-
-    fn as_code_action(&self) -> Option<&CodeAction> {
-        let Self::CodeAction { action, .. } = self else {
-            return None;
-        };
-        Some(action)
-    }
-    fn as_debug_scenario(&self) -> Option<&DebugScenario> {
-        let Self::DebugScenario(scenario) = self else {
-            return None;
-        };
-        Some(scenario)
-    }
-
     pub fn label(&self) -> String {
         match self {
             Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
             Self::DebugScenario(scenario) => scenario.label.to_string(),
+        }
+    }
+
+    pub fn menu_label(&self) -> String {
+        match self {
+            Self::CodeAction { action, .. } => action.lsp_action.title().replace("\n", ""),
+            Self::Task(_, task) => task.resolved_label.replace("\n", ""),
+            Self::DebugScenario(scenario) => format!("debug: {}", scenario.label),
         }
     }
 }
@@ -1555,60 +1615,33 @@ impl CodeActionsMenu {
                         let item_ix = range.start + ix;
                         let selected = item_ix == selected_item;
                         let colors = cx.theme().colors();
-                        div().min_w(px(220.)).max_w(px(540.)).child(
-                            ListItem::new(item_ix)
-                                .inset(true)
-                                .toggle_state(selected)
-                                .when_some(action.as_code_action(), |this, action| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(
-                                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                                                action.lsp_action.title().replace("\n", ""),
-                                            )
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_task(), |this, task| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child(task.resolved_label.replace("\n", ""))
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .when_some(action.as_debug_scenario(), |this, scenario| {
-                                    this.child(
-                                        h_flex()
-                                            .overflow_hidden()
-                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
-                                            .child("debug: ")
-                                            .child(scenario.label.clone())
-                                            .when(selected, |this| {
-                                                this.text_color(colors.text_accent)
-                                            }),
-                                    )
-                                })
-                                .on_click(cx.listener(move |editor, _, window, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                })),
-                        )
+
+                        ListItem::new(item_ix)
+                            .inset(true)
+                            .toggle_state(selected)
+                            .overflow_x()
+                            .child(
+                                div()
+                                    .min_w(CODE_ACTION_MENU_MIN_WIDTH)
+                                    .max_w(CODE_ACTION_MENU_MAX_WIDTH)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .when(is_quick_action_bar, |this| this.text_ui(cx))
+                                    .when(selected, |this| this.text_color(colors.text_accent))
+                                    .child(action.menu_label()),
+                            )
+                            .on_click(cx.listener(move |editor, _, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(task) = editor.confirm_code_action(
+                                    &ConfirmCodeAction {
+                                        item_ix: Some(item_ix),
+                                    },
+                                    window,
+                                    cx,
+                                ) {
+                                    task.detach_and_log_err(cx)
+                                }
+                            }))
                     })
                     .collect()
             }),
@@ -1634,5 +1667,47 @@ impl CodeActionsMenu {
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
         Popover::new().child(list).into_any_element()
+    }
+
+    fn render_aside(
+        &mut self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) -> Option<AnyElement> {
+        let Some(action) = self.actions.get(self.selected_item) else {
+            return None;
+        };
+
+        let label = action.menu_label();
+        let text_system = window.text_system();
+        let mut line_wrapper = text_system.line_wrapper(
+            window.text_style().font(),
+            window.text_style().font_size.to_pixels(window.rem_size()),
+        );
+        let is_truncated = line_wrapper.should_truncate_line(
+            &label,
+            CODE_ACTION_MENU_MAX_WIDTH,
+            "…",
+            gpui::TruncateFrom::End,
+        );
+
+        if is_truncated.is_none() {
+            return None;
+        }
+
+        Some(
+            Popover::new()
+                .child(
+                    div()
+                        .child(label)
+                        .id("code_actions_menu_extended")
+                        .px(MENU_ASIDE_X_PADDING / 2.)
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
+                        .occlude(),
+                )
+                .into_any_element(),
+        )
     }
 }

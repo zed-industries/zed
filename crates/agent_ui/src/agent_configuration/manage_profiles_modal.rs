@@ -2,9 +2,10 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent::ContextServerRegistry;
+use agent::{AgentTool, ContextServerRegistry, SubagentTool};
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use editor::Editor;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use language_model::{LanguageModel, LanguageModelRegistry};
@@ -156,7 +157,7 @@ impl ManageProfilesModal {
             cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
                 if matches!(this.mode, Mode::ChooseProfile(_)) {
                     this.mode = Mode::choose_profile(window, cx);
-                    this.focus_handle(cx).focus(window);
+                    this.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 }
             });
@@ -173,7 +174,7 @@ impl ManageProfilesModal {
 
     fn choose_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = Mode::choose_profile(window, cx);
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn new_profile(
@@ -191,7 +192,7 @@ impl ManageProfilesModal {
             name_editor,
             base_profile_id,
         });
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     pub fn view_profile(
@@ -209,7 +210,7 @@ impl ManageProfilesModal {
             delete_profile: NavigableEntry::focusable(cx),
             cancel_item: NavigableEntry::focusable(cx),
         });
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_default_model(
@@ -222,7 +223,6 @@ impl ManageProfilesModal {
         let profile_id_for_closure = profile_id.clone();
 
         let model_picker = cx.new(|cx| {
-            let fs = fs.clone();
             let profile_id = profile_id_for_closure.clone();
 
             language_model_selector(
@@ -250,22 +250,40 @@ impl ManageProfilesModal {
                             })
                     }
                 },
-                move |model, cx| {
-                    let provider = model.provider_id().0.to_string();
-                    let model_id = model.id().0.to_string();
-                    let profile_id = profile_id.clone();
+                {
+                    let fs = fs.clone();
+                    move |model, cx| {
+                        let provider = model.provider_id().0.to_string();
+                        let model_id = model.id().0.to_string();
+                        let profile_id = profile_id.clone();
 
-                    update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                        let agent_settings = settings.agent.get_or_insert_default();
-                        if let Some(profiles) = agent_settings.profiles.as_mut() {
-                            if let Some(profile) = profiles.get_mut(profile_id.0.as_ref()) {
-                                profile.default_model = Some(LanguageModelSelection {
-                                    provider: LanguageModelProviderSetting(provider.clone()),
-                                    model: model_id.clone(),
-                                });
+                        update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            let agent_settings = settings.agent.get_or_insert_default();
+                            if let Some(profiles) = agent_settings.profiles.as_mut() {
+                                if let Some(profile) = profiles.get_mut(profile_id.0.as_ref()) {
+                                    profile.default_model = Some(LanguageModelSelection {
+                                        provider: LanguageModelProviderSetting(provider.clone()),
+                                        model: model_id.clone(),
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
+                                    });
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
+                },
+                {
+                    let fs = fs.clone();
+                    move |model, should_be_favorite, cx| {
+                        crate::favorite_models::toggle_in_settings(
+                            model,
+                            should_be_favorite,
+                            fs.clone(),
+                            cx,
+                        );
+                    }
                 },
                 false, // Do not use popover styles for the model picker
                 self.focus_handle.clone(),
@@ -287,7 +305,7 @@ impl ManageProfilesModal {
             model_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_mcp_tools(
@@ -323,7 +341,7 @@ impl ManageProfilesModal {
             tool_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn configure_builtin_tools(
@@ -337,14 +355,25 @@ impl ManageProfilesModal {
             return;
         };
 
+        let provider = self.active_model.as_ref().map(|model| model.provider_id());
+        let tool_names: Vec<Arc<str>> = agent::ALL_TOOL_NAMES
+            .iter()
+            .copied()
+            .filter(|name| {
+                let supported_by_provider = provider.as_ref().map_or(true, |provider| {
+                    agent::tool_supports_provider(name, provider)
+                });
+                let enabled_by_feature_flag =
+                    *name != SubagentTool::NAME || cx.has_flag::<SubagentsFeatureFlag>();
+
+                supported_by_provider && enabled_by_feature_flag
+            })
+            .map(Arc::from)
+            .collect();
+
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(
-                //todo: This causes the web search tool to show up even it only works when using zed hosted models
-                agent::supported_built_in_tool_names(
-                    self.active_model.as_ref().map(|model| model.provider_id()),
-                )
-                .map(|s| s.into())
-                .collect::<Vec<_>>(),
+                tool_names,
                 self.fs.clone(),
                 profile_id.clone(),
                 profile,
@@ -364,7 +393,7 @@ impl ManageProfilesModal {
             tool_picker,
             _subscription: dismiss_subscription,
         };
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -938,7 +967,7 @@ impl Render for ManageProfilesModal {
             .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| this.cancel(window, cx)))
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| this.confirm(window, cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                this.focus_handle(cx).focus(window, cx);
             }))
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(match &self.mode {

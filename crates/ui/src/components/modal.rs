@@ -159,10 +159,10 @@ impl RenderOnce for ModalHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut children = self.children;
 
-        if self.headline.is_some() {
+        if let Some(headline) = self.headline {
             children.insert(
                 0,
-                Headline::new(self.headline.unwrap())
+                Headline::new(headline)
                     .size(HeadlineSize::XSmall)
                     .color(Color::Muted)
                     .into_any_element(),

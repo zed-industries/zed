@@ -26,6 +26,7 @@ pub struct ProjectPanelSettings {
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+    pub bold_folder_labels: bool,
     pub starts_open: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
@@ -92,7 +93,13 @@ impl Settings for ProjectPanelSettings {
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
             folder_icons: project_panel.folder_icons.unwrap(),
-            git_status: project_panel.git_status.unwrap(),
+            git_status: project_panel.git_status.unwrap()
+                && content
+                    .git
+                    .unwrap()
+                    .enabled
+                    .unwrap()
+                    .is_git_status_enabled(),
             indent_size: project_panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
@@ -100,6 +107,7 @@ impl Settings for ProjectPanelSettings {
             sticky_scroll: project_panel.sticky_scroll.unwrap(),
             auto_reveal_entries: project_panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
+            bold_folder_labels: project_panel.bold_folder_labels.unwrap(),
             starts_open: project_panel.starts_open.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: project_panel.scrollbar.unwrap().show.map(Into::into),

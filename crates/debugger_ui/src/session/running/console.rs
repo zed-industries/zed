@@ -8,7 +8,7 @@ use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
     Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    MultiBufferOffset, SizingBehavior,
+    HighlightKey, MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -105,7 +105,7 @@ impl Console {
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
-                    console.query_bar.focus_handle(cx).focus(window);
+                    console.query_bar.focus_handle(cx).focus(window, cx);
                 }
             }),
         ];
@@ -222,8 +222,6 @@ impl Console {
                     console.insert(&output, window, cx);
                     console.set_read_only(true);
 
-                    struct ConsoleAnsiHighlight;
-
                     let buffer = console.buffer().read(cx).snapshot(cx);
 
                     for (range, color) in spans {
@@ -238,8 +236,8 @@ impl Console {
                             )),
                             ..Default::default()
                         };
-                        console.highlight_text_key::<ConsoleAnsiHighlight>(
-                            start_offset,
+                        console.highlight_text_key(
+                            HighlightKey::ConsoleAnsiHighlight(start_offset),
                             vec![range],
                             style,
                             false,
@@ -253,8 +251,8 @@ impl Console {
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
                         let color_fn = color_fetcher(color);
-                        console.highlight_background_key::<ConsoleAnsiHighlight>(
-                            start_offset,
+                        console.highlight_background_key(
+                            HighlightKey::ConsoleAnsiHighlight(start_offset),
                             &[range],
                             move |_, theme| color_fn(theme),
                             cx,
