@@ -719,6 +719,8 @@ fn display_key(key: &str, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         #[cfg(target_os = "macos")]
         "backspace" => '⌫',
         #[cfg(target_os = "macos")]
+        "delete" => '⌦',
+        #[cfg(target_os = "macos")]
         "up" => '↑',
         #[cfg(target_os = "macos")]
         "down" => '↓',

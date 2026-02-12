@@ -248,7 +248,7 @@ fn icon_for_key(key: &str, platform_style: PlatformStyle) -> Option<IconName> {
         "up" => Some(IconName::ArrowUp),
         "down" => Some(IconName::ArrowDown),
         "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Backspace),
+        "delete" => Some(IconName::ForwardDelete),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
         "tab" => Some(IconName::Tab),
