@@ -353,7 +353,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                     ("number".into(), orange.into()),
                     ("operator".into(), HighlightStyle::default()),
                     ("predictive".into(), HighlightStyle::default()),
-                    ("preproc".into(), HighlightStyle::default()),
+                    ("preproc".into(), purple.into()),
                     ("primary".into(), HighlightStyle::default()),
                     ("property".into(), red.into()),
                     ("punctuation".into(), HighlightStyle::default()),
