@@ -1408,7 +1408,6 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(raw_query);
             let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
-            let path = path_position.path.clone();
             let path_str = path_position.path.to_str();
             let path_trimmed = path_str.unwrap_or(&raw_query).trim_end_matches(':');
             let file_query_end = if path_trimmed == raw_query {
