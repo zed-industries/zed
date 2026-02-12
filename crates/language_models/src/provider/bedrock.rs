@@ -819,7 +819,7 @@ pub fn into_bedrock(
                                 .context("failed to build Bedrock tool use block")
                                 .log_err()
                                 .map(BedrockInnerContent::ToolUse)
-                        },
+                        }
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
@@ -836,24 +836,32 @@ pub fn into_bedrock(
                                             Ok(image_bytes) => {
                                                 match BedrockImageBlock::builder()
                                                     .format(BedrockImageFormat::Png)
-                                                    .source(BedrockImageSource::Bytes(BedrockBlob::new(
-                                                        image_bytes,
-                                                    )))
+                                                    .source(BedrockImageSource::Bytes(
+                                                        BedrockBlob::new(image_bytes),
+                                                    ))
                                                     .build()
                                                 {
                                                     Ok(image_block) => {
-                                                        BedrockToolResultContentBlock::Image(image_block)
+                                                        BedrockToolResultContentBlock::Image(
+                                                            image_block,
+                                                        )
                                                     }
-                                                    Err(err) => BedrockToolResultContentBlock::Text(format!(
-                                                        "[Failed to build image block: {}]",
-                                                        err
-                                                    )),
+                                                    Err(err) => {
+                                                        BedrockToolResultContentBlock::Text(
+                                                            format!(
+                                                                "[Failed to build image block: {}]",
+                                                                err
+                                                            ),
+                                                        )
+                                                    }
                                                 }
                                             }
-                                            Err(err) => BedrockToolResultContentBlock::Text(format!(
-                                                "[Failed to decode tool result image: {}]",
-                                                err
-                                            )),
+                                            Err(err) => {
+                                                BedrockToolResultContentBlock::Text(format!(
+                                                    "[Failed to decode tool result image: {}]",
+                                                    err
+                                                ))
+                                            }
                                         }
                                     }
                                 })
