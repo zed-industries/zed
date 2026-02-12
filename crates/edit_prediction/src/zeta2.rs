@@ -1,10 +1,11 @@
+use crate::cursor_excerpt::{compute_excerpt_ranges, excerpt_ranges_to_byte_offsets};
 use crate::prediction::EditPredictionResult;
 use crate::zeta1::compute_edits_and_cursor_position;
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use cloud_llm_client::predict_edits_v3::RawCompletionRequest;
 use cloud_llm_client::{AcceptEditPredictionBody, EditPredictionRejectReason};
 use gpui::{App, Task, prelude::*};
@@ -13,8 +14,10 @@ use release_channel::AppVersion;
 
 use std::env;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat, clean_zeta2_model_output};
-use zeta_prompt::{format_zeta_prompt, get_prefill};
+use zeta_prompt::{
+    CURSOR_MARKER, EditPredictionModelKind, ZetaFormat, clean_zeta2_model_output,
+    format_zeta_prompt, get_prefill,
+};
 
 pub const MAX_CONTEXT_TOKENS: usize = 350;
 
@@ -39,23 +42,29 @@ pub fn request_prediction_with_zeta2(
         events,
         debug_tx,
         trigger,
+        project,
         ..
     }: EditPredictionModelInput,
+    preferred_model: Option<EditPredictionModelKind>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let buffer_snapshotted_at = Instant::now();
     let raw_config = store.zeta2_raw_config().cloned();
 
-    let Some(excerpt_path) = snapshot
+    let excerpt_path: Arc<Path> = snapshot
         .file()
         .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-    else {
-        return Task::ready(Err(anyhow!("No file path for excerpt")));
-    };
+        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let app_version = AppVersion::global(cx);
+
+    let is_open_source = snapshot
+        .file()
+        .map_or(false, |file| store.is_file_open_source(&project, file, cx))
+        && events.iter().all(|event| event.in_open_source_repo())
+        && related_files.iter().all(|file| file.in_open_source_repo);
 
     let request_task = cx.background_spawn({
         async move {
@@ -72,6 +81,8 @@ pub fn request_prediction_with_zeta2(
                 excerpt_path,
                 cursor_offset,
                 zeta_version,
+                preferred_model,
+                is_open_source,
             );
 
             if let Some(debug_tx) = &debug_tx {
@@ -248,41 +259,52 @@ pub fn zeta2_prompt_input(
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
     zeta_format: ZetaFormat,
+    preferred_model: Option<EditPredictionModelKind>,
+    is_open_source: bool,
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
-    let (editable_range, context_range) =
-        crate::cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-            cursor_point,
-            snapshot,
-            max_editable_tokens(zeta_format),
-            MAX_CONTEXT_TOKENS,
-        );
+    let (full_context, range_points) = compute_excerpt_ranges(cursor_point, snapshot);
 
     let related_files = crate::filter_redundant_excerpts(
         related_files,
         excerpt_path.as_ref(),
-        context_range.start.row..context_range.end.row,
+        full_context.start.row..full_context.end.row,
     );
 
-    let context_start_offset = context_range.start.to_offset(snapshot);
-    let context_start_row = context_range.start.row;
+    let full_context_start_offset = full_context.start.to_offset(snapshot);
+    let full_context_start_row = full_context.start.row;
+
+    let excerpt_ranges =
+        excerpt_ranges_to_byte_offsets(&range_points, full_context_start_offset, snapshot);
+
+    let editable_range = match preferred_model {
+        Some(EditPredictionModelKind::Zeta1) => &range_points.editable_350,
+        _ => match zeta_format {
+            ZetaFormat::V0112MiddleAtEnd | ZetaFormat::V0113Ordered => &range_points.editable_150,
+            _ => &range_points.editable_180,
+        },
+    };
+
     let editable_offset_range = editable_range.to_offset(snapshot);
-    let cursor_offset_in_excerpt = cursor_offset - context_start_offset;
-    let editable_range_in_excerpt = (editable_offset_range.start - context_start_offset)
-        ..(editable_offset_range.end - context_start_offset);
+    let cursor_offset_in_excerpt = cursor_offset - full_context_start_offset;
+    let editable_range_in_excerpt = (editable_offset_range.start - full_context_start_offset)
+        ..(editable_offset_range.end - full_context_start_offset);
 
     let prompt_input = zeta_prompt::ZetaPromptInput {
         cursor_path: excerpt_path,
         cursor_excerpt: snapshot
-            .text_for_range(context_range)
+            .text_for_range(full_context)
             .collect::<String>()
             .into(),
         editable_range_in_excerpt,
         cursor_offset_in_excerpt,
-        excerpt_start_row: Some(context_start_row),
+        excerpt_start_row: Some(full_context_start_row),
         events,
         related_files,
+        excerpt_ranges: Some(excerpt_ranges),
+        preferred_model,
+        in_open_source_repo: is_open_source,
     };
     (editable_offset_range, prompt_input)
 }
