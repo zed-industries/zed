@@ -554,6 +554,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn set_edited(&mut self, _edited: bool) {}
+    fn set_document_path(&self, _path: Option<&std::path::Path>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}

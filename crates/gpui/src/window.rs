@@ -2015,6 +2015,12 @@ impl Window {
         self.platform_window.set_edited(edited);
     }
 
+    /// Set the path of the file this window represents.
+    /// On macOS, this sets the window's accessibility document property (AXDocument).
+    pub fn set_document_path(&self, path: Option<&std::path::Path>) {
+        self.platform_window.set_document_path(path);
+    }
+
     /// Determine the display on which the window is visible.
     pub fn display(&self, cx: &App) -> Option<Rc<dyn PlatformDisplay>> {
         cx.platform
