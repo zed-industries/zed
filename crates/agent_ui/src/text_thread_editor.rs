@@ -60,7 +60,7 @@ use ui::{
 };
 use util::{ResultExt, maybe};
 use workspace::{
-    CollaboratorId, NotificationSource,
+    CollaboratorId,
     searchable::{Direction, SearchToken, SearchableItemHandle},
 };
 
@@ -1389,7 +1389,6 @@ impl TextThreadEditor {
                 ),
             )
             .autohide(),
-            NotificationSource::Agent,
             cx,
         );
     }

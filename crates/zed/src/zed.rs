@@ -84,8 +84,7 @@ use util::{ResultExt, asset_str, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{
-    NotificationId, NotificationSource, SuppressEvent, dismiss_app_notification,
-    show_app_notification,
+    NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
 };
 use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
@@ -804,7 +803,6 @@ fn register_actions(
                             "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
-                        NotificationSource::System,
                         cx,
                     );
                 }
@@ -1001,7 +999,6 @@ fn register_actions(
                                 ReleaseChannel::global(cx).display_name()
                             ),
                         ),
-                        NotificationSource::Cli,
                         cx,
                     )
                 })?;
@@ -1413,7 +1410,6 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                     .update(cx, |workspace, cx| {
                         workspace.show_notification(
                             NotificationId::unique::<OpenLogError>(),
-                            NotificationSource::System,
                             cx,
                             |cx| {
                                 cx.new(|cx| {
@@ -1498,7 +1494,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
                 false
                 // Local settings errors are displayed by the projects
             } else {
-                show_app_notification(id, NotificationSource::Settings, cx, move |cx| {
+                show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(format!("Invalid user settings file\n{error}"), cx)
                             .primary_message("Open Settings File")
@@ -1528,7 +1524,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
         }
         settings::MigrationStatus::Failed { error: err } => {
             if !showed_parse_error {
-                show_app_notification(id, NotificationSource::Settings, cx, move |cx| {
+                show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
                         MessageNotification::new(
                             format!(
@@ -1734,22 +1730,17 @@ fn show_keymap_file_json_error(
 ) {
     let message: SharedString =
         format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
-    show_app_notification(
-        notification_id,
-        NotificationSource::Settings,
-        cx,
-        move |cx| {
-            cx.new(|cx| {
-                MessageNotification::new(message.clone(), cx)
-                    .primary_message("Open Keymap File")
-                    .primary_icon(IconName::Settings)
-                    .primary_on_click(|window, cx| {
-                        window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
-                        cx.emit(DismissEvent);
-                    })
-            })
-        },
-    );
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(|cx| {
+            MessageNotification::new(message.clone(), cx)
+                .primary_message("Open Keymap File")
+                .primary_icon(IconName::Settings)
+                .primary_on_click(|window, cx| {
+                    window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
+                    cx.emit(DismissEvent);
+                })
+        })
+    });
 }
 
 fn show_keymap_file_load_error(
@@ -1794,34 +1785,29 @@ fn show_markdown_app_notification<F>(
         let primary_button_message = primary_button_message.clone();
         let primary_button_on_click = Arc::new(primary_button_on_click);
         cx.update(|cx| {
-            show_app_notification(
-                notification_id,
-                NotificationSource::Settings,
-                cx,
-                move |cx| {
-                    let workspace_handle = cx.entity().downgrade();
-                    let parsed_markdown = parsed_markdown.clone();
-                    let primary_button_message = primary_button_message.clone();
-                    let primary_button_on_click = primary_button_on_click.clone();
-                    cx.new(move |cx| {
-                        MessageNotification::new_from_builder(cx, move |window, cx| {
-                            image_cache(retain_all("notification-cache"))
-                                .child(div().text_ui(cx).child(
-                                    markdown_preview::markdown_renderer::render_parsed_markdown(
-                                        &parsed_markdown.clone(),
-                                        Some(workspace_handle.clone()),
-                                        window,
-                                        cx,
-                                    ),
-                                ))
-                                .into_any()
-                        })
-                        .primary_message(primary_button_message)
-                        .primary_icon(IconName::Settings)
-                        .primary_on_click_arc(primary_button_on_click)
+            show_app_notification(notification_id, cx, move |cx| {
+                let workspace_handle = cx.entity().downgrade();
+                let parsed_markdown = parsed_markdown.clone();
+                let primary_button_message = primary_button_message.clone();
+                let primary_button_on_click = primary_button_on_click.clone();
+                cx.new(move |cx| {
+                    MessageNotification::new_from_builder(cx, move |window, cx| {
+                        image_cache(retain_all("notification-cache"))
+                            .child(div().text_ui(cx).child(
+                                markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    window,
+                                    cx,
+                                ),
+                            ))
+                            .into_any()
                     })
-                },
-            )
+                    .primary_message(primary_button_message)
+                    .primary_icon(IconName::Settings)
+                    .primary_on_click_arc(primary_button_on_click)
+                })
+            })
         });
     })
     .detach();
@@ -2021,12 +2007,9 @@ fn open_local_file(
     } else {
         struct NoOpenFolders;
 
-        workspace.show_notification(
-            NotificationId::unique::<NoOpenFolders>(),
-            NotificationSource::Project,
-            cx,
-            |cx| cx.new(|cx| MessageNotification::new("This project has no folders open.", cx)),
-        )
+        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
+            cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
+        })
     }
 }
 
@@ -2201,7 +2184,6 @@ fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Cont
 
     workspace.show_notification(
         NotificationId::unique::<CaptureRecentAudioNotification>(),
-        NotificationSource::System,
         cx,
         |cx| cx.new(CaptureRecentAudioNotification::new),
     );
@@ -2381,7 +2363,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                path!("/root"),
+                "/root",
                 json!({
                     "a": {
                         "aa": null,
@@ -2409,10 +2391,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    PathBuf::from(path!("/root/a")),
-                    PathBuf::from(path!("/root/b")),
-                ],
+                &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2424,7 +2403,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/a"))],
+                &[PathBuf::from("/root/a")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2453,10 +2432,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[
-                    PathBuf::from(path!("/root/c")),
-                    PathBuf::from(path!("/root/d")),
-                ],
+                &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2472,7 +2448,7 @@ mod tests {
             .unwrap();
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/e"))],
+                &[PathBuf::from("/root/e")],
                 app_state,
                 workspace::OpenOptions {
                     replace_window: Some(window),
@@ -2495,7 +2471,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new(path!("/root/e")).into()]
+                    &[Path::new("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
@@ -5258,7 +5234,7 @@ mod tests {
 
             cx.update(|cx| {
                 let open_options = OpenOptions {
-                    wait: true,
+                    prefer_focused_window: true,
                     ..Default::default()
                 };
 

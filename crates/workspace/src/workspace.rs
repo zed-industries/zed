@@ -59,7 +59,6 @@ use itertools::Itertools;
 use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-pub use notifications::NotificationSource;
 use notifications::{
     DetachAndPromptErr, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
@@ -1127,7 +1126,7 @@ pub enum Event {
     ModalOpened,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum OpenVisible {
     All,
     None,
@@ -1357,7 +1356,6 @@ impl Workspace {
                     link,
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
-                    NotificationSource::Project,
                     cx,
                     |cx| {
                         let mut notification = MessageNotification::new(message.clone(), cx);
@@ -1380,7 +1378,6 @@ impl Workspace {
 
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(request.id),
-                        NotificationSource::Lsp,
                         cx,
                         |cx| {
                             cx.new(|cx| {
@@ -3133,7 +3130,6 @@ impl Workspace {
         if project.is_via_collab() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
-                NotificationSource::Collab,
                 cx,
             );
             return;
@@ -5875,7 +5871,7 @@ impl Workspace {
             }
         }
 
-        match self.workspace_location(cx) {
+        match self.serialize_workspace_location(cx) {
             WorkspaceLocation::Location(location, paths) => {
                 let breakpoints = self.project.update(cx, |project, cx| {
                     project
@@ -5947,7 +5943,7 @@ impl Workspace {
         self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
     }
 
-    fn workspace_location(&self, cx: &App) -> WorkspaceLocation {
+    fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         let paths = PathList::new(&self.root_paths(cx));
         if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
             WorkspaceLocation::Location(SerializedWorkspaceLocation::Remote(connection), paths)
@@ -5959,16 +5955,6 @@ impl Workspace {
             }
         } else {
             WorkspaceLocation::None
-        }
-    }
-
-    pub fn serialized_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
-        if let Some(connection) = self.project.read(cx).remote_connection_options(cx) {
-            Some(SerializedWorkspaceLocation::Remote(connection))
-        } else if self.project.read(cx).is_local() && self.has_any_items_open(cx) {
-            Some(SerializedWorkspaceLocation::Local)
-        } else {
-            None
         }
     }
 
@@ -7063,7 +7049,6 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
 
                 workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
-                    NotificationSource::Database,
                     cx,
                     |cx| {
                         cx.new(|cx| {
@@ -8183,60 +8168,24 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Works
     })
 }
 
-pub fn workspace_windows_for_location(
-    serialized_location: &SerializedWorkspaceLocation,
-    cx: &App,
-) -> Vec<WindowHandle<Workspace>> {
+pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
     cx.windows()
         .into_iter()
         .filter_map(|window| window.downcast::<Workspace>())
         .filter(|workspace| {
-            let same_host = |left: &RemoteConnectionOptions, right: &RemoteConnectionOptions| match (left, right) {
-                (RemoteConnectionOptions::Ssh(a), RemoteConnectionOptions::Ssh(b)) => {
-                    (&a.host, &a.username, &a.port) == (&b.host, &b.username, &b.port)
-                }
-                (RemoteConnectionOptions::Wsl(a), RemoteConnectionOptions::Wsl(b)) => {
-                    // The WSL username is not consistently populated in the workspace location, so ignore it for now.
-                    a.distro_name == b.distro_name
-                }
-                (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
-                    a.container_id == b.container_id
-                }
-                #[cfg(any(test, feature = "test-support"))]
-                (RemoteConnectionOptions::Mock(a), RemoteConnectionOptions::Mock(b)) => {
-                    a.id == b.id
-                }
-                _ => false,
-            };
-
             workspace
                 .read(cx)
-                .is_ok_and(|workspace| match workspace.workspace_location(cx) {
-                    WorkspaceLocation::Location(location, _) => {
-                        match (&location, serialized_location) {
-                            (
-                                SerializedWorkspaceLocation::Local,
-                                SerializedWorkspaceLocation::Local,
-                            ) => true,
-                            (
-                                SerializedWorkspaceLocation::Remote(a),
-                                SerializedWorkspaceLocation::Remote(b),
-                            ) => same_host(a, b),
-                            _ => false,
-                        }
-                    }
-                    _ => false,
-                })
+                .is_ok_and(|workspace| workspace.project.read(cx).is_local())
         })
         .collect()
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
-    pub wait: bool,
+    pub prefer_focused_window: bool,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
@@ -8318,84 +8267,6 @@ pub fn open_workspace_by_id(
     })
 }
 
-pub async fn find_existing_workspace(
-    abs_paths: &[PathBuf],
-    open_options: &OpenOptions,
-    location: &SerializedWorkspaceLocation,
-    cx: &mut AsyncApp,
-) -> (Option<WindowHandle<Workspace>>, OpenVisible) {
-    let mut existing = None;
-    let mut open_visible = OpenVisible::All;
-    let mut best_match = None;
-
-    if open_options.open_new_workspace != Some(true) {
-        cx.update(|cx| {
-            for window in workspace_windows_for_location(location, cx) {
-                if let Ok(workspace) = window.read(cx) {
-                    let project = workspace.project.read(cx);
-                    let m = project.visibility_for_paths(
-                        abs_paths,
-                        open_options.open_new_workspace == None,
-                        cx,
-                    );
-                    if m > best_match {
-                        existing = Some(window);
-                        best_match = m;
-                    } else if best_match.is_none() && open_options.open_new_workspace == Some(false)
-                    {
-                        existing = Some(window)
-                    }
-                }
-            }
-        });
-
-        let all_paths_are_files = existing
-            .and_then(|workspace| {
-                cx.update(|cx| {
-                    workspace
-                        .read(cx)
-                        .map(|workspace| {
-                            let project = workspace.project.read(cx);
-                            let path_style = workspace.path_style(cx);
-                            !abs_paths.iter().any(|path| {
-                                let path = util::paths::SanitizedPath::new(path);
-                                project.worktrees(cx).any(|worktree| {
-                                    let worktree = worktree.read(cx);
-                                    let abs_path = worktree.abs_path();
-                                    path_style
-                                        .strip_prefix(path.as_ref(), abs_path.as_ref())
-                                        .and_then(|rel| worktree.entry_for_path(&rel))
-                                        .is_some_and(|e| e.is_dir())
-                                })
-                            })
-                        })
-                        .ok()
-                })
-            })
-            .unwrap_or(false);
-
-        if open_options.open_new_workspace.is_none()
-            && existing.is_some()
-            && open_options.wait
-            && all_paths_are_files
-        {
-            cx.update(|cx| {
-                let windows = workspace_windows_for_location(location, cx);
-                let window = cx
-                    .active_window()
-                    .and_then(|window| window.downcast::<Workspace>())
-                    .filter(|window| windows.contains(window))
-                    .or_else(|| windows.into_iter().next());
-                if let Some(window) = window {
-                    existing = Some(window);
-                    open_visible = OpenVisible::None;
-                }
-            });
-        }
-    }
-    return (existing, open_visible);
-}
-
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -8409,17 +8280,16 @@ pub fn open_paths(
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
+    let mut existing = None;
+    let mut best_match = None;
+    let mut open_visible = OpenVisible::All;
     #[cfg(target_os = "windows")]
     let wsl_path = abs_paths
         .iter()
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        let (mut existing, mut open_visible) = find_existing_workspace(&abs_paths, &open_options, &SerializedWorkspaceLocation::Local, cx).await;
-
-        // Fallback: if no workspace contains the paths and all paths are files,
-        // prefer an existing local workspace window (active window first).
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
+        if open_options.open_new_workspace != Some(true) {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -8427,17 +8297,54 @@ pub fn open_paths(
                 .filter_map(|result| result.ok().flatten())
                 .collect::<Vec<_>>();
 
-            if all_metadatas.iter().all(|file| !file.is_dir) {
+            cx.update(|cx| {
+                for window in local_workspace_windows(cx) {
+                    if let Ok(workspace) = window.read(cx) {
+                        let m = workspace.project.read(cx).visibility_for_paths(
+                            &abs_paths,
+                            &all_metadatas,
+                            open_options.open_new_workspace == None,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some(window);
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.open_new_workspace == Some(false)
+                        {
+                            existing = Some(window)
+                        }
+                    }
+                }
+            });
+
+            if open_options.open_new_workspace.is_none()
+                && (existing.is_none() || open_options.prefer_focused_window)
+                && all_metadatas.iter().all(|file| !file.is_dir)
+            {
                 cx.update(|cx| {
-                    let windows = workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx);
-                    let window = cx
+                    if let Some(window) = cx
                         .active_window()
                         .and_then(|window| window.downcast::<Workspace>())
-                        .filter(|window| windows.contains(window))
-                        .or_else(|| windows.into_iter().next());
-                    if let Some(window) = window {
-                        existing = Some(window);
-                        open_visible = OpenVisible::None;
+                        && let Ok(workspace) = window.read(cx)
+                    {
+                        let project = workspace.project().read(cx);
+                        if project.is_local() && !project.is_via_collab() {
+                            existing = Some(window);
+                            open_visible = OpenVisible::None;
+                            return;
+                        }
+                    }
+                    for window in local_workspace_windows(cx) {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_via_collab() {
+                                continue;
+                            }
+                            existing = Some(window);
+                            open_visible = OpenVisible::None;
+                            break;
+                        }
                     }
                 });
             }
@@ -8463,7 +8370,7 @@ pub fn open_paths(
             _ = existing.update(cx, |workspace, _, cx| {
                 for item in open_task.iter().flatten() {
                     if let Err(e) = item {
-                        workspace.show_error(&e, NotificationSource::File, cx);
+                        workspace.show_error(&e, cx);
                     }
                 }
             });
@@ -8490,7 +8397,7 @@ pub fn open_paths(
             workspace
                 .update(cx, move |workspace, _window, cx| {
                     struct OpenInWsl;
-                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), NotificationSource::Remote, cx, move |cx| {
+                    workspace.show_notification(NotificationId::unique::<OpenInWsl>(), cx, move |cx| {
                         let display_path = util::markdown::MarkdownInlineCode(&path.to_string_lossy());
                         let msg = format!("{display_path} is inside a WSL filesystem, some features may not work unless you open it with WSL remote");
                         cx.new(move |cx| {
@@ -8752,14 +8659,10 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(
-                        &anyhow!("'{path}' does not exist"),
-                        NotificationSource::Remote,
-                        cx,
-                    )
+                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
                 }
             } else {
-                workspace.show_error(&error, NotificationSource::Remote, cx)
+                workspace.show_error(&error, cx)
             }
         }
     })?;

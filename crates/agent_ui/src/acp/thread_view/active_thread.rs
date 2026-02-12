@@ -630,7 +630,6 @@ impl AcpThreadView {
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
 
-                let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
                     let agent_name = self.agent_name.clone();
                     let server_view = self.server_view.clone();
@@ -639,7 +638,6 @@ impl AcpThreadView {
                             server_view.clone(),
                             AuthRequired::new(),
                             agent_name,
-                            connection,
                             window,
                             cx,
                         );
@@ -1441,7 +1439,6 @@ impl AcpThreadView {
                                     ));
                                 },
                             ),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });
@@ -1515,7 +1512,6 @@ impl AcpThreadView {
                                 "Thread synced with latest version",
                             )
                             .autohide(),
-                            NotificationSource::Agent,
                             cx,
                         );
                     });
@@ -6720,13 +6716,11 @@ impl AcpThreadView {
                             editor.set_message(message, window, cx);
                         });
                     }
-                    let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
                         AcpServerView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,
-                            connection,
                             window,
                             cx,
                         );

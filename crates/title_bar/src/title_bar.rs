@@ -866,7 +866,7 @@ impl TitleBar {
                         client
                             .sign_in_with_optional_connect(true, cx)
                             .await
-                            .notify_async_err(NotificationSource::Collab, cx);
+                            .notify_async_err(cx);
                     })
                     .detach();
             })

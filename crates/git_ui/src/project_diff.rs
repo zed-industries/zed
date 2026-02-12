@@ -44,7 +44,7 @@ use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
-    notifications::{NotificationSource, NotifyTaskExt},
+    notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
 use ztracing::instrument;
@@ -138,7 +138,7 @@ impl ProjectDiff {
                     .ok();
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(NotificationSource::Git, window, cx);
+            .detach_and_notify_err(window, cx);
     }
 
     pub fn deploy_at(

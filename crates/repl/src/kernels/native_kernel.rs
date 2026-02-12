@@ -220,7 +220,6 @@ impl NativeRunningKernel {
                                                         );
                                                     },
                                                 ),
-                                                workspace::notifications::NotificationSource::Repl,
                                                 cx,
                                             );
                                         })

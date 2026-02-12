@@ -10,10 +10,7 @@ use task::{
 };
 use ui::Window;
 
-use crate::{
-    Toast, Workspace,
-    notifications::{NotificationId, NotificationSource},
-};
+use crate::{Toast, Workspace, notifications::NotificationId};
 
 impl Workspace {
     pub fn schedule_task(
@@ -93,11 +90,7 @@ impl Workspace {
                         log::error!("Task spawn failed: {e:#}");
                         _ = w.update(cx, |w, cx| {
                             let id = NotificationId::unique::<ResolvedTask>();
-                            w.show_toast(
-                                Toast::new(id, format!("Task spawn failed: {e}")),
-                                NotificationSource::Task,
-                                cx,
-                            );
+                            w.show_toast(Toast::new(id, format!("Task spawn failed: {e}")), cx);
                         })
                     }
                     None => log::debug!("Task spawn got cancelled"),
