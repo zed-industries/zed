@@ -55,9 +55,15 @@ fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<Stri
         ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
             ("<|fim_middle|>current\n", "<|fim_suffix|>")
         }
-        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => (
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill => (
             zeta_prompt::v0120_git_merge_markers::START_MARKER,
             zeta_prompt::v0120_git_merge_markers::SEPARATOR,
+        ),
+        ZetaFormat::V0211SeedCoder => (
+            zeta_prompt::seed_coder::START_MARKER,
+            zeta_prompt::seed_coder::SEPARATOR,
         ),
     };
 
@@ -101,11 +107,14 @@ fn parse_zeta2_output(
     };
 
     let suffix = match format {
-        ZetaFormat::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
             zeta_prompt::v0131_git_merge_markers_prefix::END_MARKER
         }
         ZetaFormat::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
-        _ => "",
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion => "",
+        ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
     };
     if !suffix.is_empty() {
         new_text = new_text

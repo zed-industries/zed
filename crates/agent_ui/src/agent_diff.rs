@@ -1352,10 +1352,10 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped
-            | AcpThreadEvent::Error
-            | AcpThreadEvent::LoadError(_)
-            | AcpThreadEvent::Refusal => {
+            AcpThreadEvent::Stopped => {
+                self.update_reviewing_editors(workspace, window, cx);
+            }
+            AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
@@ -1726,6 +1726,7 @@ mod tests {
     use super::*;
     use crate::Keep;
     use acp_thread::AgentConnection as _;
+    use agent_settings::AgentSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1733,6 +1734,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, rc::Rc};
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
@@ -1769,8 +1771,9 @@ mod tests {
 
         let action_log = cx.read(|cx| thread.read(cx).action_log().clone());
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let agent_diff = cx.new_window_entity(|window, cx| {
             AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
@@ -1889,7 +1892,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
+    async fn test_single_file_review_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1897,6 +1900,14 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut agent_settings = store.get::<AgentSettings>(None).clone();
+                agent_settings.single_file_review = true;
+                store.override_global(agent_settings);
+            });
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1920,8 +1931,9 @@ mod tests {
             })
             .unwrap();
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Add the diff toolbar to the active pane
         let diff_toolbar = cx.new_window_entity(|_, cx| AgentDiffToolbar::new(cx));

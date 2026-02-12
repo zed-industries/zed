@@ -32,10 +32,12 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
 menu.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rope.workspace = true
 serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

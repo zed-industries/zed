@@ -1,3 +1,8 @@
+---
+title: AI Privacy and Security - Zed
+description: Zed's approach to AI privacy: opt-in data sharing by default, zero-data retention with providers, and full open-source transparency.
+---
+
 # Privacy and Security
 
 ## Philosophy
