@@ -214,10 +214,10 @@ pub fn clean_zeta2_model_output(output: &str, format: ZetaFormat) -> &str {
     }
 }
 
-fn resolve_cursor_region<'a>(
-    input: &'a ZetaPromptInput,
+fn resolve_cursor_region(
+    input: &ZetaPromptInput,
     format: ZetaFormat,
-) -> (&'a str, Range<usize>, usize) {
+) -> (&str, Range<usize>, usize) {
     let Some(ranges) = &input.excerpt_ranges else {
         return (
             &input.cursor_excerpt,
