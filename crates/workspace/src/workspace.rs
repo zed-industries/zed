@@ -140,7 +140,14 @@ pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
     WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport};
+use zed_actions::{
+    Spawn,
+    feedback::FileBugReport,
+    theme_mode::{
+        SetDarkGlobal, SetDarkWorkspace, SetLightGlobal, SetLightWorkspace, SetSystemGlobal,
+        SetSystemWorkspace,
+    },
+};
 
 use crate::{item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -6359,6 +6366,12 @@ impl Workspace {
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
+            .on_action(cx.listener(Self::set_theme_mode_light_workspace))
+            .on_action(cx.listener(Self::set_theme_mode_dark_workspace))
+            .on_action(cx.listener(Self::set_theme_mode_system_workspace))
+            .on_action(cx.listener(Self::set_theme_mode_light_global))
+            .on_action(cx.listener(Self::set_theme_mode_dark_global))
+            .on_action(cx.listener(Self::set_theme_mode_system_global))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -7000,6 +7013,115 @@ impl Workspace {
         update_settings_file(fs, cx, move |file, _| {
             file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
+    }
+
+    fn set_theme_mode_light_workspace(
+        &mut self,
+        _: &SetLightWorkspace,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(
+            theme::ThemeAppearanceMode::Light,
+            ThemeModeScope::Workspace,
+            cx,
+        );
+    }
+
+    fn set_theme_mode_dark_workspace(
+        &mut self,
+        _: &SetDarkWorkspace,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(
+            theme::ThemeAppearanceMode::Dark,
+            ThemeModeScope::Workspace,
+            cx,
+        );
+    }
+
+    fn set_theme_mode_system_workspace(
+        &mut self,
+        _: &SetSystemWorkspace,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(
+            theme::ThemeAppearanceMode::System,
+            ThemeModeScope::Workspace,
+            cx,
+        );
+    }
+
+    fn set_theme_mode_light_global(
+        &mut self,
+        _: &SetLightGlobal,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(
+            theme::ThemeAppearanceMode::Light,
+            ThemeModeScope::Global,
+            cx,
+        );
+    }
+
+    fn set_theme_mode_dark_global(
+        &mut self,
+        _: &SetDarkGlobal,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(theme::ThemeAppearanceMode::Dark, ThemeModeScope::Global, cx);
+    }
+
+    fn set_theme_mode_system_global(
+        &mut self,
+        _: &SetSystemGlobal,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_theme_mode(
+            theme::ThemeAppearanceMode::System,
+            ThemeModeScope::Global,
+            cx,
+        );
+    }
+
+    fn set_theme_mode(
+        &mut self,
+        mode: theme::ThemeAppearanceMode,
+        scope: ThemeModeScope,
+        cx: &mut Context<Self>,
+    ) {
+        if ThemeSettings::get_global(cx).theme.mode().is_none() {
+            let id = NotificationId::named("theme-mode-static-selection".into());
+            let message = match scope {
+                ThemeModeScope::Workspace => {
+                    "Theme mode can only be changed when this workspace uses dynamic theme selection."
+                }
+                ThemeModeScope::Global => {
+                    "Theme mode can only be changed when your global settings use dynamic theme selection."
+                }
+            };
+            self.show_toast(Toast::new(id, message).autohide(), cx);
+            return;
+        }
+
+        let fs = self.project().read(cx).fs().clone();
+        match scope {
+            ThemeModeScope::Workspace => {
+                update_settings_file(fs, cx, move |settings, _cx| {
+                    theme::set_mode(settings, mode);
+                });
+            }
+            ThemeModeScope::Global => {
+                settings::update_settings_file(fs, cx, move |settings, _cx| {
+                    theme::set_mode(settings, mode);
+                });
+            }
+        }
     }
 
     pub fn show_worktree_trust_security_modal(
