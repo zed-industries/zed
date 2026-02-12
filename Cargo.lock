@@ -17269,7 +17269,6 @@ dependencies = [
  "git_ui",
  "gpui",
  "http_client",
- "menu",
  "notifications",
  "platform_title_bar",
  "pretty_assertions",
