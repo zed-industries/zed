@@ -8,7 +8,7 @@ use crate::{
     },
     markdown_preview_view::MarkdownPreviewView,
 };
-use collections::HashMap;
+use collections::{HashMap, IndexSet};
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, Context, Div, Element, ElementId, Entity,
@@ -48,20 +48,20 @@ type MermaidDiagramCache = HashMap<ParsedMarkdownMermaidDiagramContents, CachedM
 #[derive(Default)]
 pub(crate) struct MermaidState {
     cache: MermaidDiagramCache,
-    order: Vec<ParsedMarkdownMermaidDiagramContents>,
+    order: IndexSet<ParsedMarkdownMermaidDiagramContents>,
 }
 
 impl MermaidState {
     fn get_fallback_image(
         idx: usize,
-        new_order: &[ParsedMarkdownMermaidDiagramContents],
-        old_order: &[ParsedMarkdownMermaidDiagramContents],
+        new_order: &IndexSet<ParsedMarkdownMermaidDiagramContents>,
+        old_order: &IndexSet<ParsedMarkdownMermaidDiagramContents>,
         cache: &MermaidDiagramCache,
     ) -> Option<Arc<RenderImage>> {
         old_order
-            .get(idx)
+            .get_index(idx)
             // Only use fallback if the old content no longer exists in the document.
-            .filter(|old_content| !new_order.contains(old_content))
+            .filter(|old_content| !new_order.contains(*old_content))
             .and_then(|old_content| cache.get(old_content))
             .and_then(|old_cached| {
                 old_cached
@@ -79,9 +79,8 @@ impl MermaidState {
         cx: &mut Context<MarkdownPreviewView>,
     ) {
         use crate::markdown_elements::ParsedMarkdownElement;
-        use std::collections::HashSet;
 
-        let new_order: Vec<_> = parsed
+        let new_order: IndexSet<_> = parsed
             .children
             .iter()
             .filter_map(|el| {
@@ -93,9 +92,7 @@ impl MermaidState {
             })
             .collect();
 
-        let mut referenced_keys = HashSet::new();
         for (idx, new_content) in new_order.iter().enumerate() {
-            referenced_keys.insert(new_content.clone());
             if !self.cache.contains_key(new_content) {
                 let fallback = Self::get_fallback_image(idx, &new_order, &self.order, &self.cache);
 
@@ -106,7 +103,7 @@ impl MermaidState {
             }
         }
 
-        self.cache.retain(|k, _| referenced_keys.contains(k));
+        self.cache.retain(|k, _| new_order.contains(k));
         self.order = new_order;
     }
 }
@@ -1286,16 +1283,20 @@ mod tests {
 
     #[test]
     fn test_mermaid_fallback_on_edit() {
-        let old_order = vec![
+        let old_order: IndexSet<_> = [
             mermaid_contents("graph A"),
             mermaid_contents("graph B"),
             mermaid_contents("graph C"),
-        ];
-        let new_order = vec![
+        ]
+        .into_iter()
+        .collect();
+        let new_order: IndexSet<_> = [
             mermaid_contents("graph A"),
             mermaid_contents("graph B modified"),
             mermaid_contents("graph C"),
-        ];
+        ]
+        .into_iter()
+        .collect();
 
         let svg_b = mock_render_image();
         let mut cache: MermaidDiagramCache = HashMap::default();
@@ -1326,12 +1327,16 @@ mod tests {
 
     #[test]
     fn test_mermaid_no_fallback_on_add_in_middle() {
-        let old_order = vec![mermaid_contents("graph A"), mermaid_contents("graph C")];
-        let new_order = vec![
+        let old_order: IndexSet<_> = [mermaid_contents("graph A"), mermaid_contents("graph C")]
+            .into_iter()
+            .collect();
+        let new_order: IndexSet<_> = [
             mermaid_contents("graph A"),
             mermaid_contents("graph NEW"),
             mermaid_contents("graph C"),
-        ];
+        ]
+        .into_iter()
+        .collect();
 
         let mut cache: MermaidDiagramCache = HashMap::default();
         cache.insert(
@@ -1353,16 +1358,20 @@ mod tests {
 
     #[test]
     fn test_mermaid_fallback_chains_on_rapid_edits() {
-        let old_order = vec![
+        let old_order: IndexSet<_> = [
             mermaid_contents("graph A"),
             mermaid_contents("graph B modified"),
             mermaid_contents("graph C"),
-        ];
-        let new_order = vec![
+        ]
+        .into_iter()
+        .collect();
+        let new_order: IndexSet<_> = [
             mermaid_contents("graph A"),
             mermaid_contents("graph B modified again"),
             mermaid_contents("graph C"),
-        ];
+        ]
+        .into_iter()
+        .collect();
 
         let original_svg = mock_render_image();
         let mut cache: MermaidDiagramCache = HashMap::default();
@@ -1394,8 +1403,10 @@ mod tests {
 
     #[test]
     fn test_mermaid_no_fallback_when_no_old_diagram_at_index() {
-        let old_order = vec![mermaid_contents("graph A")];
-        let new_order = vec![mermaid_contents("graph A"), mermaid_contents("graph B")];
+        let old_order: IndexSet<_> = [mermaid_contents("graph A")].into_iter().collect();
+        let new_order: IndexSet<_> = [mermaid_contents("graph A"), mermaid_contents("graph B")]
+            .into_iter()
+            .collect();
 
         let mut cache: MermaidDiagramCache = HashMap::default();
         cache.insert(
