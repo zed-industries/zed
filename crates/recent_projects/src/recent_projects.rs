@@ -17,7 +17,7 @@ use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Subscription, Task, WeakEntity, Window, actions, px,
+    Subscription, Task, WeakEntity, Window, actions, px,
 };
 
 use picker::{
@@ -31,7 +31,7 @@ use settings::{Settings, WorktreeId};
 use std::{path::Path, sync::Arc};
 use ui::{
     ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, render_modifiers,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -1022,6 +1022,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
             }
             ProjectPickerEntry::RecentProject(hit) => {
+                let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
                 let (_, location, paths) = self.workspaces.get(hit.candidate_id)?;
                 let tooltip_path: SharedString = paths
                     .ordered_paths()
@@ -1059,26 +1060,28 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let secondary_actions = h_flex()
                     .gap_px()
-                    .child(
-                        IconButton::new("open_new_window", IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
-                            .tooltip({
-                                move |_, cx| {
-                                    Tooltip::for_action_in(
-                                        "Open Project in New Window",
-                                        &menu::SecondaryConfirm,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                cx.stop_propagation();
-                                window.prevent_default();
-                                this.delegate.set_selected_index(ix, window, cx);
-                                this.delegate.confirm(true, window, cx);
-                            })),
-                    )
+                    .when(popover_style, |this| {
+                        this.child(
+                            IconButton::new("open_new_window", IconName::ArrowUpRight)
+                                .icon_size(IconSize::XSmall)
+                                .tooltip({
+                                    move |_, cx| {
+                                        Tooltip::for_action_in(
+                                            "Open Project in New Window",
+                                            &menu::SecondaryConfirm,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    cx.stop_propagation();
+                                    window.prevent_default();
+                                    this.delegate.set_selected_index(ix, window, cx);
+                                    this.delegate.confirm(true, window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         IconButton::new("delete", IconName::Close)
                             .icon_size(IconSize::Small)
@@ -1116,33 +1119,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     }
                                     highlighted.render(window, cx)
                                 })
-                                .tooltip(Tooltip::element({
-                                    move |_, cx| {
-                                        v_flex()
-                                            .child(
-                                                h_flex()
-                                                    .gap_0p5()
-                                                    .text_sm()
-                                                    .child("Hold")
-                                                    .child(h_flex().flex_shrink_0().children(
-                                                        render_modifiers(
-                                                            &Modifiers::secondary_key(),
-                                                            PlatformStyle::platform(),
-                                                            None,
-                                                            Some(TextSize::Default.rems(cx).into()),
-                                                            false,
-                                                        ),
-                                                    ))
-                                                    .child(div().child("to open in a new window")),
-                                            )
-                                            .child(
-                                                Label::new(tooltip_path.clone())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .into_any_element()
-                                    }
-                                })),
+                                .tooltip(Tooltip::text(tooltip_path)),
                         )
                         .map(|el| {
                             if self.selected_index == ix {
