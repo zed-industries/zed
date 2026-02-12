@@ -713,7 +713,7 @@ impl LocalLspStore {
                 env.extend(settings.env.unwrap_or_default());
 
                 Ok(LanguageServerBinary {
-                    path: delegate.resolve_executable_path(path),
+                    path: delegate.resolve_relative_path(path),
                     env: Some(env),
                     arguments: settings
                         .arguments
@@ -14069,8 +14069,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.worktree.abs_path().as_ref()
     }
 
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
-        self.worktree.resolve_executable_path(path)
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf {
+        self.worktree.resolve_relative_path(path)
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

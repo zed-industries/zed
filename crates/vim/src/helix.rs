@@ -874,7 +874,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::DeploySearch;
+    use workspace::{DeploySearch, MultiWorkspace};
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
 
@@ -1739,8 +1739,11 @@ mod test {
         .await;
 
         let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         cx.update(|cx| {
             VimTestContext::init_keybindings(true, cx);
@@ -1749,24 +1752,20 @@ mod test {
             })
         });
 
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        });
 
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view should be active")
-            })
-            .unwrap();
+        let search_view = workspace.update_in(cx, |workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view should be active")
+        });
 
         project_search::perform_project_search(&search_view, "File A", cx);
 

@@ -277,9 +277,17 @@ impl Session {
         let session_view = cx.entity();
 
         let kernel = match self.kernel_specification.clone() {
-            KernelSpecification::Jupyter(kernel_specification)
-            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+            KernelSpecification::Jupyter(kernel_specification) => NativeRunningKernel::new(
                 kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                session_view,
+                window,
+                cx,
+            ),
+            KernelSpecification::PythonEnv(env_specification) => NativeRunningKernel::new(
+                env_specification.as_local_spec(),
                 entity_id,
                 working_directory,
                 self.fs.clone(),

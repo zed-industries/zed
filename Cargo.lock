@@ -4942,6 +4942,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "theme",
  "ui",
  "util",
  "workspace",
@@ -8481,7 +8482,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
- "platform_title_bar",
  "project",
  "serde_json",
  "serde_json_lenient",
@@ -12371,6 +12371,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
+ "feature_flags",
  "gpui",
  "settings",
  "smallvec",
@@ -15362,6 +15363,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "sidebar"
+version = "0.1.0"
+dependencies = [
+ "acp_thread",
+ "agent_ui",
+ "db",
+ "editor",
+ "feature_flags",
+ "fs",
+ "fuzzy",
+ "gpui",
+ "picker",
+ "project",
+ "recent_projects",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17240,6 +17265,7 @@ dependencies = [
  "cloud_api_types",
  "collections",
  "db",
+ "feature_flags",
  "git_ui",
  "gpui",
  "http_client",
@@ -21127,6 +21153,7 @@ dependencies = [
  "settings_profile_selector",
  "settings_ui",
  "shellexpand 2.1.2",
+ "sidebar",
  "smol",
  "snippet_provider",
  "snippets_ui",
