@@ -9,8 +9,8 @@ use git_ui::commit_tooltip::CommitAvatar;
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, ParentElement,
-    PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, actions, anchored, deferred, point, px,
+    PathBuilder, Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -868,6 +868,12 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.table_interaction_state.update(cx, |state, cx| {
+            state
+                .scroll_handle
+                .scroll_to_item(idx, ScrollStrategy::Nearest);
+            cx.notify();
+        });
 
         let Some(commit) = self.graph_data.commits.get(idx) else {
             return;
