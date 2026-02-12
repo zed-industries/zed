@@ -12,6 +12,7 @@ use gpui::{
     PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
     WeakEntity, Window, actions, anchored, deferred, point, px,
 };
+use menu::{SelectNext, SelectPrevious};
 use project::{
     Project,
     git_store::{CommitDataState, GitStoreEvent, Repository, RepositoryEvent},
@@ -844,6 +845,22 @@ impl GitGraph {
             .collect()
     }
 
+    fn select_prev(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_sub(1), cx);
+        } else {
+            self.select_entry(0, cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_add(1), cx);
+        } else {
+            self.select_prev(&SelectPrevious, window, cx);
+        }
+    }
+
     fn select_entry(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.selected_entry_idx == Some(idx) {
             return;
@@ -1604,6 +1621,8 @@ impl Render for GitGraph {
             .bg(cx.theme().colors().editor_background)
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_next))
             .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
