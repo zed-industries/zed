@@ -1,3 +1,8 @@
+---
+title: Remote Development - Zed
+description: Edit code on remote servers with Zed. Local UI performance with remote language servers, terminals, and tasks over SSH.
+---
+
 # Remote Development
 
 Remote Development lets you edit code on a remote server while running Zed locally. The UI stays responsive because it runs on your machine, while language servers, tasks, and terminals run on the server.

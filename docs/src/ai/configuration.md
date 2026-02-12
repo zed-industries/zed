@@ -1,3 +1,8 @@
+---
+title: Configure AI in Zed - Providers, Models, and Settings
+description: Set up AI in Zed with hosted models, your own API keys, or external agents. Includes how to disable AI entirely.
+---
+
 # Configuration
 
 When using AI in Zed, you can configure multiple dimensions:

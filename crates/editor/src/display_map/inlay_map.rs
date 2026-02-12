@@ -938,6 +938,51 @@ impl InlaySnapshot {
         self.inlay_point_cursor().map(point)
     }
 
+    /// Converts a buffer offset range into one or more `InlayOffset` ranges that
+    /// cover only the actual buffer text, skipping any inlay hint text that falls
+    /// within the range. When there are no inlays the returned vec contains a
+    /// single element identical to the input mapped into inlay-offset space.
+    pub fn buffer_offset_to_inlay_ranges(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> impl Iterator<Item = Range<InlayOffset>> {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
+        cursor.seek(&range.start, Bias::Right);
+
+        std::iter::from_fn(move || {
+            loop {
+                match cursor.item()? {
+                    Transform::Isomorphic(_) => {
+                        let seg_buffer_start = cursor.start().0;
+                        let seg_buffer_end = cursor.end().0;
+                        let seg_inlay_start = cursor.start().1;
+
+                        let overlap_start = cmp::max(range.start, seg_buffer_start);
+                        let overlap_end = cmp::min(range.end, seg_buffer_end);
+
+                        let past_end = seg_buffer_end >= range.end;
+                        cursor.next();
+
+                        if overlap_start < overlap_end {
+                            let inlay_start =
+                                InlayOffset(seg_inlay_start.0 + (overlap_start - seg_buffer_start));
+                            let inlay_end =
+                                InlayOffset(seg_inlay_start.0 + (overlap_end - seg_buffer_start));
+                            return Some(inlay_start..inlay_end);
+                        }
+
+                        if past_end {
+                            return None;
+                        }
+                    }
+                    Transform::Inlay(_) => cursor.next(),
+                }
+            }
+        })
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn inlay_point_cursor(&self) -> InlayPointCursor<'_> {
         let cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
