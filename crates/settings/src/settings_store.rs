@@ -794,6 +794,17 @@ impl SettingsStore {
         edits
     }
 
+    /// Mutates the default settings in place and recomputes all setting values.
+    pub fn update_default_settings(
+        &mut self,
+        cx: &mut App,
+        update: impl FnOnce(&mut SettingsContent),
+    ) {
+        let default_settings = Rc::make_mut(&mut self.default_settings);
+        update(default_settings);
+        self.recompute_values(None, cx);
+    }
+
     /// Sets the default settings via a JSON string.
     ///
     /// The string should contain a JSON object with a default value for every setting.

@@ -3,12 +3,13 @@ use crate::{
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
+    resolve_active_repository,
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
+    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -123,6 +124,7 @@ impl ProjectDiff {
             return;
         }
         let workspace = cx.entity();
+        let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
                 let this = cx
@@ -137,7 +139,7 @@ impl ProjectDiff {
                     .ok();
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(workspace_weak, window, cx);
     }
 
     pub fn deploy_at(
@@ -154,6 +156,8 @@ impl ProjectDiff {
                 "Action"
             }
         );
+        let intended_repo = resolve_active_repository(workspace, cx);
+
         let existing = workspace
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
@@ -177,6 +181,23 @@ impl ProjectDiff {
             );
             project_diff
         };
+
+        if let Some(intended) = &intended_repo {
+            let needs_switch = project_diff
+                .read(cx)
+                .branch_diff
+                .read(cx)
+                .repo()
+                .map_or(true, |current| current.read(cx).id != intended.read(cx).id);
+            if needs_switch {
+                project_diff.update(cx, |project_diff, cx| {
+                    project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                        branch_diff.set_repo(Some(intended.clone()), cx);
+                    });
+                });
+            }
+        }
+
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
@@ -280,7 +301,8 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
-            let diff_display_editor = SplittableEditor::new_unsplit(
+            let diff_display_editor = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -429,7 +451,7 @@ impl ProjectDiff {
     }
 
     pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
-        let editor = self.editor.read(cx).last_selected_editor().read(cx);
+        let editor = self.editor.read(cx).focused_editor().read(cx);
         let position = editor.selections.newest_anchor().head();
         let multi_buffer = editor.buffer().read(cx);
         let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
@@ -874,9 +896,8 @@ impl Item for ProjectDiff {
         Some("Project Diff Opened")
     }
 
-    fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        // TODO(split-diff) SplitEditor should be searchable
-        Some(Box::new(self.editor.read(cx).rhs_editor().clone()))
+    fn as_searchable(&self, _: &Entity<Self>, _cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
@@ -1823,13 +1844,15 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
     use unindent::Unindent as _;
     use util::{
         path,
         rel_path::{RelPath, rel_path},
     };
+
+    use workspace::MultiWorkspace;
 
     use super::*;
 
@@ -1842,6 +1865,11 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
@@ -1873,8 +1901,9 @@ mod tests {
             &[("foo.txt", "foo\n".into())],
         );
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -1921,8 +1950,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -1991,8 +2021,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("foo", "original\n".into())],
@@ -2121,8 +2152,9 @@ mod tests {
         );
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
 
@@ -2235,8 +2267,9 @@ mod tests {
         );
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
 
@@ -2290,8 +2323,9 @@ mod tests {
             )],
         );
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2370,8 +2404,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2486,8 +2521,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx
             .update(|window, cx| {
                 ProjectDiff::new_with_default_branch(project.clone(), workspace, window, cx)
@@ -2583,8 +2619,9 @@ mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
         let _editor = workspace
@@ -2619,5 +2656,94 @@ mod tests {
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
         cx.assert_excerpts_with_selections("[EXCERPT]\nˇ# My cool project\nDetails to come.\n");
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_respects_worktree_override(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project_a"),
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project_b"),
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_a/.git")),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_b/.git")),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/project_a")),
+                Path::new(path!("/project_b")),
+            ],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|w| w.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        // Select project A via the dropdown override and open the diff.
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_a_id), cx);
+        });
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let paths_a = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert_eq!(paths_a.len(), 1);
+        assert_eq!(*paths_a[0], *"a.txt");
+
+        // Switch the override to project B and re-run the diff action.
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_override(Some(worktree_b_id), cx);
+        });
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let same_diff_item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        assert_eq!(diff_item.entity_id(), same_diff_item.entity_id());
+
+        let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
+        assert_eq!(paths_b.len(), 1);
+        assert_eq!(*paths_b[0], *"b.txt");
     }
 }

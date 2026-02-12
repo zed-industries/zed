@@ -9,13 +9,14 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+use super::edit_file_tool::{
+    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
 };
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
 /// Saves files that have unsaved changes.
 ///
@@ -41,9 +42,7 @@ impl AgentTool for SaveFileTool {
     type Input = SaveFileToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "save_file"
-    }
+    const NAME: &'static str = "save_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
@@ -68,53 +67,56 @@ impl AgentTool for SaveFileTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let mut needs_confirmation = false;
+        let mut confirmation_paths: Vec<String> = Vec::new();
 
         for path in &input.paths {
             let path_str = path.to_string_lossy();
-            let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
+            let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
             match decision {
-                ToolPermissionDecision::Allow => {}
+                ToolPermissionDecision::Allow => {
+                    if is_sensitive_settings_path(Path::new(&*path_str)) {
+                        confirmation_paths.push(path_str.to_string());
+                    }
+                }
                 ToolPermissionDecision::Deny(reason) => {
                     return Task::ready(Err(anyhow::anyhow!("{}", reason)));
                 }
                 ToolPermissionDecision::Confirm => {
-                    needs_confirmation = true;
+                    confirmation_paths.push(path_str.to_string());
                 }
             }
         }
 
-        let authorize = if needs_confirmation {
-            let title = if input.paths.len() == 1 {
-                format!(
-                    "Save {}",
-                    MarkdownInlineCode(&input.paths[0].to_string_lossy())
-                )
+        let authorize = if !confirmation_paths.is_empty() {
+            let title = if confirmation_paths.len() == 1 {
+                format!("Save {}", MarkdownInlineCode(&confirmation_paths[0]))
             } else {
-                let paths: Vec<_> = input
-                    .paths
+                let paths: Vec<_> = confirmation_paths
                     .iter()
                     .take(3)
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| p.as_str())
                     .collect();
-                if input.paths.len() > 3 {
+                if confirmation_paths.len() > 3 {
                     format!(
                         "Save {}, and {} more",
                         paths.join(", "),
-                        input.paths.len() - 3
+                        confirmation_paths.len() - 3
                     )
                 } else {
                     format!("Save {}", paths.join(", "))
                 }
             };
-            let first_path = input
-                .paths
-                .first()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
+            let sensitive_kind = confirmation_paths
+                .iter()
+                .find_map(|p| sensitive_settings_kind(Path::new(p)));
+            let title = match sensitive_kind {
+                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                None => title,
+            };
             let context = crate::ToolPermissionContext {
-                tool_name: "save_file".to_string(),
-                input_value: first_path,
+                tool_name: Self::NAME.to_string(),
+                input_values: confirmation_paths.clone(),
             };
             Some(event_stream.authorize(title, context, cx))
         } else {
@@ -131,11 +133,10 @@ impl AgentTool for SaveFileTool {
 
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
-            let mut saved_paths: Vec<PathBuf> = Vec::new();
+            let mut dirty_count: usize = 0;
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
-            let dirty_check_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
@@ -168,7 +169,7 @@ impl AgentTool for SaveFileTool {
 
                 if is_dirty {
                     buffers_to_save.insert(buffer);
-                    saved_paths.push(path);
+                    dirty_count += 1;
                 } else {
                     clean_paths.push(path);
                 }
@@ -200,8 +201,9 @@ impl AgentTool for SaveFileTool {
 
             let mut lines: Vec<String> = Vec::new();
 
-            if !saved_paths.is_empty() {
-                lines.push(format!("Saved {} file(s).", saved_paths.len()));
+            let successful_saves = dirty_count.saturating_sub(save_errors.len());
+            if successful_saves > 0 {
+                lines.push(format!("Saved {} file(s).", successful_saves));
             }
             if !clean_paths.is_empty() {
                 lines.push(format!("{} clean.", clean_paths.len()));
@@ -216,15 +218,6 @@ impl AgentTool for SaveFileTool {
             if !open_errors.is_empty() {
                 lines.push(format!("Open failed ({}):", open_errors.len()));
                 for (path, error) in &open_errors {
-                    lines.push(format!("- {}: {}", path.display(), error));
-                }
-            }
-            if !dirty_check_errors.is_empty() {
-                lines.push(format!(
-                    "Dirty check failed ({}):",
-                    dirty_check_errors.len()
-                ));
-                for (path, error) in &dirty_check_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
@@ -261,7 +254,7 @@ mod tests {
         });
         cx.update(|cx| {
             let mut settings = AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
     }

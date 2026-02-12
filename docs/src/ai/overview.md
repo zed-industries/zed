@@ -1,3 +1,8 @@
+---
+title: AI Code Editor Documentation - Zed
+description: Docs for AI in Zed, the open-source AI code editor. Agentic coding, inline edits, AI code completion, and multi-model support.
+---
+
 # AI
 
 Zed integrates AI throughout the editor: agentic coding, inline transformations, edit prediction, and direct model conversations.
@@ -19,6 +24,8 @@ Zed integrates AI throughout the editor: agentic coding, inline transformations,
 - [Rules](./rules.md): Define specific instructions for AI behavior.
 
 - [Tools](./tools.md): The built-in capabilities agents use: file operations, terminal commands, web search.
+
+- [Tool Permissions](./tool-permissions.md): Configure granular permission rules for agent tool actions.
 
 - [Model Context Protocol](./mcp.md): Extend agents with custom tools via MCP servers.
 

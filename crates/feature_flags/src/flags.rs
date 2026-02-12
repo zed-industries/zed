@@ -16,22 +16,16 @@ pub struct AgentV2FeatureFlag;
 
 impl FeatureFlag for AgentV2FeatureFlag {
     const NAME: &'static str = "agent-v2";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
 }
 
 pub struct AcpBetaFeatureFlag;
 
 impl FeatureFlag for AcpBetaFeatureFlag {
     const NAME: &'static str = "acp-beta";
-}
-
-pub struct ToolPermissionsFeatureFlag;
-
-impl FeatureFlag for ToolPermissionsFeatureFlag {
-    const NAME: &'static str = "tool-permissions";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 
 pub struct AgentSharingFeatureFlag;
@@ -60,11 +54,12 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 
-/// Controls whether we show the new thinking toggle in the Agent Panel when using models through the Zed provider (Cloud).
-pub struct CloudThinkingToggleFeatureFlag;
+/// Controls whether we show the new thinking and effort level controls in the Agent Panel when using applicable models
+/// through the Zed provider (Cloud).
+pub struct CloudThinkingEffortFeatureFlag;
 
-impl FeatureFlag for CloudThinkingToggleFeatureFlag {
-    const NAME: &'static str = "cloud-thinking-toggle";
+impl FeatureFlag for CloudThinkingEffortFeatureFlag {
+    const NAME: &'static str = "cloud-thinking-effort";
 
     fn enabled_for_staff() -> bool {
         false

@@ -9,9 +9,10 @@ use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
     EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, ParentElement,
-    PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, actions, anchored, deferred, point, px,
+    PathBuilder, Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
+use menu::{SelectNext, SelectPrevious};
 use project::{
     Project,
     git_store::{CommitDataState, GitStoreEvent, Repository, RepositoryEvent},
@@ -859,6 +860,22 @@ impl GitGraph {
             .collect()
     }
 
+    fn select_prev(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_sub(1), cx);
+        } else {
+            self.select_entry(0, cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_add(1), cx);
+        } else {
+            self.select_prev(&SelectPrevious, window, cx);
+        }
+    }
+
     fn select_entry(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.selected_entry_idx == Some(idx) {
             return;
@@ -866,6 +883,12 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.table_interaction_state.update(cx, |state, cx| {
+            state
+                .scroll_handle
+                .scroll_to_item(idx, ScrollStrategy::Nearest);
+            cx.notify();
+        });
 
         let Some(commit) = self.graph_data.commits.get(idx) else {
             return;
@@ -1663,6 +1686,8 @@ impl Render for GitGraph {
             .on_action(cx.listener(|this, _: &OpenCommitView, window, cx| {
                 this.open_selected_commit_view(window, cx);
             }))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_next))
             .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(

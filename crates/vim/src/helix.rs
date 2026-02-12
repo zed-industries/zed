@@ -714,7 +714,11 @@ impl Vim {
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
-                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+                let extra_line = if first_char == Some('\n') && selection.is_empty() {
+                    1
+                } else {
+                    0
+                };
 
                 let end_row = current_end_row + count as u32 + extra_line;
 
@@ -870,7 +874,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::DeploySearch;
+    use workspace::{DeploySearch, MultiWorkspace};
 
     use crate::{VimAddon, state::Mode, test::VimTestContext};
 
@@ -1335,7 +1339,9 @@ mod test {
             line one
             ˇ
             line three
-            line four"},
+            line four
+            line five
+            line six"},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("x");
@@ -1344,7 +1350,22 @@ mod test {
             line one
             «
             line three
-            ˇ»line four"},
+            ˇ»line four
+            line five
+            line six"},
+            Mode::HelixNormal,
+        );
+
+        // Another x should only select the next line
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five
+            line six"},
             Mode::HelixNormal,
         );
 
@@ -1718,8 +1739,11 @@ mod test {
         .await;
 
         let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         cx.update(|cx| {
             VimTestContext::init_keybindings(true, cx);
@@ -1728,24 +1752,20 @@ mod test {
             })
         });
 
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+        });
 
-        let search_view = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ProjectSearchView>())
-                    .expect("Project search view should be active")
-            })
-            .unwrap();
+        let search_view = workspace.update_in(cx, |workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .find_map(|item| item.downcast::<ProjectSearchView>())
+                .expect("Project search view should be active")
+        });
 
         project_search::perform_project_search(&search_view, "File A", cx);
 

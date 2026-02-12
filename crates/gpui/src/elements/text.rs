@@ -84,6 +84,14 @@ impl IntoElement for String {
     }
 }
 
+impl IntoElement for Cow<'static, str> {
+    type Element = SharedString;
+
+    fn into_element(self) -> Self::Element {
+        self.into()
+    }
+}
+
 impl Element for SharedString {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
@@ -922,5 +930,19 @@ impl IntoElement for InteractiveText {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_into_element_for() {
+        use crate::{ParentElement as _, SharedString, div};
+        use std::borrow::Cow;
+
+        let _ = div().child("static str");
+        let _ = div().child("String".to_string());
+        let _ = div().child(Cow::Borrowed("Cow"));
+        let _ = div().child(SharedString::from("SharedString"));
     }
 }

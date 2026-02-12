@@ -335,7 +335,8 @@ impl Search {
                     assert!(num_cpus > 0);
                     _executor
                         .scoped(|scope| {
-                            for _ in 0..num_cpus - 1 {
+                            let worker_count = (num_cpus - 1).max(1);
+                            for _ in 0..worker_count {
                                 let worker = Worker {
                                     query: query.clone(),
                                     open_buffers: open_buffers.clone(),

@@ -86,9 +86,7 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name() -> &'static str {
-        "find_path"
-    }
+    const NAME: &'static str = "find_path";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Search

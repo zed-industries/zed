@@ -93,8 +93,17 @@
 type: (primitive_type) @type.builtin
 (sized_type_specifier) @type.builtin
 
+; GNU __attribute__
+(attribute_specifier) @attribute
+(attribute_specifier
+  (argument_list
+    (identifier) @attribute))
+
+; C++11 [[attributes]]
 (attribute
-    name: (identifier) @attribute)
+  prefix: (identifier) @attribute)
+(attribute
+  name: (identifier) @attribute)
 
 ((identifier) @constant.builtin
  (#match? @constant.builtin "^_*[A-Z][A-Z\\d_]*$"))
@@ -177,7 +186,7 @@ type: (primitive_type) @type.builtin
   "#ifndef"
   "#include"
   (preproc_directive)
-] @keyword.directive
+] @preproc
 
 (comment) @comment
 

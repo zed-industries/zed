@@ -1274,10 +1274,11 @@ impl GitPanel {
                 })
                 .ok()?;
 
+            let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, mut cx| {
                 let item = open_task
                     .await
-                    .notify_async_err(&mut cx)
+                    .notify_workspace_async_err(workspace, &mut cx)
                     .ok_or_else(|| anyhow::anyhow!("Failed to open file"))?;
                 if let Some(active_editor) = item.downcast::<Editor>() {
                     if let Some(diff_task) =
@@ -2695,13 +2696,14 @@ impl GitPanel {
                         role: Role::User,
                         content: vec![content.into()],
                         cache: false,
-            reasoning_details: None,
+                        reasoning_details: None,
                     }],
                     tools: Vec::new(),
                     tool_choice: None,
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
+                    thinking_effort: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);
@@ -6284,6 +6286,8 @@ mod tests {
     use util::path;
     use util::rel_path::rel_path;
 
+    use workspace::MultiWorkspace;
+
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
@@ -6330,9 +6334,12 @@ mod tests {
 
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -6349,7 +6356,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
@@ -6451,9 +6458,12 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -6470,7 +6480,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
@@ -6643,9 +6653,12 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -6662,7 +6675,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
@@ -6854,11 +6867,14 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         // Test: User has commit message, enables amend (saves message), then disables (restores message)
         panel.update(cx, |panel, cx| {
@@ -6923,16 +6939,19 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
         // Wait for the project scanning to finish so that `head_commit(cx)` is
         // actually set, otherwise no head commit would be available from which
         // to fetch the latest commit message from.
         cx.executor().run_until_parked();
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
         panel.read_with(cx, |panel, cx| {
             assert!(panel.active_repository.is_some());
             assert!(panel.head_commit(cx).is_some());
@@ -7009,10 +7028,13 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         // Enable the `sort_by_path` setting and wait for entries to be updated,
         // as there should no longer be separators between Tracked and Untracked
@@ -7038,7 +7060,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let _ = workspace.update(cx, |workspace, _window, cx| {
+        workspace.update_in(cx, |workspace, _window, cx| {
             let active_path = workspace
                 .item_of_type::<ProjectDiff>(cx)
                 .expect("ProjectDiff should exist")
@@ -7082,9 +7104,12 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
         cx.read(|cx| {
             project
@@ -7109,7 +7134,7 @@ mod tests {
             });
         });
 
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
@@ -7268,10 +7293,13 @@ mod tests {
         );
 
         let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, GitPanel::new).unwrap();
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
