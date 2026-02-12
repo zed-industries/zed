@@ -208,6 +208,10 @@ pub struct Dock {
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
+    /// When the window is too narrow, dock panels are visually clamped to this
+    /// size without persisting it, so the panel restores its original width when
+    /// the window grows back.
+    clamped_size: Option<Pixels>,
 }
 
 impl Focusable for Dock {
@@ -303,6 +307,7 @@ impl Dock {
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
+                clamped_size: None,
             }
         });
 
@@ -720,12 +725,7 @@ impl Dock {
     }
 
     pub fn active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
-        if self.is_open {
-            self.active_panel_entry()
-                .map(|entry| entry.panel.size(window, cx))
-        } else {
-            None
-        }
+        self.active_display_size(window, cx)
     }
 
     pub fn resize_active_panel(
@@ -734,9 +734,10 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // User-initiated resize: clear any visual clamp and persist normally.
+        self.clamped_size = None;
         if let Some(entry) = self.active_panel_entry() {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-
             entry.panel.set_size(size, window, cx);
             cx.notify();
         }
@@ -748,6 +749,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clamped_size = None;
         for entry in &mut self.panel_entries {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
             entry.panel.set_size(size, window, cx);
@@ -770,13 +772,37 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &mut Window, cx: &mut App) {
-        let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
-        for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
-            if panel.size(window, cx) > max_size {
-                panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), window, cx);
+    pub fn clamp_panel_size(
+        &mut self,
+        max_size: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max_size = (max_size - RESIZE_HANDLE_SIZE).max(Pixels::ZERO);
+        if let Some(entry) = self.active_panel_entry() {
+            let panel_size = entry.panel.size(window, cx);
+            if panel_size > max_size {
+                // Store a visual-only clamp; don't persist via set_size so the
+                // panel restores its original width when the window grows back.
+                self.clamped_size = Some(max_size.max(RESIZE_HANDLE_SIZE));
+            } else {
+                // Panel fits — clear any visual clamp.
+                self.clamped_size = None;
             }
         }
+        cx.notify();
+    }
+
+    /// The size the dock should actually render at, taking the visual clamp
+    /// into account.  Falls back to the panel's stored/preferred size.
+    pub fn active_display_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        if !self.is_open {
+            return None;
+        }
+        let panel_size = self
+            .active_panel_entry()
+            .map(|e| e.panel.size(window, cx))?;
+        Some(self.clamped_size.map_or(panel_size, |c| c.min(panel_size)))
     }
 }
 
@@ -784,7 +810,8 @@ impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
-            let size = entry.panel.size(window, cx);
+            let panel_size = entry.panel.size(window, cx);
+            let display_size = self.clamped_size.map_or(panel_size, |c| c.min(panel_size));
 
             let position = self.position;
             let create_resize_handle = || {
@@ -854,8 +881,8 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(size).h_full().flex_row(),
-                    Axis::Vertical => this.h(size).w_full().flex_col(),
+                    Axis::Horizontal => this.w(display_size).h_full().flex_row(),
+                    Axis::Vertical => this.h(display_size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
@@ -863,17 +890,12 @@ impl Render for Dock {
                     DockPosition::Bottom => this.border_t_1(),
                 })
                 .child(
-                    div()
-                        .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(size).h_full(),
-                            Axis::Vertical => this.min_h(size).w_full(),
-                        })
-                        .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
-                        ),
+                    div().size_full().child(
+                        entry
+                            .panel
+                            .to_any()
+                            .cached(StyleRefinement::default().v_flex().size_full()),
+                    ),
                 )
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())

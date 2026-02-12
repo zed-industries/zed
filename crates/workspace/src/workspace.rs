@@ -7354,9 +7354,33 @@ impl Render for Workspace {
                                                 this.bounds = bounds;
 
                                                 if bounds_changed {
+                                                    // Minimum space reserved for the center
+                                                    // editor pane so dock panels shrink before
+                                                    // they start getting clipped.
+                                                    let min_center = px(80.);
+                                                    let total_w = bounds.size.width;
+
+                                                    let left_size = this
+                                                        .left_dock
+                                                        .read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(Pixels::ZERO);
+                                                    let right_size = this
+                                                        .right_dock
+                                                        .read(cx)
+                                                        .active_panel_size(window, cx)
+                                                        .unwrap_or(Pixels::ZERO);
+
+                                                    let max_for_left =
+                                                        (total_w - right_size - min_center)
+                                                            .max(Pixels::ZERO);
+                                                    let max_for_right =
+                                                        (total_w - left_size - min_center)
+                                                            .max(Pixels::ZERO);
+
                                                     this.left_dock.update(cx, |dock, cx| {
                                                         dock.clamp_panel_size(
-                                                            bounds.size.width,
+                                                            max_for_left,
                                                             window,
                                                             cx,
                                                         )
@@ -7364,7 +7388,7 @@ impl Render for Workspace {
 
                                                     this.right_dock.update(cx, |dock, cx| {
                                                         dock.clamp_panel_size(
-                                                            bounds.size.width,
+                                                            max_for_right,
                                                             window,
                                                             cx,
                                                         )
@@ -12721,6 +12745,62 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dock_panel_clamp_does_not_persist(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Set up a right-dock panel with a 400px preferred size.
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let right_dock = workspace.right_dock().clone();
+            right_dock.update(cx, |dock, cx| {
+                dock.resize_active_panel(Some(px(400.)), window, cx);
+            });
+
+            // The stored panel size and display size should both be 400.
+            assert_eq!(panel.read(cx).size, px(400.));
+            assert_eq!(
+                right_dock.read(cx).active_panel_size(window, cx).unwrap(),
+                px(400.)
+            );
+
+            // Simulate the window becoming narrow: clamp the dock to 200px.
+            right_dock.update(cx, |dock, cx| {
+                dock.clamp_panel_size(px(200.), window, cx);
+            });
+
+            // The display size should now be clamped.
+            let display = right_dock.read(cx).active_panel_size(window, cx).unwrap();
+            assert!(display < px(400.), "display size should be clamped");
+
+            // The panel's *stored* size must remain untouched.
+            assert_eq!(
+                panel.read(cx).size,
+                px(400.),
+                "stored panel size must not change from clamping"
+            );
+
+            // Simulate the window growing back: clamp with a generous max.
+            right_dock.update(cx, |dock, cx| {
+                dock.clamp_panel_size(px(1000.), window, cx);
+            });
+
+            // Display size should restore to the original 400px.
+            assert_eq!(
+                right_dock.read(cx).active_panel_size(window, cx).unwrap(),
+                px(400.),
+                "display size should restore after window grows back"
+            );
         });
     }
 
