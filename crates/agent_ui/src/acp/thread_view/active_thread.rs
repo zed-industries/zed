@@ -1164,6 +1164,10 @@ impl AcpThreadView {
             EditorEvent::BufferEdited => {
                 let new_title = title_editor.read(cx).text(cx);
                 thread.update(cx, |thread, cx| {
+                    // Only mark as manually overridden if the title actually changed.
+                    if new_title != thread.title().as_ref() {
+                        thread.set_title_manually_overridden(true);
+                    }
                     thread
                         .set_title(new_title.into(), cx)
                         .detach_and_log_err(cx);

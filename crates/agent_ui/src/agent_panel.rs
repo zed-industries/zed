@@ -2077,6 +2077,13 @@ impl AgentPanel {
 
     fn handle_regenerate_thread_title(thread_view: Entity<AcpServerView>, cx: &mut App) {
         thread_view.update(cx, |thread_view, cx| {
+            // Reset the flag on the model so the new auto-generated title can be applied
+            if let Some(active_thread_view) = thread_view.active_thread() {
+                let acp_thread = active_thread_view.read(cx).thread.clone();
+                acp_thread.update(cx, |acp_thread, _cx| {
+                    acp_thread.set_title_manually_overridden(false);
+                });
+            }
             if let Some(thread) = thread_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
                     thread.generate_title(cx);

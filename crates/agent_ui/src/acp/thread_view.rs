@@ -755,7 +755,11 @@ impl AcpServerView {
             .detach();
         }
 
-        let title_editor = if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
+        // Only create title editors for non-subagent threads.
+        let is_subagent = parent_id.is_some();
+        let title_editor = if !is_subagent
+            && thread.update(cx, |thread, cx| thread.can_set_title(cx))
+        {
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_text(thread.read(cx).title(), window, cx);
@@ -1180,16 +1184,22 @@ impl AcpServerView {
                 self.set_server_state(ServerState::LoadError(error.clone()), cx);
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = thread.read(cx).title();
-                if let Some(title_editor) = self
-                    .thread_view(&thread_id)
-                    .and_then(|active| active.read(cx).title_editor.clone())
-                {
-                    title_editor.update(cx, |editor, cx| {
-                        if editor.text(cx) != title {
-                            editor.set_text(title, window, cx);
+                if !is_subagent {
+                    let title = thread.read(cx).title();
+                    let title_manually_overridden = thread.read(cx).title_manually_overridden();
+
+                    if !title_manually_overridden {
+                        if let Some(active_thread) = self.thread_view(&thread_id) {
+                            if let Some(title_editor) = active_thread.read(cx).title_editor.clone()
+                            {
+                                title_editor.update(cx, |editor, cx| {
+                                    if editor.text(cx) != title {
+                                        editor.set_text(title, window, cx);
+                                    }
+                                });
+                            }
                         }
-                    });
+                    }
                 }
                 self.history.update(cx, |history, cx| history.refresh(cx));
             }
