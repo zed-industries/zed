@@ -3,8 +3,8 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ToolPermissionDecision,
-    WebSearchTool, decide_permission_from_settings,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -627,14 +627,14 @@ pub struct NewTerminal {
 #[derive(Debug, Clone)]
 pub struct ToolPermissionContext {
     pub tool_name: String,
-    pub input_value: String,
+    pub input_values: Vec<String>,
 }
 
 impl ToolPermissionContext {
-    pub fn new(tool_name: impl Into<String>, input_value: impl Into<String>) -> Self {
+    pub fn new(tool_name: impl Into<String>, input_values: Vec<String>) -> Self {
         Self {
             tool_name: tool_name.into(),
-            input_value: input_value.into(),
+            input_values,
         }
     }
 
@@ -667,7 +667,7 @@ impl ToolPermissionContext {
         use util::shell::ShellKind;
 
         let tool_name = &self.tool_name;
-        let input_value = &self.input_value;
+        let input_values = &self.input_values;
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
@@ -677,35 +677,50 @@ impl ToolPermissionContext {
             true
         };
 
-        let (pattern, pattern_display) = if tool_name == TerminalTool::NAME {
-            (
-                extract_terminal_pattern(input_value),
-                extract_terminal_pattern_display(input_value),
-            )
-        } else if tool_name == CopyPathTool::NAME || tool_name == MovePathTool::NAME {
-            // input_value is "source\ndestination"; extract a pattern from the
-            // common parent directory of both paths so that "always allow" covers
-            // future checks against both the source and the destination.
-            (
-                extract_copy_move_pattern(input_value),
-                extract_copy_move_pattern_display(input_value),
-            )
-        } else if tool_name == EditFileTool::NAME
-            || tool_name == DeletePathTool::NAME
-            || tool_name == CreateDirectoryTool::NAME
-            || tool_name == SaveFileTool::NAME
-        {
-            (
-                extract_path_pattern(input_value),
-                extract_path_pattern_display(input_value),
-            )
-        } else if tool_name == FetchTool::NAME {
-            (
-                extract_url_pattern(input_value),
-                extract_url_pattern_display(input_value),
-            )
-        } else {
-            (None, None)
+        let extract_for_value = |value: &str| -> (Option<String>, Option<String>) {
+            if tool_name == TerminalTool::NAME {
+                (
+                    extract_terminal_pattern(value),
+                    extract_terminal_pattern_display(value),
+                )
+            } else if tool_name == CopyPathTool::NAME
+                || tool_name == MovePathTool::NAME
+                || tool_name == EditFileTool::NAME
+                || tool_name == DeletePathTool::NAME
+                || tool_name == CreateDirectoryTool::NAME
+                || tool_name == SaveFileTool::NAME
+            {
+                (
+                    extract_path_pattern(value),
+                    extract_path_pattern_display(value),
+                )
+            } else if tool_name == FetchTool::NAME {
+                (
+                    extract_url_pattern(value),
+                    extract_url_pattern_display(value),
+                )
+            } else {
+                (None, None)
+            }
+        };
+
+        // Extract patterns from all input values. Only offer a pattern-specific
+        // "always allow/deny" button when every value produces the same pattern.
+        let (pattern, pattern_display) = match input_values.as_slice() {
+            [single] => extract_for_value(single),
+            _ => {
+                let mut iter = input_values.iter().map(|v| extract_for_value(v));
+                match iter.next() {
+                    Some(first) => {
+                        if iter.all(|pair| pair.0 == first.0) {
+                            first
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                }
+            }
         };
 
         let mut choices = Vec::new();
@@ -1328,7 +1343,6 @@ impl Thread {
             TerminalTool::new(self.project.clone(), environment.clone()),
             allowed_tool_names.as_ref(),
         );
-        self.add_tool(ThinkingTool, allowed_tool_names.as_ref());
         self.add_tool(WebSearchTool, allowed_tool_names.as_ref());
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
@@ -3090,10 +3104,10 @@ impl ToolCallEventStream {
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
     ///
     /// Unlike built-in tools, third-party tools don't support pattern-based permissions.
-    /// They only support `default_mode` (allow/deny/confirm) per tool.
+    /// They only support `default` (allow/deny/confirm) per tool.
     ///
     /// Uses the dropdown authorization flow with two granularities:
-    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default_mode = "allow"` or "deny"
+    /// - "Always for <display_name> MCP tool" → sets `tools.<tool_id>.default = "allow"` or "deny"
     /// - "Only this time" → allow/deny once
     pub fn authorize_third_party_tool(
         &self,
@@ -3104,7 +3118,7 @@ impl ToolCallEventStream {
     ) -> Task<Result<()>> {
         let settings = agent_settings::AgentSettings::get_global(cx);
 
-        let decision = decide_permission_from_settings(&tool_id, "", &settings);
+        let decision = decide_permission_from_settings(&tool_id, &[String::new()], &settings);
 
         match decision {
             ToolPermissionDecision::Allow => return Task::ready(Ok(())),
@@ -3176,7 +3190,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3189,7 +3203,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool_id, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool_id, ToolPermissionMode::Deny);
                         });
                     });
                 }
@@ -3249,7 +3263,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Allow);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Allow);
                         });
                     });
                 }
@@ -3265,7 +3279,7 @@ impl ToolCallEventStream {
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_tool_default_mode(&tool, ToolPermissionMode::Deny);
+                                .set_tool_default_permission(&tool, ToolPermissionMode::Deny);
                         });
                     });
                 }

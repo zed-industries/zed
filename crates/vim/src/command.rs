@@ -318,7 +318,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         }
     });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -327,7 +327,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -346,7 +346,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -398,7 +398,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                 if action.filename.is_empty() {
                     if whole_buffer {
-                        if let Some(workspace) = vim.workspace(window) {
+                        if let Some(workspace) = vim.workspace(window, cx) {
                             workspace.update(cx, |workspace, cx| {
                                 workspace
                                     .save_active_item(
@@ -472,7 +472,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         if action.filename.is_empty() {
-            if let Some(workspace) = vim.workspace(window) {
+            if let Some(workspace) = vim.workspace(window, cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .save_active_item(
@@ -549,7 +549,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &VimSplit, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 
@@ -647,7 +647,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, action: &VimEdit, window, cx| {
         vim.update_editor(cx, |vim, editor, cx| {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             let Some(project) = editor.project().cloned() else {
@@ -814,7 +814,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             }
         };
 
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
@@ -855,7 +855,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -888,7 +888,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             anyhow::Ok(())
         });
         if let Some(e @ Err(_)) = result {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             workspace.update(cx, |workspace, cx| {
@@ -932,7 +932,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2132,7 +2132,7 @@ impl OnMatchingLines {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2149,7 +2149,7 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2347,7 +2347,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2396,7 +2396,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2448,7 +2448,7 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 

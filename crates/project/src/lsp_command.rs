@@ -1706,7 +1706,7 @@ impl LspCommand for GetDocumentSymbols {
             return Ok(Vec::new());
         };
 
-        let symbols: Vec<_> = match lsp_symbols {
+        let symbols = match lsp_symbols {
             lsp::DocumentSymbolResponse::Flat(symbol_information) => symbol_information
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {

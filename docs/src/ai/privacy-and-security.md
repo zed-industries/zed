@@ -1,3 +1,8 @@
+---
+title: AI Privacy and Security - Zed
+description: Zed's approach to AI privacy: opt-in data sharing by default, zero-data retention with providers, and full open-source transparency.
+---
+
 # Privacy and Security
 
 ## Philosophy
@@ -11,6 +16,8 @@ As an open-source product, we believe in maximal transparency, and invite you to
 Zed, including AI features, works without sharing data with us and without authentication.
 
 ## Documentation
+
+- [Tool Permissions](./tool-permissions.md): Configure granular rules to control which agent actions are auto-approved, blocked, or require confirmation.
 
 - [Worktree trust](../worktree-trust.md): How Zed opens files and directories in restricted mode.
 

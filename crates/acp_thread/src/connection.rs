@@ -477,6 +477,11 @@ impl PermissionOptions {
         self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
             .map(|option| option.option_id.clone())
     }
+
+    pub fn deny_once_option_id(&self) -> Option<acp::PermissionOptionId> {
+        self.first_option_of_kind(acp::PermissionOptionKind::RejectOnce)
+            .map(|option| option.option_id.clone())
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -689,7 +694,6 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
-                                        false,
                                         cx,
                                     )
                                 })??
