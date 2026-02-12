@@ -14,7 +14,6 @@ path = "src/edit_prediction_context.rs"
 [dependencies]
 anyhow.workspace = true
 clock.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true

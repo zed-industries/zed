@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
+use gpui::{HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::IntoGpui;
 pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
@@ -63,8 +64,8 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                         .background_color
                         .as_ref()
                         .and_then(|color| try_parse_color(color).ok()),
-                    font_style: style.font_style.map(FontStyle::from),
-                    font_weight: style.font_weight.map(FontWeight::from),
+                    font_style: style.font_style.map(|s| s.into_gpui()),
+                    font_weight: style.font_weight.map(|w| w.into_gpui()),
                     ..Default::default()
                 },
             )

@@ -38,3 +38,7 @@ slow-timeout = { period = "300s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter = 'package(vim) and (test(test_command_read) or test(test_capital_f_and_capital_t) or test(test_f_and_t) or test(test_change_paragraph_object) or test(test_change_surrounding_character_objects) or test(test_change_word_object) or test(test_delete_paragraph_object) or test(test_delete_surrounding_character_objects) or test(test_delete_word_object))'
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+[[profile.default.overrides]]
+filter =  'package(editor) and test(test_random_split_editor)'
+slow-timeout = { period = "300s", terminate-after = 1 }

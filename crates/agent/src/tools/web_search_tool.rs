@@ -46,9 +46,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    fn name() -> &'static str {
-        "web_search"
-    }
+    const NAME: &'static str = "web_search";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
@@ -74,17 +72,28 @@ impl AgentTool for WebSearchTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &input.query, settings);
+        let decision = decide_permission_from_settings(
+            Self::NAME,
+            std::slice::from_ref(&input.query),
+            settings,
+        );
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
             ToolPermissionDecision::Deny(reason) => {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
-            ToolPermissionDecision::Confirm => Some(event_stream.authorize(
-                format!("Search the web for {}", MarkdownInlineCode(&input.query)),
-                cx,
-            )),
+            ToolPermissionDecision::Confirm => {
+                let context = crate::ToolPermissionContext {
+                    tool_name: Self::NAME.to_string(),
+                    input_values: vec![input.query.clone()],
+                };
+                Some(event_stream.authorize(
+                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    context,
+                    cx,
+                ))
+            }
         };
 
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {

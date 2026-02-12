@@ -16,12 +16,8 @@ use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 #[derive(Clone)]
 pub struct Codex;
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-
-    crate::common_e2e_tests!(async |_, _| Codex, allow_option_id = "proceed_once");
-}
+const CODEX_API_KEY_VAR_NAME: &str = "CODEX_API_KEY";
+const OPEN_AI_API_KEY_VAR_NAME: &str = "OPEN_AI_API_KEY";
 
 impl AgentServer for Codex {
     fn name(&self) -> SharedString {
@@ -217,7 +213,7 @@ impl AgentServer for Codex {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
-        let extra_env = load_proxy_env(cx);
+        let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
@@ -228,6 +224,12 @@ impl AgentServer for Codex {
                 .map(|s| s.default_config_options.clone())
                 .unwrap_or_default()
         });
+        if let Ok(api_key) = std::env::var(CODEX_API_KEY_VAR_NAME) {
+            extra_env.insert(CODEX_API_KEY_VAR_NAME.into(), api_key);
+        }
+        if let Ok(api_key) = std::env::var(OPEN_AI_API_KEY_VAR_NAME) {
+            extra_env.insert(OPEN_AI_API_KEY_VAR_NAME.into(), api_key);
+        }
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -263,4 +265,11 @@ impl AgentServer for Codex {
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    crate::common_e2e_tests!(async |_, _| Codex, allow_option_id = "proceed_once");
 }

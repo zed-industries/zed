@@ -1140,7 +1140,7 @@ float4 over(float4 below, float4 above) {
 GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
-  if (tag == 0 || tag == 2) {
+  if (tag == 0 || tag == 2 || tag == 3) {
     out.solid = hsla_to_rgba(solid);
   } else if (tag == 1) {
     out.color0 = hsla_to_rgba(color0);
@@ -1232,6 +1232,19 @@ float4 fill_color(Background background,
         color = solid_color;
         color.a *= saturate(0.5 - distance);
         break;
+    }
+    case 3: {
+        // checkerboard
+        float size = background.gradient_angle_or_pattern_height;
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+        
+        float x_index = floor(relative_position.x / size);
+        float y_index = floor(relative_position.y / size);
+        float should_be_colored = fmod(x_index + y_index, 2.0);
+        
+        color = solid_color;
+        color.a *= saturate(should_be_colored);
+        break; 
     }
   }
 

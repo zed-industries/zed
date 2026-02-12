@@ -757,7 +757,7 @@ impl Item for BufferDiagnosticsEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -904,7 +904,7 @@ impl Render for BufferDiagnosticsEditor {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(Tooltip::text("Open File"))
                                 .on_click(cx.listener(|buffer_diagnostics, _, window, cx| {
-                                    if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    if let Some(workspace) = Workspace::for_window(window, cx) {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_path(

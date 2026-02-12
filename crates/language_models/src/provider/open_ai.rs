@@ -310,6 +310,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FiveNano
             | Model::FivePointOne
             | Model::FivePointTwo
+            | Model::FivePointTwoCodex
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -327,6 +328,10 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -412,7 +417,14 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.trim().is_empty() {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -534,13 +546,13 @@ pub fn into_open_ai_response(
         thread_id,
         prompt_id: _,
         intent: _,
-        mode: _,
         messages,
         tools,
         tool_choice,
         stop: _,
         temperature,
         thinking_allowed: _,
+        thinking_effort: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -778,8 +790,18 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
             if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                if !content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -1163,8 +1185,8 @@ pub fn count_open_ai_tokens(
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1 and 5.2 don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne | Model::FivePointTwo => {
+            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
                 tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
             }
         }
@@ -1402,7 +1424,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
@@ -1414,6 +1435,7 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1509,7 +1531,6 @@ mod tests {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -1551,6 +1572,7 @@ mod tests {
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
+            thinking_effort: None,
         };
 
         let response = into_open_ai_response(

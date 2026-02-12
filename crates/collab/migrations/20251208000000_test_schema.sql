@@ -503,7 +503,8 @@ CREATE TABLE public.worktree_settings_files (
     worktree_id bigint NOT NULL,
     path character varying NOT NULL,
     content text NOT NULL,
-    kind character varying
+    kind character varying,
+    outside_worktree boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE public.worktrees (

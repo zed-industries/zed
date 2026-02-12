@@ -182,6 +182,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
+                                remote: false,
                                 command,
                             },
                         )
@@ -209,6 +210,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
+                        remote: false,
                         settings,
                     },
                 ))
@@ -404,6 +406,7 @@ impl ConfigureContextServerModal {
                 ContextServerSettings::Stdio {
                     enabled: _,
                     command,
+                    ..
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
@@ -413,6 +416,7 @@ impl ConfigureContextServerModal {
                     url,
                     headers,
                     timeout: _,
+                    ..
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
@@ -876,32 +880,32 @@ fn wait_for_context_server(
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
-    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
-        project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-            match status {
-                ContextServerStatus::Running => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Ok(()));
-                    }
+    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| {
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Running => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Ok(()));
                 }
-                ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err("Context server stopped running".into()));
-                    }
-                }
-                ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err(error.clone()));
-                    }
-                }
-                _ => {}
             }
+            ContextServerStatus::Stopped => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Err("Context server stopped running".into()));
+                }
+            }
+            ContextServerStatus::Error(error) => {
+                if server_id == &context_server_id
+                    && let Some(tx) = tx.lock().unwrap().take()
+                {
+                    let _ = tx.send(Err(error.clone()));
+                }
+            }
+            _ => {}
         }
     });
 

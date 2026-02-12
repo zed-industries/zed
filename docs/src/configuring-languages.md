@@ -1,26 +1,18 @@
+---
+title: Language Server and Tree-sitter Config - Zed
+description: Configure language support in Zed with Tree-sitter for syntax highlighting and LSP for diagnostics, completion, and formatting.
+---
+
 # Configuring Supported Languages
 
-Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
+Zed's language support is built on two technologies:
 
-Zed's language support is built on two main technologies:
+1. **Tree-sitter** handles syntax highlighting and structure-based features like the outline panel.
+2. **Language Server Protocol (LSP)** provides semantic features: code completion, diagnostics, go-to-definition, and refactoring.
 
-1. Tree-sitter: This handles syntax highlighting and structure-based features like the outline panel.
-2. Language Server Protocol (LSP): This provides semantic features such as code completion and diagnostics.
+This page covers language-specific settings, file associations, language server configuration, formatting, linting, and syntax highlighting.
 
-These components work together to provide Zed's language capabilities.
-
-In this guide, we'll cover:
-
-- Language-specific settings
-- File associations
-- Working with language servers
-- Formatting and linting configuration
-- Customizing syntax highlighting and themes
-- Advanced language features
-
-By the end of this guide, you should know how to configure and customize supported languages in Zed.
-
-For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
+For a list of supported languages, see [Supported Languages](./languages.md). To add support for new languages, see [Language Extensions](./extensions/languages.md).
 
 ## Language-specific Settings
 
@@ -49,16 +41,16 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
-- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
-- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
-- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
-- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
-- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
-- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
-- [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
-- [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
-- [`colorize_brackets`](./configuring-zed.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
+- [`tab_size`](./reference/all-settings.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./reference/all-settings.md#formatter): The tool used for code formatting
+- [`format_on_save`](./reference/all-settings.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./reference/all-settings.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./reference/all-settings.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./reference/all-settings.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./reference/all-settings.md#soft-wrap): How to wrap long lines of code
+- [`show_completions_on_input`](./reference/all-settings.md#show-completions-on-input): Whether or not to show completions as you type
+- [`show_completion_documentation`](./reference/all-settings.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`colorize_brackets`](./reference/all-settings.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -66,7 +58,7 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./reference/all-settings.md#file-types) setting in your `settings.json`:
 
 ```json [settings]
 "file_types": {
@@ -266,7 +258,7 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
+Zed supports both built-in and external formatters. See [`formatter`](./reference/all-settings.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
 ```json [settings]
 "languages": {
@@ -408,6 +400,22 @@ Zed supports theme extensions. Browse and install theme extensions from the Exte
 To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 
 ## Using Language Server Features
+
+### Semantic Tokens
+
+Semantic tokens provide richer syntax highlighting by using type and scope information from language servers. Enable them with the `semantic_tokens` setting:
+
+```json [settings]
+"semantic_tokens": "combined"
+```
+
+- `"off"` — Tree-sitter highlighting only (default)
+- `"combined"` — LSP semantic tokens overlaid on tree-sitter
+- `"full"` — LSP semantic tokens replace tree-sitter entirely
+
+You can customize token colors and styles through `global_lsp_settings.semantic_token_rules` in your settings.
+
+→ [Semantic Tokens documentation](./semantic-tokens.md)
 
 ### Inlay Hints
 

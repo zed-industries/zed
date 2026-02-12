@@ -268,7 +268,7 @@ async fn update_diff_buffer(
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
                 Some(Arc::from(base_text.as_str())),
-                true,
+                Some(true),
                 language.clone(),
                 cx,
             )
@@ -369,7 +369,7 @@ impl Item for TextDiffView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -450,6 +450,7 @@ mod tests {
     use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -675,8 +676,9 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer(file_path, cx))

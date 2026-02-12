@@ -10,7 +10,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/remote_server.rs"
+path = "src/server.rs"
 doctest = false
 
 [[bin]]
@@ -38,7 +38,7 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 git2 = { workspace = true, features = ["vendored-libgit2"] }
-gpui.workspace = true
+gpui = { workspace = true, features = ["windows-manifest"] }
 gpui_tokio.workspace = true
 http_client.workspace = true
 image.workspace = true
@@ -48,6 +48,7 @@ language_extension.workspace = true
 languages.workspace = true
 log.workspace = true
 lsp.workspace = true
+net.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
@@ -76,6 +77,9 @@ crash-handler.workspace = true
 fork.workspace = true
 libc.workspace = true
 minidumper.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true

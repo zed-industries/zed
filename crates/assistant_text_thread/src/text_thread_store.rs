@@ -1,6 +1,6 @@
 use crate::{
     SavedTextThread, SavedTextThreadMetadata, TextThread, TextThreadEvent, TextThreadId,
-    TextThreadOperation, TextThreadVersion,
+    TextThreadOperation, TextThreadVersion, context_server_command,
 };
 use anyhow::{Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
@@ -383,7 +383,6 @@ impl TextThreadStore {
         let context = cx.new(|cx| {
             TextThread::local(
                 self.languages.clone(),
-                Some(self.project.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
                 cx,
@@ -405,7 +404,6 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
 
         let prompt_builder = self.prompt_builder.clone();
         let slash_commands = self.slash_commands.clone();
@@ -422,7 +420,6 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });
@@ -459,7 +456,6 @@ impl TextThreadStore {
 
         let fs = self.fs.clone();
         let languages = self.languages.clone();
-        let project = self.project.clone();
         let load = cx.background_spawn({
             let path = path.clone();
             async move {
@@ -479,7 +475,6 @@ impl TextThreadStore {
                     languages,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });
@@ -598,7 +593,6 @@ impl TextThreadStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
-        let project = self.project.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
             context_id: text_thread_id.to_proto(),
@@ -616,7 +610,6 @@ impl TextThreadStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
-                    Some(project),
                     cx,
                 )
             });
@@ -895,29 +888,27 @@ impl TextThreadStore {
     fn handle_context_server_event(
         &mut self,
         context_server_store: Entity<ContextServerStore>,
-        event: &project::context_server_store::Event,
+        event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-                match status {
-                    ContextServerStatus::Running => {
-                        self.load_context_server_slash_commands(
-                            server_id.clone(),
-                            context_server_store,
-                            cx,
-                        );
-                    }
-                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        if let Some(slash_command_ids) =
-                            self.context_server_slash_command_ids.remove(server_id)
-                        {
-                            self.slash_commands.remove(&slash_command_ids);
-                        }
-                    }
-                    _ => {}
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Running => {
+                self.load_context_server_slash_commands(
+                    server_id.clone(),
+                    context_server_store,
+                    cx,
+                );
+            }
+            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                if let Some(slash_command_ids) =
+                    self.context_server_slash_command_ids.remove(server_id)
+                {
+                    self.slash_commands.remove(&slash_command_ids);
                 }
             }
+            _ => {}
         }
     }
 
@@ -945,11 +936,11 @@ impl TextThreadStore {
                 let slash_command_ids = response
                     .prompts
                     .into_iter()
-                    .filter(assistant_slash_commands::acceptable_prompt)
+                    .filter(context_server_command::acceptable_prompt)
                     .map(|prompt| {
                         log::info!("registering context server command: {:?}", prompt.name);
                         slash_command_working_set.insert(Arc::new(
-                            assistant_slash_commands::ContextServerSlashCommand::new(
+                            context_server_command::ContextServerSlashCommand::new(
                                 context_server_store.clone(),
                                 server.id(),
                                 prompt,

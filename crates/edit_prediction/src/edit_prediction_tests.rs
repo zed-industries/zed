@@ -6,20 +6,19 @@ use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsBody, PredictEditsResponse,
     RejectEditPredictionsBody,
-    predict_edits_v3::{
-        RawCompletionChoice, RawCompletionRequest, RawCompletionResponse, RawCompletionUsage,
-    },
+    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
     AsyncReadExt, StreamExt,
     channel::{mpsc, oneshot},
 };
+use gpui::App;
 use gpui::{
     Entity, TestAppContext,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::Point;
+use language::{Buffer, Point};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -72,7 +71,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r"
                 --- a/root/1.txt
                 +++ b/root/1.txt
@@ -94,8 +93,8 @@ async fn test_current_state(cx: &mut TestAppContext) {
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
     });
 
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project);
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
 
     // Prediction for diagnostic in another file
@@ -129,7 +128,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/2.txt
                 +++ b/root/2.txt
@@ -213,7 +212,7 @@ async fn test_simple_request(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! { r"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -290,7 +289,7 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
     respond_tx
         .send(model_response(
-            request,
+            &request,
             indoc! {r#"
                 --- a/root/foo.md
                 +++ b/root/foo.md
@@ -622,8 +621,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let response = model_response(request, "");
-    let id = response.id.clone();
+    let response = model_response(&request, "");
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -682,8 +681,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         buffer.set_text("Hello!\nHow are you?\nBye", cx);
     });
 
-    let response = model_response(request, SIMPLE_DIFF);
-    let id = response.id.clone();
+    let response = model_response(&request, SIMPLE_DIFF);
+    let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
     cx.run_until_parked();
@@ -747,8 +746,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -770,8 +769,8 @@ async fn test_replace_current(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -829,8 +828,8 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let first_response = model_response(request, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_tx.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -854,7 +853,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     // worse than current prediction
     let second_response = model_response(
-        request,
+        &request,
         indoc! { r"
             --- a/root/foo.md
             +++ b/root/foo.md
@@ -865,7 +864,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
              Bye
         "},
     );
-    let second_id = second_response.id.clone();
+    let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -935,8 +934,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // second responds first
-    let second_response = model_response(request, SIMPLE_DIFF);
-    let second_id = second_response.id.clone();
+    let second_response = model_response(&request, SIMPLE_DIFF);
+    let second_id = second_response.request_id.clone();
     respond_second.send(second_response).unwrap();
 
     cx.run_until_parked();
@@ -953,8 +952,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         );
     });
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -1046,8 +1045,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 
     let (request3, respond_third) = requests.predict.next().await.unwrap();
 
-    let first_response = model_response(request1, SIMPLE_DIFF);
-    let first_id = first_response.id.clone();
+    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
     cx.run_until_parked();
@@ -1064,8 +1063,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let cancelled_response = model_response(request2, SIMPLE_DIFF);
-    let cancelled_id = cancelled_response.id.clone();
+    let cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    let cancelled_id = cancelled_response.request_id.clone();
     respond_second.send(cancelled_response).unwrap();
 
     cx.run_until_parked();
@@ -1082,8 +1081,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let third_response = model_response(request3, SIMPLE_DIFF);
-    let third_response_id = third_response.id.clone();
+    let third_response = model_response(&request3, SIMPLE_DIFF);
+    let third_response_id = third_response.request_id.clone();
     respond_third.send(third_response).unwrap();
 
     cx.run_until_parked();
@@ -1126,16 +1125,18 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("test-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            cx,
         );
     });
 
@@ -1165,12 +1166,13 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     );
 
     // Reaching batch size limit sends without debounce
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         for i in 0..70 {
             ep_store.reject_prediction(
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                cx,
             );
         }
     });
@@ -1196,11 +1198,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     assert_eq!(reject_request.rejections[19].request_id, "batch-69");
 
     // Request failure
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-1".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 
@@ -1214,11 +1217,12 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
     drop(_respond_tx);
 
     // Add another rejection
-    ep_store.update(cx, |ep_store, _cx| {
+    ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_prediction(
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            cx,
         );
     });
 
@@ -1327,50 +1331,26 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
 // }
 
 // Generate a model response that would apply the given diff to the active file.
-fn model_response(request: RawCompletionRequest, diff_to_apply: &str) -> RawCompletionResponse {
-    let prompt = &request.prompt;
+fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> PredictEditsV3Response {
+    let excerpt =
+        request.input.cursor_excerpt[request.input.editable_range_in_excerpt.clone()].to_string();
+    let new_excerpt = apply_diff_to_string(diff_to_apply, &excerpt).unwrap();
 
-    let current_marker = "<|fim_middle|>current\n";
-    let updated_marker = "<|fim_middle|>updated\n";
-    let suffix_marker = "<|fim_suffix|>\n";
-    let cursor = "<|user_cursor|>";
-
-    let start_ix = current_marker.len() + prompt.find(current_marker).unwrap();
-    let end_ix = start_ix + &prompt[start_ix..].find(updated_marker).unwrap();
-    let excerpt = prompt[start_ix..end_ix].replace(cursor, "");
-    // In v0113_ordered format, the excerpt contains <|fim_suffix|> and suffix content.
-    // Strip that out to get just the editable region.
-    let excerpt = if let Some(suffix_pos) = excerpt.find(suffix_marker) {
-        &excerpt[..suffix_pos]
-    } else {
-        &excerpt
-    };
-    let new_excerpt = apply_diff_to_string(diff_to_apply, excerpt).unwrap();
-
-    RawCompletionResponse {
-        id: Uuid::new_v4().to_string(),
-        object: "text_completion".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![RawCompletionChoice {
-            text: new_excerpt,
-            finish_reason: None,
-        }],
-        usage: RawCompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: new_excerpt,
     }
 }
 
-fn prompt_from_request(request: &RawCompletionRequest) -> &str {
-    &request.prompt
+fn prompt_from_request(request: &PredictEditsV3Request) -> String {
+    zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
 }
 
 struct RequestChannels {
-    predict:
-        mpsc::UnboundedReceiver<(RawCompletionRequest, oneshot::Sender<RawCompletionResponse>)>,
+    predict: mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
 }
 
@@ -1397,10 +1377,11 @@ fn init_test_with_fake_client(
                             "token": "test"
                         }))
                         .unwrap(),
-                        "/predict_edits/raw" => {
+                        "/predict_edits/v3" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
-                            let req = serde_json::from_slice(&buf).unwrap();
+                            let decompressed = zstd::decode_all(&buf[..]).unwrap();
+                            let req = serde_json::from_slice(&decompressed).unwrap();
 
                             let (res_tx, res_rx) = oneshot::channel();
                             predict_req_tx.unbounded_send((req, res_tx)).unwrap();
@@ -1458,6 +1439,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
 
     let prediction = EditPrediction {
         edits,
+        cursor_position: None,
         edit_preview,
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
@@ -1469,6 +1451,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             cursor_excerpt: "".into(),
             editable_range_in_excerpt: 0..0,
             cursor_offset_in_excerpt: 0,
+            excerpt_start_row: None,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),
@@ -1677,20 +1660,9 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
 
     // Model returns output WITH a trailing newline, even though the buffer doesn't have one.
     // Zeta2 should normalize both sides before diffing, so no spurious newline is inserted.
-    let response = RawCompletionResponse {
-        id: Uuid::new_v4().to_string(),
-        object: "text_completion".into(),
-        created: 0,
-        model: "model".into(),
-        choices: vec![RawCompletionChoice {
-            text: "hello world\n".to_string(),
-            finish_reason: None,
-        }],
-        usage: RawCompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+    let response = PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: "hello world\n".to_string(),
     };
     respond_tx.send(response).unwrap();
 
@@ -2102,6 +2074,20 @@ async fn make_test_ep_store(
                             )
                             .unwrap())
                     }
+                    (&Method::POST, "/predict_edits/v3") => {
+                        next_request_id += 1;
+                        Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(
+                                serde_json::to_string(&PredictEditsV3Response {
+                                    request_id: format!("request-{next_request_id}"),
+                                    output: "hello world".to_string(),
+                                })
+                                .unwrap()
+                                .into(),
+                            )
+                            .unwrap())
+                    }
                     _ => Ok(http_client::Response::builder()
                         .status(404)
                         .body("Not Found".into())
@@ -2226,116 +2212,6 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
     assert!(
         result.is_err(),
         "Without authentication and without custom URL, prediction should fail"
-    );
-}
-
-#[gpui::test]
-async fn test_unauthenticated_with_custom_url_allows_prediction_impl(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/project",
-        serde_json::json!({
-            "main.rs": "fn main() {\n    \n}\n"
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-
-    let predict_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let predict_called_clone = predict_called.clone();
-
-    let http_client = FakeHttpClient::create({
-        move |req| {
-            let uri = req.uri().path().to_string();
-            let predict_called = predict_called_clone.clone();
-            async move {
-                if uri.contains("predict") {
-                    predict_called.store(true, std::sync::atomic::Ordering::SeqCst);
-                    Ok(gpui::http_client::Response::builder()
-                        .body(
-                            serde_json::to_string(&open_ai::Response {
-                                id: "test-123".to_string(),
-                                object: "chat.completion".to_string(),
-                                created: 0,
-                                model: "test".to_string(),
-                                usage: open_ai::Usage {
-                                    prompt_tokens: 0,
-                                    completion_tokens: 0,
-                                    total_tokens: 0,
-                                },
-                                choices: vec![open_ai::Choice {
-                                    index: 0,
-                                    message: open_ai::RequestMessage::Assistant {
-                                        content: Some(open_ai::MessageContent::Plain(
-                                            indoc! {"
-                                                ```main.rs
-                                                <|start_of_file|>
-                                                <|editable_region_start|>
-                                                fn main() {
-                                                    println!(\"Hello, world!\");
-                                                }
-                                                <|editable_region_end|>
-                                                ```
-                                            "}
-                                            .to_string(),
-                                        )),
-                                        tool_calls: vec![],
-                                    },
-                                    finish_reason: Some("stop".to_string()),
-                                }],
-                            })
-                            .unwrap()
-                            .into(),
-                        )
-                        .unwrap())
-                } else {
-                    Ok(gpui::http_client::Response::builder()
-                        .status(401)
-                        .body("Unauthorized".into())
-                        .unwrap())
-                }
-            }
-        }
-    });
-
-    let client =
-        cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
-    cx.update(|cx| {
-        language_model::RefreshLlmTokenListener::register(client.clone(), cx);
-    });
-
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            let path = project
-                .find_project_path(path!("/project/main.rs"), cx)
-                .unwrap();
-            project.open_buffer(path, cx)
-        })
-        .await
-        .unwrap();
-
-    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 4)));
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.register_buffer(&buffer, &project, cx)
-    });
-    cx.background_executor.run_until_parked();
-
-    let completion_task = ep_store.update(cx, |ep_store, cx| {
-        ep_store.set_custom_predict_edits_url(Url::parse("http://test/predict").unwrap());
-        ep_store.set_edit_prediction_model(EditPredictionModel::Zeta1);
-        ep_store.request_prediction(&project, &buffer, cursor, Default::default(), cx)
-    });
-
-    let _ = completion_task.await;
-
-    assert!(
-        predict_called.load(std::sync::atomic::Ordering::SeqCst),
-        "With custom URL, predict endpoint should be called even without authentication"
     );
 }
 

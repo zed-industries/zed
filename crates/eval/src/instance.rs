@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 
@@ -320,7 +323,7 @@ impl ExampleInstance {
                 };
 
                 thread.update(cx, |thread, cx| {
-                    thread.add_default_tools(Rc::new(EvalThreadEnvironment {
+                    thread.add_default_tools(None, Rc::new(EvalThreadEnvironment {
                         project: project.clone(),
                     }), cx);
                     thread.set_profile(meta.profile_id.clone(), cx);
@@ -548,7 +551,6 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
@@ -561,6 +563,7 @@ impl ExampleInstance {
                 tool_choice: None,
                 stop: Vec::new(),
                 thinking_allowed: true,
+                thinking_effort: None,
             };
 
             let model = model.clone();
@@ -675,6 +678,18 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
             });
             Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
         })
+    }
+
+    fn create_subagent(
+        &self,
+        _parent_thread: Entity<agent::Thread>,
+        _label: String,
+        _initial_prompt: String,
+        _timeout_ms: Option<Duration>,
+        _allowed_tools: Option<Vec<String>>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn agent::SubagentHandle>> {
+        unimplemented!()
     }
 }
 
@@ -1265,9 +1280,7 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::ToolUseLimitReached
                 | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::ReasoningDetails(_),
@@ -1359,9 +1372,7 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
-                | Ok(LanguageModelCompletionEvent::Started)
-                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. })
-                | Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => {}
+                | Ok(LanguageModelCompletionEvent::Started) => {}
 
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                     json_parse_error,
