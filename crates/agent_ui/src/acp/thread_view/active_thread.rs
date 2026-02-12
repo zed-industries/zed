@@ -2306,6 +2306,8 @@ impl AcpThreadView {
         let title = self.thread.read(cx).title();
         let server_view = self.server_view.clone();
 
+        let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
+
         Some(
             h_flex()
                 .h(Tab::container_height(cx))
@@ -2314,9 +2316,20 @@ impl AcpThreadView {
                 .w_full()
                 .justify_between()
                 .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
+                .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background.opacity(0.2))
-                .child(Label::new(title).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .child(
+                            Icon::new(IconName::ForwardArrowUp)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(title).color(Color::Muted).ml_2().mr_1())
+                        .when(is_done, |this| {
+                            this.child(Icon::new(IconName::Check).color(Color::Success))
+                        }),
+                )
                 .child(
                     IconButton::new("minimize_subagent", IconName::Minimize)
                         .icon_size(IconSize::Small)
