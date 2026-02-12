@@ -2344,30 +2344,6 @@ impl AcpServerView {
                         }
                     })
                 });
-
-            // If the user activates this workspace via the sidebar, dismiss the popup.
-            if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-                let workspace_handle = self.workspace.clone();
-                let pop_up_weak = pop_up.downgrade();
-                self.notification_subscriptions
-                    .entry(screen_window)
-                    .or_insert_with(Vec::new)
-                    .push(
-                        cx.observe(&multi_workspace, move |_this, multi_workspace, cx| {
-                            let is_active = workspace_handle
-                                .upgrade()
-                                .map(|ws| multi_workspace.read(cx).workspace() == &ws)
-                                .unwrap_or(false);
-                            if is_active {
-                                if let Some(pop_up) = pop_up_weak.upgrade() {
-                                    pop_up.update(cx, |notification, cx| {
-                                        notification.dismiss(cx);
-                                    });
-                                }
-                            }
-                        }),
-                    );
-            }
         }
     }
 
