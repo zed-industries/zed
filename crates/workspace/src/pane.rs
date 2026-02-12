@@ -2802,7 +2802,16 @@ impl Pane {
                 .icon_size(IconSize::Small)
                 .disabled(!toggleable)
                 .tooltip(move |_, cx| {
-                    Tooltip::with_meta("Unlock File", None, "This will make this file editable", cx)
+                    if toggleable {
+                        Tooltip::with_meta(
+                            "Unlock File",
+                            None,
+                            "This will make this file editable",
+                            cx,
+                        )
+                    } else {
+                        Tooltip::with_meta("Locked File", None, "This file is read-only", cx)
+                    }
                 })
                 .on_click(cx.listener(move |pane, _, window, cx| {
                     if let Some(item) = pane.item_for_index(ix) {
