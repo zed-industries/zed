@@ -7221,6 +7221,7 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
+ "menu",
  "project",
  "rand 0.9.2",
  "recent_projects",
