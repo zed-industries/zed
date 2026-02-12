@@ -980,12 +980,12 @@ impl FileFinderDelegate {
                     .collect::<Vec<_>>();
                 let worktree_count = available_worktree.len();
                 let mut expect_worktree = available_worktree.first().cloned();
-                for worktree in available_worktree {
+                for worktree in &available_worktree {
                     let worktree_root = worktree.read(cx).root_name();
                     if worktree_count > 1 {
                         if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
                             query_path = Cow::Owned(suffix.to_owned());
-                            expect_worktree = Some(worktree);
+                            expect_worktree = Some(worktree.clone());
                             break;
                         }
                     }
@@ -993,7 +993,13 @@ impl FileFinderDelegate {
 
                 if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
                     let worktree_id = project.worktree_id;
-                    expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                    let focused_file_in_available_worktree = available_worktree
+                        .iter()
+                        .any(|wt| wt.read(cx).id() == worktree_id);
+
+                    if focused_file_in_available_worktree {
+                        expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                    }
                 }
 
                 if let Some(worktree) = expect_worktree {
@@ -1566,9 +1572,12 @@ impl PickerDelegate for FileFinderDelegate {
                 .unwrap_or(0)
                 .saturating_sub(1);
             let finder = self.file_finder.clone();
+            let workspace = self.workspace.clone();
 
-            cx.spawn_in(window, async move |_, cx| {
-                let item = open_task.await.notify_async_err(cx)?;
+            cx.spawn_in(window, async move |_, mut cx| {
+                let item = open_task
+                    .await
+                    .notify_workspace_async_err(workspace, &mut cx)?;
                 if let Some(row) = row
                     && let Some(active_editor) = item.downcast::<Editor>()
                 {

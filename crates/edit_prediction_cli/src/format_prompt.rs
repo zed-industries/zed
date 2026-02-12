@@ -65,6 +65,7 @@ pub async fn run_format_prompt(
                 input: prompt,
                 expected_output: String::new(),
                 rejected_output: None,
+                prefill: None,
                 provider: args.provider,
             });
         }
@@ -94,6 +95,7 @@ pub async fn run_format_prompt(
                 related_files: prompt_inputs.related_files.clone().unwrap_or_default(),
             };
             let prompt = format_zeta_prompt(&input, version);
+            let prefill = zeta_prompt::get_prefill(&input, version);
             let (expected_patch, expected_cursor_offset) = example
                 .spec
                 .expected_patches_with_cursor_positions()
@@ -113,6 +115,7 @@ pub async fn run_format_prompt(
                 expected_output,
                 rejected_output,
                 provider: args.provider,
+                prefill: Some(prefill),
             });
         }
         _ => {
@@ -155,7 +158,9 @@ pub fn zeta2_output_for_patch(
     }
 
     match version {
-        ZetaFormat::V0120GitMergeMarkers | ZetaFormat::V0131GitMergeMarkersPrefix => {
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211SeedCoder => {
             if !result.ends_with('\n') {
                 result.push('\n');
             }

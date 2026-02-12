@@ -86,7 +86,7 @@ impl UpdateButton {
     }
 
     pub fn updated(version: impl Into<SharedString>) -> Self {
-        Self::new(IconName::Download, "Click to restart and update Zed")
+        Self::new(IconName::Download, "Restart to Update")
             .tooltip(version)
             .with_dismiss()
     }

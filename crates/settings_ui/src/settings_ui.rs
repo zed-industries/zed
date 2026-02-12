@@ -9,8 +9,9 @@ use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
     Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px, uniform_list,
+    Subscription, Task, Tiling, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px,
+    uniform_list,
 };
 
 use language::Buffer;
@@ -40,7 +41,9 @@ use ui::{
 };
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{AppState, OpenOptions, OpenVisible, Workspace, client_side_decorations};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+};
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
 use crate::components::{
@@ -48,6 +51,7 @@ use crate::components::{
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
     theme_picker,
 };
+use crate::pages::{render_input_audio_device_dropdown, render_output_audio_device_dropdown};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -394,7 +398,7 @@ pub fn init(cx: &mut App) {
                 |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
                     let window_handle = window
                         .window_handle()
-                        .downcast::<Workspace>()
+                        .downcast::<MultiWorkspace>()
                         .expect("Workspaces are root Windows");
                     open_settings_editor(workspace, Some(&path), false, window_handle, cx);
                 },
@@ -402,14 +406,14 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace, _: &OpenSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<Workspace>()
+                    .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
                 open_settings_editor(workspace, None, false, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<Workspace>()
+                    .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
                 open_settings_editor(workspace, None, true, window_handle, cx);
             });
@@ -540,6 +544,9 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
+        .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
+        .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
+        .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -548,7 +555,7 @@ pub fn open_settings_editor(
     _workspace: &mut Workspace,
     path: Option<&str>,
     open_project_settings: bool,
-    workspace_handle: WindowHandle<Workspace>,
+    workspace_handle: WindowHandle<MultiWorkspace>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -716,7 +723,7 @@ fn active_language_mut() -> Option<std::sync::RwLockWriteGuard<'static, Option<S
 
 pub struct SettingsWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    original_window: Option<WindowHandle<Workspace>>,
+    original_window: Option<WindowHandle<MultiWorkspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
@@ -1369,6 +1376,7 @@ struct ActionLink {
     description: Option<SharedString>,
     button_text: SharedString,
     on_click: Arc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) + Send + Sync>,
+    files: FileMask,
 }
 
 impl PartialEq for ActionLink {
@@ -1449,7 +1457,7 @@ impl SettingsUiFile {
 
 impl SettingsWindow {
     fn new(
-        original_window: Option<WindowHandle<Workspace>>,
+        original_window: Option<WindowHandle<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1520,34 +1528,21 @@ impl SettingsWindow {
         .detach();
 
         if let Some(app_state) = AppState::global(cx).upgrade() {
-            for project in app_state
+            let workspaces: Vec<Entity<Workspace>> = app_state
                 .workspace_store
                 .read(cx)
                 .workspaces()
-                .iter()
-                .filter_map(|space| {
-                    space
-                        .read(cx)
-                        .ok()
-                        .map(|workspace| workspace.project().clone())
-                })
-                .collect::<Vec<_>>()
-            {
+                .filter_map(|weak| weak.upgrade())
+                .collect();
+
+            for workspace in workspaces {
+                let project = workspace.read(cx).project().clone();
                 cx.observe_release_in(&project, window, |this, _, window, cx| {
                     this.fetch_files(window, cx)
                 })
                 .detach();
                 cx.subscribe_in(&project, window, Self::handle_project_event)
                     .detach();
-            }
-
-            for workspace in app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .iter()
-                .filter_map(|space| space.entity(cx).ok())
-            {
                 cx.observe_release_in(&workspace, window, |this, _, window, cx| {
                     this.fetch_files(window, cx)
                 })
@@ -1828,8 +1823,12 @@ impl SettingsWindow {
                             any_found_since_last_header = true;
                         }
                     }
-                    SettingsPageItem::ActionLink(_) => {
-                        any_found_since_last_header = true;
+                    SettingsPageItem::ActionLink(ActionLink { files, .. }) => {
+                        if !files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
                     }
                 }
             }
@@ -3323,56 +3322,19 @@ impl SettingsWindow {
                     return;
                 };
                 original_window
-                    .update(cx, |workspace, window, cx| {
-                        workspace
-                            .with_local_or_wsl_workspace(window, cx, |workspace, window, cx| {
-                                let project = workspace.project().clone();
-
-                                cx.spawn_in(window, async move |workspace, cx| {
-                                    let (config_dir, settings_file) =
-                                        project.update(cx, |project, cx| {
-                                            (
-                                                project.try_windows_path_to_wsl(
-                                                    paths::config_dir().as_path(),
-                                                    cx,
-                                                ),
-                                                project.try_windows_path_to_wsl(
-                                                    paths::settings_file().as_path(),
-                                                    cx,
-                                                ),
-                                            )
-                                        });
-                                    let config_dir = config_dir.await?;
-                                    let settings_file = settings_file.await?;
-                                    project
-                                        .update(cx, |project, cx| {
-                                            project.find_or_create_worktree(&config_dir, false, cx)
-                                        })
-                                        .await
-                                        .ok();
-                                    workspace
-                                        .update_in(cx, |workspace, window, cx| {
-                                            workspace.open_paths(
-                                                vec![settings_file],
-                                                OpenOptions {
-                                                    visible: Some(OpenVisible::None),
-                                                    ..Default::default()
-                                                },
-                                                None,
-                                                window,
-                                                cx,
-                                            )
-                                        })?
-                                        .await;
-
-                                    workspace.update_in(cx, |_, window, cx| {
-                                        window.activate_window();
-                                        cx.notify();
-                                    })
-                                })
-                                .detach();
-                            })
-                            .detach();
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace
+                            .workspace()
+                            .clone()
+                            .update(cx, |workspace, cx| {
+                                workspace
+                                    .with_local_or_wsl_workspace(
+                                        window,
+                                        cx,
+                                        open_user_settings_in_workspace,
+                                    )
+                                    .detach();
+                            });
                     })
                     .ok();
 
@@ -3384,22 +3346,22 @@ impl SettingsWindow {
                     return;
                 };
 
-                let Some((worktree, corresponding_workspace)) = app_state
+                let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
                     .read(cx)
-                    .workspaces()
-                    .iter()
-                    .find_map(|workspace| {
+                    .workspaces_with_windows()
+                    .filter_map(|(window_handle, weak)| {
+                        let workspace = weak.upgrade()?;
+                        let window = window_handle.downcast::<MultiWorkspace>()?;
+                        Some((window, workspace))
+                    })
+                    .find_map(|(window, workspace): (_, Entity<Workspace>)| {
                         workspace
-                            .read_with(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .read(cx)
-                                    .worktree_for_id(*worktree_id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .zip(Some(*workspace))
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .worktree_for_id(*worktree_id, cx)
+                            .map(|worktree| (window, worktree, workspace))
                     })
                 else {
                     log::error!(
@@ -3427,14 +3389,15 @@ impl SettingsWindow {
 
                 // TODO: move zed::open_local_file() APIs to this crate, and
                 // re-implement the "initial_contents" behavior
-                corresponding_workspace
+                let workspace_weak = corresponding_workspace.downgrade();
+                workspace_window
                     .update(cx, |_, window, cx| {
-                        cx.spawn_in(window, async move |workspace, cx| {
+                        cx.spawn_in(window, async move |_, cx| {
                             if let Some(create_task) = create_task {
                                 create_task.await.ok()?;
                             };
 
-                            workspace
+                            workspace_weak
                                 .update_in(cx, |workspace, window, cx| {
                                     workspace.open_path(
                                         (worktree_id, settings_path.clone()),
@@ -3448,7 +3411,7 @@ impl SettingsWindow {
                                 .await
                                 .log_err()?;
 
-                            workspace
+                            workspace_weak
                                 .update_in(cx, |_, window, cx| {
                                     window.activate_window();
                                     cx.notify();
@@ -3752,12 +3715,13 @@ impl Render for SettingsWindow {
                 ),
             window,
             cx,
+            Tiling::default(),
         )
     }
 }
 
 fn all_projects(
-    window: Option<&WindowHandle<Workspace>>,
+    window: Option<&WindowHandle<MultiWorkspace>>,
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
@@ -3768,15 +3732,69 @@ fn all_projects(
                 .workspace_store
                 .read(cx)
                 .workspaces()
-                .iter()
-                .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
+                .filter_map(|weak| weak.upgrade())
+                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
                 .chain(
-                    window.and_then(|workspace| Some(workspace.read(cx).ok()?.project().clone())),
+                    window
+                        .and_then(|handle| handle.read(cx).ok())
+                        .into_iter()
+                        .flat_map(|multi_workspace| {
+                            multi_workspace
+                                .workspaces()
+                                .iter()
+                                .map(|workspace| workspace.read(cx).project().clone())
+                                .collect::<Vec<_>>()
+                        }),
                 )
                 .filter(move |project| seen_project_ids.insert(project.entity_id()))
         })
         .into_iter()
         .flatten()
+}
+
+fn open_user_settings_in_workspace(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        let (config_dir, settings_file) = project.update(cx, |project, cx| {
+            (
+                project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx),
+                project.try_windows_path_to_wsl(paths::settings_file().as_path(), cx),
+            )
+        });
+        let config_dir = config_dir.await?;
+        let settings_file = settings_file.await?;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(&config_dir, false, cx)
+            })
+            .await
+            .ok();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![settings_file],
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })?
+            .await;
+
+        workspace.update_in(cx, |_, window, cx| {
+            window.activate_window();
+            cx.notify();
+        })
+    })
+    .detach();
 }
 
 fn update_settings_file(
@@ -4761,29 +4779,33 @@ pub mod test {
             .await
             .expect("Failed to create worktree_c");
 
-        let (_workspace1, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project1.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace1, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project1.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
-        let _workspace1_handle = cx.window_handle().downcast::<Workspace>().unwrap();
-
-        let (_workspace2, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project2.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project2.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
-        let workspace2_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
         cx.run_until_parked();
 
@@ -4902,17 +4924,20 @@ pub mod test {
             .await
             .expect("Failed to create worktree_a");
 
-        let (_workspace1, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project1.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace1, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project1.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
-        let workspace1_handle = cx.window_handle().downcast::<Workspace>().unwrap();
+        let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
 
         cx.run_until_parked();
 
@@ -4949,14 +4974,17 @@ pub mod test {
             .await
             .expect("Failed to create worktree_b");
 
-        let (_workspace2, cx) = cx.add_window_view(|window, cx| {
-            Workspace::new(
-                Default::default(),
-                project2.clone(),
-                app_state.clone(),
-                window,
-                cx,
-            )
+        let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(
+                    Default::default(),
+                    project2.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
+            });
+            MultiWorkspace::new(workspace, cx)
         });
 
         cx.run_until_parked();
