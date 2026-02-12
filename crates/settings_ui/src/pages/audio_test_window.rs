@@ -1,8 +1,8 @@
 use audio::{AudioSettings, CHANNEL_COUNT, RodioExt, SAMPLE_RATE};
 use cpal::DeviceId;
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, Render, Size, Window, WindowBounds, WindowKind,
-    WindowOptions, prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, Render, Size, Tiling, Window, WindowBounds,
+    WindowKind, WindowOptions, prelude::*, px,
 };
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
@@ -240,6 +240,7 @@ impl Render for AudioTestWindow {
                 .child(content),
             window,
             cx,
+            Tiling::default(),
         )
     }
 }
