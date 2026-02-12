@@ -2193,20 +2193,26 @@ impl AcpServerView {
             return false;
         }
 
-        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
-            return false;
-        };
-
-        multi_workspace.read(cx).is_sidebar_open() || self.agent_panel_visible(&multi_workspace, cx)
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            multi_workspace.read(cx).is_sidebar_open()
+                || self.agent_panel_visible(&multi_workspace, cx)
+        } else {
+            self.workspace
+                .upgrade()
+                .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+        }
     }
 
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
         let visible = window.is_window_active()
-            && window
-                .root::<MultiWorkspace>()
-                .flatten()
-                .is_some_and(|mw| self.agent_panel_visible(&mw, cx));
+            && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
+                self.agent_panel_visible(&mw, cx)
+            } else {
+                self.workspace
+                    .upgrade()
+                    .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+            };
         if settings.play_sound_when_agent_done && !visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }
