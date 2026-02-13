@@ -867,20 +867,20 @@ impl WgpuRenderer {
             ..globals
         };
 
-        loop {
-            self.queue
-                .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
-            self.queue.write_buffer(
-                &self.globals_buffer,
-                self.path_globals_offset,
-                bytemuck::bytes_of(&path_globals),
-            );
-            self.queue.write_buffer(
-                &self.globals_buffer,
-                self.gamma_offset,
-                bytemuck::bytes_of(&gamma_params),
-            );
+        self.queue
+            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        self.queue.write_buffer(
+            &self.globals_buffer,
+            self.path_globals_offset,
+            bytemuck::bytes_of(&path_globals),
+        );
+        self.queue.write_buffer(
+            &self.globals_buffer,
+            self.gamma_offset,
+            bytemuck::bytes_of(&gamma_params),
+        );
 
+        loop {
             let mut instance_offset: u64 = 0;
             let mut overflow = false;
 
