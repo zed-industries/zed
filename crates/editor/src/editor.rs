@@ -8023,10 +8023,6 @@ impl Editor {
 
                 match granularity {
                     EditPredictionGranularity::Full => {
-                        if let Some(provider) = self.edit_prediction_provider() {
-                            provider.accept(cx);
-                        }
-
                         let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
                         // Compute fallback cursor position BEFORE applying the edit,
@@ -8039,6 +8035,10 @@ impl Editor {
                         self.buffer.update(cx, |buffer, cx| {
                             buffer.edit(edits.iter().cloned(), None, cx)
                         });
+
+                        if let Some(provider) = self.edit_prediction_provider() {
+                            provider.accept(cx);
+                        }
 
                         // Resolve cursor position after the edit is applied
                         let cursor_target = if let Some((anchor, offset)) = cursor_position {
@@ -24254,10 +24254,10 @@ impl Editor {
                 .global_lsp_settings
                 .semantic_token_rules
                 .clone();
-            if self
+            let semantic_token_rules_changed = self
                 .semantic_token_state
-                .update_rules(new_semantic_token_rules)
-            {
+                .update_rules(new_semantic_token_rules);
+            if language_settings_changed || semantic_token_rules_changed {
                 self.invalidate_semantic_tokens(None);
                 self.refresh_semantic_tokens(None, None, cx);
             }

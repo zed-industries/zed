@@ -16,12 +16,13 @@ pub use settings::MistralAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
@@ -404,6 +405,9 @@ pub fn into_mistral(
             Role::Assistant => {
                 for content in &message.content {
                     match content {
+                        MessageContent::Text(text) if text.is_empty() => {
+                            // Mistral API returns a 400 if there's neither content nor tool_calls
+                        }
                         MessageContent::Text(text) => {
                             messages.push(mistral::RequestMessage::Assistant {
                                 content: Some(mistral::MessageContent::Plain {
@@ -659,7 +663,7 @@ impl MistralEventMapper {
                 continue;
             }
 
-            match serde_json::Value::from_str(&tool_call.arguments) {
+            match parse_tool_arguments(&tool_call.arguments) {
                 Ok(input) => results.push(Ok(LanguageModelCompletionEvent::ToolUse(
                     LanguageModelToolUse {
                         id: tool_call.id.into(),
@@ -849,6 +853,13 @@ mod tests {
                 LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text("Hello".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                // should skip empty assistant messages
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("".into())],
                     cache: false,
                     reasoning_details: None,
                 },

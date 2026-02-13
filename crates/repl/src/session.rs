@@ -6,6 +6,7 @@ use crate::{
     kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
+        InputReplyEvent,
     },
     repl_settings::ReplSettings,
 };
@@ -32,8 +33,8 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
-    ShutdownRequest,
+    ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
+    JupyterMessageContent, ReplyStatus, ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
@@ -129,7 +130,11 @@ impl EditorBlock {
         cx: &mut Context<Session>,
     ) {
         self.execution_view.update(cx, |execution_view, cx| {
-            execution_view.push_message(&message.content, window, cx);
+            if matches!(&message.content, JupyterMessageContent::InputRequest(_)) {
+                execution_view.handle_input_request(message, window, cx);
+            } else {
+                execution_view.push_message(&message.content, window, cx);
+            }
         });
     }
 
@@ -424,6 +429,23 @@ impl Session {
         anyhow::Ok(())
     }
 
+    fn send_stdin_reply(
+        &mut self,
+        value: String,
+        parent_message: &JupyterMessage,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            let reply = InputReply {
+                value,
+                status: ReplyStatus::Ok,
+                error: None,
+            };
+            let message = reply.as_child_of(parent_message);
+            kernel.stdin_tx().try_send(message).log_err();
+        }
+    }
+
     fn replace_block_with_inlay(&mut self, message_id: &str, text: &str, cx: &mut Context<Self>) {
         let Some(block) = self.blocks.remove(message_id) else {
             return;
@@ -511,6 +533,7 @@ impl Session {
 
         let execute_request = ExecuteRequest {
             code,
+            allow_stdin: true,
             ..ExecuteRequest::default()
         };
 
@@ -632,6 +655,14 @@ impl Session {
             &editor_block.execution_view,
             move |session, _execution_view, event: &ExecutionViewFinishedSmall, cx| {
                 session.replace_block_with_inlay(&msg_id, &event.0, cx);
+            },
+        );
+        self._subscriptions.push(subscription);
+
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            |session, _execution_view, event: &InputReplyEvent, cx| {
+                session.send_stdin_reply(event.value.clone(), &event.parent_message, cx);
             },
         );
         self._subscriptions.push(subscription);

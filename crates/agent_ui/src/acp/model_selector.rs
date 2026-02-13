@@ -632,36 +632,27 @@ mod tests {
                 vec![
                     "Claude 3.7 Sonnet",
                     "Claude 3.7 Sonnet Thinking",
-                    "gpt-4.1",
-                    "gpt-4.1-nano",
+                    "gpt-5",
+                    "gpt-5-mini",
                 ],
             ),
-            ("openai", vec!["gpt-3.5-turbo", "gpt-4.1", "gpt-4.1-nano"]),
+            ("openai", vec!["gpt-3.5-turbo", "gpt-5", "gpt-5-mini"]),
             ("ollama", vec!["mistral", "deepseek"]),
         ]);
 
         // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // In the case below, `zed/gpt-5-mini` and `openai/gpt-5-mini` have identical
+        // similarity scores, but `zed/gpt-5-mini` was higher in the models list,
         // so it should appear first in the results.
-        let results = fuzzy_search(models.clone(), "41".into(), cx.executor()).await;
+        let results = fuzzy_search(models.clone(), "mini".into(), cx.executor()).await;
         assert_models_eq(
             results,
-            vec![
-                ("zed", vec!["gpt-4.1", "gpt-4.1-nano"]),
-                ("openai", vec!["gpt-4.1", "gpt-4.1-nano"]),
-            ],
+            vec![("zed", vec!["gpt-5-mini"]), ("openai", vec!["gpt-5-mini"])],
         );
 
-        // Fuzzy search
-        let results = fuzzy_search(models.clone(), "4n".into(), cx.executor()).await;
-        assert_models_eq(
-            results,
-            vec![
-                ("zed", vec!["gpt-4.1-nano"]),
-                ("openai", vec!["gpt-4.1-nano"]),
-            ],
-        );
+        // Fuzzy search - test with specific model name
+        let results = fuzzy_search(models.clone(), "mistral".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("ollama", vec!["mistral"])]);
     }
 
     #[gpui::test]

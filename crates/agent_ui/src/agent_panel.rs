@@ -1954,7 +1954,7 @@ impl AgentPanel {
                 if let Some(title_editor) = thread_view
                     .read(cx)
                     .parent_thread(cx)
-                    .and_then(|r| r.read(cx).title_editor.clone())
+                    .map(|r| r.read(cx).title_editor.clone())
                 {
                     let container = div()
                         .w_full()

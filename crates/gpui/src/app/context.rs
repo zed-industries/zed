@@ -697,11 +697,19 @@ impl<'a, T: 'static> Context<'a, T> {
         let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
-                window_handle
-                    .update(cx, |_, window, cx| {
-                        view.update(cx, |view, cx| f(view, window, cx)).is_ok()
-                    })
-                    .unwrap_or(false)
+                // If the entity has been dropped, remove this observer.
+                if view.upgrade().is_none() {
+                    return false;
+                }
+                // If the window is unavailable (e.g. temporarily taken during a
+                // nested update, or already closed), skip this notification but
+                // keep the observer alive so it can fire on future changes.
+                let Ok(entity_alive) = window_handle.update(cx, |_, window, cx| {
+                    view.update(cx, |view, cx| f(view, window, cx)).is_ok()
+                }) else {
+                    return true;
+                };
+                entity_alive
             }),
         );
         self.defer(move |_| activate());

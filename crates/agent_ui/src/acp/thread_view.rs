@@ -723,7 +723,7 @@ impl AcpServerView {
                 });
         }
 
-        let mut subscriptions = vec![
+        let subscriptions = vec![
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.observe(&action_log, |_, _, cx| cx.notify()),
         ];
@@ -754,18 +754,6 @@ impl AcpServerView {
             })
             .detach();
         }
-
-        let title_editor = if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_text(thread.read(cx).title(), window, cx);
-                editor
-            });
-            subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
-            Some(editor)
-        } else {
-            None
-        };
 
         let profile_selector: Option<Rc<agent::NativeAgentConnection>> =
             connection.clone().downcast();
@@ -802,7 +790,6 @@ impl AcpServerView {
                 agent_display_name,
                 self.workspace.clone(),
                 entry_view_state,
-                title_editor,
                 config_options_view,
                 mode_selector,
                 model_selector,
@@ -980,20 +967,6 @@ impl AcpServerView {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
-            });
-        }
-    }
-
-    pub fn handle_title_editor_event(
-        &mut self,
-        title_editor: &Entity<Editor>,
-        event: &EditorEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.active_thread() {
-            active.update(cx, |active, cx| {
-                active.handle_title_editor_event(title_editor, event, window, cx);
             });
         }
     }
@@ -1181,10 +1154,8 @@ impl AcpServerView {
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
-                if let Some(title_editor) = self
-                    .thread_view(&thread_id)
-                    .and_then(|active| active.read(cx).title_editor.clone())
-                {
+                if let Some(active_thread) = self.thread_view(&thread_id) {
+                    let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
                             editor.set_text(title, window, cx);
@@ -2180,30 +2151,40 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_is_visible(&self, window: &Window, cx: &App) -> bool {
-        if window.is_window_active() {
-            let workspace_is_foreground = window
-                .root::<MultiWorkspace>()
-                .flatten()
-                .and_then(|mw| {
-                    let mw = mw.read(cx);
-                    self.workspace.upgrade().map(|ws| mw.workspace() == &ws)
-                })
-                .unwrap_or(true);
+    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
 
-            if workspace_is_foreground {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    return AgentPanel::is_visible(&workspace, cx);
-                }
-            }
+        multi_workspace.read(cx).workspace() == &workspace && AgentPanel::is_visible(&workspace, cx)
+    }
+
+    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
         }
 
-        false
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            multi_workspace.read(cx).is_sidebar_open()
+                || self.agent_panel_visible(&multi_workspace, cx)
+        } else {
+            self.workspace
+                .upgrade()
+                .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+        }
     }
 
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done && !self.agent_is_visible(window, cx) {
+        let visible = window.is_window_active()
+            && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
+                self.agent_panel_visible(&mw, cx)
+            } else {
+                self.workspace
+                    .upgrade()
+                    .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+            };
+        if settings.play_sound_when_agent_done && !visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2221,7 +2202,7 @@ impl AcpServerView {
 
         let settings = AgentSettings::get_global(cx);
 
-        let should_notify = !self.agent_is_visible(window, cx);
+        let should_notify = !self.agent_status_visible(window, cx);
 
         if !should_notify {
             return;
@@ -2325,7 +2306,7 @@ impl AcpServerView {
                     let pop_up_weak = pop_up.downgrade();
 
                     cx.observe_window_activation(window, move |this, window, cx| {
-                        if this.agent_is_visible(window, cx)
+                        if this.agent_status_visible(window, cx)
                             && let Some(pop_up) = pop_up_weak.upgrade()
                         {
                             pop_up.update(cx, |notification, cx| {
@@ -5798,5 +5779,50 @@ pub(crate) mod tests {
                 .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
             "Missing deny pattern option"
         );
+    }
+
+    #[gpui::test]
+    async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+        let thread = cx.read(|cx| active.read(cx).thread.clone());
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
+        });
+
+        title_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("My Custom Title", window, cx);
+        });
+        cx.run_until_parked();
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "My Custom Title");
+        });
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title().as_ref(), "My Custom Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
+
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.read_only(cx),
+                "Title editor should be read-only when the connection does not support set_title"
+            );
+        });
     }
 }
