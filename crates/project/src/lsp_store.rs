@@ -14276,14 +14276,10 @@ async fn populate_labels_for_symbols(
     }
 }
 
-fn collapse_newlines(text: &str, separator: &str) -> String {
-    if !text.contains('\n') {
-        return text.to_string();
-    }
-    text.split('\n')
+pub(crate) fn collapse_newlines(text: &str, separator: &str) -> String {
+    text.lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
         .join(separator)
 }
 

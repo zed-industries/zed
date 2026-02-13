@@ -451,43 +451,49 @@ mod tests {
         assert!(items.is_empty());
     }
 
-    #[test]
-    fn test_collapse_newlines() {
-        use super::super::collapse_newlines;
-
-        assert_eq!(collapse_newlines("a\nb", " "), "a b");
-        assert_eq!(collapse_newlines("a\n  b\nc", " "), "a b c");
-
-        // With ↵ separator (project symbols)
-        assert_eq!(collapse_newlines("a\nb", "↵ "), "a↵ b");
-
-        // Leading/trailing whitespace trimmed per line
-        assert_eq!(collapse_newlines("  a  \n  b  ", " "), "a b");
-
-        // Edge cases
-        assert_eq!(collapse_newlines("hello", " "), "hello");
-        // Empty lines filtered out
-        assert_eq!(collapse_newlines("a\n\nb", " "), "a b");
-    }
-
     #[gpui::test]
     async fn test_newlines_collapsed_in_name(cx: &mut TestAppContext) {
-        let buffer = cx.new(|cx| Buffer::local("x = 1\n", cx));
+        let buffer = cx.new(|cx| Buffer::local("x = 1\ny = 2\n", cx));
 
-        let symbols = vec![make_symbol(
-            "line1\nline2",
-            lsp::SymbolKind::VARIABLE,
-            (0, 0)..(0, 5),
-            (0, 0)..(0, 1),
-            vec![],
-        )];
+        let symbols = vec![
+            make_symbol(
+                "line1\nline2",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(0, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+            make_symbol(
+                "  a  \n  b  ",
+                lsp::SymbolKind::VARIABLE,
+                (1, 0)..(1, 5),
+                (1, 0)..(1, 1),
+                vec![],
+            ),
+            make_symbol(
+                "a\r\nb",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(1, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+            make_symbol(
+                "a\n\nb",
+                lsp::SymbolKind::VARIABLE,
+                (0, 0)..(1, 5),
+                (0, 0)..(0, 1),
+                vec![],
+            ),
+        ];
 
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
         let mut items = Vec::new();
         flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
 
-        assert_eq!(items.len(), 1);
-        // Name newlines collapsed to space
+        assert_eq!(items.len(), 4);
         assert_eq!(items[0].text, "line1 line2");
+        assert_eq!(items[1].text, "a b");
+        assert_eq!(items[2].text, "a b");
+        assert_eq!(items[3].text, "a b");
     }
 }
