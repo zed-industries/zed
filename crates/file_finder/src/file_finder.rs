@@ -210,7 +210,15 @@ impl FileFinder {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(!show_preview));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .modal(!show_preview)
+                .max_height(if show_preview {
+                    None
+                } else {
+                    Some(rems(24.).into())
+                })
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();

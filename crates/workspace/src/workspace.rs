@@ -151,6 +151,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
     env::var("ZED_WINDOW_SIZE")
@@ -7298,7 +7299,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Div> {
-        if WorkspaceSettings::get_global(cx).minimal_mode {
+        if WorkspaceSettings::get_global(cx).minimal_mode
+            && !(position == DockPosition::Bottom && self.minimal_mode_shows_bottom_terminal(cx))
+        {
             return None;
         }
 
@@ -7320,6 +7323,14 @@ impl Workspace {
                 .child(dock.clone())
                 .children(leader_border),
         )
+    }
+
+    fn minimal_mode_shows_bottom_terminal(&self, cx: &App) -> bool {
+        let bottom_dock = self.bottom_dock.read(cx);
+        bottom_dock.is_open()
+            && bottom_dock
+                .active_panel()
+                .is_some_and(|panel| panel.panel_key() == TERMINAL_PANEL_KEY)
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -7804,7 +7815,7 @@ impl Render for Workspace {
             }
         }
 
-        if !minimal_mode && self.bottom_dock.read(cx).is_open() {
+        if !minimal_mode || self.minimal_mode_shows_bottom_terminal(cx) {
             if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
                 context.set("bottom_dock", active_panel.panel_key());
             }

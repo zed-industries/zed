@@ -399,6 +399,7 @@ pub struct Pane {
     >,
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
+    show_tab_bar_in_minimal_mode: bool,
     max_tabs: Option<NonZeroUsize>,
     use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
@@ -575,6 +576,7 @@ impl Pane {
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
+            show_tab_bar_in_minimal_mode: false,
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
             ),
@@ -843,6 +845,15 @@ impl Pane {
             ) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
+        cx.notify();
+    }
+
+    pub fn set_show_tab_bar_in_minimal_mode(
+        &mut self,
+        show_tab_bar_in_minimal_mode: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_tab_bar_in_minimal_mode = show_tab_bar_in_minimal_mode;
         cx.notify();
     }
 
@@ -4098,7 +4109,8 @@ impl Render for Pane {
         let minimal_mode = WorkspaceSettings::get_global(cx).minimal_mode;
         let display_toolbar = !minimal_mode || key_context.contains("buffer_search_deployed");
         let should_display_tab_bar = self.should_display_tab_bar.clone();
-        let display_tab_bar = !minimal_mode && should_display_tab_bar(window, cx);
+        let display_tab_bar = should_display_tab_bar(window, cx)
+            && (!minimal_mode || self.show_tab_bar_in_minimal_mode);
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
