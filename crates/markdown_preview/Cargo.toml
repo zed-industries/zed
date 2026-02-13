@@ -27,6 +27,7 @@ linkify.workspace = true
 log.workspace = true
 markup5ever_rcdom.workspace = true
 pretty_assertions.workspace = true
+project.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true
 theme.workspace = true
@@ -38,4 +39,9 @@ zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

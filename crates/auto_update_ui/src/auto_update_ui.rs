@@ -133,7 +133,7 @@ fn view_release_notes_locally(
                     let markdown_preview: Entity<MarkdownPreviewView> = MarkdownPreviewView::new(
                         MarkdownPreviewMode::Default,
                         editor,
-                        ws_handle,
+                        Some(ws_handle),
                         language_registry,
                         window,
                         cx,

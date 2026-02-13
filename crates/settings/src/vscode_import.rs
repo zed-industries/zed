@@ -987,6 +987,7 @@ impl VsCodeSettings {
                 }
             }),
             zoomed_padding: None,
+            auto_preview_markdown: None,
         }
     }
 

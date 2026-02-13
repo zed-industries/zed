@@ -116,6 +116,12 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Whether to automatically open markdown files as a preview.
+    /// When enabled, opening a markdown file will display the rendered preview
+    /// instead of the raw markdown source.
+    ///
+    /// Default: false
+    pub auto_preview_markdown: Option<bool>,
 }
 
 #[with_fallible_options]

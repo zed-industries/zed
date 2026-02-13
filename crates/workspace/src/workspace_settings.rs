@@ -34,6 +34,7 @@ pub struct WorkspaceSettings {
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
+    pub auto_preview_markdown: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -111,6 +112,7 @@ impl Settings for WorkspaceSettings {
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
+            auto_preview_markdown: workspace.auto_preview_markdown.unwrap_or(false),
         }
     }
 }
