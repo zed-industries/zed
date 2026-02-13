@@ -5616,6 +5616,199 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_functions_maintain_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    
+    // Test convert_to_upper_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HELLO WORLDˇ»
+    "});
+    
+    // Test convert_to_lower_case()
+    cx.set_state(indoc! {"
+        «   HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_lower_case(&ConvertToLowerCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    
+    // Test convert_to_title_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   Hello Worldˇ»
+    "});
+    
+    // Test convert_to_snake_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello_worldˇ»
+    "});
+    
+    // Test convert_to_kebab_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_kebab_case(&ConvertToKebabCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello-worldˇ»
+    "});
+    
+    // Test convert_to_upper_camel_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HelloWorldˇ»
+    "});
+    
+    // Test convert_to_lower_camel_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   helloWorldˇ»
+    "});
+    
+    // Test convert_to_sentence_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   Hello worldˇ»
+    "});
+    
+    // Test convert_to_opposite_case()
+    cx.set_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HELLO WORLDˇ»
+    "});
+}
+
+
+#[gpui::test]
+async fn test_convert_to_functions_maintain_indentation_on_multiple_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    
+    // Test convert_to_upper_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HELLO WORLD
+                NESTED BLOCKˇ»
+    "});
+    
+    // Test convert_to_lower_case()
+    cx.set_state(indoc! {"
+        «   HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_lower_case(&ConvertToLowerCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello worldˇ»
+    "});
+    
+    // Test convert_to_title_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_title_case(&ConvertToTitleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   Hello World
+                Nested Blockˇ»
+    "});
+    
+    // Test convert_to_snake_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_snake_case(&ConvertToSnakeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello_world
+                nested_blockˇ»
+    "});
+    
+    // Test convert_to_kebab_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_kebab_case(&ConvertToKebabCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   hello-world
+                nested-blockˇ»
+    "});
+    
+    // Test convert_to_upper_camel_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_camel_case(&ConvertToUpperCamelCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HelloWorld
+                NestedBlockˇ»
+    "});
+    
+    // Test convert_to_lower_camel_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   helloWorld
+                nestedBlockˇ»
+    "});
+    
+    // Test convert_to_sentence_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   Hello world
+                Nested blockˇ»
+    "});
+    
+    // Test convert_to_opposite_case()
+    cx.set_state(indoc! {"
+        «   hello world
+                nested blockˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «   HELLO WORLD
+                NESTED BLOCKˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
