@@ -6821,6 +6821,7 @@ impl Workspace {
         }
     }
 
+    #[allow(dead_code)]
     fn toggle_minimal_file_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.minimal_file_tree_open {
             self.minimal_file_tree_open = false;
@@ -6846,6 +6847,7 @@ impl Workspace {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn ensure_minimal_file_tree_root_dirs_expanded(&mut self, cx: &App) {
         let project = self.project.read(cx);
         for worktree in project.visible_worktrees(cx) {

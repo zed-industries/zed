@@ -425,6 +425,7 @@ impl Render for FileFinder {
 
         let (preview_title, preview_lines, preview_message, preview_loading) =
             self.picker.read(cx).delegate.preview_state();
+        let has_preview_message = preview_message.is_some();
 
         v_flex()
             .key_context(key_context)
@@ -473,14 +474,14 @@ impl Render for FileFinder {
                                     .id("file-finder-preview-scroll")
                                     .flex_1()
                                     .overflow_y_scroll()
-                                    .children(preview_message.map(|message| {
+                                    .children(preview_message.clone().map(|message| {
                                         v_flex()
                                             .px_3()
                                             .py_2()
                                             .child(Label::new(message).size(LabelSize::Small))
                                             .into_any_element()
                                     }))
-                                    .children(preview_message.is_none().then(|| {
+                                    .children((!has_preview_message).then(|| {
                                         v_flex()
                                             .px_3()
                                             .py_2()
@@ -1547,7 +1548,7 @@ impl FileFinderDelegate {
         self.preview_message = Some("Loading preview...".into());
         cx.notify();
 
-        let fs = self.project.read(cx).fs();
+        let fs = self.project.read(cx).fs().clone();
         self.preview_task = cx.spawn(async move |picker, cx| {
             let loaded_contents = cx
                 .background_spawn({
