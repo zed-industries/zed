@@ -13,7 +13,7 @@ Zed's AI features run inside a native, GPU-accelerated application built in Rust
 
 - **Open source.** The editor and all AI features are [open source](https://github.com/zed-industries/zed). You can read how AI is implemented, how data flows to providers, and how tool calls execute.
 - **Multi-model.** Use Zed's hosted models or [bring your own API keys](./llm-providers.md) from Anthropic, OpenAI, Google, Ollama, and 8+ other providers. Run local models, connect to cloud APIs, or mix both. Switch models per task.
-- **External agents.** Run Claude Code, Gemini CLI, Codex, and other CLI-based agents directly in Zed through the Agent Client Protocol. See [External Agents](./external-agents.md).
+- **External agents.** Run Claude Code, Gemini CLI, Codex, and other CLI-based agents directly in Zed through the [Agent Client Protocol](https://zed.dev/acp). See [External Agents](./external-agents.md).
 - **Privacy by default.** AI data sharing is opt-in. When you use your own API keys, Zed maintains zero-data retention agreements with providers. See [Privacy and Security](./privacy-and-security.md).
 
 ## Agentic editing
