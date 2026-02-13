@@ -2696,10 +2696,12 @@ impl Thread {
             | ApiEndpointNotFound { .. }
             | PromptTooLarge { .. } => None,
             // These errors might be transient, so retry them
-            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 1,
-            }),
+            SerializeRequest { .. } | BuildRequestBody { .. } | StreamEndedUnexpectedly { .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 1,
+                })
+            }
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
                 if status_code.is_client_error() || status_code.is_server_error() =>
