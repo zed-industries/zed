@@ -9720,7 +9720,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=fb6bcad59522455a041b7eb9579f706e5cfb2d6f#fb6bcad59522455a041b7eb9579f706e5cfb2d6f"
+source = "git+https://github.com/zed-industries/lsp-types?rev=a4f410987660bf560d1e617cb78117c6b6b9f599#a4f410987660bf560d1e617cb78117c6b6b9f599"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
