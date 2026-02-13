@@ -5367,11 +5367,12 @@ impl Editor {
             let cursor = selection.head();
             let row = cursor.row;
 
-            let point = Point::new(row + 1, 0);
-            let start_of_line = snapshot.clip_point(point, Bias::Left);
+            let line_length = snapshot.line_len(MultiBufferRow(row));
+            let point = Point::new(row, line_length);
+            let end_of_line = snapshot.clip_point(point, Bias::Left);
 
             let newline = "\n".to_string();
-            edits.push((start_of_line..start_of_line, newline));
+            edits.push((end_of_line..end_of_line, newline));
 
             rows_inserted += 1;
             rows.push(row + rows_inserted);
