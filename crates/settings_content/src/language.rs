@@ -52,12 +52,16 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
         self.file_types.merge_from(&other.file_types);
         self.edit_predictions.merge_from(&other.edit_predictions);
 
-        // A user's global settings override the default global settings and
-        // all default language-specific settings.
-        //
+        // A user's global settings override the default global settings.
         self.defaults.merge_from(&other.defaults);
+
+        // A user's global settings fill in any gaps in default language-specific
+        // settings, but do not override values that were already explicitly set
+        // for a language (e.g. Markdown's `allow_rewrap: "anywhere"`).
         for language_settings in self.languages.0.values_mut() {
-            language_settings.merge_from(&other.defaults);
+            let mut merged = other.defaults.clone();
+            merged.merge_from(language_settings);
+            *language_settings = merged;
         }
 
         // A user's language-specific settings override default language-specific settings.
@@ -1116,6 +1120,147 @@ mod test {
         let raw_auto = "{\"formatter\": {}}";
         let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
         assert!(matches!(result, ParseStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn test_user_global_defaults_do_not_override_language_specific_settings() {
+        use crate::merge_from::MergeFrom;
+
+        // Simulate default.json: global allow_rewrap is "in_comments",
+        // but Markdown has "anywhere"
+        let mut defaults = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                allow_rewrap: Some(RewrapBehavior::InComments),
+                ..Default::default()
+            },
+            languages: LanguageToSettingsMap({
+                let mut map = HashMap::default();
+                map.insert(
+                    "Markdown".to_string(),
+                    LanguageSettingsContent {
+                        allow_rewrap: Some(RewrapBehavior::Anywhere),
+                        ..Default::default()
+                    },
+                );
+                map
+            }),
+            ..Default::default()
+        };
+
+        // Simulate user settings.json: explicitly sets global allow_rewrap to "in_comments"
+        let user_settings = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                allow_rewrap: Some(RewrapBehavior::InComments),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        defaults.merge_from(&user_settings);
+
+        // Markdown's "anywhere" should be preserved, not overridden by user global "in_comments"
+        let markdown_settings = defaults.languages.0.get("Markdown").unwrap();
+        assert_eq!(
+            markdown_settings.allow_rewrap,
+            Some(RewrapBehavior::Anywhere),
+        );
+    }
+
+    #[test]
+    fn test_user_language_specific_settings_override_defaults() {
+        use crate::merge_from::MergeFrom;
+
+        let mut defaults = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                allow_rewrap: Some(RewrapBehavior::InComments),
+                ..Default::default()
+            },
+            languages: LanguageToSettingsMap({
+                let mut map = HashMap::default();
+                map.insert(
+                    "Markdown".to_string(),
+                    LanguageSettingsContent {
+                        allow_rewrap: Some(RewrapBehavior::Anywhere),
+                        ..Default::default()
+                    },
+                );
+                map
+            }),
+            ..Default::default()
+        };
+
+        // User explicitly sets Markdown to "in_selections"
+        let user_settings = AllLanguageSettingsContent {
+            languages: LanguageToSettingsMap({
+                let mut map = HashMap::default();
+                map.insert(
+                    "Markdown".to_string(),
+                    LanguageSettingsContent {
+                        allow_rewrap: Some(RewrapBehavior::InSelections),
+                        ..Default::default()
+                    },
+                );
+                map
+            }),
+            ..Default::default()
+        };
+
+        defaults.merge_from(&user_settings);
+
+        let markdown_settings = defaults.languages.0.get("Markdown").unwrap();
+        assert_eq!(
+            markdown_settings.allow_rewrap,
+            Some(RewrapBehavior::InSelections),
+        );
+    }
+
+    #[test]
+    fn test_user_global_defaults_fill_gaps_in_language_settings() {
+        use crate::merge_from::MergeFrom;
+        use std::num::NonZeroU32;
+
+        // Default: Markdown has allow_rewrap set but no tab_size
+        let mut defaults = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                allow_rewrap: Some(RewrapBehavior::InComments),
+                ..Default::default()
+            },
+            languages: LanguageToSettingsMap({
+                let mut map = HashMap::default();
+                map.insert(
+                    "Markdown".to_string(),
+                    LanguageSettingsContent {
+                        allow_rewrap: Some(RewrapBehavior::Anywhere),
+                        ..Default::default()
+                    },
+                );
+                map
+            }),
+            ..Default::default()
+        };
+
+        // User sets global tab_size to 8
+        let user_settings = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                tab_size: Some(NonZeroU32::new(8).unwrap()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        defaults.merge_from(&user_settings);
+
+        let markdown_settings = defaults.languages.0.get("Markdown").unwrap();
+        // Markdown's allow_rewrap should be preserved
+        assert_eq!(
+            markdown_settings.allow_rewrap,
+            Some(RewrapBehavior::Anywhere),
+        );
+        // User's global tab_size should fill in the gap
+        assert_eq!(
+            markdown_settings.tab_size,
+            Some(NonZeroU32::new(8).unwrap()),
+        );
     }
 
     #[test]
