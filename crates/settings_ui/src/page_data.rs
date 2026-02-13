@@ -3350,6 +3350,25 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
+    fn minimal_mode_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Minimal Mode"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimal Mode",
+                description: "Hide workspace chrome to keep focus on text content.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimal_mode"),
+                    pick: |settings_content| settings_content.workspace.minimal_mode.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.workspace.minimal_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn status_bar_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
@@ -4242,6 +4261,7 @@ fn window_and_layout_page() -> SettingsPage {
     SettingsPage {
         title: "Window & Layout",
         items: concat_sections![
+            minimal_mode_section(),
             status_bar_section(),
             title_bar_section(),
             tab_bar_section(),

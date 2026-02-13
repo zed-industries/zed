@@ -180,6 +180,12 @@
   //
   // Default: true
   "zoomed_padding": true,
+  // Whether to enable minimal workspace mode.
+  // Hides workspace chrome (title bar, docks, status bar, tab bar, and pane toolbar)
+  // to keep focus on text content.
+  //
+  // Default: false
+  "minimal_mode": false,
   // What draws Zed's window decorations (titlebar):
   // 1. Client application (Zed) draws its own window decorations
   //    "client"

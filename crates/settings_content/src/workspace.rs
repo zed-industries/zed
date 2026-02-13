@@ -113,6 +113,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether to enable minimal workspace mode.
+    /// When enabled, workspace chrome (title bar, docks, status bar, tab bar, and pane toolbar)
+    /// is hidden to keep the editor focused on text content.
+    ///
+    /// Default: false
+    pub minimal_mode: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,

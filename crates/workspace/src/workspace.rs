@@ -1614,6 +1614,7 @@ impl Workspace {
                 GlobalTheme::reload_theme(cx);
                 GlobalTheme::reload_icon_theme(cx);
             }),
+            cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
             cx.on_release({
                 let weak_handle = weak_handle.clone();
                 move |this, cx| {
@@ -2029,7 +2030,7 @@ impl Workspace {
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
-        StatusBarSettings::get_global(cx).show
+        StatusBarSettings::get_global(cx).show && !WorkspaceSettings::get_global(cx).minimal_mode
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -6771,6 +6772,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Div> {
+        if WorkspaceSettings::get_global(cx).minimal_mode {
+            return None;
+        }
+
         if self.zoomed_position == Some(position) {
             return None;
         }
@@ -7255,19 +7260,21 @@ impl Render for Workspace {
             }
         }
 
-        if self.left_dock.read(cx).is_open() {
+        let minimal_mode = WorkspaceSettings::get_global(cx).minimal_mode;
+
+        if !minimal_mode && self.left_dock.read(cx).is_open() {
             if let Some(active_panel) = self.left_dock.read(cx).active_panel() {
                 context.set("left_dock", active_panel.panel_key());
             }
         }
 
-        if self.right_dock.read(cx).is_open() {
+        if !minimal_mode && self.right_dock.read(cx).is_open() {
             if let Some(active_panel) = self.right_dock.read(cx).active_panel() {
                 context.set("right_dock", active_panel.panel_key());
             }
         }
 
-        if self.bottom_dock.read(cx).is_open() {
+        if !minimal_mode && self.bottom_dock.read(cx).is_open() {
             if let Some(active_panel) = self.bottom_dock.read(cx).active_panel() {
                 context.set("bottom_dock", active_panel.panel_key());
             }
@@ -12662,6 +12669,31 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible when show is true");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_hidden_in_minimal_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, _cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(true);
+                settings.workspace.minimal_mode = Some(true);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(
+                !visible,
+                "Status bar should be hidden when minimal mode is enabled"
+            );
         });
     }
 

@@ -4095,8 +4095,9 @@ impl Render for Pane {
             .read(cx)
             .contribute_context(&mut key_context, cx);
 
+        let minimal_mode = WorkspaceSettings::get_global(cx).minimal_mode;
         let should_display_tab_bar = self.should_display_tab_bar.clone();
-        let display_tab_bar = should_display_tab_bar(window, cx);
+        let display_tab_bar = !minimal_mode && should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
@@ -4268,7 +4269,7 @@ impl Render for Pane {
                                 .v_flex()
                                 .size_full()
                                 .overflow_hidden()
-                                .child(self.toolbar.clone())
+                                .when(!minimal_mode, |div| div.child(self.toolbar.clone()))
                                 .child(item.to_any_view())
                         } else {
                             let placeholder = div
