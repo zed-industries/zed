@@ -222,56 +222,32 @@ fn possible_open_target(
                 }
             };
 
-            let relative_path_to_check = RelPath::new(&path_to_check.path, PathStyle::local()).ok();
-            let relative_path_to_check_ref = relative_path_to_check
-                .as_ref()
-                .map(std::borrow::Cow::as_ref);
-            let normalized_relative_path = relative_cwd.as_ref().and_then(|relative_cwd| {
-                if !path_to_check.path.is_relative() {
-                    return None;
-                }
-                let joined = relative_cwd
-                    .as_ref()
-                    .as_std_path()
-                    .join(&path_to_check.path);
-                let normalized = normalize_lexically(&joined).ok()?;
-                RelPath::new(&normalized, PathStyle::local())
-                    .ok()
-                    .map(std::borrow::Cow::into_owned)
-            });
+            // Normalize the path by joining with cwd if available (handles `.` and `..` segments)
+            let normalized_path = if path_to_check.path.is_relative() {
+                relative_cwd.as_ref().and_then(|relative_cwd| {
+                    let joined = relative_cwd
+                        .as_ref()
+                        .as_std_path()
+                        .join(&path_to_check.path);
+                    normalize_lexically(&joined).ok().and_then(|p| {
+                        RelPath::new(&p, PathStyle::local())
+                            .ok()
+                            .map(std::borrow::Cow::into_owned)
+                    })
+                })
+            } else {
+                None
+            };
+            let original_path = RelPath::new(&path_to_check.path, PathStyle::local()).ok();
 
             if !worktree.read(cx).is_single_file()
-                && let Some(entry) = relative_cwd
-                    .clone()
-                    .and_then(|relative_cwd| {
-                        if let Some(relative_path_to_check) = relative_path_to_check_ref {
-                            worktree
-                                .read(cx)
-                                .entry_for_path(&relative_cwd.join(relative_path_to_check))
-                        } else if let Some(normalized_relative_path) =
-                            normalized_relative_path.as_ref()
-                        {
-                            worktree
-                                .read(cx)
-                                .entry_for_path(normalized_relative_path.as_ref())
-                        } else {
-                            None
-                        }
-                    })
+                && let Some(entry) = normalized_path
+                    .as_ref()
+                    .and_then(|p| worktree.read(cx).entry_for_path(p))
                     .or_else(|| {
-                        relative_path_to_check_ref
-                            .and_then(|relative_path_to_check| {
-                                worktree.read(cx).entry_for_path(relative_path_to_check)
-                            })
-                            .or_else(|| {
-                                normalized_relative_path.as_ref().and_then(
-                                    |normalized_relative_path| {
-                                        worktree
-                                            .read(cx)
-                                            .entry_for_path(normalized_relative_path.as_ref())
-                                    },
-                                )
-                            })
+                        original_path
+                            .as_ref()
+                            .and_then(|p| worktree.read(cx).entry_for_path(p.as_ref()))
                     })
             {
                 open_target = Some(OpenTarget::Worktree(
