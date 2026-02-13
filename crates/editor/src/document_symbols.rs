@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::FutureExt;
@@ -8,7 +8,7 @@ use itertools::Itertools as _;
 use language::language_settings::language_settings;
 use language::{Buffer, BufferSnapshot, OutlineItem};
 use multi_buffer::{Anchor, MultiBufferSnapshot};
-use text::{BufferId, OffsetRangeExt as _, ToOffset as _};
+use text::{Bias, BufferId, OffsetRangeExt as _, ToOffset as _};
 use theme::{ActiveTheme as _, SyntaxTheme};
 
 use crate::display_map::DisplaySnapshot;
@@ -292,10 +292,16 @@ fn highlights_from_buffer(
     let range_end_offset = symbol_range.end;
 
     // Try to find the name verbatim in the buffer near the selection range.
-    let search_start = selection_start_offset
-        .saturating_sub(name.len())
-        .max(range_start_offset);
-    let search_end = (selection_start_offset + name.len() * 2).min(range_end_offset);
+    let search_start = buffer_snapshot.clip_offset(
+        selection_start_offset
+            .saturating_sub(name.len())
+            .max(range_start_offset),
+        Bias::Right,
+    );
+    let search_end = buffer_snapshot.clip_offset(
+        cmp::min(selection_start_offset + name.len() * 2, range_end_offset),
+        Bias::Left,
+    );
 
     if search_start < search_end {
         let buffer_text: String = buffer_snapshot
@@ -319,6 +325,9 @@ fn highlights_from_buffer(
 
     // Fallback: match word-by-word. Split the name on whitespace and find
     // each word sequentially in the buffer's symbol range.
+    let range_start_offset = buffer_snapshot.clip_offset(range_start_offset, Bias::Right);
+    let range_end_offset = buffer_snapshot.clip_offset(range_end_offset, Bias::Left);
+
     let mut highlights = Vec::new();
     let mut got_any = false;
     let buffer_text: String = buffer_snapshot
@@ -764,6 +773,86 @@ mod tests {
                 outline_symbol_names(editor),
                 vec!["mod MyModule", "fn my_function"]
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_document_symbols_multibyte_highlights(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, |settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    // Buffer: "/// αyzabc\nfn test() {}\n"
+                    // Bytes 0-3: "/// ", bytes 4-5: α (2-byte UTF-8), bytes 6-11: "yzabc\n"
+                    // Line 1 starts at byte 12: "fn test() {}"
+                    //
+                    // Symbol range includes doc comment (line 0-1).
+                    // Selection points to "test" on line 1.
+                    // enriched_symbol_text extracts "fn test" with source_range_for_text.start at byte 12.
+                    // search_start = max(12 - 7, 0) = 5, which is INSIDE the 2-byte 'α' char.
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "test",
+                            lsp::SymbolKind::FUNCTION,
+                            lsp_range(0, 0, 1, 13), // includes doc comment
+                            lsp_range(1, 3, 1, 7),  // "test"
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        // "/// αyzabc\n" = 12 bytes, then "fn test() {}\n"
+        // search_start = 12 - 7 = 5, which is byte 5 = second byte of 'α' (not a char boundary)
+        cx.set_state("/// αyzabc\nfn teˇst() {}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, _cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "fn test");
+
+            // Verify all highlight ranges are valid byte boundaries in the text
+            for (range, _style) in &symbol.highlight_ranges {
+                assert!(
+                    symbol.text.is_char_boundary(range.start),
+                    "highlight range start {} is not a char boundary in {:?}",
+                    range.start,
+                    symbol.text
+                );
+                assert!(
+                    symbol.text.is_char_boundary(range.end),
+                    "highlight range end {} is not a char boundary in {:?}",
+                    range.end,
+                    symbol.text
+                );
+                assert!(
+                    range.end <= symbol.text.len(),
+                    "highlight range end {} exceeds text length {} for {:?}",
+                    range.end,
+                    symbol.text.len(),
+                    symbol.text
+                );
+            }
         });
     }
 

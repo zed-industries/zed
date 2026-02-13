@@ -230,6 +230,7 @@ pub fn python_env_kernel_specifications(
 
 pub trait RunningKernel: Send + Debug {
     fn request_tx(&self) -> mpsc::Sender<JupyterMessage>;
+    fn stdin_tx(&self) -> mpsc::Sender<JupyterMessage>;
     fn working_directory(&self) -> &PathBuf;
     fn execution_state(&self) -> &ExecutionState;
     fn set_execution_state(&mut self, state: ExecutionState);
