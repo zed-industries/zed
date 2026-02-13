@@ -47,8 +47,8 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, ClickEvent,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
@@ -1203,6 +1203,18 @@ struct DispatchingKeystrokes {
     task: Option<Shared<Task<()>>>,
 }
 
+#[derive(Clone)]
+struct MinimalFileTreeEntry {
+    worktree_id: WorktreeId,
+    entry_id: ProjectEntryId,
+    parent_entry_id: Option<ProjectEntryId>,
+    path: Arc<RelPath>,
+    name: String,
+    depth: usize,
+    is_dir: bool,
+    expanded: bool,
+}
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -1228,6 +1240,10 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
+    minimal_file_tree_focus_handle: FocusHandle,
+    minimal_file_tree_open: bool,
+    minimal_file_tree_selected_index: usize,
+    minimal_file_tree_expanded_dirs: HashSet<(WorktreeId, ProjectEntryId)>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
@@ -1635,6 +1651,7 @@ impl Workspace {
         let mut center = PaneGroup::new(center_pane.clone());
         center.set_is_center(true);
         center.mark_positions(cx);
+        let minimal_file_tree_focus_handle = cx.focus_handle();
 
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1650,6 +1667,10 @@ impl Workspace {
             status_bar,
             modal_layer,
             toast_layer,
+            minimal_file_tree_focus_handle,
+            minimal_file_tree_open: false,
+            minimal_file_tree_selected_index: 0,
+            minimal_file_tree_expanded_dirs: HashSet::default(),
             titlebar_item: None,
             active_worktree_override: None,
             notifications: Notifications::default(),
@@ -6393,9 +6414,7 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
                 workspace.move_pane_to_border(SplitDirection::Down, cx)
             }))
-            .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
-                this.toggle_dock(DockPosition::Left, window, cx);
-            }))
+            .on_action(cx.listener(Workspace::toggle_left_dock_or_minimal_file_tree))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleRightDock, window, cx| {
                     workspace.toggle_dock(DockPosition::Right, window, cx);
@@ -6638,6 +6657,11 @@ impl Workspace {
                     }
                 }),
             )
+            .on_action(cx.listener(Workspace::minimal_file_tree_select_next))
+            .on_action(cx.listener(Workspace::minimal_file_tree_select_previous))
+            .on_action(cx.listener(Workspace::minimal_file_tree_select_child))
+            .on_action(cx.listener(Workspace::minimal_file_tree_select_parent))
+            .on_action(cx.listener(Workspace::minimal_file_tree_confirm))
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -6772,6 +6796,300 @@ impl Workspace {
         });
     }
 
+    fn toggle_left_dock_or_minimal_file_tree(
+        &mut self,
+        _: &ToggleLeftDock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if WorkspaceSettings::get_global(cx).minimal_mode {
+            self.toggle_minimal_file_tree(window, cx);
+        } else {
+            self.toggle_dock(DockPosition::Left, window, cx);
+        }
+    }
+
+    fn toggle_minimal_file_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.minimal_file_tree_open {
+            self.minimal_file_tree_open = false;
+            window.focus(&self.active_pane.focus_handle(cx), cx);
+            cx.notify();
+            return;
+        }
+
+        self.ensure_minimal_file_tree_root_dirs_expanded(cx);
+        let entries = self.minimal_file_tree_entries(cx);
+        self.minimal_file_tree_selected_index = 0;
+
+        if let Some(active_path) = self.active_project_path(cx)
+            && let Some(index) = entries.iter().position(|entry| {
+                entry.worktree_id == active_path.worktree_id && entry.path == active_path.path
+            })
+        {
+            self.minimal_file_tree_selected_index = index;
+        }
+
+        self.minimal_file_tree_open = true;
+        window.focus(&self.minimal_file_tree_focus_handle, cx);
+        cx.notify();
+    }
+
+    fn ensure_minimal_file_tree_root_dirs_expanded(&mut self, cx: &App) {
+        let project = self.project.read(cx);
+        for worktree in project.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let snapshot = worktree.snapshot();
+            if let Some(root_entry) = snapshot.root_entry()
+                && root_entry.is_dir()
+            {
+                self.minimal_file_tree_expanded_dirs
+                    .insert((worktree_id, root_entry.id));
+            }
+        }
+    }
+
+    fn minimal_file_tree_entries(&self, cx: &App) -> Vec<MinimalFileTreeEntry> {
+        let mut entries = Vec::new();
+        let project = self.project.read(cx);
+
+        for worktree in project.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let snapshot = worktree.snapshot();
+            let Some(root_entry) = snapshot.root_entry() else {
+                continue;
+            };
+
+            let mut stack = vec![(root_entry.id, None, 0usize, true)];
+            while let Some((entry_id, parent_entry_id, depth, is_root)) = stack.pop() {
+                let Some(entry) = snapshot.entry_for_id(entry_id) else {
+                    continue;
+                };
+
+                if !is_root && (entry.is_hidden || entry.is_external) {
+                    continue;
+                }
+                if !is_root && entry.is_ignored && !entry.is_always_included {
+                    continue;
+                }
+
+                let expanded = entry.is_dir()
+                    && self
+                        .minimal_file_tree_expanded_dirs
+                        .contains(&(worktree_id, entry.id));
+
+                let name = if is_root {
+                    snapshot.root_name_str().to_string()
+                } else {
+                    entry
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| entry.path.as_unix_str())
+                        .to_string()
+                };
+
+                entries.push(MinimalFileTreeEntry {
+                    worktree_id,
+                    entry_id: entry.id,
+                    parent_entry_id,
+                    path: entry.path.clone(),
+                    name,
+                    depth,
+                    is_dir: entry.is_dir(),
+                    expanded,
+                });
+
+                if expanded {
+                    let child_ids = snapshot
+                        .child_entries(entry.path.as_ref())
+                        .filter(|child| {
+                            !(child.is_hidden || child.is_external)
+                                && (!child.is_ignored || child.is_always_included)
+                        })
+                        .map(|child| child.id)
+                        .collect::<Vec<_>>();
+
+                    for child_id in child_ids.into_iter().rev() {
+                        stack.push((child_id, Some(entry.id), depth + 1, false));
+                    }
+                }
+            }
+        }
+
+        entries
+    }
+
+    fn clamp_minimal_file_tree_selection(&mut self, entry_count: usize) {
+        if entry_count == 0 {
+            self.minimal_file_tree_selected_index = 0;
+        } else {
+            self.minimal_file_tree_selected_index = self
+                .minimal_file_tree_selected_index
+                .min(entry_count.saturating_sub(1));
+        }
+    }
+
+    fn activate_minimal_file_tree_entry(
+        &mut self,
+        entry: &MinimalFileTreeEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entry.is_dir {
+            let key = (entry.worktree_id, entry.entry_id);
+            if !self.minimal_file_tree_expanded_dirs.remove(&key) {
+                self.minimal_file_tree_expanded_dirs.insert(key);
+            }
+            cx.notify();
+            return;
+        }
+
+        self.open_path_preview(
+            ProjectPath {
+                worktree_id: entry.worktree_id,
+                path: entry.path.clone(),
+            },
+            None,
+            true,
+            false,
+            true,
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
+
+        self.minimal_file_tree_open = false;
+        window.focus(&self.active_pane.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn minimal_file_tree_select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.minimal_file_tree_open {
+            cx.propagate();
+            return;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        self.clamp_minimal_file_tree_selection(entries.len());
+        if !entries.is_empty() {
+            self.minimal_file_tree_selected_index =
+                (self.minimal_file_tree_selected_index + 1).min(entries.len().saturating_sub(1));
+            cx.notify();
+        }
+    }
+
+    fn minimal_file_tree_select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.minimal_file_tree_open {
+            cx.propagate();
+            return;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        self.clamp_minimal_file_tree_selection(entries.len());
+        if !entries.is_empty() {
+            self.minimal_file_tree_selected_index =
+                self.minimal_file_tree_selected_index.saturating_sub(1);
+            cx.notify();
+        }
+    }
+
+    fn minimal_file_tree_select_child(
+        &mut self,
+        _: &menu::SelectChild,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.minimal_file_tree_open {
+            cx.propagate();
+            return;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        self.clamp_minimal_file_tree_selection(entries.len());
+        let Some(selected) = entries.get(self.minimal_file_tree_selected_index) else {
+            return;
+        };
+        if !selected.is_dir {
+            return;
+        }
+
+        let key = (selected.worktree_id, selected.entry_id);
+        if self.minimal_file_tree_expanded_dirs.insert(key) {
+            cx.notify();
+            return;
+        }
+
+        if let Some(child_index) = entries.iter().position(|entry| {
+            entry.worktree_id == selected.worktree_id
+                && entry.parent_entry_id == Some(selected.entry_id)
+        }) {
+            self.minimal_file_tree_selected_index = child_index;
+            cx.notify();
+        }
+    }
+
+    fn minimal_file_tree_select_parent(
+        &mut self,
+        _: &menu::SelectParent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.minimal_file_tree_open {
+            cx.propagate();
+            return;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        self.clamp_minimal_file_tree_selection(entries.len());
+        let Some(selected) = entries.get(self.minimal_file_tree_selected_index) else {
+            return;
+        };
+
+        let key = (selected.worktree_id, selected.entry_id);
+        if selected.is_dir && self.minimal_file_tree_expanded_dirs.remove(&key) {
+            cx.notify();
+            return;
+        }
+
+        if let Some(parent_entry_id) = selected.parent_entry_id
+            && let Some(parent_index) = entries.iter().position(|entry| {
+                entry.worktree_id == selected.worktree_id && entry.entry_id == parent_entry_id
+            })
+        {
+            self.minimal_file_tree_selected_index = parent_index;
+            cx.notify();
+        }
+    }
+
+    fn minimal_file_tree_confirm(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.minimal_file_tree_open {
+            cx.propagate();
+            return;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        self.clamp_minimal_file_tree_selection(entries.len());
+        if let Some(entry) = entries.get(self.minimal_file_tree_selected_index) {
+            self.activate_minimal_file_tree_entry(entry, window, cx);
+        }
+    }
+
     fn adjust_padding(padding: Option<f32>) -> f32 {
         padding
             .unwrap_or(CenteredPaddingSettings::default().0)
@@ -6779,6 +7097,171 @@ impl Workspace {
                 CenteredPaddingSettings::MIN_PADDING,
                 CenteredPaddingSettings::MAX_PADDING,
             )
+    }
+
+    fn render_minimal_file_tree_overlay(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if !WorkspaceSettings::get_global(cx).minimal_mode || !self.minimal_file_tree_open {
+            return None;
+        }
+
+        let entries = self.minimal_file_tree_entries(cx);
+        let selected_index = self
+            .minimal_file_tree_selected_index
+            .min(entries.len().saturating_sub(1));
+        let selected_counter = if entries.is_empty() {
+            "0/0".to_string()
+        } else {
+            format!("{}/{}", selected_index + 1, entries.len())
+        };
+        let colors = cx.theme().colors();
+
+        let entries_list = if entries.is_empty() {
+            v_flex()
+                .w_full()
+                .items_center()
+                .justify_center()
+                .py_6()
+                .child(Label::new("No files to show").size(LabelSize::Small))
+                .into_any_element()
+        } else {
+            v_flex()
+                .w_full()
+                .children(entries.into_iter().enumerate().map(|(index, entry)| {
+                    let is_selected = index == selected_index;
+                    let disclosure_icon = if entry.is_dir {
+                        if entry.expanded {
+                            Some(IconName::ChevronDown)
+                        } else {
+                            Some(IconName::ChevronRight)
+                        }
+                    } else {
+                        None
+                    };
+                    let item_icon = if entry.is_dir {
+                        if entry.expanded {
+                            IconName::FolderOpen
+                        } else {
+                            IconName::Folder
+                        }
+                    } else {
+                        IconName::File
+                    };
+                    let click_entry = entry.clone();
+
+                    div()
+                        .id(("minimal-file-tree-row", index))
+                        .cursor_pointer()
+                        .on_click(
+                            cx.listener(move |workspace, event: &ClickEvent, window, cx| {
+                                workspace.minimal_file_tree_selected_index = index;
+                                if event.click_count() == 2 {
+                                    workspace.activate_minimal_file_tree_entry(
+                                        &click_entry,
+                                        window,
+                                        cx,
+                                    );
+                                } else {
+                                    cx.notify();
+                                }
+                            }),
+                        )
+                        .child(
+                            ListItem::new(("minimal-file-tree-item", index))
+                                .toggle_state(is_selected)
+                                .inset(true)
+                                .spacing(ListItemSpacing::ExtraDense)
+                                .indent_level(entry.depth)
+                                .indent_step_size(px(14.))
+                                .start_slot::<AnyElement>(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            disclosure_icon
+                                                .map(|icon| {
+                                                    Icon::new(icon)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Muted)
+                                                        .into_any_element()
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    div()
+                                                        .w(rems(0.75))
+                                                        .flex_none()
+                                                        .into_any_element()
+                                                }),
+                                        )
+                                        .child(
+                                            Icon::new(item_icon)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .into_any_element(),
+                                )
+                                .child(
+                                    Label::new(entry.name)
+                                        .size(LabelSize::Small)
+                                        .when(!is_selected, |label| label.color(Color::Muted)),
+                                ),
+                        )
+                }))
+                .into_any_element()
+        };
+
+        Some(
+            div()
+                .id("minimal-file-tree-overlay")
+                .absolute()
+                .top_4()
+                .left_4()
+                .bottom_4()
+                .w(px(380.))
+                .max_w(px(460.))
+                .z_50()
+                .key_context("menu MinimalFileTree")
+                .track_focus(&self.minimal_file_tree_focus_handle)
+                .child(
+                    v_flex()
+                        .size_full()
+                        .occlude()
+                        .bg(colors.panel_background)
+                        .border_1()
+                        .border_color(colors.border_variant)
+                        .rounded_md()
+                        .shadow_lg()
+                        .overflow_hidden()
+                        .child(
+                            h_flex()
+                                .h_8()
+                                .px_3()
+                                .items_center()
+                                .justify_between()
+                                .border_b_1()
+                                .border_color(colors.border_variant)
+                                .child(
+                                    Label::new("Files")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Accent),
+                                )
+                                .child(
+                                    Label::new(selected_counter)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .h_8()
+                                .px_3()
+                                .items_center()
+                                .flex()
+                                .border_b_1()
+                                .border_color(colors.border_variant)
+                                .child(Label::new(">").size(LabelSize::Small).color(Color::Muted)),
+                        )
+                        .child(div().flex_1().overflow_y_scroll().child(entries_list)),
+                ),
+        )
     }
 
     fn render_dock(
@@ -6872,6 +7355,10 @@ impl Workspace {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
+        } else if self.minimal_file_tree_open {
+            self.minimal_file_tree_open = false;
+            window.focus(&self.active_pane.focus_handle(cx), cx);
+            cx.notify();
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
@@ -7728,6 +8215,7 @@ impl Render for Workspace {
                                         }
                                     })
                                 }))
+                                .children(self.render_minimal_file_tree_overlay(cx))
                                 .children(self.render_notifications(window, cx)),
                         )
                         .when(self.status_bar_visible(cx), |parent| {

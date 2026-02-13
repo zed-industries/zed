@@ -62,6 +62,15 @@
     },
   },
   {
+    "context": "MinimalFileTree",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "l": "menu::SelectChild",
+      "h": "menu::SelectParent",
+    },
+  },
+  {
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
