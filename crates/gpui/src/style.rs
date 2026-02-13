@@ -891,6 +891,18 @@ impl From<&TextStyle> for HighlightStyle {
 }
 
 impl HighlightStyle {
+    /// A highlight style that fades out supplemental text (e.g. completion label
+    /// details, document symbol details).
+    pub const FADE_OUT: Self = Self {
+        color: None,
+        font_weight: None,
+        font_style: None,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        fade_out: Some(0.35),
+    };
+
     /// Create a highlight style with just a color
     pub fn color(color: Hsla) -> Self {
         Self {

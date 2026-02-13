@@ -132,6 +132,7 @@ message DocumentSymbol {
   PointUtf16 selection_start = 5;
   PointUtf16 selection_end = 6;
   repeated DocumentSymbol children = 7;
+  optional string detail = 8;
 }
 
 message InlayHints {

@@ -1711,6 +1711,7 @@ impl LspCommand for GetDocumentSymbols {
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {
                     name: lsp_symbol.name,
+                    detail: None,
                     kind: lsp_symbol.kind,
                     range: range_from_lsp(lsp_symbol.location.range),
                     selection_range: range_from_lsp(lsp_symbol.location.range),
@@ -1721,6 +1722,7 @@ impl LspCommand for GetDocumentSymbols {
                 fn convert_symbol(lsp_symbol: lsp::DocumentSymbol) -> DocumentSymbol {
                     DocumentSymbol {
                         name: lsp_symbol.name,
+                        detail: lsp_symbol.detail,
                         kind: lsp_symbol.kind,
                         range: range_from_lsp(lsp_symbol.range),
                         selection_range: range_from_lsp(lsp_symbol.selection_range),
@@ -1795,6 +1797,7 @@ impl LspCommand for GetDocumentSymbols {
                             .into_iter()
                             .map(convert_symbol_to_proto)
                             .collect(),
+                        detail: symbol.detail,
                     }
                 }
                 convert_symbol_to_proto(symbol)
@@ -1831,6 +1834,7 @@ impl LspCommand for GetDocumentSymbols {
 
                 Ok(DocumentSymbol {
                     name: serialized_symbol.name,
+                    detail: serialized_symbol.detail,
                     kind,
                     range: Unclipped(PointUtf16::new(start.row, start.column))
                         ..Unclipped(PointUtf16::new(end.row, end.column)),

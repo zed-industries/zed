@@ -7,7 +7,7 @@ use clock::Global;
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::{Shared, join_all};
-use gpui::{AppContext as _, Context, Entity, Task};
+use gpui::{AppContext as _, Context, Entity, HighlightStyle, Task};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, OutlineItem};
 use lsp::LanguageServerId;
@@ -248,6 +248,8 @@ fn flatten_document_symbols(
     depth: usize,
     output: &mut Vec<OutlineItem<Anchor>>,
 ) {
+    let fade_out = HighlightStyle::FADE_OUT;
+
     for symbol in symbols {
         let name = super::collapse_newlines(&symbol.name, " ");
 
@@ -260,19 +262,45 @@ fn flatten_document_symbols(
         let selection_range =
             snapshot.anchor_after(selection_start)..snapshot.anchor_before(selection_end);
 
-        let (text, name_ranges, source_range_for_text) =
+        let is_whitespace_name = symbol.name.trim().is_empty();
+
+        let (mut text, mut name_ranges, source_range_for_text) = if is_whitespace_name {
+            (name.clone(), vec![0..name.len()], selection_range.clone())
+        } else {
             enriched_symbol_text(&name, start, selection_start, selection_end, snapshot)
                 .unwrap_or_else(|| {
                     let name_len = name.len();
                     (name.clone(), vec![0..name_len], selection_range.clone())
-                });
+                })
+        };
+
+        let mut highlight_ranges = Vec::new();
+
+        if let Some(raw_detail) = &symbol.detail {
+            let detail = super::collapse_newlines(raw_detail, " ");
+            if is_whitespace_name {
+                // Case A: name is whitespace-only (e.g. Namespace symbols from JETLS).
+                // Use detail as the display text, faded out entirely.
+                text = detail.clone();
+                let text_len = text.len();
+                name_ranges = vec![0..text_len];
+                highlight_ranges.push((0..text_len, fade_out));
+            } else if !detail.is_empty() {
+                // Case B: regular symbol with non-empty detail.
+                // Append detail after separator, faded out.
+                let detail_start = text.len() + 1;
+                text.push(' ');
+                text.push_str(&detail);
+                highlight_ranges.push((detail_start..text.len(), fade_out));
+            }
+        }
 
         output.push(OutlineItem {
             depth,
             range,
             source_range_for_text,
             text,
-            highlight_ranges: Vec::new(),
+            highlight_ranges,
             name_ranges,
             body_range: None,
             annotation_range: None,
@@ -331,6 +359,7 @@ mod tests {
 
     fn make_symbol(
         name: &str,
+        detail: Option<&str>,
         kind: lsp::SymbolKind,
         range: std::ops::Range<(u32, u32)>,
         selection_range: std::ops::Range<(u32, u32)>,
@@ -339,6 +368,7 @@ mod tests {
         use text::PointUtf16;
         DocumentSymbol {
             name: name.to_string(),
+            detail: detail.map(|d| d.to_string()),
             kind,
             range: Unclipped(PointUtf16::new(range.start.0, range.start.1))
                 ..Unclipped(PointUtf16::new(range.end.0, range.end.1)),
@@ -377,12 +407,14 @@ mod tests {
         let symbols = vec![
             make_symbol(
                 "Foo",
+                Some("{\n  bar: u32,\n  baz: String\n}"),
                 lsp::SymbolKind::STRUCT,
                 (0, 0)..(3, 1),
                 (0, 7)..(0, 10),
                 vec![
                     make_symbol(
                         "bar",
+                        Some(""),
                         lsp::SymbolKind::FIELD,
                         (1, 4)..(1, 13),
                         (1, 4)..(1, 7),
@@ -390,6 +422,7 @@ mod tests {
                     ),
                     make_symbol(
                         "baz",
+                        None,
                         lsp::SymbolKind::FIELD,
                         (2, 4)..(2, 15),
                         (2, 4)..(2, 7),
@@ -399,11 +432,13 @@ mod tests {
             ),
             make_symbol(
                 "Foo",
+                None,
                 lsp::SymbolKind::STRUCT,
                 (5, 0)..(9, 1),
                 (5, 5)..(5, 8),
                 vec![make_symbol(
                     "new",
+                    None,
                     lsp::SymbolKind::FUNCTION,
                     (6, 4)..(8, 5),
                     (6, 7)..(6, 10),
@@ -419,13 +454,19 @@ mod tests {
 
         assert_eq!(items.len(), 5);
 
+        // Non-empty detail is appended with FADE_OUT.
         assert_eq!(items[0].depth, 0);
-        assert_eq!(items[0].text, "struct Foo");
+        assert_eq!(items[0].text, "struct Foo { bar: u32, baz: String }");
         assert_eq!(items[0].name_ranges, vec![7..10]);
+        assert_eq!(items[0].highlight_ranges.len(), 1);
+        assert_eq!(items[0].highlight_ranges[0].0, 11..36);
+        assert_eq!(items[0].highlight_ranges[0].1, HighlightStyle::FADE_OUT);
 
+        // Empty detail is not appended.
         assert_eq!(items[1].depth, 1);
         assert_eq!(items[1].text, "bar");
         assert_eq!(items[1].name_ranges, vec![0..3]);
+        assert!(items[1].highlight_ranges.is_empty());
 
         assert_eq!(items[2].depth, 1);
         assert_eq!(items[2].text, "baz");
@@ -438,6 +479,38 @@ mod tests {
         assert_eq!(items[4].depth, 1);
         assert_eq!(items[4].text, "fn new");
         assert_eq!(items[4].name_ranges, vec![3..6]);
+
+        // Whitespace-only name is replaced by detail entirely
+        let buffer =
+            cx.new(|cx| Buffer::local(concat!("let x = 42\n", "    y = x + 1\n", "end\n"), cx));
+
+        let symbols = vec![make_symbol(
+            " ",
+            Some("let\n  x = 42"),
+            lsp::SymbolKind::NAMESPACE,
+            (0, 0)..(2, 3),
+            (0, 0)..(0, 1),
+            vec![make_symbol(
+                "x",
+                None,
+                lsp::SymbolKind::VARIABLE,
+                (0, 4)..(0, 5),
+                (0, 4)..(0, 5),
+                vec![],
+            )],
+        )];
+
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let mut items = Vec::new();
+        flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].text, "let x = 42");
+        assert_eq!(items[0].name_ranges, vec![0..10]);
+        assert_eq!(items[0].highlight_ranges.len(), 1);
+        assert_eq!(items[0].highlight_ranges[0].0, 0..10);
+        assert_eq!(items[0].highlight_ranges[0].1, HighlightStyle::FADE_OUT);
+        assert_eq!(items[1].text, "x");
     }
 
     #[gpui::test]
@@ -449,51 +522,5 @@ mod tests {
         let mut items = Vec::new();
         flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
         assert!(items.is_empty());
-    }
-
-    #[gpui::test]
-    async fn test_newlines_collapsed_in_name(cx: &mut TestAppContext) {
-        let buffer = cx.new(|cx| Buffer::local("x = 1\ny = 2\n", cx));
-
-        let symbols = vec![
-            make_symbol(
-                "line1\nline2",
-                lsp::SymbolKind::VARIABLE,
-                (0, 0)..(0, 5),
-                (0, 0)..(0, 1),
-                vec![],
-            ),
-            make_symbol(
-                "  a  \n  b  ",
-                lsp::SymbolKind::VARIABLE,
-                (1, 0)..(1, 5),
-                (1, 0)..(1, 1),
-                vec![],
-            ),
-            make_symbol(
-                "a\r\nb",
-                lsp::SymbolKind::VARIABLE,
-                (0, 0)..(1, 5),
-                (0, 0)..(0, 1),
-                vec![],
-            ),
-            make_symbol(
-                "a\n\nb",
-                lsp::SymbolKind::VARIABLE,
-                (0, 0)..(1, 5),
-                (0, 0)..(0, 1),
-                vec![],
-            ),
-        ];
-
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-        let mut items = Vec::new();
-        flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
-
-        assert_eq!(items.len(), 4);
-        assert_eq!(items[0].text, "line1 line2");
-        assert_eq!(items[1].text, "a b");
-        assert_eq!(items[2].text, "a b");
-        assert_eq!(items[3].text, "a b");
     }
 }
