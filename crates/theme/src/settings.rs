@@ -762,7 +762,6 @@ impl settings::Settings for ThemeSettings {
                     .edit_predictions_font_features
                     .clone()
                     .unwrap_or(inlay_hints_font_features)
-                    .clone()
                     .into_gpui(),
                 fallbacks: buffer_font_fallbacks.clone(),
                 weight: content
@@ -773,7 +772,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font: Font {
                 family: buffer_font_family.0.clone().into(),
-                features: buffer_font_features.clone().into_gpui(),
+                features: buffer_font_features.into_gpui(),
                 fallbacks: buffer_font_fallbacks,
                 weight: buffer_font_weight.into_gpui(),
                 style: FontStyle::default(),
