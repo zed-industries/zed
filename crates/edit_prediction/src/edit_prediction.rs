@@ -271,31 +271,30 @@ impl StoredEvent {
         let latest_range = last_edit_range.to_point(&new_snapshot);
 
         // Events near to the latest edit are not merged if their sources differ.
-        if latest_range.start > right_range.end
-            && latest_range.start.row - right_range.end.row <= CHANGE_GROUPING_LINE_SPAN
-        {
-            return false;
-        }
-        if right_range.start > latest_range.end
-            && right_range.start.row - latest_range.end.row <= CHANGE_GROUPING_LINE_SPAN
+        if lines_between_ranges(&left_range, &latest_range)
+            .min(lines_between_ranges(&right_range, &latest_range))
+            <= CHANGE_GROUPING_LINE_SPAN
         {
             return false;
         }
 
         // Events that are distant from each other are not merged.
-        if left_range.start > right_range.end
-            && left_range.start.row - right_range.end.row > CHANGE_GROUPING_LINE_SPAN
-        {
-            return false;
-        }
-        if right_range.start > left_range.end
-            && right_range.start.row - left_range.end.row > CHANGE_GROUPING_LINE_SPAN
-        {
+        if lines_between_ranges(&left_range, &right_range) > CHANGE_GROUPING_LINE_SPAN {
             return false;
         }
 
         true
     }
+}
+
+fn lines_between_ranges(left: &Range<Point>, right: &Range<Point>) -> u32 {
+    if left.start > right.end {
+        return left.start.row - right.end.row;
+    }
+    if right.start > left.end {
+        return right.start.row - left.end.row;
+    }
+    0
 }
 
 struct ProjectState {
@@ -1166,15 +1165,10 @@ impl EditPredictionStore {
                     .edit_range
                     .as_ref()
                     .is_some_and(|last_edit_range| {
-                        let a = edit_range.to_point(&new_snapshot);
-                        let b = last_edit_range.to_point(&new_snapshot);
-                        if a.start > b.end {
-                            a.start.row.abs_diff(b.end.row) <= CHANGE_GROUPING_LINE_SPAN
-                        } else if b.start > a.end {
-                            b.start.row.abs_diff(a.end.row) <= CHANGE_GROUPING_LINE_SPAN
-                        } else {
-                            true
-                        }
+                        lines_between_ranges(
+                            &edit_range.to_point(&new_snapshot),
+                            &last_edit_range.to_point(&new_snapshot),
+                        ) <= CHANGE_GROUPING_LINE_SPAN
                     });
 
             if should_coalesce {

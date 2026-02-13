@@ -386,7 +386,7 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_event_grouping_line_span_coalescing(cx: &mut TestAppContext) {
+async fn test_predicted_edits_are_separated_in_edit_history(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
 
