@@ -5,16 +5,6 @@ use std::f32::consts::PI;
 use crate::prelude::*;
 
 /// A circular progress indicator that displays progress as an arc growing clockwise from the top.
-///
-/// # Example
-///
-/// ```
-/// use ui::prelude::*;
-/// use ui::CircularProgress;
-///
-/// CircularProgress::new(75.0, 100.0, px(48.0), cx)
-///     .progress_color(cx.theme().status().success);
-/// ```
 #[derive(IntoElement, RegisterComponent, Documented)]
 pub struct CircularProgress {
     value: f32,
