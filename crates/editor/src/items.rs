@@ -1610,10 +1610,11 @@ impl SearchableItem for Editor {
                 let text: String = buffer_snapshot
                     .text_for_range(selection.start..selection.end)
                     .collect();
-                if text.contains('\n') {
+                let text = text.trim_end_matches(&['\n', '\r'][..]);
+                if text.contains('\n') || text.contains('\r') || text.is_empty() {
                     String::new()
                 } else {
-                    text
+                    text.to_string()
                 }
             }
             SeedQuerySetting::Selection => String::new(),
