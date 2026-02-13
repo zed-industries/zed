@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -48,6 +47,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::util::parse_tool_arguments;
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -111,6 +111,7 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
+    pub allow_extended_context: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -146,6 +147,9 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -153,6 +157,7 @@ impl From<ModelMode> for BedrockModelMode {
         match value {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -162,6 +167,7 @@ impl From<BedrockModelMode> for ModelMode {
         match value {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -375,6 +381,13 @@ impl State {
         self.settings
             .as_ref()
             .and_then(|s| s.allow_global)
+            .unwrap_or(false)
+    }
+
+    fn get_allow_extended_context(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_extended_context)
             .unwrap_or(false)
     }
 }
@@ -667,9 +680,14 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
-            (state.get_region(), state.get_allow_global())
-        });
+        let (region, allow_global, allow_extended_context) =
+            cx.read_entity(&self.state, |state, _cx| {
+                (
+                    state.get_region(),
+                    state.get_allow_global(),
+                    state.get_allow_extended_context(),
+                )
+            });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -680,6 +698,8 @@ impl LanguageModel for BedrockModel {
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
+        let use_extended_context = allow_extended_context && self.model.supports_extended_context();
+
         let request = match into_bedrock(
             request,
             model_id,
@@ -687,6 +707,7 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
             self.model.mode(),
             self.model.supports_caching(),
+            use_extended_context,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -742,6 +763,7 @@ pub fn into_bedrock(
     max_output_tokens: u64,
     mode: BedrockModelMode,
     supports_caching: bool,
+    allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -768,6 +790,12 @@ pub fn into_bedrock(
                             if model.contains(Model::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
+                                return None;
+                            }
+                            if signature.is_none() {
+                                // Thinking blocks without a signature are invalid
+                                // (e.g. from cancellation mid-think) and must be
+                                // stripped to avoid API errors.
                                 return None;
                             }
                             let thinking = BedrockThinkingTextBlock::builder()
@@ -850,6 +878,10 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if bedrock_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == bedrock_role
                 {
@@ -922,10 +954,16 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if request.thinking_allowed
-            && let BedrockModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                BedrockModelMode::Thinking { budget_tokens } => {
+                    Some(bedrock::Thinking::Enabled { budget_tokens })
+                }
+                BedrockModelMode::AdaptiveThinking { effort } => {
+                    Some(bedrock::Thinking::Adaptive { effort })
+                }
+                BedrockModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -934,6 +972,7 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        allow_extended_context,
     })
 }
 
@@ -1078,12 +1117,8 @@ pub fn map_to_language_model_completion_events(
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
-                                let input = if tool_use.input_json.is_empty() {
-                                    Value::Null
-                                } else {
-                                    serde_json::Value::from_str(&tool_use.input_json)
-                                        .unwrap_or(Value::Null)
-                                };
+                                let input = parse_tool_arguments(&tool_use.input_json)
+                                    .unwrap_or_else(|_| Value::Object(Default::default()));
 
                                 Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {

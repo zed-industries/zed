@@ -169,6 +169,9 @@ impl Ollama {
                         - context_offset_range.start)
                         ..(editable_offset_range.end - context_offset_range.start),
                     excerpt_start_row: Some(input_excerpt.context_range.start.row),
+                    excerpt_ranges: None,
+                    preferred_model: None,
+                    in_open_source_repo: false,
                 };
 
                 (prompt, stop_tokens, Some(editable_offset_range), inputs)
@@ -195,6 +198,9 @@ impl Ollama {
                         .text_for_range(excerpt_range)
                         .collect::<String>()
                         .into(),
+                    excerpt_ranges: None,
+                    preferred_model: None,
+                    in_open_source_repo: false,
                 };
 
                 let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();

@@ -99,7 +99,6 @@ use workspace::{
     CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
     Workspace,
     item::{BreadcrumbText, Item, ItemBufferKind},
-    notifications::NotifyTaskExt,
 };
 
 /// Determines what kinds of highlights should be applied to a lines background.
@@ -541,21 +540,21 @@ impl EditorElement {
 
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format_selections(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.organize_imports(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
@@ -565,49 +564,49 @@ impl EditorElement {
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion_replace(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion_insert(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_code_action(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.rename(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_rename(action, window, cx) {
-                task.detach_and_notify_err(window, cx);
+                editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
             }
@@ -3914,6 +3913,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
+                        height: custom.height.unwrap_or(1),
                         selected,
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
@@ -4004,26 +4004,9 @@ impl EditorElement {
                 result.into_any()
             }
 
-            Block::Spacer { height, .. } => div()
-                .id(block_id)
-                .w_full()
-                .h((*height as f32) * line_height)
-                // the checkerboard pattern is semi-transparent, so we render a
-                // solid background to prevent indent guides peeking through
-                .bg(cx.theme().colors().editor_background)
-                .child(
-                    div()
-                        .size_full()
-                        .bg(checkerboard(cx.theme().colors().panel_background, {
-                            let target_size = 16.0;
-                            let scale = window.scale_factor();
-                            Self::checkerboard_size(
-                                f32::from(line_height) * scale,
-                                target_size * scale,
-                            )
-                        })),
-                )
-                .into_any(),
+            Block::Spacer { height, .. } => {
+                Self::render_spacer_block(block_id, *height, line_height, window, cx)
+            }
         };
 
         // Discover the element's content height, then round up to the nearest multiple of line height.
@@ -4100,6 +4083,32 @@ impl EditorElement {
         } else {
             size_ceil
         }
+    }
+
+    pub fn render_spacer_block(
+        block_id: BlockId,
+        block_height: u32,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &App,
+    ) -> AnyElement {
+        div()
+            .id(block_id)
+            .w_full()
+            .h((block_height as f32) * line_height)
+            // the checkerboard pattern is semi-transparent, so we render a
+            // solid background to prevent indent guides peeking through
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                div()
+                    .size_full()
+                    .bg(checkerboard(cx.theme().colors().panel_background, {
+                        let target_size = 16.0;
+                        let scale = window.scale_factor();
+                        Self::checkerboard_size(f32::from(line_height) * scale, target_size * scale)
+                    })),
+            )
+            .into_any()
     }
 
     fn render_buffer_header(
@@ -5495,25 +5504,31 @@ impl EditorElement {
             })
             .filter(|(_, status)| status.is_modified())
             .flat_map(|(word_diffs, _)| word_diffs)
-            .filter_map(|word_diff| {
-                let start_point = word_diff.start.to_display_point(&snapshot.display_snapshot);
-                let end_point = word_diff.end.to_display_point(&snapshot.display_snapshot);
-                let start_row_offset = start_point.row().0.saturating_sub(start_row.0) as usize;
+            .flat_map(|word_diff| {
+                let display_ranges = snapshot
+                    .display_snapshot
+                    .isomorphic_display_point_ranges_for_buffer_range(
+                        word_diff.start..word_diff.end,
+                    );
 
-                row_infos
-                    .get(start_row_offset)
-                    .and_then(|row_info| row_info.diff_status)
-                    .and_then(|diff_status| {
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => colors.version_control_word_added,
-                            DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                return None;
-                            }
-                        };
-                        Some((start_point..end_point, background_color))
-                    })
+                display_ranges.into_iter().filter_map(|range| {
+                    let start_row_offset = range.start.row().0.saturating_sub(start_row.0) as usize;
+
+                    let diff_status = row_infos
+                        .get(start_row_offset)
+                        .and_then(|row_info| row_info.diff_status)?;
+
+                    let background_color = match diff_status.kind {
+                        DiffHunkStatusKind::Added => colors.version_control_word_added,
+                        DiffHunkStatusKind::Deleted => colors.version_control_word_deleted,
+                        DiffHunkStatusKind::Modified => {
+                            debug_panic!("modified diff status for row info");
+                            return None;
+                        }
+                    };
+
+                    Some((range, background_color))
+                })
             });
 
         highlighted_ranges.extend(word_highlights);
@@ -7766,7 +7781,7 @@ pub fn render_breadcrumb_text(
     multibuffer_header: bool,
     window: &mut Window,
     cx: &App,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
     const MAX_SEGMENTS: usize = 12;
 
     let element = h_flex().flex_grow().text_ui(cx);

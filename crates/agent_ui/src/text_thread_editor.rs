@@ -61,7 +61,7 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::{
     CollaboratorId,
-    searchable::{Direction, SearchableItemHandle},
+    searchable::{Direction, SearchToken, SearchableItemHandle},
 };
 
 use workspace::{
@@ -2252,8 +2252,6 @@ impl TextThreadEditor {
             .map(|p| p.icon())
             .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
-        let focus_handle = self.editor().focus_handle(cx);
-
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
@@ -2276,7 +2274,7 @@ impl TextThreadEditor {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
@@ -2799,11 +2797,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.update_matches(matches, active_match_index, window, cx)
+            editor.update_matches(matches, active_match_index, token, window, cx)
         });
     }
 
@@ -2816,33 +2815,37 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, window, cx);
+            editor.activate_match(index, matches, token, window, cx);
         });
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.select_matches(matches, window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.select_matches(matches, token, window, cx)
+        });
     }
 
     fn replace(
         &mut self,
         identifier: &Self::Match,
         query: &project::search::SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.replace(identifier, query, window, cx)
+            editor.replace(identifier, query, token, window, cx)
         });
     }
 
@@ -2860,11 +2863,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, cx| {
-            editor.active_match_index(direction, matches, window, cx)
+            editor.active_match_index(direction, matches, token, window, cx)
         })
     }
 }
@@ -2999,6 +3003,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {
@@ -3163,6 +3168,7 @@ mod tests {
     use text::OffsetRangeExt;
     use unindent::Unindent;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_copy_paste_whole_message(cx: &mut TestAppContext) {
@@ -3332,25 +3338,27 @@ mod tests {
         let text_thread = create_text_thread_with_messages(messages, cx);
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window, cx);
-
-        let text_thread_editor = window
-            .update(&mut cx, |_, window, cx| {
-                cx.new(|cx| {
-                    TextThreadEditor::for_text_thread(
-                        text_thread.clone(),
-                        fs,
-                        workspace.downgrade(),
-                        project,
-                        None,
-                        window,
-                        cx,
-                    )
-                })
-            })
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let weak_workspace = workspace.downgrade();
+        let text_thread_editor = workspace.update_in(&mut cx, |_, window, cx| {
+            cx.new(|cx| {
+                TextThreadEditor::for_text_thread(
+                    text_thread.clone(),
+                    fs,
+                    weak_workspace,
+                    project,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
 
         (text_thread, text_thread_editor, cx)
     }

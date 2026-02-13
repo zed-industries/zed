@@ -168,7 +168,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     }
 
     fn create_pull_request(token: &StepOutput, short_sha: &StepOutput) -> Step<Use> {
-        let title = format!("Update CI workflows to `zed@{}`", short_sha);
+        let title = format!("Update CI workflows to `{short_sha}`");
 
         named::uses("peter-evans", "create-pull-request", "v7")
             .add_with(("path", "extension"))
@@ -234,7 +234,7 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
         .strategy(
             Strategy::default()
                 .fail_fast(false)
-                .max_parallel(5u32)
+                .max_parallel(10u32)
                 .matrix(json!({
                     "repo": format!("${{{{ fromJson(needs.{}.outputs.repos) }}}}", fetch_repos_job.name)
                 })),

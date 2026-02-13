@@ -25,7 +25,7 @@ on:
         description: The app secret for the corresponding app ID
         required: true
 jobs:
-  check_bump_needed:
+  check_version_changed:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -51,20 +51,20 @@ jobs:
         PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
-          echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
-          echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+            echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
 
         echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
     outputs:
-      needs_bump: ${{ steps.compare-versions-check.outputs.needs_bump }}
+      version_changed: ${{ steps.compare-versions-check.outputs.version_changed }}
       current_version: ${{ steps.compare-versions-check.outputs.current_version }}
     timeout-minutes: 1
   bump_extension_version:
     needs:
-    - check_bump_needed
+    - check_version_changed
     if: |-
       (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') &&
-      (inputs.force-bump == 'true' || needs.check_bump_needed.outputs.needs_bump == 'true')
+      (inputs.force-bump == 'true' || needs.check_version_changed.outputs.version_changed == 'false')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -82,7 +82,7 @@ jobs:
     - id: bump-version
       name: extension_bump::bump_version
       run: |
-        OLD_VERSION="${{ needs.check_bump_needed.outputs.current_version }}"
+        OLD_VERSION="${{ needs.check_version_changed.outputs.current_version }}"
 
         BUMP_FILES=("extension.toml")
         if [[ -f "Cargo.toml" ]]; then
@@ -115,11 +115,11 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
         assignees: ${{ github.actor }}
-    timeout-minutes: 1
+    timeout-minutes: 3
   create_version_label:
     needs:
-    - check_bump_needed
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_bump_needed.outputs.needs_bump == 'false'
+    - check_version_changed
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check_version_changed.outputs.version_changed == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
@@ -139,11 +139,44 @@ jobs:
           github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/v${{ needs.check_bump_needed.outputs.current_version }}',
+              ref: 'refs/tags/v${{ needs.check_version_changed.outputs.current_version }}',
               sha: context.sha
           })
         github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
+  trigger_release:
+    needs:
+    - check_version_changed
+    - create_version_label
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.app-id }}
+        private-key: ${{ secrets.app-secret }}
+        owner: zed-industries
+        repositories: extensions
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - id: get-extension-id
+      name: extension_bump::get_extension_id
+      run: |
+        EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
+    - name: extension_bump::release_action
+      uses: huacnlee/zed-extension-action@v2
+      with:
+        extension-name: ${{ steps.get-extension-id.outputs.extension_id }}
+        push-to: zed-industries/extensions
+        tag: v${{ needs.check_version_changed.outputs.current_version }}
+      env:
+        COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true

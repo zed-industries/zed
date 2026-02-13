@@ -1599,6 +1599,7 @@ While other options may be changed at a runtime and should be placed under `sett
 {
   "global_lsp_settings": {
     "button": true,
+    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1611,6 +1612,7 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 - `button`: Whether to show the LSP status button in the status bar
+- `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -3331,6 +3333,68 @@ To enable semantic tokens for a specific language:
 ```
 
 May require language server restart to properly apply.
+
+## LSP Folding Ranges
+
+- Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
+- Setting: `document_folding_ranges`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter and indent-based folding.
+2. `on`: Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+
+To enable LSP folding ranges globally:
+
+```json [settings]
+{
+  "document_folding_ranges": "on"
+}
+```
+
+To enable LSP folding ranges for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_folding_ranges": "on"
+    }
+  }
+}
+```
+
+## LSP Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter queries to compute document symbols.
+2. `on`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+
+To enable LSP document symbols globally:
+
+```json [settings]
+{
+  "document_symbols": "on"
+}
+```
+
+To enable LSP document symbols for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
 
 ## Use Smartcase Search
 

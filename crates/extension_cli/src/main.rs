@@ -7,11 +7,11 @@ use std::sync::Arc;
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
+use cloud_api_types::ExtensionProvides;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
-use rpc::ExtensionProvides;
 use snippet_provider::file_to_snippets;
 use snippet_provider::format::VsSnippetsFile;
 use tokio::process::Command;
@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
+    let manifest_json = serde_json::to_string(&cloud_api_types::ExtensionApiManifest {
         name: manifest.name,
         version: manifest.version,
         description: manifest.description,

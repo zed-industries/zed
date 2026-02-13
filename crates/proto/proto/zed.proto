@@ -467,7 +467,9 @@ message Envelope {
 
         SemanticTokens semantic_tokens = 418;
         SemanticTokensResponse semantic_tokens_response = 419;
-        RefreshSemanticTokens refresh_semantic_tokens = 420; // current max
+        RefreshSemanticTokens refresh_semantic_tokens = 420;
+        GetFoldingRanges get_folding_ranges = 421;
+        GetFoldingRangesResponse get_folding_ranges_response = 422; // current max
     }
 
     reserved 87 to 88;

@@ -37,6 +37,7 @@ axum-extra = { version = "0.4", features = ["erased-json"] }
 base64.workspace = true
 chrono.workspace = true
 clock.workspace = true
+cloud_api_types.workspace = true
 collections.workspace = true
 dashmap.workspace = true
 envy = "0.4.2"
