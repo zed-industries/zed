@@ -4,14 +4,14 @@ mod file_finder_tests;
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Task, WeakEntity, Window, actions, rems,
+    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString,
+    Styled, Task, WeakEntity, Window, actions, rems,
 };
 use open_path_prompt::{
     OpenPathPrompt,
@@ -347,21 +347,32 @@ impl FileFinder {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
             if let Some(workspace) = delegate.workspace.upgrade()
-                && let Some(m) = delegate.matches.get(delegate.selected_index())
+                && let Some(selected_match) =
+                    delegate.matches.get(delegate.selected_index()).cloned()
             {
-                let path = match &m {
+                let Some(path) = (match selected_match {
                     Match::History { path, .. } => {
                         let worktree_id = path.project.worktree_id;
-                        ProjectPath {
+                        Some(ProjectPath {
                             worktree_id,
                             path: Arc::clone(&path.project.path),
-                        }
+                        })
                     }
-                    Match::Search(m) => ProjectPath {
+                    Match::Search(m) => Some(ProjectPath {
                         worktree_id: WorktreeId::from_usize(m.0.worktree_id),
                         path: m.0.path.clone(),
-                    },
-                    Match::CreateNew(p) => p.clone(),
+                    }),
+                    Match::Browse(entry) => {
+                        if entry.is_dir {
+                            delegate.toggle_browse_directory(&entry, cx);
+                            None
+                        } else {
+                            Some(entry.project_path.clone())
+                        }
+                    }
+                    Match::CreateNew(p) => Some(p),
+                }) else {
+                    return;
                 };
                 let open_task = workspace.update(cx, move |workspace, cx| {
                     workspace.split_path_preview(path, false, Some(split_direction), window, cx)
@@ -544,12 +555,23 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
+    browse_expanded_dirs: HashSet<ProjectPath>,
     preview_title: SharedString,
     preview_message: Option<SharedString>,
     preview_lines: Arc<[SharedString]>,
     preview_loading: bool,
     preview_path: Option<PathBuf>,
     preview_task: Task<()>,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+struct BrowseEntry {
+    project_path: ProjectPath,
+    absolute_path: PathBuf,
+    name: SharedString,
+    depth: usize,
+    is_dir: bool,
+    expanded: bool,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -597,6 +619,7 @@ enum Match {
         path: FoundPath,
         panel_match: Option<ProjectPanelOrdMatch>,
     },
+    Browse(BrowseEntry),
     Search(ProjectPanelOrdMatch),
     CreateNew(ProjectPath),
 }
@@ -605,6 +628,7 @@ impl Match {
     fn relative_path(&self) -> Option<&Arc<RelPath>> {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
+            Match::Browse(entry) => Some(&entry.project_path.path),
             Match::Search(panel_match) => Some(&panel_match.0.path),
             Match::CreateNew(_) => None,
         }
@@ -613,6 +637,7 @@ impl Match {
     fn abs_path(&self, project: &Entity<Project>, cx: &App) -> Option<PathBuf> {
         match self {
             Match::History { path, .. } => Some(path.absolute.clone()),
+            Match::Browse(entry) => Some(entry.absolute_path.clone()),
             Match::Search(ProjectPanelOrdMatch(path_match)) => Some(
                 project
                     .read(cx)
@@ -627,6 +652,7 @@ impl Match {
     fn panel_match(&self) -> Option<&ProjectPanelOrdMatch> {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
+            Match::Browse(_) => None,
             Match::Search(panel_match) => Some(panel_match),
             Match::CreateNew(_) => None,
         }
@@ -763,6 +789,15 @@ impl Matches {
         a: &Match,
         b: &Match,
     ) -> cmp::Ordering {
+        match (a, b) {
+            (Match::Browse(a), Match::Browse(b)) => {
+                return a.project_path.cmp(&b.project_path);
+            }
+            (Match::Browse(_), _) => return cmp::Ordering::Less,
+            (_, Match::Browse(_)) => return cmp::Ordering::Greater,
+            _ => {}
+        }
+
         // Handle CreateNew variant - always put it at the end
         match (a, b) {
             (Match::CreateNew(_), _) => return cmp::Ordering::Less,
@@ -999,6 +1034,7 @@ impl FileFinderDelegate {
             focus_handle: cx.focus_handle(),
             include_ignored: FileFinderSettings::get_global(cx).include_ignored,
             include_ignored_refresh: Task::ready(()),
+            browse_expanded_dirs: HashSet::default(),
             preview_title: "Preview".into(),
             preview_message: Some("Type to search files".into()),
             preview_lines: Arc::<[SharedString]>::from([]),
@@ -1198,7 +1234,7 @@ impl FileFinderDelegate {
     ) -> (HighlightedLabel, HighlightedLabel) {
         let path_style = self.project.read(cx).path_style(cx);
         let (file_name, file_name_positions, mut full_path, mut full_path_positions) =
-            match &path_match {
+            match path_match {
                 Match::History {
                     path: entry_path,
                     panel_match,
@@ -1237,6 +1273,19 @@ impl FileFinderDelegate {
                             Vec::new(),
                         )
                     }
+                }
+                Match::Browse(entry) => {
+                    let file_name = entry.name.to_string();
+                    let full_path =
+                        entry
+                            .project_path
+                            .path
+                            .parent()
+                            .map_or_else(String::new, |parent| {
+                                parent.display(path_style).to_string()
+                                    + path_style.primary_separator()
+                            });
+                    (file_name, Vec::new(), full_path, Vec::new())
                 }
                 Match::Search(path_match) => self.labels_for_path_match(&path_match.0, path_style),
                 Match::CreateNew(project_path) => (
@@ -1451,6 +1500,150 @@ impl FileFinderDelegate {
         key_context
     }
 
+    fn ensure_browse_root_dirs_expanded(&mut self, cx: &App) {
+        let project = self.project.read(cx);
+        let worktrees = project
+            .worktree_store()
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
+            .collect::<Vec<_>>();
+
+        for worktree in worktrees {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let snapshot = worktree.snapshot();
+            if let Some(root_entry) = snapshot.root_entry()
+                && root_entry.is_dir()
+            {
+                self.browse_expanded_dirs.insert(ProjectPath {
+                    worktree_id,
+                    path: root_entry.path.clone(),
+                });
+            }
+        }
+    }
+
+    fn rebuild_browse_matches(
+        &mut self,
+        selected_path: Option<ProjectPath>,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.ensure_browse_root_dirs_expanded(cx);
+
+        let selected_path = selected_path.or_else(|| {
+            self.selected_match()
+                .and_then(|path_match| match path_match {
+                    Match::Browse(entry) => Some(entry.project_path.clone()),
+                    _ => None,
+                })
+        });
+
+        let project = self.project.read(cx);
+        let worktrees = project
+            .worktree_store()
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
+            .collect::<Vec<_>>();
+
+        let mut browse_matches = Vec::new();
+        for worktree in worktrees {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let snapshot = worktree.snapshot();
+            let Some(root_entry) = snapshot.root_entry() else {
+                continue;
+            };
+
+            let mut stack = vec![(root_entry.id, 0usize, true)];
+            while let Some((entry_id, depth, is_root)) = stack.pop() {
+                let Some(entry) = snapshot.entry_for_id(entry_id) else {
+                    continue;
+                };
+
+                if !is_root && (entry.is_hidden || entry.is_external) {
+                    continue;
+                }
+                if !is_root && entry.is_ignored && !entry.is_always_included {
+                    continue;
+                }
+
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: entry.path.clone(),
+                };
+                let expanded = entry.is_dir() && self.browse_expanded_dirs.contains(&project_path);
+
+                let name: SharedString = if is_root {
+                    snapshot.root_name_str().to_string().into()
+                } else {
+                    entry
+                        .path
+                        .file_name()
+                        .unwrap_or_else(|| entry.path.as_unix_str())
+                        .to_string()
+                        .into()
+                };
+
+                browse_matches.push(Match::Browse(BrowseEntry {
+                    project_path: project_path.clone(),
+                    absolute_path: worktree.absolutize(&entry.path),
+                    name,
+                    depth,
+                    is_dir: entry.is_dir(),
+                    expanded,
+                }));
+
+                if expanded {
+                    let child_ids = snapshot
+                        .child_entries(entry.path.as_ref())
+                        .filter(|child| {
+                            !(child.is_hidden || child.is_external)
+                                && (!child.is_ignored || child.is_always_included)
+                        })
+                        .map(|child| child.id)
+                        .collect::<Vec<_>>();
+
+                    for child_id in child_ids.into_iter().rev() {
+                        stack.push((child_id, depth + 1, false));
+                    }
+                }
+            }
+        }
+
+        self.matches = Matches {
+            separate_history: false,
+            matches: browse_matches,
+        };
+        self.latest_search_query = None;
+        self.latest_search_did_cancel = false;
+
+        self.selected_index = selected_path
+            .and_then(|selected_path| {
+                self.matches
+                    .matches
+                    .iter()
+                    .position(|path_match| match path_match {
+                        Match::Browse(entry) => entry.project_path == selected_path,
+                        _ => false,
+                    })
+            })
+            .unwrap_or(0)
+            .min(self.matches.len().saturating_sub(1));
+    }
+
+    fn toggle_browse_directory(&mut self, entry: &BrowseEntry, cx: &mut Context<Picker<Self>>) {
+        if !entry.is_dir {
+            return;
+        }
+
+        if !self.browse_expanded_dirs.remove(&entry.project_path) {
+            self.browse_expanded_dirs.insert(entry.project_path.clone());
+        }
+        self.rebuild_browse_matches(Some(entry.project_path.clone()), cx);
+        self.queue_preview_update(cx);
+        cx.notify();
+    }
+
     fn preview_state(
         &self,
     ) -> (
@@ -1484,6 +1677,12 @@ impl FileFinderDelegate {
         let path_style = self.project.read(cx).path_style(cx);
         match path_match {
             Match::History { path, .. } => path.project.path.display(path_style).to_string().into(),
+            Match::Browse(entry) => entry
+                .project_path
+                .path
+                .display(path_style)
+                .to_string()
+                .into(),
             Match::Search(path_match) => path_match.0.path.display(path_style).to_string().into(),
             Match::CreateNew(project_path) => {
                 format!("Create {}", project_path.path.display(path_style)).into()
@@ -1536,6 +1735,21 @@ impl FileFinderDelegate {
         }
 
         self.preview_title = self.selected_preview_title(cx);
+        if let Some(entry) = self
+            .selected_match()
+            .and_then(|path_match| match path_match {
+                Match::Browse(entry) if entry.is_dir => Some(entry.clone()),
+                _ => None,
+            })
+        {
+            self.preview_path = None;
+            self.preview_loading = false;
+            self.preview_lines = Arc::<[SharedString]>::from([]);
+            self.preview_message = Some(format!("Directory: {}", entry.name).into());
+            cx.notify();
+            return;
+        }
+
         let Some(selected_path) = self.selected_preview_path(cx) else {
             self.preview_path = None;
             self.preview_loading = false;
@@ -1679,12 +1893,10 @@ impl PickerDelegate for FileFinderDelegate {
 
         if raw_query.is_empty() {
             if self.show_all_files {
-                let query = FileSearchQuery {
-                    raw_query: String::new(),
-                    file_query_end: None,
-                    path_position: PathWithPosition::from_path(PathBuf::new()),
-                };
-                return self.spawn_search(query, window, cx);
+                self.rebuild_browse_matches(None, cx);
+                self.queue_preview_update(cx);
+                cx.notify();
+                return Task::ready(());
             }
 
             // if there was no query before, and we already have some (history) matches
@@ -1775,6 +1987,14 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
+        if let Some(Match::Browse(entry)) = self.matches.get(self.selected_index())
+            && entry.is_dir
+        {
+            let entry = entry.clone();
+            self.toggle_browse_directory(&entry, cx);
+            return;
+        }
+
         if let Some(m) = self.matches.get(self.selected_index())
             && let Some(workspace) = self.workspace.upgrade()
         {
@@ -1870,6 +2090,9 @@ impl PickerDelegate for FileFinderDelegate {
                         window,
                         cx,
                     ),
+                    Match::Browse(entry) => {
+                        split_or_open(workspace, entry.project_path.clone(), window, cx)
+                    }
                 }
             });
 
@@ -1926,12 +2149,90 @@ impl PickerDelegate for FileFinderDelegate {
 
         let path_match = self.matches.get(ix)?;
 
+        if let Match::Browse(entry) = path_match {
+            let disclosure_icon = if entry.is_dir {
+                if entry.expanded {
+                    Some(IconName::ChevronDown)
+                } else {
+                    Some(IconName::ChevronRight)
+                }
+            } else {
+                None
+            };
+            let item_icon = if entry.is_dir {
+                if entry.expanded {
+                    IconName::FolderOpen
+                } else {
+                    IconName::Folder
+                }
+            } else {
+                IconName::File
+            };
+
+            return Some(
+                ListItem::new(ix)
+                    .spacing(ListItemSpacing::ExtraDense)
+                    .inset(true)
+                    .toggle_state(selected)
+                    .indent_level(entry.depth)
+                    .indent_step_size(px(14.))
+                    .on_click(cx.listener(move |picker, event: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        picker.set_selected_index(ix, None, false, window, cx);
+
+                        if event.click_count() == 2
+                            && let Some(Match::Browse(entry)) =
+                                picker.delegate.matches.get(ix).cloned()
+                        {
+                            if entry.is_dir {
+                                picker.delegate.toggle_browse_directory(&entry, cx);
+                            } else {
+                                picker.delegate.confirm(false, window, cx);
+                            }
+                        }
+                    }))
+                    .start_slot::<AnyElement>(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                disclosure_icon
+                                    .map(|icon| {
+                                        Icon::new(icon)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted)
+                                            .into_any_element()
+                                    })
+                                    .unwrap_or_else(|| {
+                                        div().w(rems(0.75)).flex_none().into_any_element()
+                                    }),
+                            )
+                            .child(
+                                Icon::new(item_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .into_any_element(),
+                    )
+                    .child(
+                        Label::new(entry.name.clone())
+                            .size(LabelSize::Small)
+                            .when(!selected, |label| label.color(Color::Muted)),
+                    ),
+            );
+        }
+
         let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
                 .color(Color::Muted)
                 .size(IconSize::Small)
                 .into_any_element(),
             Match::Search(_) => v_flex()
+                .flex_none()
+                .size(IconSize::Small.rems())
+                .into_any_element(),
+            Match::Browse(_) => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),

@@ -6637,6 +6637,15 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, action: &pane::CloseActiveItem, window, cx| {
+                    if WorkspaceSettings::get_global(cx).minimal_mode && workspace.panes().len() > 1
+                    {
+                        let active_pane = workspace.active_pane().clone();
+                        if active_pane.read(cx).items_len() <= 1 {
+                            workspace.join_pane_into_next(active_pane, window, cx);
+                            return;
+                        }
+                    }
+
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
                         let dock = active_dock.read(cx);
                         if let Some(active_panel) = dock.active_panel() {
