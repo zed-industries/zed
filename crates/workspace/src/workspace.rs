@@ -7217,7 +7217,6 @@ impl Workspace {
                 .bottom_4()
                 .w(px(380.))
                 .max_w(px(460.))
-                .z_50()
                 .key_context("menu MinimalFileTree")
                 .track_focus(&self.minimal_file_tree_focus_handle)
                 .child(
@@ -7259,7 +7258,13 @@ impl Workspace {
                                 .border_color(colors.border_variant)
                                 .child(Label::new(">").size(LabelSize::Small).color(Color::Muted)),
                         )
-                        .child(div().flex_1().overflow_y_scroll().child(entries_list)),
+                        .child(
+                            div()
+                                .id("minimal-file-tree-scroll")
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .child(entries_list),
+                        ),
                 ),
         )
     }
