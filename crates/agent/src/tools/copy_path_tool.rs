@@ -129,10 +129,10 @@ impl AgentTool for CopyPathTool {
         } else if needs_confirmation {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
-            let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
-                input_values: vec![input.source_path.clone(), input.destination_path.clone()],
-            };
+            let context = crate::ToolPermissionContext::new(
+                Self::NAME,
+                vec![input.source_path.clone(), input.destination_path.clone()],
+            );
             let title = format!("Copy {src} to {dest}");
             let sensitive_kind = sensitive_settings_kind(Path::new(&input.source_path))
                 .or_else(|| sensitive_settings_kind(Path::new(&input.destination_path)));

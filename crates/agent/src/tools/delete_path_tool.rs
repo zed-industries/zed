@@ -105,10 +105,7 @@ impl AgentTool for DeletePathTool {
             match decision {
                 ToolPermissionDecision::Allow => None,
                 ToolPermissionDecision::Confirm => {
-                    let context = crate::ToolPermissionContext {
-                        tool_name: Self::NAME.to_string(),
-                        input_values: vec![path.clone()],
-                    };
+                    let context = crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
                     let title = format!("Delete {}", MarkdownInlineCode(&path));
                     let title = match sensitive_settings_kind(Path::new(&path)) {
                         Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),

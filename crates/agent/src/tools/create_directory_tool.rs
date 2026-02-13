@@ -104,10 +104,8 @@ impl AgentTool for CreateDirectoryTool {
                         Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
                         None => title,
                     };
-                    let context = crate::ToolPermissionContext {
-                        tool_name: Self::NAME.to_string(),
-                        input_values: vec![input.path.clone()],
-                    };
+                    let context =
+                        crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
                     Some(event_stream.authorize(title, context, cx))
                 }
                 ToolPermissionDecision::Deny(_) => None,

@@ -241,10 +241,10 @@ pub fn authorize_symlink_access(
         canonical_target.display(),
     );
 
-    let context = ToolPermissionContext {
-        tool_name: tool_name.to_string(),
-        input_values: vec![canonical_target.display().to_string()],
-    };
+    let context = ToolPermissionContext::symlink_target(
+        tool_name,
+        vec![canonical_target.display().to_string()],
+    );
 
     event_stream.authorize(title, context, cx)
 }
@@ -270,13 +270,13 @@ pub fn authorize_symlink_escapes(
         .join(" and ");
     let title = format!("{} (symlinks outside project)", targets);
 
-    let context = ToolPermissionContext {
-        tool_name: tool_name.to_string(),
-        input_values: escapes
+    let context = ToolPermissionContext::symlink_target(
+        tool_name,
+        escapes
             .iter()
             .map(|(_, target)| target.display().to_string())
             .collect(),
-    };
+    );
 
     event_stream.authorize(title, context, cx)
 }
@@ -366,10 +366,7 @@ pub fn authorize_file_edit(
 
     match sensitive_settings_kind(path) {
         Some(SensitiveSettingsKind::Local) => {
-            let context = ToolPermissionContext {
-                tool_name: tool_name.to_string(),
-                input_values: vec![path_str.to_string()],
-            };
+            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
             return event_stream.authorize(
                 format!("{} (local settings)", display_description),
                 context,
@@ -377,10 +374,7 @@ pub fn authorize_file_edit(
             );
         }
         Some(SensitiveSettingsKind::Global) => {
-            let context = ToolPermissionContext {
-                tool_name: tool_name.to_string(),
-                input_values: vec![path_str.to_string()],
-            };
+            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
             return event_stream.authorize(
                 format!("{} (settings)", display_description),
                 context,
@@ -393,10 +387,7 @@ pub fn authorize_file_edit(
     match resolved {
         Some(Ok(_)) => Task::ready(Ok(())),
         _ => {
-            let context = ToolPermissionContext {
-                tool_name: tool_name.to_string(),
-                input_values: vec![path_str.to_string()],
-            };
+            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
             event_stream.authorize(display_description, context, cx)
         }
     }

@@ -83,10 +83,8 @@ impl AgentTool for OpenTool {
                 cx,
             )
         } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
-                input_values: vec![input.path_or_url.clone()],
-            };
+            let context =
+                crate::ToolPermissionContext::new(Self::NAME, vec![input.path_or_url.clone()]);
             event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx)
         };
         cx.background_spawn(async move {

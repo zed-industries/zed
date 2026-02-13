@@ -122,10 +122,7 @@ impl AgentTool for SaveFileTool {
                 Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
                 None => title,
             };
-            let context = crate::ToolPermissionContext {
-                tool_name: Self::NAME.to_string(),
-                input_values: confirmation_paths.clone(),
-            };
+            let context = crate::ToolPermissionContext::new(Self::NAME, confirmation_paths.clone());
             Some(event_stream.authorize(title, context, cx))
         } else {
             None
