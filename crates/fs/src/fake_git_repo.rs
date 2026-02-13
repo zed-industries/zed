@@ -1,4 +1,4 @@
-use crate::{FakeFs, FakeFsEntry, Fs};
+use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
@@ -421,12 +421,19 @@ impl GitRepository for FakeGitRepository {
         async move {
             let path = directory.join(&name);
             executor.simulate_random_delay().await;
+            // Check for simulated error before any side effects
+            fs.with_git_state(&dot_git_path, false, |state| {
+                if let Some(message) = &state.simulated_create_worktree_error {
+                    anyhow::bail!("{message}");
+                }
+                Ok(())
+            })??;
+            // Create directory before updating state so state is never
+            // inconsistent with the filesystem
+            fs.create_dir(&path).await?;
             fs.with_git_state(&dot_git_path, true, {
                 let path = path.clone();
                 move |state| {
-                    if let Some(message) = &state.simulated_create_worktree_error {
-                        anyhow::bail!("{message}");
-                    }
                     let ref_name = format!("refs/heads/{name}");
                     let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
                     state.worktrees.push(Worktree {
@@ -438,37 +445,72 @@ impl GitRepository for FakeGitRepository {
                     Ok::<(), anyhow::Error>(())
                 }
             })??;
-            fs.create_dir(&path).await?;
             Ok(())
         }
         .boxed()
     }
 
     fn remove_worktree(&self, path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            let initial_len = state.worktrees.len();
-            state.worktrees.retain(|worktree| worktree.path != path);
-            if state.worktrees.len() == initial_len {
-                bail!("no worktree found at path: {}", path.display());
-            }
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            // Remove the directory first, then update state
+            fs.remove_dir(
+                &path,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
+            .await?;
+            fs.with_git_state(&dot_git_path, true, move |state| {
+                let initial_len = state.worktrees.len();
+                state.worktrees.retain(|worktree| worktree.path != path);
+                if state.worktrees.len() == initial_len {
+                    bail!("no worktree found at path: {}", path.display());
+                }
+                Ok(())
+            })??;
             Ok(())
-        })
+        }
+        .boxed()
     }
 
     fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            let worktree = state
-                .worktrees
-                .iter_mut()
-                .find(|worktree| worktree.path == old_path);
-            match worktree {
-                Some(worktree) => {
-                    worktree.path = new_path;
-                    Ok(())
+        let fs = self.fs.clone();
+        let executor = self.executor.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            // Move the directory first, then update state
+            fs.rename(
+                &old_path,
+                &new_path,
+                RenameOptions {
+                    overwrite: false,
+                    ignore_if_exists: false,
+                    create_parents: true,
+                },
+            )
+            .await?;
+            fs.with_git_state(&dot_git_path, true, move |state| {
+                let worktree = state
+                    .worktrees
+                    .iter_mut()
+                    .find(|worktree| worktree.path == old_path);
+                match worktree {
+                    Some(worktree) => {
+                        worktree.path = new_path;
+                        Ok(())
+                    }
+                    None => bail!("no worktree found at path: {}", old_path.display()),
                 }
-                None => bail!("no worktree found at path: {}", old_path.display()),
-            }
-        })
+            })??;
+            Ok(())
+        }
+        .boxed()
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
@@ -863,6 +905,12 @@ mod tests {
         assert_eq!(worktrees[0].ref_name.as_ref(), "refs/heads/feature-branch");
         assert_eq!(worktrees[0].sha.as_ref(), "abc123");
 
+        // Directory should exist in FakeFs after create
+        assert!(
+            fs.is_dir(Path::new("/worktrees/feature-branch")).await,
+            "worktree directory should be created in FakeFs"
+        );
+
         // Create a second worktree (without explicit commit)
         repo.create_worktree(
             "bugfix-branch".to_string(),
@@ -874,6 +922,10 @@ mod tests {
 
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 2);
+        assert!(
+            fs.is_dir(Path::new("/worktrees/bugfix-branch")).await,
+            "second worktree directory should be created in FakeFs"
+        );
 
         // Rename the first worktree
         repo.rename_worktree(
@@ -898,6 +950,16 @@ mod tests {
             "old path should no longer exist"
         );
 
+        // Directory should be moved in FakeFs after rename
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/feature-branch")).await,
+            "old worktree directory should not exist after rename"
+        );
+        assert!(
+            fs.is_dir(Path::new("/worktrees/renamed-branch")).await,
+            "new worktree directory should exist after rename"
+        );
+
         // Rename a nonexistent worktree should fail
         let result = repo
             .rename_worktree(PathBuf::from("/nonexistent"), PathBuf::from("/somewhere"))
@@ -913,6 +975,12 @@ mod tests {
         assert_eq!(worktrees.len(), 1);
         assert_eq!(worktrees[0].path, PathBuf::from("/worktrees/bugfix-branch"));
 
+        // Directory should be removed from FakeFs after remove
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/renamed-branch")).await,
+            "worktree directory should be removed from FakeFs"
+        );
+
         // Remove a nonexistent worktree should fail
         let result = repo
             .remove_worktree(PathBuf::from("/nonexistent"), false)
@@ -926,5 +994,9 @@ mod tests {
 
         let worktrees = repo.worktrees().await.unwrap();
         assert!(worktrees.is_empty());
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/bugfix-branch")).await,
+            "last worktree directory should be removed from FakeFs"
+        );
     }
 }
