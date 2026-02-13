@@ -1866,36 +1866,15 @@ impl EditorElement {
                     let block_text = if selection.cursor_shape == CursorShape::Block
                         && !is_target_redacted
                     {
-                        resolve_block_cursor_grapheme(&snapshot.display_snapshot, cursor_position)
-                            .or_else(|| {
-                                if snapshot.is_empty() {
-                                    snapshot
-                                        .placeholder_text()
-                                        .and_then(|text| text.graphemes(true).next().map(normalize_block_cursor_grapheme))
-                                } else {
-                                    None
-                                }
-                            })
-                            .map(|text| {
-                                let is_ascii_whitespace_only =
-                                    text.chars().all(|c| c.is_ascii_whitespace());
-                                let len = text.len();
-                                let shaped = window.text_system().shape_line(
-                                    text,
-                                    cursor_row_layout.font_size,
-                                    &[TextRun {
-                                        len,
-                                        font: block_cursor_font.clone(),
-                                        color: block_text_color,
-                                        ..Default::default()
-                                    }],
-                                    None,
-                                );
-                                if !is_ascii_whitespace_only {
-                                    block_width = block_width.max(shaped.width);
-                                }
-                                shaped
-                            })
+                        shape_block_cursor_text_for_point(
+                            &snapshot.display_snapshot,
+                            cursor_position,
+                            snapshot.placeholder_text().as_deref(),
+                            &block_cursor_font,
+                            cursor_row_layout.font_size,
+                            block_text_color,
+                            window,
+                        )
                     } else {
                         None
                     };
@@ -2057,8 +2036,7 @@ impl EditorElement {
         // on top of the cached scene.
         if is_animating && let Some(mut state) = animation_state {
             if let Some(newest_idx) = newest_cursor_index {
-                let mut other_cursors =
-                    Vec::with_capacity(cursor_layouts.len().saturating_sub(1));
+                let mut other_cursors = Vec::with_capacity(cursor_layouts.len().saturating_sub(1));
                 let mut kept = Vec::new();
                 for (i, cursor) in cursor_layouts.into_iter().enumerate() {
                     if i == newest_idx {
@@ -11983,13 +11961,6 @@ fn shape_block_cursor_text_for_point(
     })
 }
 
-fn prefer_cached_block_cursor_text<T>(
-    cached_block_text: Option<T>,
-    fresh_block_text: Option<T>,
-) -> Option<T> {
-    cached_block_text.or(fresh_block_text)
-}
-
 fn quad_top_left_or_fallback(
     quad_corners: Option<[gpui::Point<Pixels>; 4]>,
     fallback_origin: gpui::Point<Pixels>,
@@ -11997,14 +11968,6 @@ fn quad_top_left_or_fallback(
     quad_corners
         .map(|corners| corners[0])
         .unwrap_or(fallback_origin)
-}
-
-fn should_paint_block_cursor_destination_mask<T>(
-    cursor_animating: bool,
-    destination_pos: Option<gpui::Point<Pixels>>,
-    block_text: Option<&T>,
-) -> bool {
-    cursor_animating && destination_pos.is_some() && block_text.is_some()
 }
 
 #[derive(Debug)]
@@ -12067,7 +12030,11 @@ struct CursorAnimationState {
 }
 
 /// Paint one frame of cursor animation and re-register callback if still animating.
-fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Window, cx: &mut App) {
+fn paint_cursor_animation_frame(
+    mut state: CursorAnimationState,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if !state
         .editor
         .read(cx)
@@ -12105,26 +12072,28 @@ fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Wi
         let cursor_animating = editor.is_cursor_animating();
         let cursor_or_vfx_animating = cursor_animating || editor.is_cursor_vfx_animating();
 
-        let fresh_block_text =
-            if state.cursor_shape == CursorShape::Block && !state.is_target_redacted {
-                let snapshot = editor.display_snapshot(cx);
-                let placeholder_text = if snapshot.is_empty() {
-                    editor.placeholder_text(cx)
-                } else {
-                    None
-                };
-                shape_block_cursor_text_for_point(
-                    &snapshot,
-                    state.target_display_point,
-                    placeholder_text.as_deref(),
-                    &state.font,
-                    state.font_size,
-                    state.block_text_color,
-                    window,
-                )
+        let fresh_block_text = if state.block_text.is_none()
+            && state.cursor_shape == CursorShape::Block
+            && !state.is_target_redacted
+        {
+            let snapshot = editor.display_snapshot(cx);
+            let placeholder_text = if snapshot.is_empty() {
+                editor.placeholder_text(cx)
             } else {
                 None
             };
+            shape_block_cursor_text_for_point(
+                &snapshot,
+                state.target_display_point,
+                placeholder_text.as_deref(),
+                &state.font,
+                state.font_size,
+                state.block_text_color,
+                window,
+            )
+        } else {
+            None
+        };
 
         let destination_pos = if cursor_animating
             && state.cursor_shape == CursorShape::Block
@@ -12133,7 +12102,7 @@ fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Wi
             editor
                 .quad_cursor()
                 .map(|quad| quad.destination_pos())
-                .or(Some(state.cursor_pos))
+                .unwrap_or(state.cursor_pos)
         } else {
             None
         };
@@ -12151,13 +12120,12 @@ fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Wi
     let blink_animating = state.blink_manager.read(cx).is_smooth_blink_animating();
     let still_animating = cursor_or_vfx_animating || blink_animating;
 
-    let block_text = prefer_cached_block_cursor_text(state.block_text.clone(), fresh_block_text);
+    let block_text = state.block_text.clone().or(fresh_block_text);
 
-    if should_paint_block_cursor_destination_mask(
-        cursor_animating,
-        destination_pos,
-        block_text.as_ref(),
-    ) && let Some(destination_pos) = destination_pos
+    if cursor_animating
+        && destination_pos.is_some()
+        && block_text.is_some()
+        && let Some(destination_pos) = destination_pos
     {
         let destination_bounds = Bounds::new(
             state.content_origin + destination_pos,
@@ -12337,10 +12305,8 @@ impl CursorLayout {
             }
 
             if let Some(block_text) = &self.block_text {
-                let block_text_origin = quad_top_left_or_fallback(
-                    Some(corners_with_offset),
-                    self.origin + origin,
-                );
+                let block_text_origin =
+                    quad_top_left_or_fallback(Some(corners_with_offset), self.origin + origin);
                 block_text
                     .paint_with_opacity(
                         block_text_origin,
@@ -13272,37 +13238,6 @@ mod tests {
                 assert_eq!(right_text.as_deref(), Some("b"));
             })
             .unwrap();
-    }
-
-    #[test]
-    fn test_prefer_cached_block_cursor_text_prioritizes_cached_value() {
-        assert_eq!(prefer_cached_block_cursor_text(Some(1), Some(2)), Some(1));
-        assert_eq!(prefer_cached_block_cursor_text(Some(1), None), Some(1));
-        assert_eq!(
-            prefer_cached_block_cursor_text(None::<i32>, Some(2)),
-            Some(2)
-        );
-    }
-
-    #[test]
-    fn test_destination_mask_requires_block_text() {
-        let destination = Some(point(px(4.), px(2.)));
-
-        assert!(!should_paint_block_cursor_destination_mask::<u8>(
-            true,
-            destination,
-            None
-        ));
-        assert!(!should_paint_block_cursor_destination_mask(
-            false,
-            destination,
-            Some(&1u8)
-        ));
-        assert!(should_paint_block_cursor_destination_mask(
-            true,
-            destination,
-            Some(&1u8)
-        ));
     }
 
     #[test]
