@@ -1,11 +1,12 @@
 use super::tool_permissions::{
-    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    resolve_project_path,
 };
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -67,36 +68,51 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
+        let initial_title = self.initial_title(Ok(input.clone()), cx);
 
-        // Symlink escape authorization replaces (rather than supplements)
-        // the normal tool-permission prompt. The symlink prompt already
-        // requires explicit user approval with the canonical target shown,
-        // which is strictly more security-relevant than a generic confirm.
-        let symlink_escape = match resolve_project_path(
-            self.project.read(cx),
-            PathBuf::from(&input.path_or_url),
-            cx,
-        ) {
-            Ok(ResolvedProjectPath::SymlinkEscape {
-                canonical_target, ..
-            }) => Some(canonical_target),
-            _ => None,
-        };
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-        let authorize = if let Some(canonical_target) = symlink_escape {
-            authorize_symlink_access(
-                Self::NAME,
-                &input.path_or_url,
-                &canonical_target,
-                &event_stream,
-                cx,
-            )
-        } else {
-            let context =
-                crate::ToolPermissionContext::new(Self::NAME, vec![input.path_or_url.clone()]);
-            event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx)
-        };
-        cx.background_spawn(async move {
+            // Symlink escape authorization replaces (rather than supplements)
+            // the normal tool-permission prompt. The symlink prompt already
+            // requires explicit user approval with the canonical target shown,
+            // which is strictly more security-relevant than a generic confirm.
+            let symlink_escape = project.read_with(cx, |project, cx| {
+                match resolve_project_path(
+                    project,
+                    PathBuf::from(&input.path_or_url),
+                    &canonical_roots,
+                    cx,
+                ) {
+                    Ok(ResolvedProjectPath::SymlinkEscape {
+                        canonical_target, ..
+                    }) => Some(canonical_target),
+                    _ => None,
+                }
+            });
+
+            let authorize = if let Some(canonical_target) = symlink_escape {
+                cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &input.path_or_url,
+                        &canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                })
+            } else {
+                cx.update(|cx| {
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.path_or_url.clone()],
+                    );
+                    event_stream.authorize(initial_title, context, cx)
+                })
+            };
+
             futures::select! {
                 result = authorize.fuse() => result?,
                 _ = event_stream.cancelled_by_user().fuse() => {

@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, collect_symlink_escapes,
-    is_sensitive_settings_path, sensitive_settings_kind,
+    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
+    collect_symlink_escapes, sensitive_settings_kind,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_paths};
 use agent_client_protocol::ToolKind;
@@ -104,56 +104,61 @@ impl AgentTool for MovePathTool {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
-        let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
-            || (matches!(decision, ToolPermissionDecision::Allow)
-                && (is_sensitive_settings_path(Path::new(&input.source_path))
-                    || is_sensitive_settings_path(Path::new(&input.destination_path))));
-
-        let symlink_escapes = collect_symlink_escapes(
-            self.project.read(cx),
-            &input.source_path,
-            &input.destination_path,
-            cx,
-        );
-        let symlink_authorize = if !symlink_escapes.is_empty() {
-            Some(authorize_symlink_escapes(
-                Self::NAME,
-                &symlink_escapes,
-                &event_stream,
-                cx,
-            ))
-        } else {
-            None
-        };
-
-        let authorize = if let Some(authorize) = symlink_authorize {
-            // Symlink escape authorization replaces (rather than supplements)
-            // the normal tool-permission prompt. The symlink prompt already
-            // requires explicit user approval with the canonical target shown,
-            // which is strictly more security-relevant than a generic confirm.
-            Some(authorize)
-        } else if needs_confirmation {
-            let src = MarkdownInlineCode(&input.source_path);
-            let dest = MarkdownInlineCode(&input.destination_path);
-            let context = crate::ToolPermissionContext::new(
-                Self::NAME,
-                vec![input.source_path.clone(), input.destination_path.clone()],
-            );
-            let title = format!("Move {src} to {dest}");
-            let settings_kind = sensitive_settings_kind(Path::new(&input.source_path))
-                .or_else(|| sensitive_settings_kind(Path::new(&input.destination_path)));
-            let title = match settings_kind {
-                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                None => title,
-            };
-            Some(event_stream.authorize(title, context, cx))
-        } else {
-            None
-        };
-
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
+                project.read_with(cx, |project, cx| {
+                    collect_symlink_escapes(
+                        project,
+                        &input.source_path,
+                        &input.destination_path,
+                        &canonical_roots,
+                        cx,
+                    )
+                });
+
+            let sensitive_kind =
+                sensitive_settings_kind(Path::new(&input.source_path), fs.as_ref())
+                    .await
+                    .or(
+                        sensitive_settings_kind(Path::new(&input.destination_path), fs.as_ref())
+                            .await,
+                    );
+
+            let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
+                || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
+
+            let authorize = if !symlink_escapes.is_empty() {
+                // Symlink escape authorization replaces (rather than supplements)
+                // the normal tool-permission prompt. The symlink prompt already
+                // requires explicit user approval with the canonical target shown,
+                // which is strictly more security-relevant than a generic confirm.
+                Some(cx.update(|cx| {
+                    authorize_symlink_escapes(Self::NAME, &symlink_escapes, &event_stream, cx)
+                }))
+            } else if needs_confirmation {
+                Some(cx.update(|cx| {
+                    let src = MarkdownInlineCode(&input.source_path);
+                    let dest = MarkdownInlineCode(&input.destination_path);
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.source_path.clone(), input.destination_path.clone()],
+                    );
+                    let title = format!("Move {src} to {dest}");
+                    let title = match sensitive_kind {
+                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                        None => title,
+                    };
+                    event_stream.authorize(title, context, cx)
+                }))
+            } else {
+                None
+            };
+
             if let Some(authorize) = authorize {
                 authorize.await?;
             }

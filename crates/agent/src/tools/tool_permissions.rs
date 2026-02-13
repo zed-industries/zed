@@ -3,12 +3,13 @@ use crate::{
     decide_permission_for_path,
 };
 use anyhow::{Result, anyhow};
-use gpui::{App, Task, WeakEntity};
+use fs::Fs;
+use gpui::{App, Entity, Task, WeakEntity};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use util::paths::SanitizedPath;
+use std::sync::Arc;
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -32,9 +33,30 @@ pub enum ResolvedProjectPath {
     },
 }
 
-fn safe_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
-    let canonical = std::fs::canonicalize(path)?;
-    Ok(PathBuf::from(SanitizedPath::new(&canonical).as_path()))
+/// Asynchronously canonicalizes the absolute paths of all worktrees in a
+/// project using the provided `Fs`. The returned paths can be passed to
+/// [`resolve_project_path`] and related helpers so that they don't need to
+/// perform blocking filesystem I/O themselves.
+pub async fn canonicalize_worktree_roots<C: gpui::AppContext>(
+    project: &Entity<Project>,
+    fs: &Arc<dyn Fs>,
+    cx: &C,
+) -> Vec<PathBuf> {
+    let abs_paths: Vec<Arc<Path>> = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path())
+            .collect()
+    });
+
+    let mut canonical_roots = Vec::with_capacity(abs_paths.len());
+    for abs_path in &abs_paths {
+        match fs.canonicalize(abs_path).await {
+            Ok(canonical) => canonical_roots.push(canonical),
+            Err(_) => canonical_roots.push(abs_path.to_path_buf()),
+        }
+    }
+    canonical_roots
 }
 
 /// Walks up ancestors of `path` to find the deepest one that exists on disk and
@@ -48,16 +70,12 @@ fn safe_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
 /// so we must walk the full ancestor chain. For example:
 ///   `ln -s /external/config /project/.zed`
 /// makes `.zed` an intermediate symlink directory.
-///
-/// This performs blocking filesystem I/O and should ideally be moved to an async
-/// context in the future. Currently it is only used for sensitive-settings
-/// detection which operates on a small number of well-known paths.
-fn canonicalize_with_ancestors(path: &Path) -> Option<PathBuf> {
+async fn canonicalize_with_ancestors(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     let mut current: Option<&Path> = Some(path);
     let mut suffix_components = Vec::new();
     loop {
         match current {
-            Some(ancestor) => match safe_canonicalize(ancestor) {
+            Some(ancestor) => match fs.canonicalize(ancestor).await {
                 Ok(canonical) => {
                     let mut result = canonical;
                     for component in suffix_components.into_iter().rev() {
@@ -77,19 +95,15 @@ fn canonicalize_with_ancestors(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn is_within_any_worktree(project: &Project, canonical_path: &Path, cx: &App) -> bool {
-    project.worktrees(cx).any(|worktree| {
-        let worktree_abs = worktree.read(cx).abs_path();
-        match safe_canonicalize(worktree_abs.as_ref()) {
-            Ok(worktree_canonical) => canonical_path.starts_with(&worktree_canonical),
-            Err(_) => canonical_path.starts_with(worktree_abs.as_ref()),
-        }
-    })
+fn is_within_any_worktree(canonical_path: &Path, canonical_worktree_roots: &[PathBuf]) -> bool {
+    canonical_worktree_roots
+        .iter()
+        .any(|root| canonical_path.starts_with(root))
 }
 
 /// Returns the kind of sensitive settings location this path targets, if any:
 /// either inside a `.zed/` local-settings directory or inside the global config dir.
-pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
+pub async fn sensitive_settings_kind(path: &Path, fs: &dyn Fs) -> Option<SensitiveSettingsKind> {
     let local_settings_folder = paths::local_settings_folder_name();
     if path.components().any(|component| {
         component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
@@ -97,8 +111,10 @@ pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
         return Some(SensitiveSettingsKind::Local);
     }
 
-    if let Some(canonical_path) = canonicalize_with_ancestors(path) {
-        let config_dir = safe_canonicalize(paths::config_dir())
+    if let Some(canonical_path) = canonicalize_with_ancestors(path, fs).await {
+        let config_dir = fs
+            .canonicalize(paths::config_dir())
+            .await
             .unwrap_or_else(|_| paths::config_dir().to_path_buf());
         if canonical_path.starts_with(&config_dir) {
             return Some(SensitiveSettingsKind::Global);
@@ -108,8 +124,8 @@ pub fn sensitive_settings_kind(path: &Path) -> Option<SensitiveSettingsKind> {
     None
 }
 
-pub fn is_sensitive_settings_path(path: &Path) -> bool {
-    sensitive_settings_kind(path).is_some()
+pub async fn is_sensitive_settings_path(path: &Path, fs: &dyn Fs) -> bool {
+    sensitive_settings_kind(path, fs).await.is_some()
 }
 
 /// Resolves a path within the project, checking for symlink escapes.
@@ -117,6 +133,10 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
 /// This is the primary entry point for agent tools that need to resolve a
 /// user-provided path string into a validated `ProjectPath`. It combines
 /// path lookup (`find_project_path`) with symlink safety verification.
+///
+/// `canonical_worktree_roots` should be obtained from
+/// [`canonicalize_worktree_roots`] before calling this function so that no
+/// blocking I/O is needed here.
 ///
 /// # Returns
 ///
@@ -130,6 +150,7 @@ pub fn is_sensitive_settings_path(path: &Path) -> bool {
 pub fn resolve_project_path(
     project: &Project,
     path: impl AsRef<Path>,
+    canonical_worktree_roots: &[PathBuf],
     cx: &App,
 ) -> Result<ResolvedProjectPath> {
     let path = path.as_ref();
@@ -154,7 +175,7 @@ pub fn resolve_project_path(
         // canonical path if the entry has one, otherwise fall through to
         // filesystem-level canonicalization.
         if let Some(canonical) = &entry.canonical_path {
-            if is_within_any_worktree(project, canonical.as_ref(), cx) {
+            if is_within_any_worktree(canonical.as_ref(), canonical_worktree_roots) {
                 return Ok(ResolvedProjectPath::Safe(project_path));
             }
 
@@ -195,7 +216,7 @@ pub fn resolve_project_path(
             canonical_ancestor.join(suffix.as_std_path())
         };
 
-        if is_within_any_worktree(project, &canonical_target, cx) {
+        if is_within_any_worktree(&canonical_target, canonical_worktree_roots) {
             return Ok(ResolvedProjectPath::Safe(project_path));
         }
 
@@ -271,9 +292,14 @@ pub fn authorize_symlink_escapes(
 
 /// Checks whether a path escapes the project via symlink, without creating
 /// an authorization task. Useful for pre-filtering paths before settings checks.
-pub fn path_has_symlink_escape(project: &Project, path: impl AsRef<Path>, cx: &App) -> bool {
+pub fn path_has_symlink_escape(
+    project: &Project,
+    path: impl AsRef<Path>,
+    canonical_worktree_roots: &[PathBuf],
+    cx: &App,
+) -> bool {
     matches!(
-        resolve_project_path(project, path, cx),
+        resolve_project_path(project, path, canonical_worktree_roots, cx),
         Ok(ResolvedProjectPath::SymlinkEscape { .. })
     )
 }
@@ -283,9 +309,10 @@ pub fn path_has_symlink_escape(project: &Project, path: impl AsRef<Path>, cx: &A
 pub fn detect_symlink_escape<'a>(
     project: &Project,
     display_path: &'a str,
+    canonical_worktree_roots: &[PathBuf],
     cx: &App,
 ) -> Option<(&'a str, PathBuf)> {
-    match resolve_project_path(project, display_path, cx).ok()? {
+    match resolve_project_path(project, display_path, canonical_worktree_roots, cx).ok()? {
         ResolvedProjectPath::Safe(_) => None,
         ResolvedProjectPath::SymlinkEscape {
             canonical_target, ..
@@ -304,13 +331,17 @@ pub fn collect_symlink_escapes<'a>(
     project: &Project,
     source_path: &'a str,
     destination_path: &'a str,
+    canonical_worktree_roots: &[PathBuf],
     cx: &App,
 ) -> Vec<(&'a str, PathBuf)> {
     let mut escapes = Vec::new();
-    if let Some(escape) = detect_symlink_escape(project, source_path, cx) {
+    if let Some(escape) = detect_symlink_escape(project, source_path, canonical_worktree_roots, cx)
+    {
         escapes.push(escape);
     }
-    if let Some(escape) = detect_symlink_escape(project, destination_path, cx) {
+    if let Some(escape) =
+        detect_symlink_escape(project, destination_path, canonical_worktree_roots, cx)
+    {
         escapes.push(escape);
     }
     escapes
@@ -346,75 +377,135 @@ pub fn authorize_file_edit(
         return Task::ready(Err(anyhow!("{}", reason)));
     }
 
-    // Resolve the path and check for symlink escapes in one step.
-    // Symlink authorization is an additional gate after deny has been enforced.
-    let resolved = thread
-        .read_with(cx, |thread, cx| {
-            resolve_project_path(thread.project().read(cx), path, cx)
-        })
-        .ok();
+    let path_owned = path.to_path_buf();
+    let display_description = display_description.to_string();
+    let tool_name = tool_name.to_string();
+    let thread = thread.clone();
+    let event_stream = event_stream.clone();
 
-    if let Some(Ok(ResolvedProjectPath::SymlinkEscape {
-        canonical_target, ..
-    })) = &resolved
-    {
-        return authorize_symlink_access(tool_name, &path_str, canonical_target, event_stream, cx);
-    }
+    // The local settings folder check is synchronous (pure path inspection),
+    // so we can handle this common case without spawning.
+    let local_settings_folder = paths::local_settings_folder_name();
+    let is_local_settings = path.components().any(|component| {
+        component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+    });
 
-    // Create-mode paths may not resolve yet, so also inspect the parent path
-    // for symlink escapes before applying settings-based allow decisions.
-    let parent_resolved = if matches!(resolved, Some(Err(_))) {
-        path.parent().and_then(|parent_path| {
-            thread
-                .read_with(cx, |thread, cx| {
-                    resolve_project_path(thread.project().read(cx), parent_path, cx)
-                })
-                .ok()
-        })
-    } else {
-        None
-    };
+    cx.spawn(async move |cx| {
+        // Resolve the path and check for symlink escapes.
+        let (project_entity, fs) = thread.read_with(cx, |thread, cx| {
+            let project = thread.project().clone();
+            let fs = project.read(cx).fs().clone();
+            (project, fs)
+        })?;
 
-    if let Some(Ok(ResolvedProjectPath::SymlinkEscape {
-        canonical_target, ..
-    })) = &parent_resolved
-    {
-        return authorize_symlink_access(tool_name, &path_str, canonical_target, event_stream, cx);
-    }
+        let canonical_roots = canonicalize_worktree_roots(&project_entity, &fs, cx).await;
 
-    let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+        let resolved = project_entity.read_with(cx, |project, cx| {
+            resolve_project_path(project, &path_owned, &canonical_roots, cx)
+        });
 
-    if explicitly_allowed && !is_sensitive_settings_path(path) {
-        return Task::ready(Ok(()));
-    }
-
-    match sensitive_settings_kind(path) {
-        Some(SensitiveSettingsKind::Local) => {
-            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
-            return event_stream.authorize(
-                format!("{} (local settings)", display_description),
-                context,
-                cx,
-            );
+        if let Ok(ResolvedProjectPath::SymlinkEscape {
+            canonical_target, ..
+        }) = &resolved
+        {
+            let authorize = cx.update(|cx| {
+                authorize_symlink_access(
+                    &tool_name,
+                    &path_owned.to_string_lossy(),
+                    canonical_target,
+                    &event_stream,
+                    cx,
+                )
+            });
+            return authorize.await;
         }
-        Some(SensitiveSettingsKind::Global) => {
-            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
-            return event_stream.authorize(
-                format!("{} (settings)", display_description),
-                context,
-                cx,
-            );
-        }
-        None => {}
-    }
 
-    match resolved {
-        Some(Ok(_)) => Task::ready(Ok(())),
-        _ => {
-            let context = ToolPermissionContext::new(tool_name, vec![path_str.to_string()]);
-            event_stream.authorize(display_description, context, cx)
+        // Create-mode paths may not resolve yet, so also inspect the parent path
+        // for symlink escapes before applying settings-based allow decisions.
+        if resolved.is_err() {
+            if let Some(parent_path) = path_owned.parent() {
+                let parent_resolved = project_entity.read_with(cx, |project, cx| {
+                    resolve_project_path(project, parent_path, &canonical_roots, cx)
+                });
+
+                if let Ok(ResolvedProjectPath::SymlinkEscape {
+                    canonical_target, ..
+                }) = &parent_resolved
+                {
+                    let authorize = cx.update(|cx| {
+                        authorize_symlink_access(
+                            &tool_name,
+                            &path_owned.to_string_lossy(),
+                            canonical_target,
+                            &event_stream,
+                            cx,
+                        )
+                    });
+                    return authorize.await;
+                }
+            }
         }
-    }
+
+        let explicitly_allowed = matches!(decision, ToolPermissionDecision::Allow);
+
+        // Check sensitive settings asynchronously.
+        let settings_kind = if is_local_settings {
+            Some(SensitiveSettingsKind::Local)
+        } else {
+            sensitive_settings_kind(&path_owned, fs.as_ref()).await
+        };
+
+        let is_sensitive = settings_kind.is_some();
+        if explicitly_allowed && !is_sensitive {
+            return Ok(());
+        }
+
+        match settings_kind {
+            Some(SensitiveSettingsKind::Local) => {
+                let authorize = cx.update(|cx| {
+                    let context = ToolPermissionContext::new(
+                        &tool_name,
+                        vec![path_owned.to_string_lossy().to_string()],
+                    );
+                    event_stream.authorize(
+                        format!("{} (local settings)", display_description),
+                        context,
+                        cx,
+                    )
+                });
+                return authorize.await;
+            }
+            Some(SensitiveSettingsKind::Global) => {
+                let authorize = cx.update(|cx| {
+                    let context = ToolPermissionContext::new(
+                        &tool_name,
+                        vec![path_owned.to_string_lossy().to_string()],
+                    );
+                    event_stream.authorize(
+                        format!("{} (settings)", display_description),
+                        context,
+                        cx,
+                    )
+                });
+                return authorize.await;
+            }
+            None => {}
+        }
+
+        match resolved {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                let authorize = cx.update(|cx| {
+                    let context = ToolPermissionContext::new(
+                        &tool_name,
+                        vec![path_owned.to_string_lossy().to_string()],
+                    );
+                    event_stream.authorize(&display_description, context, cx)
+                });
+                authorize.await
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -432,6 +523,28 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    async fn worktree_roots(
+        project: &Entity<Project>,
+        fs: &Arc<dyn Fs>,
+        cx: &TestAppContext,
+    ) -> Vec<PathBuf> {
+        let abs_paths: Vec<Arc<Path>> = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|wt| wt.read(cx).abs_path())
+                .collect()
+        });
+
+        let mut roots = Vec::with_capacity(abs_paths.len());
+        for p in &abs_paths {
+            match fs.canonicalize(p).await {
+                Ok(c) => roots.push(c),
+                Err(_) => roots.push(p.to_path_buf()),
+            }
+        }
+        roots
     }
 
     #[gpui::test]
@@ -453,11 +566,13 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved = resolve_project_path(project, "project/src/main.rs", cx)
+            let resolved = resolve_project_path(project, "project/src/main.rs", &roots, cx)
                 .expect("should resolve normal file");
             assert!(
                 matches!(resolved, ResolvedProjectPath::Safe(_)),
@@ -465,7 +580,7 @@ mod tests {
                 resolved
             );
 
-            let resolved = resolve_project_path(project, "project/README.md", cx)
+            let resolved = resolve_project_path(project, "project/README.md", &roots, cx)
                 .expect("should resolve readme");
             assert!(
                 matches!(resolved, ResolvedProjectPath::Safe(_)),
@@ -501,11 +616,13 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved = resolve_project_path(project, "project/link", cx)
+            let resolved = resolve_project_path(project, "project/link", &roots, cx)
                 .expect("should resolve symlink path");
             match &resolved {
                 ResolvedProjectPath::SymlinkEscape {
@@ -545,11 +662,13 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved = resolve_project_path(project, "project/link_dir", cx)
+            let resolved = resolve_project_path(project, "project/link_dir", &roots, cx)
                 .expect("should resolve intra-project symlink");
             assert!(
                 matches!(resolved, ResolvedProjectPath::Safe(_)),
@@ -583,11 +702,13 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved = resolve_project_path(project, "project/link/new_dir", cx)
+            let resolved = resolve_project_path(project, "project/link/new_dir", &roots, cx)
                 .expect("should resolve missing child path under symlink");
             match resolved {
                 ResolvedProjectPath::SymlinkEscape {
@@ -641,12 +762,15 @@ mod tests {
         )
         .await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved = resolve_project_path(project, "worktree_one/link_to_worktree_two", cx)
-                .expect("should resolve cross-worktree symlink");
+            let resolved =
+                resolve_project_path(project, "worktree_one/link_to_worktree_two", &roots, cx)
+                    .expect("should resolve cross-worktree symlink");
             assert!(
                 matches!(resolved, ResolvedProjectPath::Safe(_)),
                 "cross-worktree symlink should be Safe, got: {:?}",
@@ -690,13 +814,19 @@ mod tests {
         )
         .await;
         cx.run_until_parked();
+        let fs_arc: Arc<dyn Fs> = fs;
+        let roots = worktree_roots(&project, &fs_arc, cx).await;
 
         cx.read(|cx| {
             let project = project.read(cx);
 
-            let resolved =
-                resolve_project_path(project, "worktree_one/link_to_worktree_two/new_dir", cx)
-                    .expect("should resolve missing child under cross-worktree symlink");
+            let resolved = resolve_project_path(
+                project,
+                "worktree_one/link_to_worktree_two/new_dir",
+                &roots,
+                cx,
+            )
+            .expect("should resolve missing child under cross-worktree symlink");
             assert!(
                 matches!(resolved, ResolvedProjectPath::Safe(_)),
                 "missing child under cross-worktree symlink should be Safe, got: {:?}",

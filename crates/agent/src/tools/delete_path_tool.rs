@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, detect_symlink_escape,
-    is_sensitive_settings_path, sensitive_settings_kind,
+    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
+    detect_symlink_escape, sensitive_settings_kind,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 use action_log::ActionLog;
@@ -79,52 +79,66 @@ impl AgentTool for DeletePathTool {
         let path = input.path;
 
         let settings = AgentSettings::get_global(cx);
-        let mut decision = decide_permission_for_path(Self::NAME, &path, settings);
-        let symlink_escape_target =
-            detect_symlink_escape(self.project.read(cx), &path, cx).map(|(_, target)| target);
-
-        if matches!(decision, ToolPermissionDecision::Allow)
-            && is_sensitive_settings_path(Path::new(&path))
-        {
-            decision = ToolPermissionDecision::Confirm;
-        }
+        let decision = decide_permission_for_path(Self::NAME, &path, settings);
 
         if let ToolPermissionDecision::Deny(reason) = decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
-        let authorize = if let Some(canonical_target) = symlink_escape_target {
-            // Symlink escape authorization replaces (rather than supplements)
-            // the normal tool-permission prompt. The symlink prompt already
-            // requires explicit user approval with the canonical target shown,
-            // which is strictly more security-relevant than a generic confirm.
-            Some(authorize_symlink_access(
-                Self::NAME,
-                &path,
-                &canonical_target,
-                &event_stream,
-                cx,
-            ))
-        } else {
-            match decision {
-                ToolPermissionDecision::Allow => None,
-                ToolPermissionDecision::Confirm => {
-                    let context = crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
-                    let title = format!("Delete {}", MarkdownInlineCode(&path));
-                    let title = match sensitive_settings_kind(Path::new(&path)) {
-                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                        None => title,
-                    };
-                    Some(event_stream.authorize(title, context, cx))
-                }
-                ToolPermissionDecision::Deny(_) => None,
-            }
-        };
-
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            let symlink_escape_target = project.read_with(cx, |project, cx| {
+                detect_symlink_escape(project, &path, &canonical_roots, cx)
+                    .map(|(_, target)| target)
+            });
+
+            let settings_kind = sensitive_settings_kind(Path::new(&path), fs.as_ref()).await;
+
+            let decision =
+                if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {
+                    ToolPermissionDecision::Confirm
+                } else {
+                    decision
+                };
+
+            let authorize = if let Some(canonical_target) = symlink_escape_target {
+                // Symlink escape authorization replaces (rather than supplements)
+                // the normal tool-permission prompt. The symlink prompt already
+                // requires explicit user approval with the canonical target shown,
+                // which is strictly more security-relevant than a generic confirm.
+                Some(cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &path,
+                        &canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                }))
+            } else {
+                match decision {
+                    ToolPermissionDecision::Allow => None,
+                    ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
+                        let context =
+                            crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
+                        let title = format!("Delete {}", MarkdownInlineCode(&path));
+                        let title = match settings_kind {
+                            Some(SensitiveSettingsKind::Local) => {
+                                format!("{title} (local settings)")
+                            }
+                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                            None => title,
+                        };
+                        event_stream.authorize(title, context, cx)
+                    })),
+                    ToolPermissionDecision::Deny(_) => None,
+                }
+            };
+
             if let Some(authorize) = authorize {
                 authorize.await?;
             }

@@ -1,5 +1,6 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, detect_symlink_escape, sensitive_settings_kind,
+    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
+    detect_symlink_escape, sensitive_settings_kind,
 };
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
@@ -10,11 +11,11 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use std::path::Path;
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
@@ -73,53 +74,67 @@ impl AgentTool for CreateDirectoryTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-        let mut decision = decide_permission_for_path(Self::NAME, &input.path, settings);
-        let sensitive_kind = sensitive_settings_kind(Path::new(&input.path));
-        let symlink_escape_target =
-            detect_symlink_escape(self.project.read(cx), &input.path, cx).map(|(_, target)| target);
-
-        if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {
-            decision = ToolPermissionDecision::Confirm;
-        }
+        let decision = decide_permission_for_path(Self::NAME, &input.path, settings);
 
         if let ToolPermissionDecision::Deny(reason) = decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
-        let authorize = if let Some(canonical_target) = symlink_escape_target {
-            // Symlink escape authorization replaces (rather than supplements)
-            // the normal tool-permission prompt. The symlink prompt already
-            // requires explicit user approval with the canonical target shown,
-            // which is strictly more security-relevant than a generic confirm.
-            Some(authorize_symlink_access(
-                Self::NAME,
-                &input.path,
-                &canonical_target,
-                &event_stream,
-                cx,
-            ))
-        } else {
-            match decision {
-                ToolPermissionDecision::Allow => None,
-                ToolPermissionDecision::Confirm => {
-                    let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
-                    let title = match &sensitive_kind {
-                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                        None => title,
-                    };
-                    let context =
-                        crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
-                    Some(event_stream.authorize(title, context, cx))
-                }
-                ToolPermissionDecision::Deny(_) => None,
-            }
-        };
-
         let destination_path: Arc<str> = input.path.as_str().into();
 
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            let symlink_escape_target = project.read_with(cx, |project, cx| {
+                detect_symlink_escape(project, &input.path, &canonical_roots, cx)
+                    .map(|(_, target)| target)
+            });
+
+            let sensitive_kind = sensitive_settings_kind(Path::new(&input.path), fs.as_ref()).await;
+
+            let decision =
+                if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {
+                    ToolPermissionDecision::Confirm
+                } else {
+                    decision
+                };
+
+            let authorize = if let Some(canonical_target) = symlink_escape_target {
+                // Symlink escape authorization replaces (rather than supplements)
+                // the normal tool-permission prompt. The symlink prompt already
+                // requires explicit user approval with the canonical target shown,
+                // which is strictly more security-relevant than a generic confirm.
+                Some(cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &input.path,
+                        &canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                }))
+            } else {
+                match decision {
+                    ToolPermissionDecision::Allow => None,
+                    ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
+                        let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
+                        let title = match &sensitive_kind {
+                            Some(SensitiveSettingsKind::Local) => {
+                                format!("{title} (local settings)")
+                            }
+                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                            None => title,
+                        };
+                        let context =
+                            crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
+                        event_stream.authorize(title, context, cx)
+                    })),
+                    ToolPermissionDecision::Deny(_) => None,
+                }
+            };
+
             if let Some(authorize) = authorize {
                 authorize.await?;
             }

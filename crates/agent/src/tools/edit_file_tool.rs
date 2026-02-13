@@ -2549,13 +2549,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_sensitive_settings_kind_detects_nonexistent_subdirectory() {
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_detects_nonexistent_subdirectory(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
         let config_dir = paths::config_dir();
+        fs.insert_tree(&*config_dir.to_string_lossy(), json!({}))
+            .await;
         let path = config_dir.join("nonexistent_subdir_xyz").join("evil.json");
         assert!(
             matches!(
-                sensitive_settings_kind(&path),
+                sensitive_settings_kind(&path, fs.as_ref()).await,
                 Some(SensitiveSettingsKind::Global)
             ),
             "Path in non-existent subdirectory of config dir should be detected as sensitive: {:?}",
@@ -2563,13 +2568,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_sensitive_settings_kind_detects_deeply_nested_nonexistent_subdirectory() {
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_detects_deeply_nested_nonexistent_subdirectory(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
         let config_dir = paths::config_dir();
+        fs.insert_tree(&*config_dir.to_string_lossy(), json!({}))
+            .await;
         let path = config_dir.join("a").join("b").join("c").join("evil.json");
         assert!(
             matches!(
-                sensitive_settings_kind(&path),
+                sensitive_settings_kind(&path, fs.as_ref()).await,
                 Some(SensitiveSettingsKind::Global)
             ),
             "Path in deeply nested non-existent subdirectory of config dir should be detected as sensitive: {:?}",
@@ -2577,11 +2587,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_sensitive_settings_kind_returns_none_for_non_config_path() {
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_returns_none_for_non_config_path(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
         let path = PathBuf::from("/tmp/not_a_config_dir/some_file.json");
         assert!(
-            sensitive_settings_kind(&path).is_none(),
+            sensitive_settings_kind(&path, fs.as_ref()).await.is_none(),
             "Path outside config dir should not be detected as sensitive: {:?}",
             path
         );

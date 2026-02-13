@@ -1,5 +1,6 @@
 use super::tool_permissions::{
-    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
@@ -171,92 +172,90 @@ impl AgentTool for ListDirectoryTool {
             return Task::ready(Ok(output));
         }
 
-        let resolved = match resolve_project_path(self.project.read(cx), &input.path, cx) {
-            Ok(resolved) => resolved,
-            Err(err) => return Task::ready(Err(err)),
-        };
-
-        let (project_path, symlink_canonical_target) = match resolved {
-            ResolvedProjectPath::Safe(path) => (path, None),
-            ResolvedProjectPath::SymlinkEscape {
-                project_path,
-                canonical_target,
-            } => (project_path, Some(canonical_target)),
-        };
-
-        let Some(worktree) = self
-            .project
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("Worktree not found")));
-        };
-
-        // Check if the directory whose contents we're listing is itself excluded or private
-        let global_settings = WorktreeSettings::get_global(cx);
-        if global_settings.is_path_excluded(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
-                &input.path
-            )));
-        }
-
-        if global_settings.is_path_private(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot list directory because its path matches the user's global `private_files` setting: {}",
-                &input.path
-            )));
-        }
-
-        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-        if worktree_settings.is_path_excluded(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot list directory because its path matches the user's worktree`file_scan_exclusions` setting: {}",
-                &input.path
-            )));
-        }
-
-        if worktree_settings.is_path_private(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
-                &input.path
-            )));
-        }
-
-        let worktree_snapshot = worktree.read(cx).snapshot();
-
-        let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
-            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
-        };
-
-        if !entry.is_dir() {
-            return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
-        }
-
-        let symlink_authorize = symlink_canonical_target.as_ref().map(|canonical_target| {
-            authorize_symlink_access(Self::NAME, &input.path, canonical_target, &event_stream, cx)
-        });
-
         let project = self.project.clone();
-        let list_path = input.path;
-        let project_path = project_path.clone();
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-        if let Some(authorize) = symlink_authorize {
-            cx.spawn(async move |cx| {
+            let (project_path, symlink_canonical_target) =
+                project.read_with(cx, |project, cx| -> anyhow::Result<_> {
+                    let resolved = resolve_project_path(project, &input.path, &canonical_roots, cx)?;
+                    Ok(match resolved {
+                        ResolvedProjectPath::Safe(path) => (path, None),
+                        ResolvedProjectPath::SymlinkEscape {
+                            project_path,
+                            canonical_target,
+                        } => (project_path, Some(canonical_target)),
+                    })
+                })?;
+
+            // Check settings exclusions synchronously
+            project.read_with(cx, |project, cx| {
+                let worktree = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .with_context(|| {
+                        format!("{} is not in a known worktree", &input.path)
+                    })?;
+
+                let global_settings = WorktreeSettings::get_global(cx);
+                if global_settings.is_path_excluded(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
+                        &input.path
+                    );
+                }
+
+                if global_settings.is_path_private(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot list directory because its path matches the user's global `private_files` setting: {}",
+                        &input.path
+                    );
+                }
+
+                let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                if worktree_settings.is_path_excluded(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot list directory because its path matches the user's worktree `file_scan_exclusions` setting: {}",
+                        &input.path
+                    );
+                }
+
+                if worktree_settings.is_path_private(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
+                        &input.path
+                    );
+                }
+
+                let worktree_snapshot = worktree.read(cx).snapshot();
+                let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
+                    anyhow::bail!("Path not found: {}", input.path);
+                };
+                if !entry.is_dir() {
+                    anyhow::bail!("{} is not a directory.", input.path);
+                }
+
+                anyhow::Ok(())
+            })?;
+
+            if let Some(canonical_target) = &symlink_canonical_target {
+                let authorize = cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &input.path,
+                        canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                });
                 authorize.await?;
+            }
 
-                cx.update(|cx| {
-                    Self::build_directory_output(&project, &project_path, &list_path, cx)
-                })
+            let list_path = input.path;
+            cx.update(|cx| {
+                Self::build_directory_output(&project, &project_path, &list_path, cx)
             })
-        } else {
-            Task::ready(Self::build_directory_output(
-                &project,
-                &project_path,
-                &list_path,
-                cx,
-            ))
-        }
+        })
     }
 }
 

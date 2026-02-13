@@ -14,7 +14,8 @@ use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
 use super::tool_permissions::{
-    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    resolve_project_path,
 };
 use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
@@ -113,73 +114,96 @@ impl AgentTool for ReadFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent>> {
-        let resolved = match resolve_project_path(self.project.read(cx), &input.path, cx) {
-            Ok(resolved) => resolved,
-            Err(err) => return Task::ready(Err(err)),
-        };
+        let project = self.project.clone();
+        let thread = self.thread.clone();
+        let action_log = self.action_log.clone();
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-        let (project_path, symlink_canonical_target) = match resolved {
-            ResolvedProjectPath::Safe(path) => (path, None),
-            ResolvedProjectPath::SymlinkEscape {
-                project_path,
-                canonical_target,
-            } => (project_path, Some(canonical_target)),
-        };
-        let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-            return Task::ready(Err(anyhow!(
-                "Failed to convert {} to absolute path",
-                &input.path
-            )));
-        };
+            let (project_path, symlink_canonical_target) =
+                project.read_with(cx, |project, cx| {
+                    let resolved =
+                        resolve_project_path(project, &input.path, &canonical_roots, cx)?;
+                    anyhow::Ok(match resolved {
+                        ResolvedProjectPath::Safe(path) => (path, None),
+                        ResolvedProjectPath::SymlinkEscape {
+                            project_path,
+                            canonical_target,
+                        } => (project_path, Some(canonical_target)),
+                    })
+                })?;
 
-        // Error out if this path is either excluded or private in global settings
-        let global_settings = WorktreeSettings::get_global(cx);
-        if global_settings.is_path_excluded(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
-                &input.path
-            )));
-        }
+            let abs_path = project
+                .read_with(cx, |project, cx| {
+                    project.absolute_path(&project_path, cx)
+                })
+                .ok_or_else(|| {
+                    anyhow!("Failed to convert {} to absolute path", &input.path)
+                })?;
 
-        if global_settings.is_path_private(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot read file because its path matches the global `private_files` setting: {}",
-                &input.path
-            )));
-        }
-
-        // Error out if this path is either excluded or private in worktree settings
-        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-        if worktree_settings.is_path_excluded(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
-                &input.path
-            )));
-        }
-
-        if worktree_settings.is_path_private(&project_path.path) {
-            return Task::ready(Err(anyhow!(
-                "Cannot read file because its path matches the worktree `private_files` setting: {}",
-                &input.path
-            )));
-        }
-
-        let symlink_authorize = symlink_canonical_target.as_ref().map(|canonical_target| {
-            authorize_symlink_access(Self::NAME, &input.path, canonical_target, &event_stream, cx)
-        });
-
-        let file_path = input.path.clone();
-
-        event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
-                acp::ToolCallLocation::new(&abs_path)
-                    .line(input.start_line.map(|line| line.saturating_sub(1))),
-            ]));
-
-        if image_store::is_image_file(&self.project, &project_path, cx) {
-            return cx.spawn(async move |cx| {
-                if let Some(authorize) = symlink_authorize {
-                    authorize.await?;
+            // Check settings exclusions synchronously
+            project.read_with(cx, |_project, cx| {
+                let global_settings = WorktreeSettings::get_global(cx);
+                if global_settings.is_path_excluded(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
+                        &input.path
+                    );
                 }
+
+                if global_settings.is_path_private(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot read file because its path matches the global `private_files` setting: {}",
+                        &input.path
+                    );
+                }
+
+                let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+                if worktree_settings.is_path_excluded(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
+                        &input.path
+                    );
+                }
+
+                if worktree_settings.is_path_private(&project_path.path) {
+                    anyhow::bail!(
+                        "Cannot read file because its path matches the worktree `private_files` setting: {}",
+                        &input.path
+                    );
+                }
+
+                anyhow::Ok(())
+            })?;
+
+            if let Some(canonical_target) = &symlink_canonical_target {
+                let authorize = cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &input.path,
+                        canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                });
+                authorize.await?;
+            }
+
+            let file_path = input.path.clone();
+
+            cx.update(|_cx| {
+                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                    acp::ToolCallLocation::new(&abs_path)
+                        .line(input.start_line.map(|line| line.saturating_sub(1))),
+                ]));
+            });
+
+            let is_image = project.read_with(cx, |_project, cx| {
+                image_store::is_image_file(&project, &project_path, cx)
+            });
+
+            if is_image {
 
                 let image_entity: Entity<ImageItem> = cx
                     .update(|cx| {
@@ -203,22 +227,11 @@ impl AgentTool for ReadFileTool {
                     ))),
                 ]));
 
-                Ok(language_model_image.into())
-            });
-        }
-
-        let project = self.project.clone();
-        let action_log = self.action_log.clone();
-
-        cx.spawn(async move |cx| {
-            if let Some(authorize) = symlink_authorize {
-                authorize.await?;
+                return Ok(language_model_image.into());
             }
 
-            let open_buffer_task = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })
+            let open_buffer_task = project.update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
             });
 
             let buffer = futures::select! {
@@ -240,7 +253,7 @@ impl AgentTool for ReadFileTool {
             if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
                 buffer.file().and_then(|file| file.disk_state().mtime())
             }) {
-                self.thread
+                thread
                     .update(cx, |thread, _| {
                         thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
                     })
@@ -316,6 +329,7 @@ impl AgentTool for ReadFileTool {
                     cx,
                 );
                 if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+                    let text: &str = text;
                     let markdown = MarkdownCodeBlock {
                         tag: &input.path,
                         text,

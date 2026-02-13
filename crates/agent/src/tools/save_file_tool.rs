@@ -15,7 +15,7 @@ use util::markdown::MarkdownInlineCode;
 
 use super::tool_permissions::{
     ResolvedProjectPath, SensitiveSettingsKind, authorize_symlink_access,
-    is_sensitive_settings_path, path_has_symlink_escape, resolve_project_path,
+    canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
     sensitive_settings_kind,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
@@ -68,24 +68,48 @@ impl AgentTool for SaveFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let settings = AgentSettings::get_global(cx);
-        let mut confirmation_paths: Vec<String> = Vec::new();
+        let settings = AgentSettings::get_global(cx).clone();
 
-        {
-            let project = self.project.read(cx);
-            for path in &input.paths {
+        // Check for any immediate deny before spawning async work.
+        for path in &input.paths {
+            let path_str = path.to_string_lossy();
+            let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
+            if let ToolPermissionDecision::Deny(reason) = decision {
+                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+            }
+        }
+
+        let project = self.project.clone();
+        let input_paths = input.paths;
+
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            let mut confirmation_paths: Vec<String> = Vec::new();
+
+            for path in &input_paths {
                 let path_str = path.to_string_lossy();
-                let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
-                let symlink_escape = path_has_symlink_escape(project, path, cx);
+                let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
+                let symlink_escape = project.read_with(cx, |project, cx| {
+                    path_has_symlink_escape(project, path, &canonical_roots, cx)
+                });
 
                 match decision {
                     ToolPermissionDecision::Allow => {
-                        if !symlink_escape && is_sensitive_settings_path(Path::new(&*path_str)) {
-                            confirmation_paths.push(path_str.to_string());
+                        if !symlink_escape {
+                            let is_sensitive = super::tool_permissions::is_sensitive_settings_path(
+                                Path::new(&*path_str),
+                                fs.as_ref(),
+                            )
+                            .await;
+                            if is_sensitive {
+                                confirmation_paths.push(path_str.to_string());
+                            }
                         }
                     }
                     ToolPermissionDecision::Deny(reason) => {
-                        return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                        return Err(anyhow::anyhow!("{}", reason));
                     }
                     ToolPermissionDecision::Confirm => {
                         if !symlink_escape {
@@ -94,46 +118,42 @@ impl AgentTool for SaveFileTool {
                     }
                 }
             }
-        }
 
-        let authorize = if !confirmation_paths.is_empty() {
-            let title = if confirmation_paths.len() == 1 {
-                format!("Save {}", MarkdownInlineCode(&confirmation_paths[0]))
-            } else {
-                let paths: Vec<_> = confirmation_paths
-                    .iter()
-                    .take(3)
-                    .map(|p| p.as_str())
-                    .collect();
-                if confirmation_paths.len() > 3 {
-                    format!(
-                        "Save {}, and {} more",
-                        paths.join(", "),
-                        confirmation_paths.len() - 3
-                    )
+            if !confirmation_paths.is_empty() {
+                let title = if confirmation_paths.len() == 1 {
+                    format!("Save {}", MarkdownInlineCode(&confirmation_paths[0]))
                 } else {
-                    format!("Save {}", paths.join(", "))
+                    let paths: Vec<_> = confirmation_paths
+                        .iter()
+                        .take(3)
+                        .map(|p| p.as_str())
+                        .collect();
+                    if confirmation_paths.len() > 3 {
+                        format!(
+                            "Save {}, and {} more",
+                            paths.join(", "),
+                            confirmation_paths.len() - 3
+                        )
+                    } else {
+                        format!("Save {}", paths.join(", "))
+                    }
+                };
+
+                let mut settings_kind = None;
+                for p in &confirmation_paths {
+                    if let Some(kind) = sensitive_settings_kind(Path::new(p), fs.as_ref()).await {
+                        settings_kind = Some(kind);
+                        break;
+                    }
                 }
-            };
-            let sensitive_kind = confirmation_paths
-                .iter()
-                .find_map(|p| sensitive_settings_kind(Path::new(p)));
-            let title = match sensitive_kind {
-                Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                None => title,
-            };
-            let context = crate::ToolPermissionContext::new(Self::NAME, confirmation_paths.clone());
-            Some(event_stream.authorize(title, context, cx))
-        } else {
-            None
-        };
-
-        let project = self.project.clone();
-        let input_paths = input.paths;
-
-        cx.spawn(async move |cx| {
-            if let Some(authorize) = authorize {
+                let title = match settings_kind {
+                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                    None => title,
+                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, confirmation_paths.clone());
+                let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
                 authorize.await?;
             }
 
@@ -147,9 +167,9 @@ impl AgentTool for SaveFileTool {
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
-                let project_path = match project
-                    .read_with(cx, |project, cx| resolve_project_path(project, &path, cx))
-                {
+                let project_path = match project.read_with(cx, |project, cx| {
+                    resolve_project_path(project, &path, &canonical_roots, cx)
+                }) {
                     Ok(resolved) => {
                         let (project_path, symlink_canonical_target) = match resolved {
                             ResolvedProjectPath::Safe(path) => (path, None),
@@ -160,17 +180,16 @@ impl AgentTool for SaveFileTool {
                         };
                         if let Some(canonical_target) = &symlink_canonical_target {
                             let path_str = path.to_string_lossy();
-                            let result = cx
-                                .update(|cx| {
-                                    authorize_symlink_access(
-                                        Self::NAME,
-                                        &path_str,
-                                        canonical_target,
-                                        &event_stream,
-                                        cx,
-                                    )
-                                })
-                                .await;
+                            let authorize_task = cx.update(|cx| {
+                                authorize_symlink_access(
+                                    Self::NAME,
+                                    &path_str,
+                                    canonical_target,
+                                    &event_stream,
+                                    cx,
+                                )
+                            });
+                            let result = authorize_task.await;
                             if let Err(err) = result {
                                 authorization_errors.push((path.clone(), err.to_string()));
                                 continue;
