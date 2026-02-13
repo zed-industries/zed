@@ -33,6 +33,7 @@ use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, WorktreeId};
+use ui_input::ErasedEditor;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
@@ -41,9 +42,9 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, notifications::DetachAndPromptErr,
-    with_active_or_new_workspace,
+    HistoryManager, ModalView, MultiWorkspace, OpenOptions, OpenVisible, PathList,
+    SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
@@ -655,6 +656,40 @@ impl PickerDelegate for RecentProjectsDelegate {
         "Search projects…".into()
     }
 
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        let focus_handle = self.focus_handle.clone();
+
+        h_flex()
+            .flex_none()
+            .h_9()
+            .pl_2p5()
+            .pr_1p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(editor.render(window, cx))
+            .child(
+                IconButton::new("add_folder", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Add Project to Workspace",
+                            &workspace::AddFolderToProject,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(workspace::AddFolderToProject.boxed_clone(), cx)
+                    }),
+            )
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }
@@ -1032,6 +1067,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             ProjectPickerEntry::RecentProject(hit) => {
                 let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
                 let (_, location, paths) = self.workspaces.get(hit.candidate_id)?;
+                let is_local = matches!(location, SerializedWorkspaceLocation::Local);
+                let paths_to_add = paths.paths().to_vec();
                 let tooltip_path: SharedString = paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
@@ -1068,6 +1105,25 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let secondary_actions = h_flex()
                     .gap_px()
+                    .when(is_local, |this| {
+                        this.child(
+                            IconButton::new("add_to_workspace", IconName::Plus)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Add Project to Workspace"))
+                                .on_click({
+                                    let paths_to_add = paths_to_add.clone();
+                                    cx.listener(move |picker, _event, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        picker.delegate.add_project_to_workspace(
+                                            paths_to_add.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                }),
+                        )
+                    })
                     .when(popover_style, |this| {
                         this.child(
                             IconButton::new("open_new_window", IconName::ArrowUpRight)
@@ -1158,20 +1214,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_1()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        Button::new("add_folder", "Add Project to Workspace")
-                            .key_binding(KeyBinding::for_action_in(
-                                &workspace::AddFolderToProject,
-                                &focus_handle,
-                                cx,
-                            ))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    workspace::AddFolderToProject.boxed_clone(),
-                                    cx,
-                                )
-                            }),
-                    )
                     .child(
                         Button::new("open_local_folder", "Open Local Project")
                             .key_binding(KeyBinding::for_action_in(
@@ -1291,10 +1333,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 }
                                                 .boxed_clone(),
                                             )
-                                            .action(
-                                                "Add Project to Workspace",
-                                                workspace::AddFolderToProject.boxed_clone(),
-                                            )
                                     }
                                 }))
                             }
@@ -1366,6 +1404,43 @@ fn highlights_for_path(
     )
 }
 impl RecentProjectsDelegate {
+    fn add_project_to_workspace(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let open_paths_task = workspace.update(cx, |workspace, cx| {
+            workspace.open_paths(
+                paths,
+                OpenOptions {
+                    visible: Some(OpenVisible::All),
+                    ..Default::default()
+                },
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |picker, cx| {
+            let _result = open_paths_task.await;
+            picker
+                .update_in(cx, |picker, window, cx| {
+                    let Some(workspace) = picker.delegate.workspace.upgrade() else {
+                        return;
+                    };
+                    picker.delegate.open_folders = get_open_folders(workspace.read(cx), cx);
+                    let query = picker.query(cx);
+                    picker.update_matches(query, window, cx);
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     fn delete_recent_project(
         &self,
         ix: usize,

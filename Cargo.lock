@@ -13534,6 +13534,7 @@ dependencies = [
  "task",
  "telemetry",
  "ui",
+ "ui_input",
  "util",
  "windows-registry 0.6.1",
  "workspace",
