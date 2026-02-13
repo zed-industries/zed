@@ -2700,11 +2700,11 @@ impl LspAdapter for PyreflyLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -2739,30 +2739,30 @@ impl LspAdapter for PyreflyLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        cx.update(move |cx| {
-            let mut user_settings =
+        let mut user_settings = cx
+            .update(move |cx| {
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
-                    .unwrap_or_default();
+            })
+            .unwrap_or_default();
 
-            if let Some(toolchain) = toolchain
-                && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
-            {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
-                if let Some(interpreter_path) = &env.environment.executable {
-                    object.insert(
-                        "pythonPath".to_owned(),
-                        Value::String(interpreter_path.to_string_lossy().into_owned()),
-                    );
-                }
+        if let Some(toolchain) = toolchain
+            && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
+        {
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
             }
+            let object = user_settings.as_object_mut().unwrap();
 
-            user_settings
-        })
+            if let Some(interpreter_path) = &env.environment.executable {
+                object.insert(
+                    "pythonPath".to_owned(),
+                    Value::String(interpreter_path.to_string_lossy().into_owned()),
+                );
+            }
+        }
+
+        Ok(user_settings)
     }
 }
 
