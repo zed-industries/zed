@@ -4915,11 +4915,16 @@ impl Editor {
             let initial_buffer_versions =
                 jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
 
+            let autoindent_mode = if !text.contains('\n') && edits.len() > 1 {
+                None
+            } else {
+                this.autoindent_mode.clone()
+            };
             this.buffer.update(cx, |buffer, cx| {
                 if has_adjacent_edits {
-                    buffer.edit_non_coalesce(edits, this.autoindent_mode.clone(), cx);
+                    buffer.edit_non_coalesce(edits, autoindent_mode.clone(), cx);
                 } else {
-                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
+                    buffer.edit(edits, autoindent_mode, cx);
                 }
             });
             for (buffer, edits) in linked_edits {
@@ -10843,8 +10848,24 @@ impl Editor {
         let mut selections = self.selections.all_adjusted(&self.display_snapshot(cx));
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
-        let rows_iter = selections.iter().map(|s| s.head().row);
-        let suggested_indents = snapshot.suggested_indents(rows_iter, cx);
+
+        // When there are multiple empty cursors on different rows, skip
+        // suggested-indent logic so Tab uniformly adds one indent level
+        // instead of jumping each cursor to a language-suggested position.
+        let has_multiple_cursor_rows = {
+            let mut rows = selections
+                .iter()
+                .filter(|s| s.is_empty())
+                .map(|s| s.head().row);
+            let first = rows.next();
+            first.is_some() && rows.any(|row| Some(row) != first)
+        };
+        let suggested_indents = if has_multiple_cursor_rows {
+            BTreeMap::new()
+        } else {
+            let rows_iter = selections.iter().map(|s| s.head().row);
+            snapshot.suggested_indents(rows_iter, cx)
+        };
 
         let has_some_cursor_in_whitespace = selections
             .iter()
