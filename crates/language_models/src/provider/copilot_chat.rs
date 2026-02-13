@@ -250,6 +250,10 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.supports_vision()
     }
 
+    fn supports_thinking(&self) -> bool {
+        todo!()
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.vendor() {
             ModelVendor::OpenAI | ModelVendor::Anthropic => {

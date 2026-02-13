@@ -1478,6 +1478,10 @@ impl AgentPanel {
                 {
                     update_settings_file(self.fs.clone(), cx, move |settings, _| {
                         let provider = model.provider_id().0.to_string();
+                        let enable_thinking = model.supports_thinking();
+                        let effort = model
+                            .default_effort_level()
+                            .map(|effort| effort.value.to_string());
                         let model = model.id().0.to_string();
                         settings
                             .agent
@@ -1485,8 +1489,8 @@ impl AgentPanel {
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
-                                enable_thinking: false,
-                                effort: None,
+                                enable_thinking,
+                                effort,
                             })
                     });
                 }

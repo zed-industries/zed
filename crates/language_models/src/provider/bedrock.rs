@@ -640,6 +640,13 @@ impl LanguageModel for BedrockModel {
         self.model.supports_images()
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(
+            self.model.mode(),
+            BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
+        )
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
