@@ -1,6 +1,6 @@
 # Tool Permissions
 
-Configure which agent actions run automatically and which require your approval.
+Configure which [Agent Panel](./agent-panel.md) actions run automatically and which require your approval. For a list of available tools, see [Tools](./tools.md).
 
 > **Note:** In Zed v0.224.0 and above, this page documents the granular `agent.tool_permissions` system.
 >

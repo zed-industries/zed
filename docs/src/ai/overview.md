@@ -40,3 +40,5 @@ The default provider is Zeta, Zed's open-source model trained on open data. You 
 - [External Agents](./external-agents.md): Run Claude Code, Codex, Aider, or other external agents inside Zed.
 - [Subscription](./subscription.md): Zed's hosted models and billing.
 - [Privacy and Security](./privacy-and-security.md): How Zed handles data when using AI features.
+
+New to Zed? Start with [Getting Started](../getting-started.md), then come back here to set up AI. For a higher-level overview, see [zed.dev/ai](https://zed.dev/ai).
