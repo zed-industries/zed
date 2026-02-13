@@ -7742,8 +7742,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        let file = buffer.read(cx).file().cloned();
-        if DisableAiSettings::is_ai_disabled(file.as_ref(), cx) {
+        if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
             return None;
         }
 
@@ -7804,8 +7803,7 @@ impl Editor {
         if let Some((buffer, cursor_buffer_position)) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)
         {
-            let file = buffer.read(cx).file().cloned();
-            if DisableAiSettings::is_ai_disabled(file.as_ref(), cx) {
+            if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
                 self.edit_prediction_settings = EditPredictionSettings::Disabled;
                 self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
                 return;
@@ -8463,8 +8461,7 @@ impl Editor {
 
         // Check project-level disable_ai setting for the current buffer
         if let Some((buffer, _)) = self.buffer.read(cx).text_anchor_for_position(cursor, cx) {
-            let file = buffer.read(cx).file().cloned();
-            if DisableAiSettings::is_ai_disabled(file.as_ref(), cx) {
+            if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
                 return None;
             }
         }

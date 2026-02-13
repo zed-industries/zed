@@ -5261,7 +5261,7 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |settings_store, cx| {
                 settings_store.update_user_settings(cx, |settings| {
-                    settings.disable_ai = Some(SaturatingBool(true));
+                    settings.project.disable_ai = Some(SaturatingBool(true));
                 });
             });
         });

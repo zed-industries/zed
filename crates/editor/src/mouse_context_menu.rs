@@ -218,12 +218,10 @@ pub fn deploy_context_menu(
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
-        let file = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|b| b.read(cx).file().cloned());
-        let disable_ai = DisableAiSettings::is_ai_disabled(file.as_ref(), cx);
+        let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
+            editor.buffer.read(cx).as_singleton().as_ref(),
+            cx,
+        );
 
         let is_markdown = editor
             .buffer()
