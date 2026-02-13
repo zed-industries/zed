@@ -32,7 +32,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -44,7 +44,7 @@ use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DockPosition, LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -334,19 +334,6 @@ pub fn init(
 
     cx.on_flags_ready(|_, cx| {
         update_command_palette_filter(cx);
-    })
-    .detach();
-
-    cx.observe_flag::<AgentV2FeatureFlag, _>(|is_enabled, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_default_settings(cx, |defaults| {
-                defaults.agent.get_or_insert_default().dock = Some(if is_enabled {
-                    DockPosition::Left
-                } else {
-                    DockPosition::Right
-                });
-            });
-        });
     })
     .detach();
 }
