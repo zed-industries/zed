@@ -127,7 +127,7 @@ pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 pub use ui;
-use ui::{Window, prelude::*};
+use ui::{ListItem, ListItemSpacing, Window, prelude::*};
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -7210,7 +7210,6 @@ impl Workspace {
 
         Some(
             div()
-                .id("minimal-file-tree-overlay")
                 .absolute()
                 .top_4()
                 .left_4()
