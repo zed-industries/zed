@@ -417,6 +417,10 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    #[serde(default)]
+    pub show_preview: bool,
+    #[serde(default)]
+    pub show_all_files: bool,
 }
 
 /// Opens a new terminal in the center.
@@ -6803,7 +6807,15 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if WorkspaceSettings::get_global(cx).minimal_mode {
-            self.toggle_minimal_file_tree(window, cx);
+            self.minimal_file_tree_open = false;
+            window.dispatch_action(
+                Box::new(ToggleFileFinder {
+                    separate_history: false,
+                    show_preview: true,
+                    show_all_files: true,
+                }),
+                cx,
+            );
         } else {
             self.toggle_dock(DockPosition::Left, window, cx);
         }
