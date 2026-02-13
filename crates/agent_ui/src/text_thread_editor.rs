@@ -250,7 +250,7 @@ impl TextThreadEditor {
 
         let editor = cx.new(|cx| {
             let mut editor =
-                Editor::for_buffer(text_thread.read(cx).buffer().clone(), None, window, cx);
+                Editor::for_buffer(text_thread.read(cx).buffer().clone(), Some(project.clone()), window, cx);
             editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
@@ -3473,6 +3473,21 @@ mod tests {
                     text.contains(&format!("```console\n{}\n```", terminal_output)),
                     "Terminal text should be wrapped in code block. Got: {}",
                     text
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_text_thread_editor_has_project(cx: &mut TestAppContext) {
+        let (_text_thread, text_thread_editor, mut cx) =
+            setup_text_thread_editor_text(vec![(Role::User, "")], cx).await;
+
+        text_thread_editor.update_in(&mut cx, |text_thread_editor, _window, cx| {
+            text_thread_editor.editor.update(cx, |editor, _cx| {
+                assert!(
+                    editor.project().is_some(),
+                    "Text thread editor should have a project reference for edit predictions"
                 );
             });
         });
