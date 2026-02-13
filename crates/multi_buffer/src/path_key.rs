@@ -375,6 +375,15 @@ impl MultiBuffer {
                 (None, Some((existing_id, _))) => {
                     existing_iter.next();
                     to_remove.push(existing_id);
+                    // Map removed excerpt to nearest surviving neighbor so stale
+                    // anchors remap to a valid locator and maintain ordering.
+                    let replacement = to_insert.last().map(|(id, _)| *id).unwrap_or(insert_after);
+                    if replacement != ExcerptId::min() {
+                        self.snapshot
+                            .get_mut()
+                            .replaced_excerpts
+                            .insert(existing_id, replacement);
+                    }
                     continue;
                 }
                 (Some(_), None) => {
@@ -388,6 +397,16 @@ impl MultiBuffer {
                     if existing_range.end < new.context.start {
                         let existing_id = existing_iter.next().unwrap();
                         to_remove.push(existing_id);
+                        // Map removed excerpt to nearest surviving neighbor so stale
+                        // anchors remap to a valid locator and maintain ordering.
+                        let replacement =
+                            to_insert.last().map(|(id, _)| *id).unwrap_or(insert_after);
+                        if replacement != ExcerptId::min() {
+                            self.snapshot
+                                .get_mut()
+                                .replaced_excerpts
+                                .insert(existing_id, replacement);
+                        }
                         continue;
                     } else if existing_range.start > new.context.end {
                         let new_id = next_excerpt_id();
