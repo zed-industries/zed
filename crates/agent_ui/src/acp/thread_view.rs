@@ -5007,7 +5007,7 @@ pub(crate) mod tests {
                     "Missing 'Always for terminal' option"
                 );
                 assert!(
-                    labels.contains(&"Always for `cargo` commands"),
+                    labels.contains(&"Always for `cargo build` commands"),
                     "Missing pattern option"
                 );
                 assert!(
