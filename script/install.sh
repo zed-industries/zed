@@ -93,19 +93,19 @@ linux() {
 
     appid=""
     case "$channel" in
-    stable)
+      stable)
         appid="dev.zed.Zed"
         ;;
-    nightly)
+      nightly)
         appid="dev.zed.Zed-Nightly"
         ;;
-    preview)
+      preview)
         appid="dev.zed.Zed-Preview"
         ;;
-    dev)
+      dev)
         appid="dev.zed.Zed-Dev"
         ;;
-    *)
+      *)
         echo "Unknown release channel: ${channel}. Using stable app ID."
         appid="dev.zed.Zed"
         ;;
