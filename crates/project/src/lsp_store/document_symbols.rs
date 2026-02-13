@@ -75,6 +75,7 @@ impl LspStore {
                                 .symbols
                                 .values()
                                 .flatten()
+                                .unique()
                                 .cloned()
                                 .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
                                 .collect(),
@@ -156,6 +157,7 @@ impl LspStore {
                             .symbols
                             .values()
                             .flatten()
+                            .unique()
                             .cloned()
                             .sorted_by(|a, b| a.range.start.cmp(&b.range.start, &snapshot))
                             .collect()
