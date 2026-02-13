@@ -1395,12 +1395,19 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn set_title(
         &self,
         session_id: &acp::SessionId,
-        _cx: &App,
+        cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
-        Some(Rc::new(NativeAgentSessionSetTitle {
-            connection: self.clone(),
-            session_id: session_id.clone(),
-        }) as _)
+        self.0.read_with(cx, |agent, _cx| {
+            agent
+                .sessions
+                .get(session_id)
+                .filter(|s| !s.thread.read(cx).is_subagent())
+                .map(|session| {
+                    Rc::new(NativeAgentSessionSetTitle {
+                        thread: session.thread.clone(),
+                    }) as _
+                })
+        })
     }
 
     fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
@@ -1559,17 +1566,13 @@ impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
 }
 
 struct NativeAgentSessionSetTitle {
-    connection: NativeAgentConnection,
-    session_id: acp::SessionId,
+    thread: Entity<Thread>,
 }
 
 impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
     fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>> {
-        let Some(session) = self.connection.0.read(cx).sessions.get(&self.session_id) else {
-            return Task::ready(Err(anyhow!("session not found")));
-        };
-        let thread = session.thread.clone();
-        thread.update(cx, |thread, cx| thread.set_title(title, cx));
+        self.thread
+            .update(cx, |thread, cx| thread.set_title(title, cx));
         Task::ready(Ok(()))
     }
 }

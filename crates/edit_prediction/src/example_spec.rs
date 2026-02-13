@@ -66,6 +66,7 @@ pub struct CapturedPromptInput {
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<CapturedEvent>,
     pub related_files: Vec<CapturedRelatedFile>,
+    pub in_open_source_repo: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
@@ -101,6 +102,7 @@ impl CapturedRelatedFile {
         zeta_prompt::RelatedFile {
             path: self.path.clone(),
             max_row: self.max_row,
+            in_open_source_repo: false,
             excerpts: self
                 .excerpts
                 .iter()

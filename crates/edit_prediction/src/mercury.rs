@@ -97,6 +97,9 @@ impl Mercury {
                     - context_offset_range.start)
                     ..(editable_offset_range.end - context_offset_range.start),
                 excerpt_start_row: Some(context_start_row),
+                excerpt_ranges: None,
+                preferred_model: None,
+                in_open_source_repo: false,
             };
 
             let prompt = build_prompt(&inputs);

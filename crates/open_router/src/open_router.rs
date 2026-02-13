@@ -82,7 +82,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub fn default() -> Self {
         Self::new(
             "openrouter/auto",
             Some("Auto Router"),
@@ -92,10 +92,6 @@ impl Model {
             Some(ModelMode::Default),
             None,
         )
-    }
-
-    pub fn default() -> Self {
-        Self::default_fast()
     }
 
     pub fn new(

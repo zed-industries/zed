@@ -752,11 +752,11 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
@@ -767,14 +767,14 @@ mod tests {
         );
 
         // The order of models should be maintained, case doesn't matter
-        let results = matcher.exact_search("GPT-4.1");
+        let results = matcher.exact_search("GPT-5");
         assert_models_eq(
             results,
             vec![
-                "zed/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1",
-                "openai/gpt-4.1-nano",
+                "zed/gpt-5",
+                "zed/gpt-5-mini",
+                "openai/gpt-5",
+                "openai/gpt-5-mini",
             ],
         );
     }
@@ -784,11 +784,11 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
@@ -799,27 +799,19 @@ mod tests {
         );
 
         // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // In the case below, `zed/gpt-5-mini` and `openai/gpt-5-mini` have identical
+        // similarity scores, but `zed/gpt-5-mini` was higher in the models list,
         // so it should appear first in the results.
-        let results = matcher.fuzzy_search("41");
-        assert_models_eq(
-            results,
-            vec![
-                "zed/gpt-4.1",
-                "openai/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1-nano",
-            ],
-        );
+        let results = matcher.fuzzy_search("mini");
+        assert_models_eq(results, vec!["zed/gpt-5-mini", "openai/gpt-5-mini"]);
 
         // Model provider should be searchable as well
         let results = matcher.fuzzy_search("ol"); // meaning "ollama"
         assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
 
-        // Fuzzy search
-        let results = matcher.fuzzy_search("z4n");
-        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+        // Fuzzy search - search for Claude to get the Thinking variant
+        let results = matcher.fuzzy_search("thinking");
+        assert_models_eq(results, vec!["zed/Claude 3.7 Sonnet Thinking"]);
     }
 
     #[gpui::test]

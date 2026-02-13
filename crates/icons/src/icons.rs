@@ -134,6 +134,7 @@ pub enum IconName {
     FontSize,
     FontWeight,
     ForwardArrow,
+    ForwardArrowUp,
     GenericClose,
     GenericMaximize,
     GenericMinimize,

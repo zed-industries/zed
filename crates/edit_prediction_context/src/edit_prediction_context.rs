@@ -136,11 +136,13 @@ impl RelatedExcerptStore {
             .collect()
     }
 
-    pub fn related_files_with_buffers(&mut self, cx: &App) -> Vec<(RelatedFile, Entity<Buffer>)> {
+    pub fn related_files_with_buffers(
+        &mut self,
+        cx: &App,
+    ) -> impl Iterator<Item = (RelatedFile, Entity<Buffer>)> {
         self.related_buffers
             .iter_mut()
             .map(|related| (related.related_file(cx), related.buffer.clone()))
-            .collect::<Vec<_>>()
     }
 
     pub fn set_related_files(&mut self, files: Vec<RelatedFile>, cx: &App) {
@@ -424,6 +426,7 @@ impl RelatedBuffer {
             path,
             excerpts: cached.excerpts.clone(),
             max_row: buffer.max_point().row,
+            in_open_source_repo: false,
         };
         return related_file;
     }
