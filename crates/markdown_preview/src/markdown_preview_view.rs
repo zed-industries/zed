@@ -41,6 +41,7 @@ pub struct MarkdownPreviewView {
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
+    latex_renderer: Arc<latex_render::LatexRenderer>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -205,6 +206,9 @@ impl MarkdownPreviewView {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
+            let latex_renderer = Arc::new(latex_render::LatexRenderer::new(
+                cx.background_executor().clone(),
+            ));
 
             let mut this = Self {
                 selected_block: 0,
@@ -217,6 +221,7 @@ impl MarkdownPreviewView {
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
+                latex_renderer,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -571,39 +576,35 @@ impl Render for MarkdownPreviewView {
                                 return div().into_any();
                             };
 
-                            let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
-                                    .with_checkbox_clicked_callback(cx.listener(
-                                        move |this, e: &CheckboxClickedEvent, window, cx| {
-                                            if let Some(editor) = this
-                                                .active_editor
-                                                .as_ref()
-                                                .map(|s| s.editor.clone())
-                                            {
-                                                editor.update(cx, |editor, cx| {
-                                                    let task_marker =
-                                                        if e.checked() { "[x]" } else { "[ ]" };
+                            let mut render_cx = RenderContext::new(
+                                Some(this.workspace.clone()),
+                                this.latex_renderer.clone(),
+                                window,
+                                cx,
+                            )
+                            .with_checkbox_clicked_callback(cx.listener(
+                                move |this, e: &CheckboxClickedEvent, window, cx| {
+                                    if let Some(editor) =
+                                        this.active_editor.as_ref().map(|s| s.editor.clone())
+                                    {
+                                        editor.update(cx, |editor, cx| {
+                                            let task_marker =
+                                                if e.checked() { "[x]" } else { "[ ]" };
 
-                                                    editor.edit(
-                                                        [(
-                                                            MultiBufferOffset(
-                                                                e.source_range().start,
-                                                            )
-                                                                ..MultiBufferOffset(
-                                                                    e.source_range().end,
-                                                                ),
-                                                            task_marker,
-                                                        )],
-                                                        cx,
-                                                    );
-                                                });
-                                                this.parse_markdown_from_active_editor(
-                                                    false, window, cx,
-                                                );
-                                                cx.notify();
-                                            }
-                                        },
-                                    ));
+                                            editor.edit(
+                                                [(
+                                                    MultiBufferOffset(e.source_range().start)
+                                                        ..MultiBufferOffset(e.source_range().end),
+                                                    task_marker,
+                                                )],
+                                                cx,
+                                            );
+                                        });
+                                        this.parse_markdown_from_active_editor(false, window, cx);
+                                        cx.notify();
+                                    }
+                                },
+                            ));
 
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);

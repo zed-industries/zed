@@ -21,6 +21,7 @@ pub async fn parse_markdown(
 ) -> ParsedMarkdown {
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
+    options.insert(pulldown_cmark::Options::ENABLE_MATH);
 
     let parser = Parser::new_ext(markdown_input, options);
     let parser = MarkdownParser::new(
@@ -222,6 +223,15 @@ impl<'a> MarkdownParser<'a> {
             Event::Rule => {
                 self.cursor += 1;
                 Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
+            }
+            Event::DisplayMath(content) => {
+                let content_str = content.to_string();
+                self.cursor += 1;
+                Some(vec![ParsedMarkdownElement::Math(ParsedMarkdownMath {
+                    source_range,
+                    contents: content_str.into(),
+                    display: true,
+                })])
             }
             _ => None,
         }
@@ -435,6 +445,40 @@ impl<'a> MarkdownParser<'a> {
                         break;
                     }
                 },
+                Event::InlineMath(content) => {
+                    if !text.is_empty() {
+                        let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: source_range.clone(),
+                            contents: mem::take(&mut text).into(),
+                            highlights: mem::take(&mut highlights),
+                            regions: mem::take(&mut regions),
+                        });
+                        markdown_text_like.push(parsed_regions);
+                    }
+                    let (_, range) = self.current().unwrap();
+                    markdown_text_like.push(MarkdownParagraphChunk::Math(ParsedMarkdownMath {
+                        source_range: range.clone(),
+                        contents: content.to_string().into(),
+                        display: false,
+                    }));
+                }
+                Event::DisplayMath(content) => {
+                    if !text.is_empty() {
+                        let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: source_range.clone(),
+                            contents: mem::take(&mut text).into(),
+                            highlights: mem::take(&mut highlights),
+                            regions: mem::take(&mut regions),
+                        });
+                        markdown_text_like.push(parsed_regions);
+                    }
+                    let (_, range) = self.current().unwrap();
+                    markdown_text_like.push(MarkdownParagraphChunk::Math(ParsedMarkdownMath {
+                        source_range: range.clone(),
+                        contents: content.to_string().into(),
+                        display: true,
+                    }));
+                }
                 _ => {
                     break;
                 }

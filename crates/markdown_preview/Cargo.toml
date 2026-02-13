@@ -23,6 +23,7 @@ fs.workspace = true
 gpui.workspace = true
 html5ever.workspace = true
 language.workspace = true
+latex_render.workspace = true
 linkify.workspace = true
 log.workspace = true
 markup5ever_rcdom.workspace = true

@@ -1,8 +1,8 @@
 use crate::markdown_elements::{
     HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownMath,
+    ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use fs::normalize_path;
 use gpui::{
@@ -11,6 +11,7 @@ use gpui::{
     ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity,
     Window, div, img, rems,
 };
+use latex_render::{LatexColor, LatexRenderer};
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
@@ -20,6 +21,9 @@ use std::{
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
 use workspace::{OpenOptions, OpenVisible, Workspace};
+
+/// Scale factor for display math relative to base font size.
+const DISPLAY_MATH_SCALE: f64 = 1.3;
 
 pub struct CheckboxClickedEvent {
     pub checked: bool,
@@ -58,11 +62,13 @@ pub struct RenderContext {
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
     is_last_child: bool,
+    pub latex_renderer: Arc<LatexRenderer>,
 }
 
 impl RenderContext {
     pub fn new(
         workspace: Option<WeakEntity<Workspace>>,
+        latex_renderer: Arc<LatexRenderer>,
         window: &mut Window,
         cx: &mut App,
     ) -> RenderContext {
@@ -95,6 +101,7 @@ impl RenderContext {
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
             is_last_child: false,
+            latex_renderer,
         }
     }
 
@@ -160,10 +167,11 @@ impl RenderContext {
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
     workspace: Option<WeakEntity<Workspace>>,
+    latex_renderer: Arc<LatexRenderer>,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let mut cx = RenderContext::new(workspace, window, cx);
+    let mut cx = RenderContext::new(workspace, latex_renderer, window, cx);
 
     v_flex().gap_3().children(
         parsed
@@ -183,6 +191,61 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
         Image(image) => render_markdown_image(image, cx),
+        Math(math) => render_markdown_math(math, cx),
+    }
+}
+
+fn render_markdown_math(parsed: &ParsedMarkdownMath, cx: &mut RenderContext) -> AnyElement {
+    let renderer = cx.latex_renderer.clone();
+    let source = parsed.contents.clone();
+    let font_size = cx.buffer_text_style.font_size.to_pixels(cx.window_rem_size);
+    let base_size = f32::from(font_size) as f64;
+
+    let size_val = if parsed.display {
+        base_size * DISPLAY_MATH_SCALE
+    } else {
+        base_size
+    };
+
+    let color_hsla = cx.text_color;
+    let color = if color_hsla.l < 0.5 {
+        LatexColor::BLACK
+    } else {
+        LatexColor::WHITE
+    };
+
+    log::debug!(
+        "Rendering math: source={:?}, display={}, size={}",
+        source.as_ref(),
+        parsed.display,
+        size_val
+    );
+
+    let result = renderer.render(source.as_ref(), size_val, color, parsed.display);
+
+    let element_id = cx.next_id(&parsed.source_range);
+
+    let content = match result {
+        Some(Ok((image, (width, height)))) => img(ImageSource::Render(image))
+            .w(px(width as f32))
+            .h(px(height as f32))
+            .into_any_element(),
+        Some(Err(e)) => div()
+            .text_color(gpui::red())
+            .child(format!("Math Error: {}", e))
+            .into_any_element(),
+        None => div().into_any_element(),
+    };
+
+    if parsed.display {
+        div()
+            .id(element_id)
+            .py_2()
+            .child(content)
+            .into_any_element()
+    } else {
+        // somehow need to handle the fact that based on zoom level inline math can be aligned up or down
+        div().id(element_id).child(content).into_any_element()
     }
 }
 
@@ -655,7 +718,10 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
     cx.with_common_p(div())
         .children(render_markdown_text(parsed, cx))
         .flex()
-        .flex_col()
+        // this ensures that inline latex stays on the same line as text
+        .flex_row()
+        .flex_wrap()
+        .items_center()
         .into_any_element()
 }
 
@@ -759,6 +825,9 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 
             MarkdownParagraphChunk::Image(image) => {
                 any_element.push(render_markdown_image(image, cx));
+            }
+            MarkdownParagraphChunk::Math(math) => {
+                any_element.push(render_markdown_math(math, cx));
             }
         }
     }
