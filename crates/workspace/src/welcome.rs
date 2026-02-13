@@ -88,7 +88,7 @@ impl SectionButton {
 
 impl RenderOnce for SectionButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let id = format!("onb-button-{}", self.label);
+        let id = format!("onb-button-{}-{}", self.label, self.tab_index);
         let action_ref: &dyn Action = &*self.action;
 
         ButtonLike::new(id)
@@ -305,7 +305,8 @@ impl WelcomePage {
 
     fn render_recent_project(
         &self,
-        index: usize,
+        project_index: usize,
+        tab_index: usize,
         location: &SerializedWorkspaceLocation,
         paths: &PathList,
     ) -> impl IntoElement {
@@ -326,8 +327,10 @@ impl WelcomePage {
         SectionButton::new(
             title,
             icon,
-            &OpenRecentProject { index },
-            10,
+            &OpenRecentProject {
+                index: project_index,
+            },
+            tab_index,
             self.focus_handle.clone(),
         )
     }
@@ -346,7 +349,9 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths))| self.render_recent_project(index, loc, paths))
+            .map(|(index, (_, loc, paths))| {
+                self.render_recent_project(index, first_section_entries + index, loc, paths)
+            })
             .collect::<Vec<_>>();
 
         let second_section = if self.fallback_to_recent_projects && !recent_projects.is_empty() {

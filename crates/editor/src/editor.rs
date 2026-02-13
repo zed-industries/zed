@@ -8023,10 +8023,6 @@ impl Editor {
 
                 match granularity {
                     EditPredictionGranularity::Full => {
-                        if let Some(provider) = self.edit_prediction_provider() {
-                            provider.accept(cx);
-                        }
-
                         let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
                         // Compute fallback cursor position BEFORE applying the edit,
@@ -8039,6 +8035,10 @@ impl Editor {
                         self.buffer.update(cx, |buffer, cx| {
                             buffer.edit(edits.iter().cloned(), None, cx)
                         });
+
+                        if let Some(provider) = self.edit_prediction_provider() {
+                            provider.accept(cx);
+                        }
 
                         // Resolve cursor position after the edit is applied
                         let cursor_target = if let Some((anchor, offset)) = cursor_position {

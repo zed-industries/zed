@@ -126,6 +126,25 @@ impl ZetaFormat {
             .collect::<Vec<_>>()
             .concat()
     }
+
+    pub fn special_tokens(&self) -> &'static [&'static str] {
+        match self {
+            ZetaFormat::V0112MiddleAtEnd
+            | ZetaFormat::V0113Ordered
+            | ZetaFormat::V0114180EditableRegion => &[
+                "<|fim_prefix|>",
+                "<|fim_suffix|>",
+                "<|fim_middle|>",
+                "<|file_sep|>",
+                CURSOR_MARKER,
+            ],
+            ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::special_tokens(),
+            ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
+                v0131_git_merge_markers_prefix::special_tokens()
+            }
+            ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,6 +211,13 @@ pub struct RelatedFile {
 pub struct RelatedExcerpt {
     pub row_range: Range<u32>,
     pub text: Arc<str>,
+}
+
+pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
+    format
+        .special_tokens()
+        .iter()
+        .any(|token| input.cursor_excerpt.contains(token))
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> String {
@@ -560,6 +586,19 @@ pub mod v0120_git_merge_markers {
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
 
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
+
     pub fn write_cursor_excerpt_section(
         prompt: &mut String,
         path: &Path,
@@ -620,6 +659,19 @@ pub mod v0131_git_merge_markers_prefix {
     pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            "<|fim_prefix|>",
+            "<|fim_suffix|>",
+            "<|fim_middle|>",
+            "<|file_sep|>",
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
 
     pub fn write_cursor_excerpt_section(
         prompt: &mut String,
@@ -737,6 +789,19 @@ pub mod seed_coder {
     pub const START_MARKER: &str = "<<<<<<< CURRENT\n";
     pub const SEPARATOR: &str = "=======\n";
     pub const END_MARKER: &str = ">>>>>>> UPDATED\n";
+
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            FIM_SUFFIX,
+            FIM_PREFIX,
+            FIM_MIDDLE,
+            FILE_MARKER,
+            START_MARKER,
+            SEPARATOR,
+            END_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
 
     pub fn format_prompt_with_budget(
         path: &Path,

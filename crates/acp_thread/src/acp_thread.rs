@@ -1955,6 +1955,11 @@ impl AcpThread {
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
+                    Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        Err(anyhow!("Max tokens reached"))
+                    }
                     result => {
                         let canceled = matches!(
                             result,

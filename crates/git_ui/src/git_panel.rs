@@ -78,6 +78,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+
 actions!(
     git_panel,
     [
@@ -109,6 +110,14 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+    ]
+);
+
+actions!(
+    git_graph,
+    [
+        /// Opens the Git Graph Tab.
+        Open,
     ]
 );
 
@@ -4448,7 +4457,11 @@ impl GitPanel {
             )
     }
 
-    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_previous_commit(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
@@ -4465,10 +4478,10 @@ impl GitPanel {
                 .child(
                     div()
                         .id("commit-msg-hover")
-                        .px_1()
                         .cursor_pointer()
-                        .line_clamp(1)
+                        .px_1()
                         .rounded_sm()
+                        .line_clamp(1)
                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                         .child(
                             Label::new(commit.subject.clone())
@@ -4504,27 +4517,46 @@ impl GitPanel {
                             }
                         }),
                 )
-                .when(commit.has_parent, |this| {
-                    let has_unstaged = self.has_unstaged_changes();
-                    this.pr_2().child(
-                        panel_icon_button("undo", IconName::Undo)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Uncommit",
-                                    Some(&git::Uncommit),
-                                    if has_unstaged {
-                                        "git reset HEAD^ --soft"
-                                    } else {
-                                        "git reset HEAD^"
-                                    },
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
-                    )
-                }),
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .when(commit.has_parent, |this| {
+                            let has_unstaged = self.has_unstaged_changes();
+                            this.child(
+                                panel_icon_button("undo", IconName::Undo)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Uncommit",
+                                            Some(&git::Uncommit),
+                                            if has_unstaged {
+                                                "git reset HEAD^ --soft"
+                                            } else {
+                                                "git reset HEAD^"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| {
+                                            this.uncommit(window, cx)
+                                        }),
+                                    ),
+                            )
+                        })
+                        .when(window.is_action_available(&Open, cx), |this| {
+                            this.child(
+                                panel_icon_button("git-graph-button", IconName::GitGraph)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::for_action("Open Git Graph", &Open, cx)
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Open.boxed_clone(), cx)
+                                    }),
+                            )
+                        }),
+                ),
         )
     }
 
@@ -5513,7 +5545,7 @@ impl Render for GitPanel {
                         this.child(self.render_pending_amend(cx))
                     })
                     .when(!self.amend_pending, |this| {
-                        this.children(self.render_previous_commit(cx))
+                        this.children(self.render_previous_commit(window, cx))
                     })
                     .into_any_element(),
             )
