@@ -909,6 +909,9 @@ impl VsCodeSettings {
 
     fn theme_settings_content(&self) -> ThemeSettingsContent {
         let (buffer_font_family, buffer_font_fallbacks) = self.read_fonts("editor.fontFamily");
+        let (inlay_hints_font_family, _) = self.read_fonts("editor.inlayHints.fontFamily");
+        let (edit_predictions_font_family, _) = self.read_fonts("editor.inlineSuggest.fontFamily");
+
         ThemeSettingsContent {
             ui_font_size: None,
             ui_font_family: None,
@@ -929,8 +932,12 @@ impl VsCodeSettings {
             unnecessary_code_fade: None,
             experimental_theme_overrides: None,
             theme_overrides: Default::default(),
-            inlay_hints_font_family: None,
-            edit_predictions_font_family: None,
+            inlay_hints_font_family,
+            inlay_hints_font_weight: None,
+            inlay_hints_font_features: None,
+            edit_predictions_font_family,
+            edit_predictions_font_weight: None,
+            edit_predictions_font_features: None,
         }
     }
 

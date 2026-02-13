@@ -46,7 +46,7 @@ use gpui::{
     KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun,
+    Size, StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyle,
     TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
@@ -8645,13 +8645,13 @@ impl LineWithInvisibles {
     /// Helper function to get the appropriate font for a chunk, using inlay font if available
     fn font_for_chunk(
         kind: ChunkKind,
-        base_font: gpui::Font,
+        text_style: &TextStyle,
         editor_style: &EditorStyle,
     ) -> gpui::Font {
         match kind {
             ChunkKind::InlayHint => editor_style.inlay_hints_font.clone(),
             ChunkKind::EditPrediction => editor_style.edit_predictions_font.clone(),
-            _ => base_font,
+            _ => text_style.font(),
         }
     }
 
@@ -8762,7 +8762,7 @@ impl LineWithInvisibles {
                             len: x.len(),
                             font: Self::font_for_chunk(
                                 highlighted_chunk.kind,
-                                text_style.font(),
+                                &text_style,
                                 editor_style,
                             ),
                             color: text_style.color,
@@ -8836,7 +8836,7 @@ impl LineWithInvisibles {
                             len: line_chunk.len(),
                             font: Self::font_for_chunk(
                                 highlighted_chunk.kind,
-                                text_style.font(),
+                                &text_style,
                                 editor_style,
                             ),
                             color: text_style.color,

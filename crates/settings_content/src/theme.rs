@@ -178,9 +178,13 @@ pub struct ThemeSettingsContent {
 
     /// The font used for inlay hints.
     pub inlay_hints_font_family: Option<FontFamilyName>,
+    pub inlay_hints_font_weight: Option<FontWeightContent>,
+    pub inlay_hints_font_features: Option<FontFeaturesContent>,
 
     /// The font used for edit predictions.
     pub edit_predictions_font_family: Option<FontFamilyName>,
+    pub edit_predictions_font_weight: Option<FontWeightContent>,
+    pub edit_predictions_font_features: Option<FontFeaturesContent>,
 }
 
 /// A font size value in pixels, wrapping around `f32` for custom settings UI rendering.
