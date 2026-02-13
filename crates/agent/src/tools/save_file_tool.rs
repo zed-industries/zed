@@ -142,6 +142,7 @@ impl AgentTool for SaveFileTool {
             let mut clean_paths: Vec<PathBuf> = Vec::new();
             let mut not_found_paths: Vec<PathBuf> = Vec::new();
             let mut open_errors: Vec<(PathBuf, String)> = Vec::new();
+            let mut authorization_errors: Vec<(PathBuf, String)> = Vec::new();
             let mut save_errors: Vec<(String, String)> = Vec::new();
 
             for path in input_paths {
@@ -163,8 +164,7 @@ impl AgentTool for SaveFileTool {
                                 })
                                 .await;
                             if let Err(err) = result {
-                                save_errors
-                                    .push((path.to_string_lossy().to_string(), err.to_string()));
+                                authorization_errors.push((path.clone(), err.to_string()));
                                 continue;
                             }
                         }
@@ -247,6 +247,15 @@ impl AgentTool for SaveFileTool {
             if !open_errors.is_empty() {
                 lines.push(format!("Open failed ({}):", open_errors.len()));
                 for (path, error) in &open_errors {
+                    lines.push(format!("- {}: {}", path.display(), error));
+                }
+            }
+            if !authorization_errors.is_empty() {
+                lines.push(format!(
+                    "Authorization failed ({}):",
+                    authorization_errors.len()
+                ));
+                for (path, error) in &authorization_errors {
                     lines.push(format!("- {}: {}", path.display(), error));
                 }
             }
@@ -613,5 +622,90 @@ mod tests {
         );
 
         let _result = task.await;
+    }
+
+    #[gpui::test]
+    async fn test_save_file_symlink_denial_does_not_reduce_success_count(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "dirty.txt": "on disk value\n",
+                },
+                "external": {
+                    "secret.txt": "secret content"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let dirty_project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path("project/dirty.txt", cx)
+                .expect("dirty.txt should exist in project")
+        });
+        let dirty_buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(dirty_project_path, cx)
+            })
+            .await
+            .unwrap();
+        dirty_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..buffer.len(), "in memory value\n")], None, cx);
+        });
+        assert!(
+            dirty_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+            "dirty.txt should be dirty before save"
+        );
+
+        let tool = Arc::new(SaveFileTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                SaveFileToolInput {
+                    paths: vec![
+                        PathBuf::from("project/dirty.txt"),
+                        PathBuf::from("project/link.txt"),
+                    ],
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        cx.run_until_parked();
+
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp::PermissionOptionId::new("deny"))
+            .unwrap();
+
+        let output = task.await.unwrap();
+        assert!(
+            output.contains("Saved 1 file(s)."),
+            "Expected successful save count to remain accurate, got:\n{output}",
+        );
+        assert!(
+            output.contains("Authorization failed (1):"),
+            "Expected authorization failure section, got:\n{output}",
+        );
+        assert!(
+            !output.contains("Save failed"),
+            "Authorization denials should not be counted as save failures, got:\n{output}",
+        );
     }
 }
