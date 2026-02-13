@@ -462,7 +462,13 @@ impl Render for FileFinder {
                 h_flex()
                     .size_full()
                     .overflow_hidden()
-                    .child(div().w(relative(0.45)).h_full().child(self.picker.clone()))
+                    .child(
+                        v_flex()
+                            .w(relative(0.45))
+                            .h_full()
+                            .overflow_hidden()
+                            .child(div().size_full().child(self.picker.clone())),
+                    )
                     .child(
                         v_flex()
                             .w(relative(0.55))
@@ -2151,27 +2157,68 @@ impl PickerDelegate for FileFinderDelegate {
 
         if let Match::Browse(entry) = path_match {
             let disclosure_icon = if entry.is_dir {
-                if entry.expanded {
-                    Some(IconName::ChevronDown)
-                } else {
-                    Some(IconName::ChevronRight)
-                }
+                Some(
+                    FileIcons::get_chevron_icon(entry.expanded, cx)
+                        .map(|icon_path| {
+                            Icon::from_path(icon_path)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted)
+                                .into_any_element()
+                        })
+                        .unwrap_or_else(|| {
+                            Icon::new(if entry.expanded {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted)
+                            .into_any_element()
+                        }),
+                )
             } else {
                 None
             };
-            let item_icon = if entry.is_dir {
-                if entry.expanded {
-                    IconName::FolderOpen
+
+            let item_icon = if settings.file_icons {
+                let maybe_icon_path = if entry.is_dir {
+                    FileIcons::get_folder_icon(
+                        entry.expanded,
+                        entry.project_path.path.as_std_path(),
+                        cx,
+                    )
                 } else {
-                    IconName::Folder
-                }
+                    FileIcons::get_icon(entry.project_path.path.as_std_path(), cx)
+                };
+
+                maybe_icon_path
+                    .map(|icon_path| Icon::from_path(icon_path))
+                    .unwrap_or_else(|| {
+                        Icon::new(if entry.is_dir {
+                            if entry.expanded {
+                                IconName::FolderOpen
+                            } else {
+                                IconName::Folder
+                            }
+                        } else {
+                            IconName::File
+                        })
+                    })
             } else {
-                IconName::File
+                Icon::new(if entry.is_dir {
+                    if entry.expanded {
+                        IconName::FolderOpen
+                    } else {
+                        IconName::Folder
+                    }
+                } else {
+                    IconName::File
+                })
             };
 
             return Some(
                 ListItem::new(ix)
-                    .spacing(ListItemSpacing::ExtraDense)
+                    .spacing(ListItemSpacing::Sparse)
                     .inset(true)
                     .toggle_state(selected)
                     .indent_level(entry.depth)
@@ -2196,30 +2243,13 @@ impl PickerDelegate for FileFinderDelegate {
                         h_flex()
                             .gap_1()
                             .items_center()
-                            .child(
-                                disclosure_icon
-                                    .map(|icon| {
-                                        Icon::new(icon)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted)
-                                            .into_any_element()
-                                    })
-                                    .unwrap_or_else(|| {
-                                        div().w(rems(0.75)).flex_none().into_any_element()
-                                    }),
-                            )
-                            .child(
-                                Icon::new(item_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
+                            .child(disclosure_icon.map(|icon| icon).unwrap_or_else(|| {
+                                div().w(rems(0.75)).flex_none().into_any_element()
+                            }))
+                            .child(item_icon.size(IconSize::Small).color(Color::Muted))
                             .into_any_element(),
                     )
-                    .child(
-                        Label::new(entry.name.clone())
-                            .size(LabelSize::Small)
-                            .when(!selected, |label| label.color(Color::Muted)),
-                    ),
+                    .child(Label::new(entry.name.clone())),
             );
         }
 
