@@ -2007,14 +2007,14 @@ impl LhsEditor {
             })
             .collect();
 
-        let (ids, _) = lhs_multibuffer.update_path_excerpts(
+        let lhs_result = lhs_multibuffer.update_path_excerpts(
             path_key.clone(),
             base_text_buffer.clone(),
             &base_text_buffer_snapshot,
             new,
             lhs_cx,
         );
-        if !ids.is_empty()
+        if !lhs_result.excerpt_ids.is_empty()
             && lhs_multibuffer
                 .diff_for(base_text_buffer.read(lhs_cx).remote_id())
                 .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())

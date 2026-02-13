@@ -13,6 +13,36 @@ use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
 };
 
+#[derive(Debug, Clone)]
+pub struct PathExcerptInsertResult {
+    pub excerpt_ids: Vec<ExcerptId>,
+    pub input_to_output: Vec<usize>,
+    pub added_new_excerpt: bool,
+}
+
+impl PathExcerptInsertResult {
+    fn from_excerpt_ids_with_duplicates(
+        excerpt_ids_with_duplicates: Vec<ExcerptId>,
+        added_new_excerpt: bool,
+    ) -> Self {
+        let mut excerpt_ids = Vec::new();
+        let mut input_to_output = Vec::with_capacity(excerpt_ids_with_duplicates.len());
+
+        for id in excerpt_ids_with_duplicates {
+            if excerpt_ids.last() != Some(&id) {
+                excerpt_ids.push(id);
+            }
+            input_to_output.push(excerpt_ids.len() - 1);
+        }
+
+        Self {
+            excerpt_ids,
+            input_to_output,
+            added_new_excerpt,
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
     // Used by the derived PartialOrd & Ord
@@ -268,12 +298,15 @@ impl MultiBuffer {
         counts: Vec<usize>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let (excerpt_ids, added_a_new_excerpt) =
-            self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
+        let insert_result = self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
 
         let mut result = Vec::new();
         let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(counts.into_iter()) {
+        for (excerpt_id, range_count) in insert_result
+            .excerpt_ids
+            .into_iter()
+            .zip(counts.into_iter())
+        {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
@@ -283,7 +316,7 @@ impl MultiBuffer {
                 result.push(range)
             }
         }
-        (result, added_a_new_excerpt)
+        (result, insert_result.added_new_excerpt)
     }
 
     pub fn update_path_excerpts(
@@ -293,7 +326,7 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> (Vec<ExcerptId>, bool) {
+    ) -> PathExcerptInsertResult {
         let mut insert_after = self
             .excerpts_by_path
             .range(..path.clone())
@@ -431,18 +464,23 @@ impl MultiBuffer {
         to_remove.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
         self.remove_excerpts(to_remove, cx);
 
-        if excerpt_ids.is_empty() {
+        let result = PathExcerptInsertResult::from_excerpt_ids_with_duplicates(
+            excerpt_ids,
+            added_a_new_excerpt,
+        );
+
+        if result.excerpt_ids.is_empty() {
             self.excerpts_by_path.remove(&path);
         } else {
-            for excerpt_id in &excerpt_ids {
+            for excerpt_id in &result.excerpt_ids {
                 self.paths_by_excerpt.insert(*excerpt_id, path.clone());
             }
             let snapshot = &*self.snapshot.get_mut();
-            let mut excerpt_ids: Vec<_> = excerpt_ids.iter().dedup().cloned().collect();
-            excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
-            self.excerpts_by_path.insert(path, excerpt_ids);
+            let mut sorted_excerpt_ids = result.excerpt_ids.clone();
+            sorted_excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
+            self.excerpts_by_path.insert(path, sorted_excerpt_ids);
         }
 
-        (excerpt_ids, added_a_new_excerpt)
+        result
     }
 }

@@ -57,7 +57,7 @@ use theme::SyntaxTheme;
 use util::post_inc;
 use ztracing::instrument;
 
-pub use self::path_key::PathKey;
+pub use self::path_key::{PathExcerptInsertResult, PathKey};
 
 pub static EXCERPT_CONTEXT_LINES: OnceLock<fn(&App) -> u32> = OnceLock::new();
 
