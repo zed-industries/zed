@@ -91,6 +91,26 @@ linux() {
         suffix="-$channel"
     fi
 
+    appid=""
+    case "$channel" in
+    stable)
+        appid="dev.zed.Zed"
+        ;;
+    nightly)
+        appid="dev.zed.Zed-Nightly"
+        ;;
+    preview)
+        appid="dev.zed.Zed-Preview"
+        ;;
+    dev)
+        appid="dev.zed.Zed-Dev"
+        ;;
+    *)
+        echo "Unknown release channel: ${channel}. Using stable app ID."
+        appid="dev.zed.Zed"
+        ;;
+    esac
+
     # Unpack
     rm -rf "$HOME/.local/zed$suffix.app"
     mkdir -p "$HOME/.local/zed$suffix.app"
@@ -108,9 +128,14 @@ linux() {
     fi
 
     # Copy .desktop file
-    desktop_file_path_now="$(find "$HOME/.local/zed$suffix.app/share/applications" -name "*.desktop")"
-    desktop_file_path="$HOME/.local/share/applications/$(basename "$desktop_file_path_now")"
-    cp "$desktop_file_path_now" "${desktop_file_path}"
+    desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
+    src_dir="$HOME/.local/zed$suffix.app/share/applications"
+    if [ -f "$src_dir/${appid}.desktop" ]; then
+        cp "$src_dir/${appid}.desktop" "${desktop_file_path}"
+    else
+        # Fallback for older tarballs
+        cp "$src_dir/zed$suffix.desktop" "${desktop_file_path}"
+    fi
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
 }
