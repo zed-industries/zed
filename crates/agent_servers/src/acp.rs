@@ -80,15 +80,19 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: Rc<acp::ClientSideConnection>,
+    supports_delete: bool,
+    sessions: Rc<RefCell<Vec<AgentSessionInfo>>>,
     updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
-    fn new(connection: Rc<acp::ClientSideConnection>) -> Self {
+    fn new(connection: Rc<acp::ClientSideConnection>, supports_delete: bool) -> Self {
         let (tx, rx) = smol::channel::unbounded();
         Self {
             connection,
+            supports_delete,
+            sessions: Rc::new(RefCell::new(Vec::new())),
             updates_tx: tx,
             updates_rx: rx,
         }
@@ -114,30 +118,124 @@ impl AgentSessionList for AcpSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>> {
         let conn = self.connection.clone();
+        let sessions_cache = self.sessions.clone();
+        let is_first_page = request.cursor.is_none();
         cx.foreground_executor().spawn(async move {
             let acp_request = acp::ListSessionsRequest::new()
                 .cwd(request.cwd)
                 .cursor(request.cursor);
             let response = conn.list_sessions(acp_request).await?;
+            let sessions: Vec<AgentSessionInfo> = response
+                .sessions
+                .into_iter()
+                .map(|s| AgentSessionInfo {
+                    session_id: s.session_id,
+                    cwd: Some(s.cwd),
+                    title: s.title.map(Into::into),
+                    updated_at: s.updated_at.and_then(|date_str| {
+                        chrono::DateTime::parse_from_rfc3339(&date_str)
+                            .ok()
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                    }),
+                    meta: s.meta,
+                })
+                .collect();
+
+            let mut cache = sessions_cache.borrow_mut();
+            if is_first_page {
+                *cache = sessions.clone();
+            } else {
+                cache.extend(sessions.clone());
+            }
+            drop(cache);
+
             Ok(AgentSessionListResponse {
-                sessions: response
-                    .sessions
-                    .into_iter()
-                    .map(|s| AgentSessionInfo {
-                        session_id: s.session_id,
-                        cwd: Some(s.cwd),
-                        title: s.title.map(Into::into),
-                        updated_at: s.updated_at.and_then(|date_str| {
-                            chrono::DateTime::parse_from_rfc3339(&date_str)
-                                .ok()
-                                .map(|dt| dt.with_timezone(&chrono::Utc))
-                        }),
-                        meta: s.meta,
-                    })
-                    .collect(),
+                sessions,
                 next_cursor: response.next_cursor,
                 meta: response.meta,
             })
+        })
+    }
+
+    fn supports_delete(&self) -> bool {
+        self.supports_delete
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        let conn = self.connection.clone();
+        let session_id = session_id.clone();
+        let cwd = self
+            .sessions
+            .borrow()
+            .iter()
+            .find(|s| s.session_id == session_id)
+            .and_then(|s| s.cwd.clone());
+        let sessions_cache = self.sessions.clone();
+        let updates_tx = self.updates_tx.clone();
+
+        cx.foreground_executor().spawn(async move {
+            let params = serde_json::json!({
+                "sessionId": session_id.0,
+                "cwd": cwd,
+            });
+            let raw_params: std::sync::Arc<serde_json::value::RawValue> =
+                serde_json::value::to_raw_value(&params)?.into();
+
+            conn.ext_method(acp::ExtRequest::new("session/delete", raw_params))
+                .await
+                .map_err(|err| anyhow!("{}", err))?;
+
+            sessions_cache
+                .borrow_mut()
+                .retain(|s| s.session_id != session_id);
+            updates_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .ok();
+
+            Ok(())
+        })
+    }
+
+    fn delete_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        let session_entries: Vec<_> = self
+            .sessions
+            .borrow()
+            .iter()
+            .map(|s| (s.session_id.clone(), s.cwd.clone()))
+            .collect();
+        let conn = self.connection.clone();
+        let sessions_cache = self.sessions.clone();
+        let updates_tx = self.updates_tx.clone();
+
+        cx.foreground_executor().spawn(async move {
+            let mut first_error = None;
+            for (session_id, cwd) in session_entries {
+                let params = serde_json::json!({
+                    "sessionId": session_id.0,
+                    "cwd": cwd,
+                });
+                let raw_params: std::sync::Arc<serde_json::value::RawValue> =
+                    serde_json::value::to_raw_value(&params)?.into();
+
+                if let Err(err) = conn
+                    .ext_method(acp::ExtRequest::new("session/delete", raw_params))
+                    .await
+                {
+                    if first_error.is_none() {
+                        first_error = Some(anyhow!("{}", err));
+                    }
+                }
+            }
+
+            sessions_cache.borrow_mut().clear();
+            updates_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .ok();
+
+            match first_error {
+                Some(err) => Err(err),
+                None => Ok(()),
+            }
         })
     }
 
@@ -313,13 +411,25 @@ impl AcpConnection {
             // Otherwise, just use the name
             .unwrap_or_else(|| server_name.clone());
 
+        let supports_session_delete = response
+            .agent_capabilities
+            .session_capabilities
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("delete"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let session_list = if response
             .agent_capabilities
             .session_capabilities
             .list
             .is_some()
         {
-            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            let list = Rc::new(AcpSessionList::new(
+                connection.clone(),
+                supports_session_delete,
+            ));
             *client_session_list.borrow_mut() = Some(list.clone());
             Some(list)
         } else {

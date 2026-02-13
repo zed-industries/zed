@@ -27,6 +27,10 @@ fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
         .unwrap_or(DEFAULT_TITLE)
 }
 
+fn message_count(entry: &AgentSessionInfo) -> Option<u64> {
+    entry.meta.as_ref()?.get("messageCount")?.as_u64()
+}
+
 pub struct AcpThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
     sessions: Vec<AgentSessionInfo>,
@@ -636,6 +640,7 @@ impl AcpThreadHistory {
         };
 
         let title = thread_title(entry).clone();
+        let msg_count = message_count(entry);
         let full_date = entry_time
             .map(|time| {
                 EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
@@ -661,13 +666,30 @@ impl AcpThreadHistory {
                                     .truncate(),
                             )
                             .child(
-                                Label::new(display_text)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::XSmall),
+                                h_flex()
+                                    .gap_1()
+                                    .flex_shrink_0()
+                                    .when_some(msg_count, |this, count| {
+                                        this.child(
+                                            Label::new(format!("{count} msgs"))
+                                                .color(Color::Muted)
+                                                .size(LabelSize::XSmall),
+                                        )
+                                    })
+                                    .child(
+                                        Label::new(display_text)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall),
+                                    ),
                             ),
                     )
                     .tooltip(move |_, cx| {
-                        Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
+                        let meta_text = if let Some(count) = msg_count {
+                            format!("{full_date} · {count} messages")
+                        } else {
+                            full_date.clone()
+                        };
+                        Tooltip::with_meta(title.clone(), None, meta_text, cx)
                     })
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
@@ -882,6 +904,7 @@ impl RenderOnce for AcpHistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let id = ElementId::Name(self.entry.session_id.0.clone().into());
         let title = thread_title(&self.entry).clone();
+        let msg_count = message_count(&self.entry);
         let formatted_time = self
             .entry
             .updated_at
@@ -901,6 +924,9 @@ impl RenderOnce for AcpHistoryEntryElement {
             })
             .unwrap_or_else(|| "Unknown".to_string());
 
+        let tooltip_title = title.clone();
+        let tooltip_time = formatted_time.clone();
+
         ListItem::new(id)
             .rounded()
             .toggle_state(self.selected)
@@ -912,11 +938,31 @@ impl RenderOnce for AcpHistoryEntryElement {
                     .justify_between()
                     .child(Label::new(title).size(LabelSize::Small).truncate())
                     .child(
-                        Label::new(formatted_time)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
+                        h_flex()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .when_some(msg_count, |this, count| {
+                                this.child(
+                                    Label::new(format!("{count} msgs"))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall),
+                                )
+                            })
+                            .child(
+                                Label::new(formatted_time)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            ),
                     ),
             )
+            .tooltip(move |_, cx| {
+                let meta_text = if let Some(count) = msg_count {
+                    format!("{tooltip_time} · {count} messages")
+                } else {
+                    tooltip_time.clone()
+                };
+                Tooltip::with_meta(tooltip_title.clone(), None, meta_text, cx)
+            })
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
                 Some(
