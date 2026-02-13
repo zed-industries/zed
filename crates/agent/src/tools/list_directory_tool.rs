@@ -1,7 +1,9 @@
-use super::tool_permissions::{authorize_symlink_access, resolve_project_path};
+use super::tool_permissions::{
+    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+};
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
@@ -53,12 +55,10 @@ impl ListDirectoryTool {
         input_path: &str,
         cx: &App,
     ) -> Result<String> {
-        let Some(worktree) = project
+        let worktree = project
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Err(anyhow!("Worktree not found"));
-        };
+            .with_context(|| format!("{input_path} is not in a known worktree"))?;
 
         let global_settings = WorktreeSettings::get_global(cx);
         let worktree_settings = WorktreeSettings::get(Some(project_path.into()), cx);
@@ -176,11 +176,13 @@ impl AgentTool for ListDirectoryTool {
             Err(err) => return Task::ready(Err(err)),
         };
 
-        let symlink_canonical_target = resolved
-            .symlink_target()
-            .map(|canonical_target| canonical_target.to_path_buf());
-
-        let project_path = resolved.into_project_path();
+        let (project_path, symlink_canonical_target) = match resolved {
+            ResolvedProjectPath::Safe(path) => (path, None),
+            ResolvedProjectPath::SymlinkEscape {
+                project_path,
+                canonical_target,
+            } => (project_path, Some(canonical_target)),
+        };
 
         let Some(worktree) = self
             .project
@@ -231,7 +233,7 @@ impl AgentTool for ListDirectoryTool {
             return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
         }
 
-        let symlink_authorize = symlink_canonical_target.as_deref().map(|canonical_target| {
+        let symlink_authorize = symlink_canonical_target.as_ref().map(|canonical_target| {
             authorize_symlink_access(Self::NAME, &input.path, canonical_target, &event_stream, cx)
         });
 

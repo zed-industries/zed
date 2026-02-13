@@ -1,4 +1,6 @@
-use super::tool_permissions::{authorize_symlink_access, resolve_project_path};
+use super::tool_permissions::{
+    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+};
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
@@ -66,12 +68,19 @@ impl AgentTool for OpenTool {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
 
-        // Check for symlink escape (takes priority over normal authorization)
-        let symlink_escape = {
-            let project = self.project.read(cx);
-            resolve_project_path(project, PathBuf::from(&input.path_or_url), cx)
-                .ok()
-                .and_then(|resolved| resolved.symlink_target().map(|p| p.to_path_buf()))
+        // Symlink escape authorization replaces (rather than supplements)
+        // the normal tool-permission prompt. The symlink prompt already
+        // requires explicit user approval with the canonical target shown,
+        // which is strictly more security-relevant than a generic confirm.
+        let symlink_escape = match resolve_project_path(
+            self.project.read(cx),
+            PathBuf::from(&input.path_or_url),
+            cx,
+        ) {
+            Ok(ResolvedProjectPath::SymlinkEscape {
+                canonical_target, ..
+            }) => Some(canonical_target),
+            _ => None,
         };
 
         let authorize = if let Some(canonical_target) = symlink_escape {

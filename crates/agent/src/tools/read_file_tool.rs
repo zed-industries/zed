@@ -13,7 +13,9 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
-use super::tool_permissions::{authorize_symlink_access, resolve_project_path};
+use super::tool_permissions::{
+    ResolvedProjectPath, authorize_symlink_access, resolve_project_path,
+};
 use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
@@ -116,11 +118,13 @@ impl AgentTool for ReadFileTool {
             Err(err) => return Task::ready(Err(err)),
         };
 
-        let symlink_canonical_target = resolved
-            .symlink_target()
-            .map(|canonical_target| canonical_target.to_path_buf());
-
-        let project_path = resolved.into_project_path();
+        let (project_path, symlink_canonical_target) = match resolved {
+            ResolvedProjectPath::Safe(path) => (path, None),
+            ResolvedProjectPath::SymlinkEscape {
+                project_path,
+                canonical_target,
+            } => (project_path, Some(canonical_target)),
+        };
         let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Failed to convert {} to absolute path",
@@ -160,7 +164,7 @@ impl AgentTool for ReadFileTool {
             )));
         }
 
-        let symlink_authorize = symlink_canonical_target.as_deref().map(|canonical_target| {
+        let symlink_authorize = symlink_canonical_target.as_ref().map(|canonical_target| {
             authorize_symlink_access(Self::NAME, &input.path, canonical_target, &event_stream, cx)
         });
 

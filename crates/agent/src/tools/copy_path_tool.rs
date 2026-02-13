@@ -1,5 +1,5 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, detect_symlink_escape,
+    SensitiveSettingsKind, authorize_symlink_escapes, collect_symlink_escapes,
     is_sensitive_settings_path, sensitive_settings_kind,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_paths};
@@ -12,7 +12,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -96,27 +96,16 @@ impl AgentTool for CopyPathTool {
                 && (is_sensitive_settings_path(Path::new(&input.source_path))
                     || is_sensitive_settings_path(Path::new(&input.destination_path))));
 
-        let mut symlink_escapes: Vec<(String, PathBuf)> = Vec::new();
-        {
-            let project = self.project.read(cx);
-            if let Some((path, target)) = detect_symlink_escape(project, &input.source_path, cx) {
-                symlink_escapes.push((path.to_string(), target));
-            }
-            if let Some((path, target)) =
-                detect_symlink_escape(project, &input.destination_path, cx)
-            {
-                symlink_escapes.push((path.to_string(), target));
-            }
-        }
-        let has_symlink_escapes = !symlink_escapes.is_empty();
-        let symlink_authorize = if has_symlink_escapes {
-            let escapes: Vec<(&str, &Path)> = symlink_escapes
-                .iter()
-                .map(|(path, target)| (path.as_str(), target.as_path()))
-                .collect();
+        let symlink_escapes = collect_symlink_escapes(
+            self.project.read(cx),
+            &input.source_path,
+            &input.destination_path,
+            cx,
+        );
+        let symlink_authorize = if !symlink_escapes.is_empty() {
             Some(authorize_symlink_escapes(
                 Self::NAME,
-                &escapes,
+                &symlink_escapes,
                 &event_stream,
                 cx,
             ))
@@ -125,6 +114,10 @@ impl AgentTool for CopyPathTool {
         };
 
         let authorize = if let Some(authorize) = symlink_authorize {
+            // Symlink escape authorization replaces (rather than supplements)
+            // the normal tool-permission prompt. The symlink prompt already
+            // requires explicit user approval with the canonical target shown,
+            // which is strictly more security-relevant than a generic confirm.
             Some(authorize)
         } else if needs_confirmation {
             let src = MarkdownInlineCode(&input.source_path);
@@ -251,7 +244,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
@@ -305,7 +298,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         drop(auth);
@@ -357,7 +350,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
@@ -433,9 +426,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let result = cx
-            .update(|cx| tool.clone().run(input, event_stream, cx))
-            .await;
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
 
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(

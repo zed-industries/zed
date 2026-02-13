@@ -8,6 +8,7 @@ use project::{Project, ProjectPath};
 use settings::Settings;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use util::paths::SanitizedPath;
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -31,43 +32,26 @@ pub enum ResolvedProjectPath {
     },
 }
 
-impl ResolvedProjectPath {
-    pub fn into_project_path(self) -> ProjectPath {
-        match self {
-            ResolvedProjectPath::Safe(path) => path,
-            ResolvedProjectPath::SymlinkEscape { project_path, .. } => project_path,
-        }
-    }
-
-    pub fn symlink_target(&self) -> Option<&Path> {
-        match self {
-            ResolvedProjectPath::Safe(_) => None,
-            ResolvedProjectPath::SymlinkEscape {
-                canonical_target, ..
-            } => Some(canonical_target),
-        }
-    }
-}
-
-/// Canonicalize a path, stripping the Windows extended-length path prefix (`\\?\`)
-/// that `std::fs::canonicalize` adds on Windows. This ensures that canonicalized
-/// paths can be compared with non-canonicalized paths via `starts_with`.
 fn safe_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     let canonical = std::fs::canonicalize(path)?;
-    #[cfg(target_os = "windows")]
-    {
-        let s = canonical.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix("\\\\?\\") {
-            return Ok(PathBuf::from(stripped));
-        }
-    }
-    Ok(canonical)
+    Ok(PathBuf::from(SanitizedPath::new(&canonical).as_path()))
 }
 
 /// Walks up ancestors of `path` to find the deepest one that exists on disk and
-/// can be canonicalized, then reattaches the remaining suffix components. This
-/// handles paths where the leaf (or intermediate directories) don't exist yet
-/// but an ancestor may be a symlink.
+/// can be canonicalized, then reattaches the remaining suffix components.
+///
+/// This is needed for paths where the leaf (or intermediate directories) don't
+/// exist yet but an ancestor may be a symlink. For example, when creating
+/// `.zed/settings.json` where `.zed` is a symlink to an external directory.
+///
+/// Note: intermediate directories *can* be symlinks (not just leaf entries),
+/// so we must walk the full ancestor chain. For example:
+///   `ln -s /external/config /project/.zed`
+/// makes `.zed` an intermediate symlink directory.
+///
+/// This performs blocking filesystem I/O and should ideally be moved to an async
+/// context in the future. Currently it is only used for sensitive-settings
+/// detection which operates on a small number of well-known paths.
 fn canonicalize_with_ancestors(path: &Path) -> Option<PathBuf> {
     let mut current: Option<&Path> = Some(path);
     let mut suffix_components = Vec::new();
@@ -251,16 +235,20 @@ pub fn authorize_symlink_access(
 
 /// Creates a single authorization prompt for multiple symlink escapes.
 /// Each escape is a `(display_path, canonical_target)` pair.
+///
+/// Accepts `&[(&str, PathBuf)]` to match the natural return type of
+/// [`detect_symlink_escape`], avoiding intermediate owned-to-borrowed
+/// conversions at call sites.
 pub fn authorize_symlink_escapes(
     tool_name: &str,
-    escapes: &[(&str, &Path)],
+    escapes: &[(&str, PathBuf)],
     event_stream: &ToolCallEventStream,
     cx: &mut App,
 ) -> Task<Result<()>> {
     debug_assert!(!escapes.is_empty());
 
     if escapes.len() == 1 {
-        return authorize_symlink_access(tool_name, escapes[0].0, escapes[0].1, event_stream, cx);
+        return authorize_symlink_access(tool_name, escapes[0].0, &escapes[0].1, event_stream, cx);
     }
 
     let targets = escapes
@@ -284,9 +272,10 @@ pub fn authorize_symlink_escapes(
 /// Checks whether a path escapes the project via symlink, without creating
 /// an authorization task. Useful for pre-filtering paths before settings checks.
 pub fn path_has_symlink_escape(project: &Project, path: impl AsRef<Path>, cx: &App) -> bool {
-    resolve_project_path(project, path, cx)
-        .ok()
-        .is_some_and(|resolved| resolved.symlink_target().is_some())
+    matches!(
+        resolve_project_path(project, path, cx),
+        Ok(ResolvedProjectPath::SymlinkEscape { .. })
+    )
 }
 
 /// Collects symlink escape info for a path without creating an authorization task.
@@ -296,15 +285,50 @@ pub fn detect_symlink_escape<'a>(
     display_path: &'a str,
     cx: &App,
 ) -> Option<(&'a str, PathBuf)> {
-    resolve_project_path(project, display_path, cx)
-        .ok()
-        .and_then(|resolved| {
-            resolved
-                .symlink_target()
-                .map(|target| (display_path, target.to_path_buf()))
-        })
+    match resolve_project_path(project, display_path, cx).ok()? {
+        ResolvedProjectPath::Safe(_) => None,
+        ResolvedProjectPath::SymlinkEscape {
+            canonical_target, ..
+        } => Some((display_path, canonical_target)),
+    }
 }
 
+/// Collects symlink escape info for two paths (source and destination) and
+/// returns any escapes found. This deduplicates the common pattern used by
+/// tools that operate on two paths (copy, move).
+///
+/// Returns a `Vec` of `(display_path, canonical_target)` pairs for paths
+/// that escape the project via symlink. The returned vec borrows the display
+/// paths from the input strings.
+pub fn collect_symlink_escapes<'a>(
+    project: &Project,
+    source_path: &'a str,
+    destination_path: &'a str,
+    cx: &App,
+) -> Vec<(&'a str, PathBuf)> {
+    let mut escapes = Vec::new();
+    if let Some(escape) = detect_symlink_escape(project, source_path, cx) {
+        escapes.push(escape);
+    }
+    if let Some(escape) = detect_symlink_escape(project, destination_path, cx) {
+        escapes.push(escape);
+    }
+    escapes
+}
+
+/// Checks authorization for file edits, handling symlink escapes and
+/// sensitive settings paths.
+///
+/// # Authorization precedence
+///
+/// When a symlink escape is detected, the symlink authorization prompt
+/// *replaces* (rather than supplements) the normal tool-permission prompt.
+/// This is intentional: the symlink prompt already requires explicit user
+/// approval and displays the canonical target, which provides strictly more
+/// security-relevant information than the generic tool confirmation. Requiring
+/// two sequential prompts for the same operation would degrade UX without
+/// meaningfully improving security, since the user must already approve the
+/// more specific symlink-escape prompt.
 pub fn authorize_file_edit(
     tool_name: &str,
     path: &Path,

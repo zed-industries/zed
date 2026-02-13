@@ -14,8 +14,9 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, is_sensitive_settings_path,
-    path_has_symlink_escape, resolve_project_path, sensitive_settings_kind,
+    ResolvedProjectPath, SensitiveSettingsKind, authorize_symlink_access,
+    is_sensitive_settings_path, path_has_symlink_escape, resolve_project_path,
+    sensitive_settings_kind,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
 
@@ -150,7 +151,14 @@ impl AgentTool for SaveFileTool {
                     .read_with(cx, |project, cx| resolve_project_path(project, &path, cx))
                 {
                     Ok(resolved) => {
-                        if let Some(canonical_target) = resolved.symlink_target() {
+                        let (project_path, symlink_canonical_target) = match resolved {
+                            ResolvedProjectPath::Safe(path) => (path, None),
+                            ResolvedProjectPath::SymlinkEscape {
+                                project_path,
+                                canonical_target,
+                            } => (project_path, Some(canonical_target)),
+                        };
+                        if let Some(canonical_target) = &symlink_canonical_target {
                             let path_str = path.to_string_lossy();
                             let result = cx
                                 .update(|cx| {
@@ -168,7 +176,7 @@ impl AgentTool for SaveFileTool {
                                 continue;
                             }
                         }
-                        resolved.into_project_path()
+                        project_path
                     }
                     Err(_) => {
                         not_found_paths.push(path);

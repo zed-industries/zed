@@ -87,6 +87,10 @@ impl AgentTool for CreateDirectoryTool {
         }
 
         let authorize = if let Some(canonical_target) = symlink_escape_target {
+            // Symlink escape authorization replaces (rather than supplements)
+            // the normal tool-permission prompt. The symlink prompt already
+            // requires explicit user approval with the canonical target shown,
+            // which is strictly more security-relevant than a generic confirm.
             Some(authorize_symlink_access(
                 Self::NAME,
                 &input.path,
@@ -199,7 +203,7 @@ mod tests {
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
-            tool.clone().run(
+            tool.run(
                 CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
                 },
@@ -258,7 +262,7 @@ mod tests {
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
-            tool.clone().run(
+            tool.run(
                 CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
                 },
@@ -317,7 +321,7 @@ mod tests {
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
-            tool.clone().run(
+            tool.run(
                 CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
                 },
@@ -396,7 +400,7 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
             .update(|cx| {
-                tool.clone().run(
+                tool.run(
                     CreateDirectoryToolInput {
                         path: "project/link_to_external".into(),
                     },
