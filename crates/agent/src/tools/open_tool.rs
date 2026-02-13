@@ -6,7 +6,7 @@ use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -120,11 +120,15 @@ impl AgentTool for OpenTool {
                 }
             }
 
-            match abs_path {
-                Some(path) => open::that(path),
-                None => open::that(&input.path_or_url),
-            }
-            .context("Failed to open URL or file path")?;
+            let path_or_url = input.path_or_url.clone();
+            cx.background_spawn(async move {
+                match abs_path {
+                    Some(path) => open::that(path),
+                    None => open::that(path_or_url),
+                }
+                .context("Failed to open URL or file path")
+            })
+            .await?;
 
             Ok(format!("Successfully opened {}", input.path_or_url))
         })
