@@ -249,6 +249,8 @@ fn flatten_document_symbols(
     output: &mut Vec<OutlineItem<Anchor>>,
 ) {
     for symbol in symbols {
+        let name = super::collapse_newlines(&symbol.name, " ");
+
         let start = snapshot.clip_point_utf16(symbol.range.start, Bias::Right);
         let end = snapshot.clip_point_utf16(symbol.range.end, Bias::Left);
         let selection_start = snapshot.clip_point_utf16(symbol.selection_range.start, Bias::Right);
@@ -258,18 +260,12 @@ fn flatten_document_symbols(
         let selection_range =
             snapshot.anchor_after(selection_start)..snapshot.anchor_before(selection_end);
 
-        let (text, name_ranges, source_range_for_text) = enriched_symbol_text(
-            &symbol.name,
-            start,
-            selection_start,
-            selection_end,
-            snapshot,
-        )
-        .unwrap_or_else(|| {
-            let name = symbol.name.clone();
-            let name_len = name.len();
-            (name, vec![0..name_len], selection_range.clone())
-        });
+        let (text, name_ranges, source_range_for_text) =
+            enriched_symbol_text(&name, start, selection_start, selection_end, snapshot)
+                .unwrap_or_else(|| {
+                    let name_len = name.len();
+                    (name.clone(), vec![0..name_len], selection_range.clone())
+                });
 
         output.push(OutlineItem {
             depth,
@@ -453,5 +449,45 @@ mod tests {
         let mut items = Vec::new();
         flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_collapse_newlines() {
+        use super::super::collapse_newlines;
+
+        assert_eq!(collapse_newlines("a\nb", " "), "a b");
+        assert_eq!(collapse_newlines("a\n  b\nc", " "), "a b c");
+
+        // With ↵ separator (project symbols)
+        assert_eq!(collapse_newlines("a\nb", "↵ "), "a↵ b");
+
+        // Leading/trailing whitespace trimmed per line
+        assert_eq!(collapse_newlines("  a  \n  b  ", " "), "a b");
+
+        // Edge cases
+        assert_eq!(collapse_newlines("hello", " "), "hello");
+        // Empty lines filtered out
+        assert_eq!(collapse_newlines("a\n\nb", " "), "a b");
+    }
+
+    #[gpui::test]
+    async fn test_newlines_collapsed_in_name(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("x = 1\n", cx));
+
+        let symbols = vec![make_symbol(
+            "line1\nline2",
+            lsp::SymbolKind::VARIABLE,
+            (0, 0)..(0, 5),
+            (0, 0)..(0, 1),
+            vec![],
+        )];
+
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let mut items = Vec::new();
+        flatten_document_symbols(&symbols, &snapshot, 0, &mut items);
+
+        assert_eq!(items.len(), 1);
+        // Name newlines collapsed to space
+        assert_eq!(items[0].text, "line1 line2");
     }
 }
