@@ -99,8 +99,8 @@ pub struct WgpuRenderer {
     atlas: Arc<WgpuAtlas>,
     atlas_sampler: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
-    gamma_buffer: wgpu::Buffer,
-    path_globals_buffer: wgpu::Buffer,
+    path_globals_offset: u64,
+    gamma_offset: u64,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
@@ -225,16 +225,15 @@ impl WgpuRenderer {
             ..Default::default()
         });
 
+        let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
+        let globals_size = std::mem::size_of::<GlobalParams>() as u64;
+        let gamma_size = std::mem::size_of::<GammaParams>() as u64;
+        let path_globals_offset = globals_size.next_multiple_of(uniform_alignment);
+        let gamma_offset = (path_globals_offset + globals_size).next_multiple_of(uniform_alignment);
+
         let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals_buffer"),
-            size: std::mem::size_of::<GlobalParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let gamma_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gamma_buffer"),
-            size: std::mem::size_of::<GammaParams>() as u64,
+            size: gamma_offset + gamma_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -271,20 +270,21 @@ impl WgpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: globals_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: 0,
+                        size: Some(NonZeroU64::new(globals_size).unwrap()),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: gamma_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: gamma_offset,
+                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
+                    }),
                 },
             ],
-        });
-
-        let path_globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("path_globals_buffer"),
-            size: std::mem::size_of::<GlobalParams>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
         });
 
         let path_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -293,11 +293,19 @@ impl WgpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: path_globals_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: path_globals_offset,
+                        size: Some(NonZeroU64::new(globals_size).unwrap()),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: gamma_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &globals_buffer,
+                        offset: gamma_offset,
+                        size: Some(NonZeroU64::new(gamma_size).unwrap()),
+                    }),
                 },
             ],
         });
@@ -314,8 +322,8 @@ impl WgpuRenderer {
             atlas,
             atlas_sampler,
             globals_buffer,
-            gamma_buffer,
-            path_globals_buffer,
+            path_globals_offset,
+            gamma_offset,
             globals_bind_group,
             path_globals_bind_group,
             instance_buffer,
@@ -862,12 +870,15 @@ impl WgpuRenderer {
         loop {
             self.queue
                 .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
-            self.queue
-                .write_buffer(&self.gamma_buffer, 0, bytemuck::bytes_of(&gamma_params));
             self.queue.write_buffer(
-                &self.path_globals_buffer,
-                0,
+                &self.globals_buffer,
+                self.path_globals_offset,
                 bytemuck::bytes_of(&path_globals),
+            );
+            self.queue.write_buffer(
+                &self.globals_buffer,
+                self.gamma_offset,
+                bytemuck::bytes_of(&gamma_params),
             );
 
             let mut instance_offset: u64 = 0;
