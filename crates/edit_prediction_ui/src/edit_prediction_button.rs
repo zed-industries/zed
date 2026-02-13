@@ -38,8 +38,8 @@ use ui::{
 use util::ResultExt as _;
 
 use workspace::{
-    NotificationSource, StatusItemView, Toast, Workspace, create_and_open_local_file,
-    item::ItemHandle, notifications::NotificationId,
+    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
+    notifications::NotificationId,
 };
 use zed_actions::{OpenBrowser, OpenSettingsAt};
 
@@ -119,7 +119,7 @@ impl Render for EditPredictionButton {
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
                                     workspace.update(cx, |workspace, cx| {
                                         let copilot = copilot.clone();
                                         workspace.show_toast(
@@ -137,7 +137,6 @@ impl Render for EditPredictionButton {
                                                     )
                                                 },
                                             ),
-                                            NotificationSource::Copilot,
                                             cx,
                                         );
                                     });

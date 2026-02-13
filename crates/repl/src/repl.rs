@@ -17,13 +17,13 @@ use project::Fs;
 pub use runtimelib::ExecutionState;
 
 pub use crate::jupyter_settings::JupyterSettings;
-pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
+pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
     ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
 pub use crate::repl_settings::ReplSettings;
-use crate::repl_store::ReplStore;
+pub use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
 pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";

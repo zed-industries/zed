@@ -828,6 +828,8 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Whether to search on input.
+    pub search_on_input: Option<bool>,
 }
 
 #[with_fallible_options]

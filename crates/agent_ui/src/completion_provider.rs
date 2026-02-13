@@ -2354,7 +2354,7 @@ mod tests {
         use project::Project;
         use serde_json::json;
         use util::{path, rel_path::rel_path};
-        use workspace::AppState;
+        use workspace::{AppState, MultiWorkspace};
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
@@ -2379,8 +2379,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| workspace::Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();

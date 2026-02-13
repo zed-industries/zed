@@ -54,7 +54,7 @@ use std::{
 };
 use util::{
     ResultExt,
-    command::{new_smol_command, new_std_command},
+    command::{new_command, new_std_command},
 };
 
 #[allow(non_upper_case_globals)]
@@ -848,7 +848,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_smol_command("open")
+                if let Some(mut child) = new_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")

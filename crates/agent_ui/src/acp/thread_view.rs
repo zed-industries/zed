@@ -58,8 +58,7 @@ use ui::{
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use util::{debug_panic, defer};
 use workspace::{
-    CollaboratorId, NewTerminal, NotificationSource, Toast, Workspace,
-    notifications::NotificationId,
+    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
@@ -724,7 +723,7 @@ impl AcpServerView {
                 });
         }
 
-        let mut subscriptions = vec![
+        let subscriptions = vec![
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.observe(&action_log, |_, _, cx| cx.notify()),
         ];
@@ -755,18 +754,6 @@ impl AcpServerView {
             })
             .detach();
         }
-
-        let title_editor = if thread.update(cx, |thread, cx| thread.can_set_title(cx)) {
-            let editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_text(thread.read(cx).title(), window, cx);
-                editor
-            });
-            subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
-            Some(editor)
-        } else {
-            None
-        };
 
         let profile_selector: Option<Rc<agent::NativeAgentConnection>> =
             connection.clone().downcast();
@@ -803,7 +790,6 @@ impl AcpServerView {
                 agent_display_name,
                 self.workspace.clone(),
                 entry_view_state,
-                title_editor,
                 config_options_view,
                 mode_selector,
                 model_selector,
@@ -981,20 +967,6 @@ impl AcpServerView {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
                 active.cancel_generation(cx);
-            });
-        }
-    }
-
-    pub fn handle_title_editor_event(
-        &mut self,
-        title_editor: &Entity<Editor>,
-        event: &EditorEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.active_thread() {
-            active.update(cx, |active, cx| {
-                active.handle_title_editor_event(title_editor, event, window, cx);
             });
         }
     }
@@ -1182,10 +1154,8 @@ impl AcpServerView {
             }
             AcpThreadEvent::TitleUpdated => {
                 let title = thread.read(cx).title();
-                if let Some(title_editor) = self
-                    .thread_view(&thread_id)
-                    .and_then(|active| active.read(cx).title_editor.clone())
-                {
+                if let Some(active_thread) = self.thread_view(&thread_id) {
+                    let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
                             editor.set_text(title, window, cx);
@@ -1405,6 +1375,7 @@ impl AcpServerView {
             if !provider.is_authenticated(cx) {
                 let this = cx.weak_entity();
                 let agent_name = self.agent.name();
+                let connection = connection.clone();
                 window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
                         this,
@@ -1427,6 +1398,7 @@ impl AcpServerView {
         {
             let this = cx.weak_entity();
             let agent_name = self.agent.name();
+            let connection = connection.clone();
 
             window.defer(cx, |window, cx| {
                     Self::handle_auth_required(
@@ -2179,9 +2151,40 @@ impl AcpServerView {
         self.show_notification(caption, icon, window, cx);
     }
 
+    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+
+        multi_workspace.read(cx).workspace() == &workspace && AgentPanel::is_visible(&workspace, cx)
+    }
+
+    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            multi_workspace.read(cx).is_sidebar_open()
+                || self.agent_panel_visible(&multi_workspace, cx)
+        } else {
+            self.workspace
+                .upgrade()
+                .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+        }
+    }
+
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done && !window.is_window_active() {
+        let visible = window.is_window_active()
+            && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
+                self.agent_panel_visible(&mw, cx)
+            } else {
+                self.workspace
+                    .upgrade()
+                    .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+            };
+        if settings.play_sound_when_agent_done && !visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2199,14 +2202,7 @@ impl AcpServerView {
 
         let settings = AgentSettings::get_global(cx);
 
-        let window_is_inactive = !window.is_window_active();
-        let panel_is_hidden = self
-            .workspace
-            .upgrade()
-            .map(|workspace| AgentPanel::is_hidden(&workspace, cx))
-            .unwrap_or(true);
-
-        let should_notify = window_is_inactive || panel_is_hidden;
+        let should_notify = !self.agent_status_visible(window, cx);
 
         if !should_notify {
             return;
@@ -2269,19 +2265,22 @@ impl AcpServerView {
                 .push(cx.subscribe_in(&pop_up, window, {
                     |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
-                            let handle = window.window_handle();
+                            let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
+                            else {
+                                log::error!("root view should be a MultiWorkspace");
+                                return;
+                            };
                             cx.activate(true);
 
                             let workspace_handle = this.workspace.clone();
 
-                            // If there are multiple Zed windows, activate the correct one.
                             cx.defer(move |cx| {
                                 handle
-                                    .update(cx, |_view, window, _cx| {
+                                    .update(cx, |multi_workspace, window, cx| {
                                         window.activate_window();
-
                                         if let Some(workspace) = workspace_handle.upgrade() {
-                                            workspace.update(_cx, |workspace, cx| {
+                                            multi_workspace.activate(workspace.clone(), cx);
+                                            workspace.update(cx, |workspace, cx| {
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
                                             });
                                         }
@@ -2306,12 +2305,12 @@ impl AcpServerView {
                 .push({
                     let pop_up_weak = pop_up.downgrade();
 
-                    cx.observe_window_activation(window, move |_, window, cx| {
-                        if window.is_window_active()
+                    cx.observe_window_activation(window, move |this, window, cx| {
+                        if this.agent_status_visible(window, cx)
                             && let Some(pop_up) = pop_up_weak.upgrade()
                         {
-                            pop_up.update(cx, |_, cx| {
-                                cx.emit(AgentNotificationEvent::Dismissed);
+                            pop_up.update(cx, |notification, cx| {
+                                notification.dismiss(cx);
                             });
                         }
                     })
@@ -2581,6 +2580,7 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
+    use assistant_text_thread::TextThreadStore;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, TestAppContext, VisualTestContext};
@@ -2592,7 +2592,9 @@ pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::Arc;
-    use workspace::Item;
+    use workspace::{Item, MultiWorkspace};
+
+    use crate::agent_panel;
 
     use super::*;
 
@@ -2664,8 +2666,9 @@ pub(crate) mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         // Create history without an initial session list - it will be set after connection
@@ -2736,8 +2739,9 @@ pub(crate) mod tests {
         let session = AgentSessionInfo::new(SessionId::new("resume-session"));
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -2783,8 +2787,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
@@ -2834,8 +2839,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
@@ -2885,8 +2891,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let connection = CwdCapturingConnection::new();
         let captured_cwd = connection.captured_cwd.clone();
@@ -2945,6 +2952,78 @@ pub(crate) mod tests {
             assert!(
                 matches!(state.read(cx).thread_error, Some(ThreadError::Refusal)),
                 "Expected refusal error to be set"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = AuthGatedAgentConnection::new();
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
+
+        // When new_session returns AuthRequired, the server should transition
+        // to Connected + Unauthenticated rather than getting stuck in Loading.
+        thread_view.read_with(cx, |view, _cx| {
+            let connected = view
+                .as_connected()
+                .expect("Should be in Connected state even though auth is required");
+            assert!(
+                !connected.auth_state.is_ok(),
+                "Auth state should be Unauthenticated"
+            );
+            assert!(
+                connected.active_id.is_none(),
+                "There should be no active thread since no session was created"
+            );
+            assert!(
+                connected.threads.is_empty(),
+                "There should be no threads since no session was created"
+            );
+        });
+
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                view.active_thread().is_none(),
+                "active_thread() should be None when unauthenticated without a session"
+            );
+        });
+
+        // Authenticate using the real authenticate flow on AcpServerView.
+        // This calls connection.authenticate(), which flips the internal flag,
+        // then on success triggers reset() -> new_session() which now succeeds.
+        thread_view.update_in(cx, |view, window, cx| {
+            view.authenticate(
+                acp::AuthMethodId::new(AuthGatedAgentConnection::AUTH_METHOD_ID),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // After auth, the server should have an active thread in the Ok state.
+        thread_view.read_with(cx, |view, cx| {
+            let connected = view
+                .as_connected()
+                .expect("Should still be in Connected state after auth");
+            assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
+            assert!(
+                connected.active_id.is_some(),
+                "There should be an active thread after successful auth"
+            );
+            assert_eq!(
+                connected.threads.len(),
+                1,
+                "There should be exactly one thread"
+            );
+
+            let active = view
+                .active_thread()
+                .expect("active_thread() should return the new thread");
+            assert!(
+                active.read(cx).thread_error.is_none(),
+                "The new thread should have no errors"
             );
         });
     }
@@ -3048,6 +3127,137 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_notification_when_workspace_is_background_in_multi_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // Enable multi-workspace feature flag and init globals needed by AgentPanel
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project1 = Project::test(fs.clone(), [], cx).await;
+
+        // Create a MultiWorkspace window with one workspace
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        // Get workspace 1 (the initial workspace)
+        let workspace1 = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        workspace1.update_in(cx, |workspace, window, cx| {
+            let text_thread_store =
+                cx.new(|cx| TextThreadStore::fake(workspace.project().clone(), cx));
+            let panel =
+                cx.new(|cx| crate::AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel, window, cx);
+
+            // Open the dock and activate the agent panel so it's visible
+            workspace.focus_panel::<crate::AgentPanel>(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        cx.read(|cx| {
+            assert!(
+                crate::AgentPanel::is_visible(&workspace1, cx),
+                "AgentPanel should be visible in workspace1's dock"
+            );
+        });
+
+        // Set up thread view in workspace 1
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
+
+        let agent = StubAgentServer::default_response();
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpServerView::new(
+                    Rc::new(agent),
+                    None,
+                    None,
+                    workspace1.downgrade(),
+                    project1.clone(),
+                    Some(thread_store),
+                    None,
+                    history,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        // Create a second workspace and switch to it.
+        // This makes workspace1 the "background" workspace.
+        let project2 = Project::test(fs, [], cx).await;
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.test_add_workspace(project2, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Verify workspace1 is no longer the active workspace
+        multi_workspace_handle
+            .read_with(cx, |mw, _cx| {
+                assert_eq!(mw.active_workspace_index(), 1);
+                assert_ne!(mw.workspace(), &workspace1);
+            })
+            .unwrap();
+
+        // Window is active, agent panel is visible in workspace1, but workspace1
+        // is in the background. The notification should show because the user
+        // can't actually see the agent panel.
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when workspace is in background within MultiWorkspace"
+        );
+
+        // Also verify: clicking "View Panel" should switch to workspace1.
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .unwrap()
+            .update(cx, |window, _, cx| window.accept(cx))
+            .unwrap();
+
+        cx.run_until_parked();
+
+        multi_workspace_handle
+            .read_with(cx, |mw, _cx| {
+                assert_eq!(
+                    mw.workspace(),
+                    &workspace1,
+                    "Expected workspace1 to become the active workspace after accepting notification"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     async fn test_notification_respects_never_setting(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3139,8 +3349,9 @@ pub(crate) mod tests {
     ) -> (Entity<AcpServerView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -3209,18 +3420,18 @@ pub(crate) mod tests {
         }
     }
 
-    struct StubAgentServer<C> {
+    pub(crate) struct StubAgentServer<C> {
         connection: C,
     }
 
     impl<C> StubAgentServer<C> {
-        fn new(connection: C) -> Self {
+        pub(crate) fn new(connection: C) -> Self {
             Self { connection }
         }
     }
 
     impl StubAgentServer<StubAgentConnection> {
-        fn default_response() -> Self {
+        pub(crate) fn default_response() -> Self {
             let conn = StubAgentConnection::new();
             conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
                 acp::ContentChunk::new("Default response".into()),
@@ -3368,6 +3579,99 @@ pub(crate) mod tests {
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    /// Simulates an agent that requires authentication before a session can be
+    /// created. `new_session` returns `AuthRequired` until `authenticate` is
+    /// called with the correct method, after which sessions are created normally.
+    #[derive(Clone)]
+    struct AuthGatedAgentConnection {
+        authenticated: Arc<Mutex<bool>>,
+        auth_method: acp::AuthMethod,
+    }
+
+    impl AuthGatedAgentConnection {
+        const AUTH_METHOD_ID: &str = "test-login";
+
+        fn new() -> Self {
+            Self {
+                authenticated: Arc::new(Mutex::new(false)),
+                auth_method: acp::AuthMethod::new(Self::AUTH_METHOD_ID, "Test Login"),
+            }
+        }
+    }
+
+    impl AgentConnection for AuthGatedAgentConnection {
+        fn telemetry_id(&self) -> SharedString {
+            "auth-gated".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            if !*self.authenticated.lock() {
+                return Task::ready(Err(acp_thread::AuthRequired::new()
+                    .with_description("Sign in to continue".to_string())
+                    .into()));
+            }
+
+            let session_id = acp::SessionId::new("auth-gated-session");
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            Task::ready(Ok(cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    "AuthGatedAgent",
+                    self,
+                    project,
+                    action_log,
+                    session_id,
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            })))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            std::slice::from_ref(&self.auth_method)
+        }
+
+        fn authenticate(
+            &self,
+            method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            if method_id == self.auth_method.id {
+                *self.authenticated.lock() = true;
+                Task::ready(Ok(()))
+            } else {
+                Task::ready(Err(anyhow::anyhow!("Unknown auth method")))
+            }
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            unimplemented!()
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
@@ -3616,6 +3920,7 @@ pub(crate) mod tests {
             cx.set_global(settings_store);
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
+            agent_panel::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             prompt_store::init(cx)
         });
@@ -3656,8 +3961,9 @@ pub(crate) mod tests {
         )
         .await;
         let project = Project::test(fs, [Path::new("/project")], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
@@ -5473,5 +5779,102 @@ pub(crate) mod tests {
                 .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
             "Missing deny pattern option"
         );
+    }
+
+    #[gpui::test]
+    async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default_response(), cx).await;
+
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+        let thread = cx.read(|cx| active.read(cx).thread.clone());
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(!editor.read_only(cx));
+        });
+
+        title_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("My Custom Title", window, cx);
+        });
+        cx.run_until_parked();
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "My Custom Title");
+        });
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title().as_ref(), "My Custom Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
+
+        let active = active_thread(&thread_view, cx);
+        let title_editor = cx.read(|cx| active.read(cx).title_editor.clone());
+
+        title_editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor.read_only(cx),
+                "Title editor should be read-only when the connection does not support set_title"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_max_tokens_error_is_rendered(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Some prompt", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        let session_id = thread_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|_, _cx| {
+            connection.end_turn(session_id, acp::StopReason::MaxTokens);
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.active_thread().unwrap();
+            let error = &state.read(cx).thread_error;
+            match error {
+                Some(ThreadError::Other { message, .. }) => {
+                    assert!(
+                        message.contains("Max tokens reached"),
+                        "Expected 'Max tokens reached' error, got: {}",
+                        message
+                    );
+                }
+                other => panic!(
+                    "Expected ThreadError::Other with 'Max tokens reached', got: {:?}",
+                    other.is_some()
+                ),
+            }
+        });
     }
 }
