@@ -711,10 +711,28 @@ impl settings::Settings for ThemeSettings {
 
         let buffer_font_family = content.buffer_font_family.as_ref().unwrap();
 
-        let buffer_font_features = content.buffer_font_features.clone().unwrap().into_gpui();
+        let buffer_font_features = content.buffer_font_features.clone().unwrap();
         let buffer_font_fallbacks =
             font_fallbacks_from_settings(content.buffer_font_fallbacks.clone());
-        let buffer_font_weight = content.buffer_font_weight.unwrap().into_gpui();
+        let buffer_font_weight = content.buffer_font_weight.unwrap();
+
+        // Inlay hints work in an "inheritance" manner. Base level is buffer options
+        // They can then be overridden by inlay hints options
+        // Then the underlying inlay hint type, which only edit predictions are
+        // supported for this atm.
+        // buffer > inlay hints > inlay type
+        let buffer_font_size = content.buffer_font_size.unwrap();
+        let inlay_hints_font_family = content
+            .inlay_hints_font_family
+            .as_ref()
+            .unwrap_or(buffer_font_family);
+        let inlay_hints_font_weight = content
+            .inlay_hints_font_weight
+            .unwrap_or(buffer_font_weight);
+        let inlay_hints_font_features = content
+            .inlay_hints_font_features
+            .clone()
+            .unwrap_or(buffer_font_features.clone());
 
         Self {
             ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
@@ -726,39 +744,41 @@ impl settings::Settings for ThemeSettings {
                 style: Default::default(),
             },
             inlay_hints_font: Font {
-                family: content
-                    .inlay_hints_font_family
-                    .as_ref()
-                    .unwrap_or(buffer_font_family)
-                    .0
-                    .clone()
-                    .into(),
-                features: buffer_font_features.clone(),
+                family: inlay_hints_font_family.0.clone().into(),
+                features: inlay_hints_font_features.clone().into_gpui(),
                 fallbacks: buffer_font_fallbacks.clone(),
-                weight: buffer_font_weight,
+                weight: inlay_hints_font_weight.into_gpui(),
                 style: FontStyle::default(),
             },
             edit_predictions_font: Font {
                 family: content
                     .edit_predictions_font_family
                     .as_ref()
-                    .unwrap_or(buffer_font_family)
+                    .unwrap_or(inlay_hints_font_family)
                     .0
                     .clone()
                     .into(),
-                features: buffer_font_features.clone(),
+                features: content
+                    .edit_predictions_font_features
+                    .clone()
+                    .unwrap_or(inlay_hints_font_features)
+                    .clone()
+                    .into_gpui(),
                 fallbacks: buffer_font_fallbacks.clone(),
-                weight: buffer_font_weight,
+                weight: content
+                    .edit_predictions_font_weight
+                    .unwrap_or(inlay_hints_font_weight)
+                    .into_gpui(),
                 style: FontStyle::default(),
             },
             buffer_font: Font {
                 family: buffer_font_family.0.clone().into(),
-                features: buffer_font_features,
+                features: buffer_font_features.clone().into_gpui(),
                 fallbacks: buffer_font_fallbacks,
-                weight: buffer_font_weight,
+                weight: buffer_font_weight.into_gpui(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into_gpui()),
+            buffer_font_size: clamp_font_size(buffer_font_size.into_gpui()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_ui_font_size: content.agent_ui_font_size.map(|s| s.into_gpui()),
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
