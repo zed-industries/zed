@@ -1,3 +1,4 @@
+use super::tool_permissions::{authorize_symlink_access, resolve_project_path};
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
@@ -64,12 +65,30 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
-        let context = crate::ToolPermissionContext {
-            tool_name: Self::NAME.to_string(),
-            input_values: vec![input.path_or_url.clone()],
+
+        // Check for symlink escape (takes priority over normal authorization)
+        let symlink_escape = {
+            let project = self.project.read(cx);
+            resolve_project_path(project, PathBuf::from(&input.path_or_url), cx)
+                .ok()
+                .and_then(|resolved| resolved.symlink_target().map(|p| p.to_path_buf()))
         };
-        let authorize =
-            event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
+
+        let authorize = if let Some(canonical_target) = symlink_escape {
+            authorize_symlink_access(
+                Self::NAME,
+                &input.path_or_url,
+                &canonical_target,
+                &event_stream,
+                cx,
+            )
+        } else {
+            let context = crate::ToolPermissionContext {
+                tool_name: Self::NAME.to_string(),
+                input_values: vec![input.path_or_url.clone()],
+            };
+            event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx)
+        };
         cx.background_spawn(async move {
             futures::select! {
                 result = authorize.fuse() => result?,

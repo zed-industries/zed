@@ -1,5 +1,6 @@
-use super::edit_file_tool::{
-    SensitiveSettingsKind, is_sensitive_settings_path, sensitive_settings_kind,
+use super::tool_permissions::{
+    SensitiveSettingsKind, authorize_symlink_access, is_sensitive_settings_path,
+    path_has_symlink_escape, resolve_project_path, sensitive_settings_kind,
 };
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -72,12 +73,15 @@ impl AgentTool for RestoreFileFromDiskTool {
         let settings = AgentSettings::get_global(cx);
         let mut confirmation_paths: Vec<String> = Vec::new();
 
+        let project = self.project.read(cx);
         for path in &input.paths {
             let path_str = path.to_string_lossy();
             let decision = decide_permission_for_path(Self::NAME, &path_str, settings);
+            let symlink_escape = path_has_symlink_escape(project, path, cx);
+
             match decision {
                 ToolPermissionDecision::Allow => {
-                    if is_sensitive_settings_path(Path::new(&*path_str)) {
+                    if !symlink_escape && is_sensitive_settings_path(Path::new(&*path_str)) {
                         confirmation_paths.push(path_str.to_string());
                     }
                 }
@@ -85,7 +89,9 @@ impl AgentTool for RestoreFileFromDiskTool {
                     return Task::ready(Err(anyhow::anyhow!("{}", reason)));
                 }
                 ToolPermissionDecision::Confirm => {
-                    confirmation_paths.push(path_str.to_string());
+                    if !symlink_escape {
+                        confirmation_paths.push(path_str.to_string());
+                    }
                 }
             }
         }
@@ -146,11 +152,34 @@ impl AgentTool for RestoreFileFromDiskTool {
             let mut reload_errors: Vec<String> = Vec::new();
 
             for path in input_paths {
-                let Some(project_path) =
-                    project.read_with(cx, |project, cx| project.find_project_path(&path, cx))
-                else {
-                    not_found_paths.push(path);
-                    continue;
+                let project_path = match project
+                    .read_with(cx, |project, cx| resolve_project_path(project, &path, cx))
+                {
+                    Ok(resolved) => {
+                        if let Some(canonical_target) = resolved.symlink_target() {
+                            let path_str = path.to_string_lossy();
+                            let result = cx
+                                .update(|cx| {
+                                    authorize_symlink_access(
+                                        Self::NAME,
+                                        &path_str,
+                                        canonical_target,
+                                        &event_stream,
+                                        cx,
+                                    )
+                                })
+                                .await;
+                            if let Err(err) = result {
+                                reload_errors.push(format!("{}: {}", path.to_string_lossy(), err));
+                                continue;
+                            }
+                        }
+                        resolved.into_project_path()
+                    }
+                    Err(_) => {
+                        not_found_paths.push(path);
+                        continue;
+                    }
                 };
 
                 let open_buffer_task =
@@ -246,7 +275,7 @@ impl AgentTool for RestoreFileFromDiskTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::Fs;
+    use fs::Fs as _;
     use gpui::TestAppContext;
     use language::LineEnding;
     use project::FakeFs;
@@ -407,5 +436,198 @@ mod tests {
         );
 
         let _ = LineEnding::Unix; // keep import used if the buffer edit API changes
+    }
+
+    #[gpui::test]
+    async fn test_restore_file_symlink_escape_requests_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": {}
+                },
+                "external": {
+                    "secret.txt": "secret content"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(RestoreFileFromDiskTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                RestoreFileFromDiskToolInput {
+                    paths: vec![PathBuf::from("project/link.txt")],
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        cx.run_until_parked();
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project"),
+            "Expected symlink escape authorization, got: {title}",
+        );
+
+        auth.response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        let _result = task.await;
+    }
+
+    #[gpui::test]
+    async fn test_restore_file_symlink_escape_honors_deny_policy(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "restore_file_from_disk".into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    ..Default::default()
+                },
+            );
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": {}
+                },
+                "external": {
+                    "secret.txt": "secret content"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(RestoreFileFromDiskTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    RestoreFileFromDiskToolInput {
+                        paths: vec![PathBuf::from("project/link.txt")],
+                    },
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(result.is_err(), "Tool should fail when policy denies");
+        assert!(
+            !matches!(
+                event_rx.try_next(),
+                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+            ),
+            "Deny policy should not emit symlink authorization prompt",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_file_symlink_escape_confirm_requires_single_approval(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": {}
+                },
+                "external": {
+                    "secret.txt": "secret content"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(RestoreFileFromDiskTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                RestoreFileFromDiskToolInput {
+                    paths: vec![PathBuf::from("project/link.txt")],
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        cx.run_until_parked();
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project"),
+            "Expected symlink escape authorization, got: {title}",
+        );
+
+        auth.response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        assert!(
+            !matches!(
+                event_rx.try_next(),
+                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+            ),
+            "Expected a single authorization prompt",
+        );
+
+        let _result = task.await;
     }
 }

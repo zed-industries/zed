@@ -13,6 +13,7 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
+use super::tool_permissions::{authorize_symlink_access, resolve_project_path};
 use crate::{AgentTool, Thread, ToolCallEventStream, outline};
 
 /// Reads the content of the given file in the project.
@@ -110,9 +111,16 @@ impl AgentTool for ReadFileTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent>> {
-        let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
+        let resolved = match resolve_project_path(self.project.read(cx), &input.path, cx) {
+            Ok(resolved) => resolved,
+            Err(err) => return Task::ready(Err(err)),
         };
+
+        let symlink_canonical_target = resolved
+            .symlink_target()
+            .map(|canonical_target| canonical_target.to_path_buf());
+
+        let project_path = resolved.into_project_path();
         let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Failed to convert {} to absolute path",
@@ -152,6 +160,10 @@ impl AgentTool for ReadFileTool {
             )));
         }
 
+        let symlink_authorize = symlink_canonical_target.as_deref().map(|canonical_target| {
+            authorize_symlink_access(Self::NAME, &input.path, canonical_target, &event_stream, cx)
+        });
+
         let file_path = input.path.clone();
 
         event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
@@ -161,6 +173,10 @@ impl AgentTool for ReadFileTool {
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
+                if let Some(authorize) = symlink_authorize {
+                    authorize.await?;
+                }
+
                 let image_entity: Entity<ImageItem> = cx
                     .update(|cx| {
                         self.project.update(cx, |project, cx| {
@@ -191,6 +207,10 @@ impl AgentTool for ReadFileTool {
         let action_log = self.action_log.clone();
 
         cx.spawn(async move |cx| {
+            if let Some(authorize) = symlink_authorize {
+                authorize.await?;
+            }
+
             let open_buffer_task = cx.update(|cx| {
                 project.update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
@@ -312,12 +332,15 @@ impl AgentTool for ReadFileTool {
 mod test {
     use super::*;
     use crate::{ContextServerRegistry, Templates, Thread};
+    use agent_client_protocol as acp;
+    use fs::Fs as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
 
@@ -606,6 +629,16 @@ mod test {
         });
     }
 
+    fn single_pixel_png() -> Vec<u8> {
+        vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ]
+    }
+
     #[gpui::test]
     async fn test_read_file_security(cx: &mut TestAppContext) {
         init_test(cx);
@@ -811,6 +844,70 @@ mod test {
             result.is_err(),
             "read_file_tool should error when attempting to read a relative path that resolves to outside a worktree"
         );
+    }
+
+    #[gpui::test]
+    async fn test_read_image_symlink_requires_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        fs.insert_tree(path!("/outside"), json!({})).await;
+        fs.insert_file(path!("/outside/secret.png"), single_pixel_png())
+            .await;
+        fs.insert_symlink(
+            path!("/root/secret.png"),
+            PathBuf::from("/outside/secret.png"),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let read_task = cx.update(|cx| {
+            tool.run(
+                ReadFileToolInput {
+                    path: "root/secret.png".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let authorization = event_rx.expect_authorization().await;
+        assert!(
+            authorization
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.contains("points outside the project")),
+            "Expected symlink escape authorization before reading the image"
+        );
+        authorization
+            .response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        let result = read_task.await;
+        assert!(result.is_ok());
     }
 
     #[gpui::test]
@@ -1044,6 +1141,247 @@ mod test {
                 .to_string()
                 .contains("worktree `private_files` setting"),
             "Config.toml should be blocked by worktree1's private_files setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_symlink_escape_requests_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "main.rs": "fn main() {}" }
+                },
+                "external": {
+                    "secret.txt": "SECRET_KEY=abc123"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/secret_link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                ReadFileToolInput {
+                    path: "project/secret_link.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project"),
+            "title: {title}"
+        );
+
+        auth.response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "should succeed after approval: {result:?}");
+    }
+
+    #[gpui::test]
+    async fn test_read_file_symlink_escape_denied(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "main.rs": "fn main() {}" }
+                },
+                "external": {
+                    "secret.txt": "SECRET_KEY=abc123"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/secret_link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.clone().run(
+                ReadFileToolInput {
+                    path: "project/secret_link.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                },
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        drop(auth);
+
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "Tool should fail when authorization is denied"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_symlink_escape_private_path_no_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "main.rs": "fn main() {}" }
+                },
+                "external": {
+                    "secret.txt": "SECRET_KEY=abc123"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/secret_link.txt").as_ref(),
+            PathBuf::from("../external/secret.txt"),
+        )
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/secret_link.txt".to_string()].into());
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(ReadFileTool::new(
+            thread.downgrade(),
+            project.clone(),
+            action_log,
+        ));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    ReadFileToolInput {
+                        path: "project/secret_link.txt".to_string(),
+                        start_line: None,
+                        end_line: None,
+                    },
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Expected read_file to fail on private path"
+        );
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("private_files"),
+            "Expected private-files validation error, got: {error}"
+        );
+
+        let event = event_rx.try_next();
+        assert!(
+            !matches!(
+                event,
+                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
+                    _
+                ))))
+            ),
+            "No authorization should be requested when validation fails before read",
         );
     }
 }
