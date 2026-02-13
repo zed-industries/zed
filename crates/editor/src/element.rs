@@ -1792,8 +1792,9 @@ impl EditorElement {
         let mut autoscroll_bounds = None;
         let mut cursor_vfx_pos = None;
         let mut animation_state = None;
+        let mut newest_cursor_index: Option<usize> = None;
         let editor_handle = self.editor.clone();
-        let cursor_layouts = self.editor.update(cx, |editor, cx| {
+        let mut cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
@@ -1997,6 +1998,7 @@ impl EditorElement {
                     });
                     cursor.layout(content_origin, cursor_name, window, cx);
                     if selection.is_newest {
+                        newest_cursor_index = Some(cursors.len());
                         animation_state = Some(CursorAnimationState {
                             generation: 0,
                             editor: editor_handle.clone(),
@@ -2013,6 +2015,7 @@ impl EditorElement {
                             font_size: cursor_row_layout.font_size,
                             block_text_color,
                             is_target_redacted,
+                            other_cursors: Vec::new(),
                         });
                     }
                     cursors.push(cursor);
@@ -2053,6 +2056,21 @@ impl EditorElement {
         // We register an animation callback to tick physics and paint the cursor
         // on top of the cached scene.
         if is_animating && let Some(mut state) = animation_state {
+            if let Some(newest_idx) = newest_cursor_index {
+                let mut other_cursors =
+                    Vec::with_capacity(cursor_layouts.len().saturating_sub(1));
+                let mut kept = Vec::new();
+                for (i, cursor) in cursor_layouts.into_iter().enumerate() {
+                    if i == newest_idx {
+                        kept.push(cursor);
+                    } else {
+                        other_cursors.push(cursor);
+                    }
+                }
+                cursor_layouts = kept;
+                state.other_cursors = other_cursors;
+            }
+
             let generation = self.editor.update(cx, |editor, _cx| {
                 editor.begin_cursor_animation_callback_cycle()
             });
@@ -12044,10 +12062,12 @@ struct CursorAnimationState {
     block_text_color: Hsla,
     /// Whether target position is in a redacted range
     is_target_redacted: bool,
+    /// Non-animated cursors from multi-selection that must be painted alongside the animated cursor.
+    other_cursors: Vec<CursorLayout>,
 }
 
 /// Paint one frame of cursor animation and re-register callback if still animating.
-fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window, cx: &mut App) {
+fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Window, cx: &mut App) {
     if !state
         .editor
         .read(cx)
@@ -12161,6 +12181,11 @@ fn paint_cursor_animation_frame(state: CursorAnimationState, window: &mut Window
         cursor_name: None,
     };
     cursor.paint(state.content_origin, window, cx);
+
+    for other in &mut state.other_cursors {
+        other.opacity = blink_opacity;
+        other.paint(state.content_origin, window, cx);
+    }
 
     if let Some(vfx_system) = state.editor.read(cx).cursor_vfx_system() {
         vfx_system.paint(state.content_origin, window, state.cursor_color);
