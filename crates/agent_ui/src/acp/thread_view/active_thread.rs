@@ -2672,7 +2672,7 @@ impl AcpThreadView {
             .is_some_and(|model| model.supports_split_token_display())
     }
 
-    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
@@ -2758,24 +2758,104 @@ impl AcpThreadView {
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
-                    ),
+                    )
+                    .into_any_element(),
             )
         } else {
             let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
             let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+            let progress_ratio = if usage.max_tokens > 0 {
+                usage.used_tokens as f32 / usage.max_tokens as f32
+            } else {
+                0.0
+            };
+
+            let progress_color = if progress_ratio >= 0.85 {
+                cx.theme().status().warning
+            } else {
+                cx.theme().colors().text_muted
+            };
+            let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
+
+            let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
+
+            let (user_rules_count, project_rules_count) = self
+                .as_native_thread(cx)
+                .map(|thread| {
+                    let project_context = thread.read(cx).project_context().read(cx);
+                    let user_rules = project_context.user_rules.len();
+                    let project_rules = project_context
+                        .worktrees
+                        .iter()
+                        .filter(|wt| wt.rules_file.is_some())
+                        .count();
+                    (user_rules, project_rules)
+                })
+                .unwrap_or((0, 0));
 
             Some(
                 h_flex()
-                    .flex_shrink_0()
-                    .gap_0p5()
-                    .mr_1p5()
-                    .child(token_label(used, "used-tokens-label"))
+                    .id("circular_progress_tokens")
+                    .mt_px()
+                    .mr_1()
                     .child(
-                        Label::new("/")
-                            .size(LabelSize::Small)
-                            .color(separator_color),
+                        CircularProgress::new(
+                            usage.used_tokens as f32,
+                            usage.max_tokens as f32,
+                            px(16.0),
+                            cx,
+                        )
+                        .stroke_width(px(2.))
+                        .progress_color(progress_color),
                     )
-                    .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
+                    .tooltip(Tooltip::element({
+                        move |_, cx| {
+                            v_flex()
+                                .min_w_40()
+                                .child(
+                                    Label::new("Context")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child(Label::new(percentage.clone()))
+                                        .child(Label::new("•").color(separator_color).mx_1())
+                                        .child(Label::new(used.clone()))
+                                        .child(Label::new("/").color(separator_color))
+                                        .child(Label::new(max.clone()).color(Color::Muted)),
+                                )
+                                .when(user_rules_count > 0 || project_rules_count > 0, |this| {
+                                    this.child(
+                                        v_flex()
+                                            .mt_1p5()
+                                            .pt_1p5()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(
+                                                Label::new("Rules")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .when(user_rules_count > 0, |this| {
+                                                this.child(Label::new(format!(
+                                                    "{} user rules",
+                                                    user_rules_count
+                                                )))
+                                            })
+                                            .when(project_rules_count > 0, |this| {
+                                                this.child(Label::new(format!(
+                                                    "{} project rules",
+                                                    project_rules_count
+                                                )))
+                                            }),
+                                    )
+                                })
+                                .into_any_element()
+                        }
+                    }))
+                    .into_any_element(),
             )
         }
     }
