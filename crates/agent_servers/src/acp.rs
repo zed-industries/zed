@@ -48,6 +48,8 @@ pub struct AcpConnection {
     root_dir: PathBuf,
     child: Child,
     session_list: Option<Rc<AcpSessionList>>,
+    server_supports_close: bool,
+    server_supports_set_title: bool,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
@@ -411,12 +413,21 @@ impl AcpConnection {
             // Otherwise, just use the name
             .unwrap_or_else(|| server_name.clone());
 
-        let supports_session_delete = response
+        let session_meta = response
             .agent_capabilities
             .session_capabilities
             .meta
-            .as_ref()
+            .as_ref();
+        let supports_session_delete = session_meta
             .and_then(|meta| meta.get("delete"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let server_supports_close = session_meta
+            .and_then(|meta| meta.get("close"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let server_supports_set_title = session_meta
+            .and_then(|meta| meta.get("setTitle"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -448,6 +459,8 @@ impl AcpConnection {
             default_model,
             default_config_options,
             session_list,
+            server_supports_close,
+            server_supports_set_title,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
@@ -697,6 +710,31 @@ impl AgentConnection for AcpConnection {
 
     fn supports_load_session(&self, cx: &App) -> bool {
         cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
+    }
+
+    fn supports_close_session(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn close_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        self.sessions.borrow_mut().remove(session_id);
+
+        if self.server_supports_close {
+            let connection = self.connection.clone();
+            let session_id = session_id.clone();
+            cx.foreground_executor().spawn(async move {
+                let params = serde_json::json!({ "sessionId": session_id.0 });
+                let raw_params: std::sync::Arc<serde_json::value::RawValue> =
+                    serde_json::value::to_raw_value(&params)?.into();
+                connection
+                    .ext_method(acp::ExtRequest::new("session/close", raw_params))
+                    .await
+                    .ok();
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     fn supports_resume_session(&self, cx: &App) -> bool {
@@ -997,6 +1035,23 @@ impl AgentConnection for AcpConnection {
         }) as _)
     }
 
+    fn set_title(
+        &self,
+        session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
+        if !self.server_supports_set_title {
+            return None;
+        }
+        if !self.sessions.borrow().contains_key(session_id) {
+            return None;
+        }
+        Some(Rc::new(AcpSessionSetTitle {
+            session_id: session_id.clone(),
+            connection: self.connection.clone(),
+        }))
+    }
+
     fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
         if cx.has_flag::<AcpBetaFeatureFlag>() {
             self.session_list.clone().map(|s| s as _)
@@ -1007,6 +1062,31 @@ impl AgentConnection for AcpConnection {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+struct AcpSessionSetTitle {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+}
+
+impl acp_thread::AgentSessionSetTitle for AcpSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            let params = serde_json::json!({
+                "sessionId": session_id.0,
+                "title": title.as_ref(),
+            });
+            let raw_params: std::sync::Arc<serde_json::value::RawValue> =
+                serde_json::value::to_raw_value(&params)?.into();
+            connection
+                .ext_method(acp::ExtRequest::new("session/setTitle", raw_params))
+                .await
+                .map_err(|err| anyhow!("{}", err))?;
+            Ok(())
+        })
     }
 }
 
