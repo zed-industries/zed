@@ -273,6 +273,8 @@ actions!(
         ToggleBottomDock,
         /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles minimal mode.
+        ToggleMinimalMode,
         /// Toggles edit prediction feature globally for all files.
         ToggleEditPrediction,
         /// Toggles the left dock.
@@ -6527,6 +6529,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::toggle_minimal_mode))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _action: &pane::ActivateNextItem, window, cx| {
                     if let Some(active_dock) = workspace.active_dock(window, cx) {
@@ -6754,6 +6757,19 @@ impl Workspace {
                 .detach_and_log_err(cx);
         }
         cx.notify();
+    }
+
+    fn toggle_minimal_mode(
+        &mut self,
+        _: &ToggleMinimalMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.app_state.fs.clone();
+        let minimal_mode = WorkspaceSettings::get_global(cx).minimal_mode;
+        update_settings_file(fs, cx, move |file, _| {
+            file.workspace.minimal_mode = Some(!minimal_mode);
+        });
     }
 
     fn adjust_padding(padding: Option<f32>) -> f32 {
@@ -12693,6 +12709,20 @@ mod tests {
             assert!(
                 !visible,
                 "Status bar should be hidden when minimal mode is enabled"
+            );
+        });
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.minimal_mode = Some(false);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(
+                visible,
+                "Status bar should be visible when minimal mode is disabled"
             );
         });
     }

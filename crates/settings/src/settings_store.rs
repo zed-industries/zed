@@ -495,7 +495,8 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text, cx)?;
+                        let new_text = update(old_text, cx.clone())?;
+                        let new_text_for_store = new_text.clone();
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
                             let resolved_path =
@@ -518,6 +519,21 @@ impl SettingsStore {
                                     format!("Failed to write settings to file {:?}", settings_path)
                                 })?;
                         }
+
+                        // Apply the updated settings in memory right away so setting toggles
+                        // don't depend on file watcher delivery to take effect.
+                        cx.update(|cx| {
+                            SettingsStore::update_global(cx, |store, cx| {
+                                let parse_result = store.set_user_settings(&new_text_for_store, cx);
+                                if parse_result.requires_user_action() {
+                                    log::warn!(
+                                        "Updated settings were written but failed to apply in memory: {:?}",
+                                        parse_result
+                                    );
+                                }
+                            });
+                        });
+
                         anyhow::Ok(())
                     }
                     .await;

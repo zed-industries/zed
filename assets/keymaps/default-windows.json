@@ -600,6 +600,7 @@
       "ctrl-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
       "ctrl-alt-;": "multi_workspace::FocusWorkspaceSidebar",
       "ctrl-shift-y": "workspace::ToggleAllDocks",
+      "ctrl-alt-shift-m": "workspace::ToggleMinimalMode",
       "alt-r": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
       "shift-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
