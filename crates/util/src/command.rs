@@ -4,7 +4,7 @@ use std::ffi::OsStr;
 mod darwin;
 
 #[cfg(target_os = "macos")]
-pub use darwin::{Child, Command};
+pub use darwin::{Child, Command, Stdio};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
@@ -29,6 +29,9 @@ pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
 
 #[cfg(not(target_os = "macos"))]
 pub type Child = smol::process::Child;
+
+#[cfg(not(target_os = "macos"))]
+pub use std::process::Stdio;
 
 #[cfg(not(target_os = "macos"))]
 #[derive(Debug)]

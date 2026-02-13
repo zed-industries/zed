@@ -19,13 +19,13 @@ use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
-use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::command::Stdio;
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
@@ -146,11 +146,7 @@ impl RustLspAdapter {
         async fn from_ldd_version() -> Option<LibcType> {
             use util::command::new_command;
 
-            let ldd_output = new_command("ldd")
-                .arg("--version")
-                .output()
-                .await
-                .ok()?;
+            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {

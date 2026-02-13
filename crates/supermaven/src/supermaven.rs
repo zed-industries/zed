@@ -18,10 +18,11 @@ use postage::watch;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::io::AsyncWriteExt;
-use std::{path::PathBuf, process::Stdio, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use ui::prelude::*;
 use util::ResultExt;
 use util::command::Child;
+use util::command::Stdio;
 
 actions!(
     supermaven,

@@ -51,7 +51,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 use std::u64;
 use std::{
@@ -64,6 +63,7 @@ use std::{
 use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
+use util::command::Stdio;
 use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;

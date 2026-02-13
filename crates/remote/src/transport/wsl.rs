@@ -16,12 +16,12 @@ use std::{
     ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Instant,
 };
 
 use util::{
+    command::Stdio,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::{Shell, ShellKind},

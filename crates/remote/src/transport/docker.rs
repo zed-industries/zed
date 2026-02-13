@@ -9,10 +9,10 @@ use semver::Version as SemanticVersion;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 use util::ResultExt;
+use util::command::Stdio;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},

@@ -2373,6 +2373,7 @@ impl LocalLspStore {
             Some(worktree_path)
         });
 
+        use util::command::Stdio;
         let mut child = util::command::new_command(command);
 
         if let Some(buffer_env) = buffer.env.as_ref() {
@@ -2394,9 +2395,9 @@ impl LocalLspStore {
         }
 
         let mut child = child
-            .stdin(smol::process::Stdio::piped())
-            .stdout(smol::process::Stdio::piped())
-            .stderr(smol::process::Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         let stdin = child.stdin.as_mut().context("failed to acquire stdin")?;

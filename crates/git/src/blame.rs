@@ -5,12 +5,12 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
 use serde::{Deserialize, Serialize};
-use std::process::Stdio;
 use std::{ops::Range, path::Path};
 use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
+use util::command::Stdio;
 
 pub use git2 as libgit;
 
@@ -84,7 +84,6 @@ async fn run_git_blame(
         stdin.write_all(chunk.as_bytes()).await?;
     }
     stdin.flush().await?;
-    drop(child.stdin.take());
 
     let output = child.output().await.context("reading git blame output")?;
 

@@ -181,10 +181,9 @@ async fn build_remote_server_from_source(
     binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
-    use smol::process::Stdio;
     use std::env::VarError;
     use std::path::Path;
-    use util::command::{Command, new_command};
+    use util::command::{Command, Stdio, new_command};
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
         let path = std::path::PathBuf::from(path);

@@ -11,10 +11,10 @@ use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::Stdio,
     str::FromStr,
     sync::Arc,
 };
+use util::command::Stdio;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 

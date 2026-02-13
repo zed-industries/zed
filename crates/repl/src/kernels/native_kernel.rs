@@ -143,9 +143,9 @@ impl NativeRunningKernel {
 
             let mut process = cmd
                 .current_dir(&working_directory)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .stdin(std::process::Stdio::piped())
+                .stdout(util::command::Stdio::piped())
+                .stderr(util::command::Stdio::piped())
+                .stdin(util::command::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;

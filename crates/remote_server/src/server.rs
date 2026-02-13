@@ -56,7 +56,10 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use thiserror::Error;
-use util::{ResultExt, command::new_command};
+use util::{
+    ResultExt,
+    command::{Stdio, new_command},
+};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -947,9 +950,9 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
 fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
     let mut server_process = new_command(binary_name);
     server_process
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)

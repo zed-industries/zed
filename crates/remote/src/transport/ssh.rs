@@ -18,7 +18,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
 pub use settings::SshPortForwardOption;
-use smol::{fs, process::Stdio};
+use smol::fs;
 use std::{
     net::IpAddr,
     path::{Path, PathBuf},
@@ -26,7 +26,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::command::Child;
+use util::command::{Child, Stdio};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
@@ -992,8 +992,7 @@ impl SshRemoteConnection {
         args: Option<&[&str]>,
     ) -> util::command::Command {
         let mut command = util::command::new_command("scp");
-        self.socket.ssh_options(&mut command, false);
-        command.args(
+        self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
                 .port
@@ -1013,8 +1012,7 @@ impl SshRemoteConnection {
 
     fn build_sftp_command(&self) -> util::command::Command {
         let mut command = util::command::new_command("sftp");
-        self.socket.ssh_options(&mut command, false);
-        command.args(
+        self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
                 .port
@@ -1155,8 +1153,8 @@ impl SshSocket {
             let separator = shell_kind.sequential_commands_separator();
             format!("cd{separator} {to_run}")
         };
-        self.ssh_options(&mut command, true);
-        command.arg(self.connection_options.ssh_destination());
+        self.ssh_options(&mut command, true)
+            .arg(self.connection_options.ssh_destination());
         if !allow_pseudo_tty {
             command.arg("-T");
         }
@@ -1183,28 +1181,32 @@ impl SshSocket {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    fn ssh_options(&self, command: &mut util::command::Command, include_port_forwards: bool) {
+    fn ssh_options<'a>(
+        &self,
+        command: &'a mut util::command::Command,
+        include_port_forwards: bool,
+    ) -> &'a mut util::command::Command {
         let args = if include_port_forwards {
             self.connection_options.additional_args()
         } else {
             self.connection_options.additional_args_for_scp()
         };
 
-        command
+        let cmd = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        command.args(args);
+            .stderr(Stdio::piped())
+            .args(args);
 
         if cfg!(windows) {
-            command.envs(self.envs.clone());
+            cmd.envs(self.envs.clone());
         }
         #[cfg(not(windows))]
         {
-            command
-                .args(["-o", "ControlMaster=no", "-o"])
+            cmd.args(["-o", "ControlMaster=no", "-o"])
                 .arg(format!("ControlPath={}", self.socket_path.display()));
         }
+        cmd
     }
 
     // Returns the SSH command-line options (without the destination) for building commands.

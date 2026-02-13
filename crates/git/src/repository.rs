@@ -21,7 +21,7 @@ use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::process::{ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -31,7 +31,7 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::command::new_command;
+use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, paths};
@@ -2039,8 +2039,8 @@ impl GitRepository for RealGitRepository {
                 .arg(&message.to_string())
                 .arg("--cleanup=strip")
                 .arg("--no-verify")
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
             if options.amend {
                 cmd.arg("--amend");
@@ -2090,9 +2090,9 @@ impl GitRepository for RealGitRepository {
                 }))
                 .arg(remote_name)
                 .arg(format!("{}:{}", branch_name, remote_branch_name))
-                .stdin(smol::process::Stdio::null())
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
             run_git_command(env, ask_pass, command, executor).await
         }
@@ -2128,8 +2128,8 @@ impl GitRepository for RealGitRepository {
             command
                 .arg(remote_name)
                 .args(branch_name)
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
             run_git_command(env, ask_pass, command, executor).await
         }
@@ -2156,8 +2156,8 @@ impl GitRepository for RealGitRepository {
                 .envs(env.iter())
                 .current_dir(&working_directory?)
                 .args(["fetch", &remote_name])
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
             run_git_command(env, ask_pass, command, executor).await
         }
@@ -2706,10 +2706,10 @@ async fn run_commit_data_reader(
     Ok(())
 }
 
-async fn read_single_commit_response<R>(stdout: &mut R, sha: &Oid) -> Result<GraphCommitData>
-where
-    R: smol::io::AsyncBufRead + Unpin,
-{
+async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
+    stdout: &mut R,
+    sha: &Oid,
+) -> Result<GraphCommitData> {
     let mut header_bytes = Vec::new();
     stdout.read_until(b'\n', &mut header_bytes).await?;
     let header_line = String::from_utf8_lossy(&header_bytes);

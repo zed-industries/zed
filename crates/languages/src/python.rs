@@ -30,7 +30,7 @@ use terminal::terminal_settings::TerminalSettings;
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
-use std::process::Stdio;
+use util::command::Stdio;
 
 use util::command::new_command;
 use util::fs::{make_file_executable, remove_matching};

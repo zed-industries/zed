@@ -4,14 +4,40 @@ use mach2::exception_types::{
 use mach2::port::{MACH_PORT_NULL, mach_port_t};
 use mach2::thread_status::{THREAD_STATE_NONE, thread_state_flavor_t};
 use smol::Unblock;
+use std::collections::BTreeMap;
 use std::ffi::{CString, OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Output, Stdio};
+use std::process::{ExitStatus, Output};
 use std::ptr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Stdio {
+    /// A new pipe should be arranged to connect the parent and child processes.
+    #[default]
+    Piped,
+    /// The child inherits from the corresponding parent descriptor.
+    Inherit,
+    /// This stream will be ignored (redirected to `/dev/null`).
+    Null,
+}
+
+impl Stdio {
+    pub fn piped() -> Self {
+        Self::Piped
+    }
+
+    pub fn inherit() -> Self {
+        Self::Inherit
+    }
+
+    pub fn null() -> Self {
+        Self::Null
+    }
+}
 
 unsafe extern "C" {
     fn posix_spawnattr_setexceptionports_np(
@@ -39,7 +65,7 @@ unsafe extern "C" {
 pub struct Command {
     program: OsString,
     args: Vec<OsString>,
-    envs: Option<Vec<(OsString, OsString)>>,
+    envs: BTreeMap<OsString, Option<OsString>>,
     env_clear: bool,
     current_dir: Option<PathBuf>,
     stdin_cfg: Option<Stdio>,
@@ -53,7 +79,7 @@ impl Command {
         Self {
             program: program.as_ref().to_owned(),
             args: Vec::new(),
-            envs: None,
+            envs: BTreeMap::new(),
             env_clear: false,
             current_dir: None,
             stdin_cfg: None,
@@ -80,8 +106,7 @@ impl Command {
 
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.envs
-            .get_or_insert_with(Vec::new)
-            .push((key.as_ref().to_owned(), val.as_ref().to_owned()));
+            .insert(key.as_ref().to_owned(), Some(val.as_ref().to_owned()));
         self
     }
 
@@ -91,21 +116,26 @@ impl Command {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let env_vec = self.envs.get_or_insert_with(Vec::new);
-        env_vec.extend(
-            vars.into_iter()
-                .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned())),
-        );
+        for (key, val) in vars {
+            self.envs
+                .insert(key.as_ref().to_owned(), Some(val.as_ref().to_owned()));
+        }
         self
     }
 
-    pub fn env_remove(&mut self, _key: impl AsRef<OsStr>) -> &mut Self {
+    pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
+        let key = key.as_ref().to_owned();
+        if self.env_clear {
+            self.envs.remove(&key);
+        } else {
+            self.envs.insert(key, None);
+        }
         self
     }
 
     pub fn env_clear(&mut self) -> &mut Self {
         self.env_clear = true;
-        self.envs = Some(Vec::new());
+        self.envs.clear();
         self
     }
 
@@ -140,25 +170,36 @@ impl Command {
             .as_deref()
             .unwrap_or_else(|| Path::new("."));
 
-        let envs = if self.env_clear {
-            self.envs.as_deref()
-        } else if self.envs.is_some() {
-            let base_envs: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-            let mut combined = base_envs;
-            if let Some(ref additional) = self.envs {
-                combined.extend(additional.iter().cloned());
+        // Optimization: if no environment modifications were requested, pass None
+        // to spawn_posix so it uses the `environ` global directly, avoiding a
+        // full copy of the environment. This matches std::process::Command behavior.
+        let envs = if self.env_clear || !self.envs.is_empty() {
+            let mut result = BTreeMap::<OsString, OsString>::new();
+            if !self.env_clear {
+                for (key, val) in std::env::vars_os() {
+                    result.insert(key, val);
+                }
             }
-            self.envs = Some(combined);
-            self.envs.as_deref()
+            for (key, maybe_val) in &self.envs {
+                if let Some(val) = maybe_val {
+                    result.insert(key.clone(), val.clone());
+                } else {
+                    result.remove(key);
+                }
+            }
+            Some(result.into_iter().collect::<Vec<_>>())
         } else {
             None
         };
 
-        spawn_posix(
+        spawn_posix_spawn(
             &self.program,
             &self.args,
             current_dir,
-            envs,
+            envs.as_deref(),
+            self.stdin_cfg.unwrap_or_default(),
+            self.stdout_cfg.unwrap_or_default(),
+            self.stderr_cfg.unwrap_or_default(),
             self.kill_on_drop,
         )
     }
@@ -258,19 +299,21 @@ impl Child {
     pub async fn output(mut self) -> io::Result<Output> {
         use futures_lite::AsyncReadExt;
 
-        drop(self.stdin.take());
+        let status = self.status();
 
-        let stdout_future = async {
+        let stdout = self.stdout.take();
+        let stdout_future = async move {
             let mut data = Vec::new();
-            if let Some(mut stdout) = self.stdout.take() {
+            if let Some(mut stdout) = stdout {
                 stdout.read_to_end(&mut data).await?;
             }
             io::Result::Ok(data)
         };
 
-        let stderr_future = async {
+        let stderr = self.stderr.take();
+        let stderr_future = async move {
             let mut data = Vec::new();
-            if let Some(mut stderr) = self.stderr.take() {
+            if let Some(mut stderr) = stderr {
                 stderr.read_to_end(&mut data).await?;
             }
             io::Result::Ok(data)
@@ -278,22 +321,7 @@ impl Child {
 
         let (stdout_data, stderr_data) =
             futures_lite::future::try_zip(stdout_future, stderr_future).await?;
-
-        let pid = self.pid;
-        let status = if let Some(status) = self.status {
-            status
-        } else {
-            smol::unblock(move || {
-                let mut status: libc::c_int = 0;
-                let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-                if result == -1 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(ExitStatus::from_raw(status))
-                }
-            })
-            .await?
-        };
+        let status = status.await?;
 
         Ok(Output {
             status,
@@ -303,11 +331,14 @@ impl Child {
     }
 }
 
-fn spawn_posix(
+fn spawn_posix_spawn(
     program: &OsStr,
     args: &[OsString],
     current_dir: &Path,
     envs: Option<&[(OsString, OsString)]>,
+    stdin_cfg: Stdio,
+    stdout_cfg: Stdio,
+    stderr_cfg: Stdio,
     kill_on_drop: bool,
 ) -> io::Result<Child> {
     let program_cstr = CString::new(program.as_bytes()).map_err(|_| invalid_input_error())?;
@@ -326,45 +357,74 @@ fn spawn_posix(
         .collect();
     argv_ptrs.push(ptr::null_mut());
 
-    let (envp_cstrs, envp_ptrs): (Option<Vec<CString>>, Vec<*mut libc::c_char>) =
-        if let Some(envs) = envs {
-            let cstrs: Vec<CString> = envs
-                .iter()
-                .map(|(key, value)| {
-                    let mut env_str = key.as_bytes().to_vec();
-                    env_str.push(b'=');
-                    env_str.extend_from_slice(value.as_bytes());
-                    CString::new(env_str)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| invalid_input_error())?;
-            let mut ptrs: Vec<*mut libc::c_char> = cstrs
-                .iter()
-                .map(|s| s.as_ptr() as *mut libc::c_char)
-                .collect();
-            ptrs.push(ptr::null_mut());
-            (Some(cstrs), ptrs)
-        } else {
-            (None, vec![ptr::null_mut()])
-        };
+    let envp: Vec<CString> = if let Some(envs) = envs {
+        envs.iter()
+            .map(|(key, value)| {
+                let mut env_str = key.as_bytes().to_vec();
+                env_str.push(b'=');
+                env_str.extend_from_slice(value.as_bytes());
+                CString::new(env_str)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| invalid_input_error())?
+    } else {
+        Vec::new()
+    };
+    let mut envp_ptrs: Vec<*mut libc::c_char> = envp
+        .iter()
+        .map(|s| s.as_ptr() as *mut libc::c_char)
+        .collect();
+    envp_ptrs.push(ptr::null_mut());
 
-    let (stdin_read, stdin_write) = create_pipe()?;
-    let (stdout_read, stdout_write) = create_pipe()?;
-    let (stderr_read, stderr_write) = create_pipe()?;
+    let (stdin_read, stdin_write) = match stdin_cfg {
+        Stdio::Piped => {
+            let (r, w) = create_pipe()?;
+            (Some(r), Some(w))
+        }
+        Stdio::Null => {
+            let fd = open_dev_null(libc::O_RDONLY)?;
+            (Some(fd), None)
+        }
+        Stdio::Inherit => (None, None),
+    };
+
+    let (stdout_read, stdout_write) = match stdout_cfg {
+        Stdio::Piped => {
+            let (r, w) = create_pipe()?;
+            (Some(r), Some(w))
+        }
+        Stdio::Null => {
+            let fd = open_dev_null(libc::O_WRONLY)?;
+            (None, Some(fd))
+        }
+        Stdio::Inherit => (None, None),
+    };
+
+    let (stderr_read, stderr_write) = match stderr_cfg {
+        Stdio::Piped => {
+            let (r, w) = create_pipe()?;
+            (Some(r), Some(w))
+        }
+        Stdio::Null => {
+            let fd = open_dev_null(libc::O_WRONLY)?;
+            (None, Some(fd))
+        }
+        Stdio::Inherit => (None, None),
+    };
 
     let mut attr: libc::posix_spawnattr_t = ptr::null_mut();
     let mut file_actions: libc::posix_spawn_file_actions_t = ptr::null_mut();
 
     unsafe {
-        check_posix_err(libc::posix_spawnattr_init(&mut attr))?;
-        check_posix_err(libc::posix_spawn_file_actions_init(&mut file_actions))?;
+        cvt_nz(libc::posix_spawnattr_init(&mut attr))?;
+        cvt_nz(libc::posix_spawn_file_actions_init(&mut file_actions))?;
 
-        check_posix_err(libc::posix_spawnattr_setflags(
+        cvt_nz(libc::posix_spawnattr_setflags(
             &mut attr,
             libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short,
         ))?;
 
-        check_posix_err(posix_spawnattr_setexceptionports_np(
+        cvt_nz(posix_spawnattr_setexceptionports_np(
             &mut attr,
             EXC_MASK_ALL,
             MACH_PORT_NULL,
@@ -372,48 +432,48 @@ fn spawn_posix(
             THREAD_STATE_NONE,
         ))?;
 
-        check_posix_err(posix_spawn_file_actions_addchdir_np(
+        cvt_nz(posix_spawn_file_actions_addchdir_np(
             &mut file_actions,
             current_dir_cstr.as_ptr(),
         ))?;
 
-        check_posix_err(libc::posix_spawn_file_actions_adddup2(
-            &mut file_actions,
-            stdin_read,
-            libc::STDIN_FILENO,
-        ))?;
-        check_posix_err(posix_spawn_file_actions_addinherit_np(
-            &mut file_actions,
-            libc::STDIN_FILENO,
-        ))?;
+        if let Some(fd) = stdin_read {
+            cvt_nz(libc::posix_spawn_file_actions_adddup2(
+                &mut file_actions,
+                fd,
+                libc::STDIN_FILENO,
+            ))?;
+            cvt_nz(posix_spawn_file_actions_addinherit_np(
+                &mut file_actions,
+                libc::STDIN_FILENO,
+            ))?;
+        }
 
-        check_posix_err(libc::posix_spawn_file_actions_adddup2(
-            &mut file_actions,
-            stdout_write,
-            libc::STDOUT_FILENO,
-        ))?;
-        check_posix_err(posix_spawn_file_actions_addinherit_np(
-            &mut file_actions,
-            libc::STDOUT_FILENO,
-        ))?;
+        if let Some(fd) = stdout_write {
+            cvt_nz(libc::posix_spawn_file_actions_adddup2(
+                &mut file_actions,
+                fd,
+                libc::STDOUT_FILENO,
+            ))?;
+            cvt_nz(posix_spawn_file_actions_addinherit_np(
+                &mut file_actions,
+                libc::STDOUT_FILENO,
+            ))?;
+        }
 
-        check_posix_err(libc::posix_spawn_file_actions_adddup2(
-            &mut file_actions,
-            stderr_write,
-            libc::STDERR_FILENO,
-        ))?;
-        check_posix_err(posix_spawn_file_actions_addinherit_np(
-            &mut file_actions,
-            libc::STDERR_FILENO,
-        ))?;
+        if let Some(fd) = stderr_write {
+            cvt_nz(libc::posix_spawn_file_actions_adddup2(
+                &mut file_actions,
+                fd,
+                libc::STDERR_FILENO,
+            ))?;
+            cvt_nz(posix_spawn_file_actions_addinherit_np(
+                &mut file_actions,
+                libc::STDERR_FILENO,
+            ))?;
+        }
 
         let mut pid: libc::pid_t = 0;
-
-        let envp = if envs.is_some() {
-            envp_ptrs.as_ptr()
-        } else {
-            environ
-        };
 
         let spawn_result = libc::posix_spawnp(
             &mut pid,
@@ -421,25 +481,33 @@ fn spawn_posix(
             &file_actions,
             &attr,
             argv_ptrs.as_ptr(),
-            envp,
+            if envs.is_some() {
+                envp_ptrs.as_ptr()
+            } else {
+                environ
+            },
         );
 
         libc::posix_spawnattr_destroy(&mut attr);
         libc::posix_spawn_file_actions_destroy(&mut file_actions);
 
-        libc::close(stdin_read);
-        libc::close(stdout_write);
-        libc::close(stderr_write);
+        if let Some(fd) = stdin_read {
+            libc::close(fd);
+        }
+        if let Some(fd) = stdout_write {
+            libc::close(fd);
+        }
+        if let Some(fd) = stderr_write {
+            libc::close(fd);
+        }
 
-        check_posix_err(spawn_result)?;
-
-        let _envp_cstrs = envp_cstrs;
+        cvt_nz(spawn_result)?;
 
         Ok(Child {
             pid,
-            stdin: Some(Unblock::new(std::fs::File::from_raw_fd(stdin_write))),
-            stdout: Some(Unblock::new(std::fs::File::from_raw_fd(stdout_read))),
-            stderr: Some(Unblock::new(std::fs::File::from_raw_fd(stderr_read))),
+            stdin: stdin_write.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
+            stdout: stdout_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
+            stderr: stderr_read.map(|fd| Unblock::new(std::fs::File::from_raw_fd(fd))),
             kill_on_drop,
             status: None,
         })
@@ -455,11 +523,21 @@ fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     Ok((fds[0], fds[1]))
 }
 
-fn check_posix_err(result: libc::c_int) -> io::Result<()> {
-    if result != 0 {
-        Err(io::Error::from_raw_os_error(result))
-    } else {
+fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
+    let fd = unsafe { libc::open(c"/dev/null".as_ptr() as *const libc::c_char, flags) };
+    if fd == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(fd)
+}
+
+/// Zero means `Ok()`, all other values are treated as raw OS errors. Does not look at `errno`.
+/// Mirrored after Rust's std `cvt_nz` function.
+fn cvt_nz(error: libc::c_int) -> io::Result<()> {
+    if error == 0 {
         Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(error))
     }
 }
 
@@ -587,6 +665,161 @@ mod tests {
                 .expect("failed to run command");
 
             assert!(!status.success());
+        });
+    }
+
+    #[test]
+    fn test_env_remove_removes_set_env() {
+        smol::block_on(async {
+            let output = Command::new("/bin/sh")
+                .args(["-c", "echo ${MY_VAR:-unset}"])
+                .env("MY_VAR", "set_value")
+                .env_remove("MY_VAR")
+                .output()
+                .await
+                .expect("failed to run command");
+
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unset");
+        });
+    }
+
+    #[test]
+    fn test_env_remove_removes_inherited_env() {
+        smol::block_on(async {
+            // SAFETY: This test is single-threaded and we clean up the var at the end
+            unsafe { std::env::set_var("TEST_INHERITED_VAR", "inherited_value") };
+
+            let output = Command::new("/bin/sh")
+                .args(["-c", "echo ${TEST_INHERITED_VAR:-unset}"])
+                .env_remove("TEST_INHERITED_VAR")
+                .output()
+                .await
+                .expect("failed to run command");
+
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unset");
+
+            // SAFETY: Cleaning up test env var
+            unsafe { std::env::remove_var("TEST_INHERITED_VAR") };
+        });
+    }
+
+    #[test]
+    fn test_env_after_env_remove() {
+        smol::block_on(async {
+            let output = Command::new("/bin/sh")
+                .args(["-c", "echo ${MY_VAR:-unset}"])
+                .env_remove("MY_VAR")
+                .env("MY_VAR", "new_value")
+                .output()
+                .await
+                .expect("failed to run command");
+
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "new_value");
+        });
+    }
+
+    #[test]
+    fn test_env_remove_after_env_clear() {
+        smol::block_on(async {
+            let output = Command::new("/bin/sh")
+                .args(["-c", "echo ${MY_VAR:-unset}"])
+                .env_clear()
+                .env("MY_VAR", "set_value")
+                .env_remove("MY_VAR")
+                .output()
+                .await
+                .expect("failed to run command");
+
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unset");
+        });
+    }
+
+    #[test]
+    fn test_stdio_null_stdin() {
+        smol::block_on(async {
+            let child = Command::new("/bin/cat")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn");
+
+            let output = child.output().await.expect("failed to get output");
+            assert!(output.status.success());
+            assert!(
+                output.stdout.is_empty(),
+                "stdin from /dev/null should produce no output from cat"
+            );
+        });
+    }
+
+    #[test]
+    fn test_stdio_null_stdout() {
+        smol::block_on(async {
+            let mut child = Command::new("/bin/echo")
+                .args(["hello"])
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("failed to spawn");
+
+            assert!(
+                child.stdout.is_none(),
+                "stdout should be None when Stdio::null() is used"
+            );
+
+            let status = child.status().await.expect("failed to get status");
+            assert!(status.success());
+        });
+    }
+
+    #[test]
+    fn test_stdio_null_stderr() {
+        smol::block_on(async {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", "echo error >&2"])
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("failed to spawn");
+
+            assert!(
+                child.stderr.is_none(),
+                "stderr should be None when Stdio::null() is used"
+            );
+
+            let status = child.status().await.expect("failed to get status");
+            assert!(status.success());
+        });
+    }
+
+    #[test]
+    fn test_stdio_piped_stdin() {
+        smol::block_on(async {
+            let mut child = Command::new("/bin/cat")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn");
+
+            assert!(
+                child.stdin.is_some(),
+                "stdin should be Some when Stdio::piped() is used"
+            );
+
+            if let Some(ref mut stdin) = child.stdin {
+                stdin
+                    .write_all(b"piped input")
+                    .await
+                    .expect("failed to write");
+                stdin.close().await.expect("failed to close");
+            }
+            drop(child.stdin.take());
+
+            let output = child.output().await.expect("failed to get output");
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"piped input");
         });
     }
 }
