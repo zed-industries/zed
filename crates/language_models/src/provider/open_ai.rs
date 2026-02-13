@@ -1151,8 +1151,8 @@ pub fn count_open_ai_tokens(
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
-                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt-5-mini
-                    "gpt-5-mini"
+                    // If the max tokens is 100k or more, it likely uses the o200k_base tokenizer
+                    "gpt-4o"
                 } else {
                     // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
                     // supported with this tiktoken method
