@@ -48,32 +48,20 @@ impl DirectXDevices {
         let debug_layer_available = check_debug_layer_available();
         let dxgi_factory =
             get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
-        let adapter =
+        let (adapter, device, device_context, feature_level) =
             get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
-        let (device, device_context) = {
-            let mut context: Option<ID3D11DeviceContext> = None;
-            let mut feature_level = D3D_FEATURE_LEVEL::default();
-            let device = get_device(
-                &adapter,
-                Some(&mut context),
-                Some(&mut feature_level),
-                debug_layer_available,
-            )
-            .context("Creating Direct3D device")?;
-            match feature_level {
-                D3D_FEATURE_LEVEL_11_1 => {
-                    log::info!("Created device with Direct3D 11.1 feature level.")
-                }
-                D3D_FEATURE_LEVEL_11_0 => {
-                    log::info!("Created device with Direct3D 11.0 feature level.")
-                }
-                D3D_FEATURE_LEVEL_10_1 => {
-                    log::info!("Created device with Direct3D 10.1 feature level.")
-                }
-                _ => unreachable!(),
+        match feature_level {
+            D3D_FEATURE_LEVEL_11_1 => {
+                log::info!("Created device with Direct3D 11.1 feature level.")
             }
-            (device, context.unwrap())
-        };
+            D3D_FEATURE_LEVEL_11_0 => {
+                log::info!("Created device with Direct3D 11.0 feature level.")
+            }
+            D3D_FEATURE_LEVEL_10_1 => {
+                log::info!("Created device with Direct3D 10.1 feature level.")
+            }
+            _ => unreachable!(),
+        }
 
         Ok(Self {
             adapter,
@@ -115,7 +103,15 @@ fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
 }
 
 #[inline]
-fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
+fn get_adapter(
+    dxgi_factory: &IDXGIFactory6,
+    debug_layer_available: bool,
+) -> Result<(
+    IDXGIAdapter1,
+    ID3D11Device,
+    ID3D11DeviceContext,
+    D3D_FEATURE_LEVEL,
+)> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe { dxgi_factory.EnumAdapters(adapter_index)?.cast()? };
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {
@@ -124,13 +120,19 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Res
                 .to_string();
             log::info!("Using GPU: {}", gpu_name);
         }
-        // Check to see whether the adapter supports Direct3D 11, but don't
-        // create the actual device yet.
-        if get_device(&adapter, None, None, debug_layer_available)
-            .log_err()
-            .is_some()
+        // Check to see whether the adapter supports Direct3D 11 and create
+        // the device if it does.
+        let mut context: Option<ID3D11DeviceContext> = None;
+        let mut feature_level = D3D_FEATURE_LEVEL::default();
+        if let Some(device) = get_device(
+            &adapter,
+            Some(&mut context),
+            Some(&mut feature_level),
+            debug_layer_available,
+        )
+        .log_err()
         {
-            return Ok(adapter);
+            return Ok((adapter, device, context.unwrap(), feature_level));
         }
     }
 

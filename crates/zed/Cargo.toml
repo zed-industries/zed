@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.223.0"
+version = "0.225.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -25,6 +25,7 @@ test-support = [
     "image_viewer/test-support",
     "recent_projects/test-support",
     "repl/test-support",
+    "title_bar/test-support",
 ]
 visual-tests = [
     "gpui/test-support",
@@ -48,6 +49,7 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
+    "sidebar/test-support",
     "title_bar/test-support",
 ]
 
@@ -67,7 +69,6 @@ agent.workspace = true
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
-agent_ui_v2.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -186,6 +187,7 @@ settings.workspace = true
 settings_profile_selector.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
+sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -250,10 +252,10 @@ semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
+title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
-agent_ui_v2 = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
 

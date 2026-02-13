@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
@@ -217,7 +217,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    editor.clear_background_highlights::<HoverState>(cx);
+    editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
     if did_hide {
         cx.notify();
@@ -513,10 +513,11 @@ fn show_hover(
 
             this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
-                    editor.clear_background_highlights::<HoverState>(cx);
+                    editor.clear_background_highlights(HighlightKey::HoverState, cx);
                 } else {
                     // Highlight the selected symbol using a background highlight
-                    editor.highlight_background::<HoverState>(
+                    editor.highlight_background(
+                        HighlightKey::HoverState,
                         &hover_highlights,
                         |_, theme| theme.colors().element_hover, // todo update theme
                         cx,
@@ -718,7 +719,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = window.root::<Workspace>().flatten()
+        && let Some(workspace) = Workspace::for_window(window, cx)
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(

@@ -55,6 +55,7 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -71,4 +72,5 @@ theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-python.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

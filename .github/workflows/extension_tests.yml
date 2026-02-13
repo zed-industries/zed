@@ -52,7 +52,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.check_rust == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: namespace-profile-8x32-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -68,7 +68,7 @@ jobs:
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: extension_tests::run_clippy
-      run: cargo clippy --release --all-targets --all-features -- --deny warnings
+      run: cargo clippy --release --all-features -- --deny warnings
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
@@ -102,6 +102,34 @@ jobs:
         mkdir -p /tmp/ext-scratch
         mkdir -p /tmp/ext-output
         ./zed-extension --source-dir . --scratch-dir /tmp/ext-scratch --output-dir /tmp/ext-output
+    - id: compare-versions-check
+      name: extension_bump::compare_versions
+      run: |
+        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
+
+        if [[ -n "$PR_PARENT_SHA" ]]; then
+            git checkout "$PR_PARENT_SHA"
+        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
+            git checkout "$BRANCH_PARENT_SHA"
+        else
+            git checkout "$(git log -1 --format=%H)"~1
+        fi
+
+        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
+            echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+
+        echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+    - name: extension_tests::verify_version_did_not_change
+      run: |
+        if [[ ${{ steps.compare-versions-check.outputs.version_changed }} == "true" && "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.user.login }}" != "zed-zippy[bot]" ]] ; then
+            echo "Version change detected in your change!"
+            echo "Version changes happen in separate PRs and will be performed by the zed-zippy bot"
+            exit 42
+        fi
     timeout-minutes: 4
   tests_pass:
     needs:

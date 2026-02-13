@@ -6,7 +6,9 @@ use crate::{
     kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
+        InputReplyEvent,
     },
+    repl_settings::ReplSettings,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -31,9 +33,10 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
-    ShutdownRequest,
+    ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
+    JupyterMessageContent, ReplyStatus, ShutdownRequest,
 };
+use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -93,9 +96,14 @@ impl EditorBlock {
                 });
             }
 
-            let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
+            // Re-read snapshot after potential buffer edit and create a fresh anchor for
+            // block placement. Using anchor_before (Bias::Left) ensures the anchor stays
+            // at the end of the code line regardless of whether we inserted a newline.
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let block_placement_anchor = buffer_snapshot.anchor_before(end_point);
+            let invalidation_anchor = buffer_snapshot.anchor_before(next_row_start);
             let block = BlockProperties {
-                placement: BlockPlacement::Below(code_range.end),
+                placement: BlockPlacement::Below(block_placement_anchor),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: Some(1),
                 style: BlockStyle::Sticky,
@@ -122,7 +130,11 @@ impl EditorBlock {
         cx: &mut Context<Session>,
     ) {
         self.execution_view.update(cx, |execution_view, cx| {
-            execution_view.push_message(&message.content, window, cx);
+            if matches!(&message.content, JupyterMessageContent::InputRequest(_)) {
+                execution_view.handle_input_request(message, window, cx);
+            } else {
+                execution_view.push_message(&message.content, window, cx);
+            }
         });
     }
 
@@ -143,6 +155,12 @@ impl EditorBlock {
             let rem_size = cx.window.rem_size();
 
             let text_line_height = text_style.line_height_in_pixels(rem_size);
+            let output_settings = ReplSettings::get_global(cx.app);
+            let output_max_height = if output_settings.output_max_height_lines > 0 {
+                Some(text_line_height * output_settings.output_max_height_lines as f32)
+            } else {
+                None
+            };
 
             let close_button = h_flex()
                 .flex_none()
@@ -190,11 +208,15 @@ impl EditorBlock {
                 )
                 .child(
                     div()
+                        .id((ElementId::from(cx.block_id), "output-scroll"))
                         .flex_1()
                         .overflow_x_hidden()
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()
+                        .when_some(output_max_height, |div, max_h| {
+                            div.max_h(max_h).overflow_y_scroll()
+                        })
                         .child(execution_view),
                 )
                 .into_any_element()
@@ -260,9 +282,17 @@ impl Session {
         let session_view = cx.entity();
 
         let kernel = match self.kernel_specification.clone() {
-            KernelSpecification::Jupyter(kernel_specification)
-            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+            KernelSpecification::Jupyter(kernel_specification) => NativeRunningKernel::new(
                 kernel_specification,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
+                session_view,
+                window,
+                cx,
+            ),
+            KernelSpecification::PythonEnv(env_specification) => NativeRunningKernel::new(
+                env_specification.as_local_spec(),
                 entity_id,
                 working_directory,
                 self.fs.clone(),
@@ -399,6 +429,23 @@ impl Session {
         anyhow::Ok(())
     }
 
+    fn send_stdin_reply(
+        &mut self,
+        value: String,
+        parent_message: &JupyterMessage,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            let reply = InputReply {
+                value,
+                status: ReplyStatus::Ok,
+                error: None,
+            };
+            let message = reply.as_child_of(parent_message);
+            kernel.stdin_tx().try_send(message).log_err();
+        }
+    }
+
     fn replace_block_with_inlay(&mut self, message_id: &str, text: &str, cx: &mut Context<Self>) {
         let Some(block) = self.blocks.remove(message_id) else {
             return;
@@ -486,6 +533,7 @@ impl Session {
 
         let execute_request = ExecuteRequest {
             code,
+            allow_stdin: true,
             ..ExecuteRequest::default()
         };
 
@@ -607,6 +655,14 @@ impl Session {
             &editor_block.execution_view,
             move |session, _execution_view, event: &ExecutionViewFinishedSmall, cx| {
                 session.replace_block_with_inlay(&msg_id, &event.0, cx);
+            },
+        );
+        self._subscriptions.push(subscription);
+
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            |session, _execution_view, event: &InputReplyEvent, cx| {
+                session.send_stdin_reply(event.value.clone(), &event.parent_message, cx);
             },
         );
         self._subscriptions.push(subscription);

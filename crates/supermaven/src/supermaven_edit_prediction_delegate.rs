@@ -1,6 +1,8 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
+use edit_prediction_types::{
+    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};
@@ -11,6 +13,7 @@ use std::{
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
+use ui::prelude::*;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -100,6 +103,7 @@ fn completion_from_diff(
     EditPrediction::Local {
         id: None,
         edits,
+        cursor_position: None,
         edit_preview: None,
     }
 }
@@ -123,6 +127,12 @@ impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
 
     fn supports_jump_to_edit() -> bool {
         false
+    }
+
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::Supermaven)
+            .with_disabled(IconName::SupermavenDisabled)
+            .with_error(IconName::SupermavenError)
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
@@ -193,7 +203,7 @@ impl EditPredictionDelegate for SupermavenEditPredictionDelegate {
         reset_completion_cache(self, _cx);
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, _reason: EditPredictionDiscardReason, _cx: &mut Context<Self>) {
         reset_completion_cache(self, _cx);
     }
 

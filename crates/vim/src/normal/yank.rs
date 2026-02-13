@@ -7,13 +7,11 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor, SelectionEffects};
+use editor::{ClipboardSelection, Editor, HighlightKey, SelectionEffects};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
 use settings::Settings;
-
-struct HighlightOnYank;
 
 impl Vim {
     pub fn yank_motion(
@@ -25,7 +23,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
@@ -227,7 +225,8 @@ impl Vim {
             return;
         }
 
-        editor.highlight_background::<HighlightOnYank>(
+        editor.highlight_background(
+            HighlightKey::HighlightOnYank,
             &ranges_to_highlight,
             |_, colors| colors.colors().editor_document_highlight_read_background,
             cx,
@@ -237,7 +236,7 @@ impl Vim {
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
             this.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<HighlightOnYank>(cx)
+                editor.clear_background_highlights(HighlightKey::HighlightOnYank, cx)
             })
             .ok();
         })

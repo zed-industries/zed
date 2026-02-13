@@ -119,10 +119,20 @@ impl AddToolchainState {
                 picker
             });
 
+            let weak_toolchain_selector = weak.clone();
+            let window_handle = window.window_handle();
             Self {
                 state: AddState::Path {
-                    _subscription: cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
-                        cx.stop_propagation();
+                    _subscription: cx.subscribe(&picker, move |_, _, _: &DismissEvent, cx| {
+                        if let Some(toolchain_selector) = weak_toolchain_selector.upgrade() {
+                            window_handle
+                                .update(cx, |_, window, cx| {
+                                    toolchain_selector.update(cx, |this, cx| {
+                                        this.cancel(&menu::Cancel, window, cx);
+                                    });
+                                })
+                                .ok();
+                        }
                     }),
                     picker,
                     error: None,
@@ -384,7 +394,6 @@ impl Focusable for State {
 impl Render for AddToolchainState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let weak = self.weak.upgrade();
         let label = SharedString::new_static("Add");
 
         v_flex()
@@ -395,16 +404,6 @@ impl Render for AddToolchainState {
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_lg()
-            .when_some(weak, |this, weak| {
-                this.on_action(window.listener_for(
-                    &weak,
-                    |this: &mut ToolchainSelector, _: &menu::Cancel, window, cx| {
-                        this.state = State::Search((this.create_search_state)(window, cx));
-                        this.state.focus_handle(cx).focus(window, cx);
-                        cx.notify();
-                    },
-                ))
-            })
             .on_action(cx.listener(Self::confirm_toolchain))
             .map(|this| match &self.state {
                 AddState::Path { picker, .. } => this.child(picker.clone()),
@@ -727,6 +726,19 @@ impl ToolchainSelector {
             cx.notify();
         }
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.state {
+            State::Search(_) => {
+                cx.emit(DismissEvent);
+            }
+            State::AddToolchain(_) => {
+                self.state = State::Search((self.create_search_state)(window, cx));
+                self.state.focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }
+        }
+    }
 }
 
 impl Render for ToolchainSelector {
@@ -737,6 +749,7 @@ impl Render for ToolchainSelector {
         v_flex()
             .key_context(key_context)
             .w(rems(34.))
+            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::handle_add_toolchain))
             .child(self.state.clone().render(window, cx))
     }
