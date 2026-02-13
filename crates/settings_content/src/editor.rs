@@ -828,8 +828,14 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
-    /// Whether to search on input.
+    /// Whether to search on input in project search.
     pub search_on_input: Option<bool>,
+    /// Debounce time in milliseconds for search on input in project search.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 200
+    pub search_on_input_debounce_ms: Option<u64>,
 }
 
 #[with_fallible_options]

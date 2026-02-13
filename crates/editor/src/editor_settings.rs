@@ -175,8 +175,11 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
-    /// Whether to search on input.
+    /// Whether to search on input in project search.
     pub search_on_input: bool,
+    /// Debounce time in milliseconds for search on input in project search.
+    /// Set to 0 to disable debouncing.
+    pub search_on_input_debounce_ms: u64,
 }
 
 impl EditorSettings {
@@ -274,6 +277,7 @@ impl Settings for EditorSettings {
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
                 search_on_input: search.search_on_input.unwrap(),
+                search_on_input_debounce_ms: search.search_on_input_debounce_ms.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

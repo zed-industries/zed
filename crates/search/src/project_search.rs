@@ -39,6 +39,7 @@ use std::{
     ops::{Not, Range},
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
@@ -270,6 +271,7 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     results_collapsed: bool,
+    current_search_on_input: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -879,11 +881,11 @@ impl ProjectSearchView {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
-                    // Trigger search on input:
-                    if EditorSettings::get_global(cx).search.search_on_input {
-                        let query = this.search_query_text(cx);
-                        if query.is_empty() {
-                            // Clear results immediately when query is empty and abort ongoing search
+
+                    let search_settings = &EditorSettings::get_global(cx).search;
+                    if search_settings.search_on_input {
+                        if this.query_editor.read(cx).is_empty(cx) {
+                            this.current_search_on_input = Task::ready(());
                             this.entity.update(cx, |model, cx| {
                                 model.pending_search = None;
                                 model.match_ranges.clear();
@@ -893,7 +895,18 @@ impl ProjectSearchView {
                                 cx.notify();
                             });
                         } else {
-                            this.search(cx);
+                            let debounce = search_settings.search_on_input_debounce_ms;
+                            this.current_search_on_input = cx.spawn(async move |this, cx| {
+                                if debounce > 0 {
+                                    cx.background_executor()
+                                        .timer(Duration::from_millis(debounce))
+                                        .await;
+                                }
+                                this.update(cx, |this, cx| {
+                                    this.search(cx);
+                                })
+                                .ok();
+                            });
                         }
                     }
                 }
@@ -1015,6 +1028,7 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             results_collapsed: false,
+            current_search_on_input: Task::ready(()),
             _subscriptions: subscriptions,
         };
 

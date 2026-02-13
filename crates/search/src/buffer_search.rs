@@ -3422,6 +3422,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_input: false,
+                search_on_input_debounce_ms: 0,
             },
             cx,
         );
@@ -3486,6 +3487,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_input: false,
+                search_on_input_debounce_ms: 0,
             },
             cx,
         );
@@ -3525,6 +3527,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_input: false,
+                search_on_input_debounce_ms: 0,
             },
             cx,
         );
@@ -3608,6 +3611,9 @@ mod tests {
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
                         search_on_input: Some(search_settings.search_on_input),
+                        search_on_input_debounce_ms: Some(
+                            search_settings.search_on_input_debounce_ms,
+                        ),
                     });
                 });
             });
@@ -3626,6 +3632,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_input: false,
+                search_on_input_debounce_ms: 0,
             },
             cx,
         );
@@ -3662,6 +3669,7 @@ mod tests {
                 regex: false,
                 center_on_match: false,
                 search_on_input: true,
+                search_on_input_debounce_ms: 0,
             },
             cx,
         );
