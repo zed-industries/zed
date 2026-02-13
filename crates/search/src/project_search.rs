@@ -2562,7 +2562,8 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::{
-        InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
+        InlayHintSettingsContent, SearchSettingsContent, SettingsStore, ThemeColorsContent,
+        ThemeStyleContent,
     };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
@@ -4780,6 +4781,15 @@ pub mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.search = Some(SearchSettingsContent {
+                        search_on_input: Some(false),
+                        ..Default::default()
+                    });
+                });
+            });
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
