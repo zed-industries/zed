@@ -2059,7 +2059,7 @@ impl LhsEditor {
             .collect();
 
         let lhs_result = lhs_multibuffer.update_path_excerpts(
-            path_key.clone(),
+            path_key,
             base_text_buffer.clone(),
             &base_text_buffer_snapshot,
             new,
