@@ -707,6 +707,7 @@ impl BlockMap {
         }
     }
 
+    // Warning: doesn't sync the block map, use advisedly
     pub(crate) fn insert_block_raw(
         &mut self,
         block: BlockProperties<Anchor>,
@@ -730,6 +731,20 @@ impl BlockMap {
         self.custom_blocks.insert(block_ix, new_block.clone());
         self.custom_blocks_by_id.insert(id, new_block);
         id
+    }
+
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn retain_blocks_raw(&mut self, mut pred: impl FnMut(&Arc<CustomBlock>) -> bool) {
+        let mut ids_to_remove = HashSet::default();
+        self.custom_blocks.retain(|block| {
+            let keep = pred(block);
+            if !keep {
+                ids_to_remove.insert(block.id);
+            }
+            keep
+        });
+        self.custom_blocks_by_id
+            .retain(|id, _| !ids_to_remove.contains(id));
     }
 
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
