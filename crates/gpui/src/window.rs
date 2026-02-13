@@ -4269,18 +4269,6 @@ impl Window {
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
-        // Skip dispatch if the tree hasn't been populated yet (before first frame)
-        if self.rendered_frame.dispatch_tree.is_empty() {
-            return;
-        }
-
-        if self.invalidator.is_dirty() {
-            self.draw(cx).clear();
-        }
-
-        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
         let mut keystroke: Option<Keystroke> = None;
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
@@ -4288,21 +4276,19 @@ impl Window {
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_keystroke
             {
-                let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                keystroke = match self.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some("shift".to_string()),
+                    modifiers if modifiers.control => Some("control".to_string()),
+                    modifiers if modifiers.alt => Some("alt".to_string()),
+                    modifiers if modifiers.platform => Some("platform".to_string()),
+                    modifiers if modifiers.function => Some("function".to_string()),
                     _ => None,
-                };
-                if let Some(key) = key {
-                    keystroke = Some(Keystroke {
-                        key: key.to_string(),
-                        key_char: None,
-                        modifiers: Modifiers::default(),
-                    });
                 }
+                .map(|key| Keystroke {
+                    key,
+                    key_char: None,
+                    modifiers: Modifiers::default(),
+                });
             }
 
             if self.pending_modifier.modifiers.number_of_modifiers() == 0
@@ -4315,6 +4301,18 @@ impl Window {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
         }
+
+        // Skip dispatch if the tree hasn't been populated yet (before first frame)
+        if self.rendered_frame.dispatch_tree.is_empty() {
+            return;
+        }
+
+        if self.invalidator.is_dirty() {
+            self.draw(cx).clear();
+        }
+
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         let Some(keystroke) = keystroke else {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
