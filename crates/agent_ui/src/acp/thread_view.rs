@@ -5825,4 +5825,56 @@ pub(crate) mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_max_tokens_error_is_rendered(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let message_editor = message_editor(&thread_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Some prompt", window, cx);
+        });
+        active_thread(&thread_view, cx).update_in(cx, |view, window, cx| view.send(window, cx));
+
+        let session_id = thread_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|_, _cx| {
+            connection.end_turn(session_id, acp::StopReason::MaxTokens);
+        });
+
+        cx.run_until_parked();
+
+        thread_view.read_with(cx, |thread_view, cx| {
+            let state = thread_view.active_thread().unwrap();
+            let error = &state.read(cx).thread_error;
+            match error {
+                Some(ThreadError::Other { message, .. }) => {
+                    assert!(
+                        message.contains("Max tokens reached"),
+                        "Expected 'Max tokens reached' error, got: {}",
+                        message
+                    );
+                }
+                other => panic!(
+                    "Expected ThreadError::Other with 'Max tokens reached', got: {:?}",
+                    other.is_some()
+                ),
+            }
+        });
+    }
 }
