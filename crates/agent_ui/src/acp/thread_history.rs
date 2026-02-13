@@ -19,12 +19,42 @@ use ui::{
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
 
+/// Key in `AgentSessionInfo.meta` used to store the git worktree branch name.
+/// Branch name generation (e.g. `zed/agent/<short-id>`) is handled at creation
+/// time in the worktree orchestration layer; this key is a stable lookup key.
+const WORKTREE_BRANCH_META_KEY: &str = "worktree_branch";
+
 fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
     entry
         .title
         .as_ref()
         .filter(|title| !title.is_empty())
         .unwrap_or(DEFAULT_TITLE)
+}
+
+fn worktree_branch_from_meta(entry: &AgentSessionInfo) -> Option<&str> {
+    entry
+        .meta
+        .as_ref()
+        .and_then(|m| m.get(WORKTREE_BRANCH_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+}
+
+fn render_worktree_branch_row(branch: String) -> impl IntoElement {
+    h_flex()
+        .gap_1()
+        .child(
+            Icon::new(IconName::GitBranchAlt)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            Label::new(branch)
+                .color(Color::Muted)
+                .size(LabelSize::XSmall),
+        )
 }
 
 pub struct AcpThreadHistory {
@@ -68,6 +98,8 @@ impl ListItemType {
 
 pub enum ThreadHistoryEvent {
     Open(AgentSessionInfo),
+    DeleteRequested(acp::SessionId),
+    DeleteAllRequested,
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
@@ -378,6 +410,14 @@ impl AcpThreadHistory {
         }
     }
 
+    pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
+        if let Some(session_list) = self.session_list.as_ref() {
+            session_list.delete_sessions(cx)
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
     fn add_list_separators(
         &self,
         entries: Vec<AgentSessionInfo>,
@@ -557,24 +597,19 @@ impl AcpThreadHistory {
         let Some(entry) = self.get_history_entry(visible_item_ix) else {
             return;
         };
-        let Some(session_list) = self.session_list.as_ref() else {
-            return;
-        };
-        if !session_list.supports_delete() {
+        if !self.supports_delete() {
             return;
         }
-        let task = session_list.delete_session(&entry.session_id, cx);
-        task.detach_and_log_err(cx);
+        cx.emit(ThreadHistoryEvent::DeleteRequested(
+            entry.session_id.clone(),
+        ));
     }
 
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session_list) = self.session_list.as_ref() else {
-            return;
-        };
-        if !session_list.supports_delete() {
+        if !self.supports_delete() {
             return;
         }
-        session_list.delete_sessions(cx).detach_and_log_err(cx);
+        cx.emit(ThreadHistoryEvent::DeleteAllRequested);
         self.confirming_delete_history = false;
         cx.notify();
     }
@@ -669,22 +704,33 @@ impl AcpThreadHistory {
                     .rounded()
                     .toggle_state(selected)
                     .spacing(ListItemSpacing::Sparse)
-                    .start_slot(
-                        h_flex()
+                    .start_slot({
+                        let branch = worktree_branch_from_meta(entry).map(|b| b.to_string());
+                        v_flex()
                             .w_full()
-                            .gap_2()
-                            .justify_between()
                             .child(
-                                HighlightedLabel::new(thread_title(entry), highlight_positions)
-                                    .size(LabelSize::Small)
-                                    .truncate(),
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(
+                                        HighlightedLabel::new(
+                                            thread_title(entry),
+                                            highlight_positions,
+                                        )
+                                        .size(LabelSize::Small)
+                                        .truncate(),
+                                    )
+                                    .child(
+                                        Label::new(display_text)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall),
+                                    ),
                             )
-                            .child(
-                                Label::new(display_text)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::XSmall),
-                            ),
-                    )
+                            .when_some(branch, |this, branch| {
+                                this.child(render_worktree_branch_row(branch))
+                            })
+                    })
                     .tooltip(move |_, cx| {
                         Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
                     })
@@ -920,21 +966,30 @@ impl RenderOnce for AcpHistoryEntryElement {
             })
             .unwrap_or_else(|| "Unknown".to_string());
 
+        let branch = worktree_branch_from_meta(&self.entry).map(|b| b.to_string());
+
         ListItem::new(id)
             .rounded()
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                h_flex()
+                v_flex()
                     .w_full()
-                    .gap_2()
-                    .justify_between()
-                    .child(Label::new(title).size(LabelSize::Small).truncate())
                     .child(
-                        Label::new(formatted_time)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .child(Label::new(title).size(LabelSize::Small).truncate())
+                            .child(
+                                Label::new(formatted_time)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::XSmall),
+                            ),
+                    )
+                    .when_some(branch, |this, branch| {
+                        this.child(render_worktree_branch_row(branch))
+                    }),
             )
             .on_hover(self.on_hover)
             .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
@@ -1682,5 +1737,134 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
         assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
+    }
+
+    #[test]
+    fn test_worktree_branch_from_meta() {
+        let session = |meta: Option<acp::Meta>| AgentSessionInfo {
+            session_id: acp::SessionId::new("s1"),
+            cwd: None,
+            title: None,
+            updated_at: None,
+            meta,
+        };
+
+        // Valid branch name
+        let entry = session(Some(acp::Meta::from_iter([(
+            WORKTREE_BRANCH_META_KEY.into(),
+            "zed/agent/a4Xiu".into(),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), Some("zed/agent/a4Xiu"));
+
+        // No meta at all
+        let entry = session(None);
+        assert_eq!(worktree_branch_from_meta(&entry), None);
+
+        // Meta present but without the worktree key
+        let entry = session(Some(acp::Meta::from_iter([(
+            "other_key".into(),
+            "value".into(),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), None);
+
+        // Empty string branch is treated as absent
+        let entry = session(Some(acp::Meta::from_iter([(
+            WORKTREE_BRANCH_META_KEY.into(),
+            "".into(),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), None);
+
+        // Whitespace-only branch is treated as absent
+        let entry = session(Some(acp::Meta::from_iter([(
+            WORKTREE_BRANCH_META_KEY.into(),
+            "   ".into(),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), None);
+
+        // Branch with surrounding whitespace is trimmed
+        let entry = session(Some(acp::Meta::from_iter([(
+            WORKTREE_BRANCH_META_KEY.into(),
+            "  feature/foo  ".into(),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), Some("feature/foo"));
+
+        // Non-string value (e.g. number) is treated as absent
+        let entry = session(Some(acp::Meta::from_iter([(
+            WORKTREE_BRANCH_META_KEY.into(),
+            serde_json::Value::Number(42.into()),
+        )])));
+        assert_eq!(worktree_branch_from_meta(&entry), None);
+    }
+
+    #[gpui::test]
+    async fn test_history_row_displays_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_with_branch = AgentSessionInfo {
+            session_id: acp::SessionId::new("with-branch"),
+            cwd: None,
+            title: Some("Has Worktree".into()),
+            updated_at: None,
+            meta: Some(acp::Meta::from_iter([(
+                WORKTREE_BRANCH_META_KEY.into(),
+                "zed/agent/a4Xiu".into(),
+            )])),
+        };
+        let session_without_branch = AgentSessionInfo {
+            session_id: acp::SessionId::new("without-branch"),
+            cwd: None,
+            title: Some("No Worktree".into()),
+            updated_at: None,
+            meta: None,
+        };
+
+        let sessions = vec![session_with_branch, session_without_branch];
+        let session_list = Rc::new(TestSessionList::new(sessions));
+
+        let (history, cx) = cx.add_window_view(|window, cx| {
+            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        // Verify both sessions are loaded and branch metadata is accessible
+        history.update(cx, |history, _cx| {
+            assert_eq!(history.sessions.len(), 2);
+
+            let with_branch = history
+                .sessions
+                .iter()
+                .find(|s| s.session_id == acp::SessionId::new("with-branch"))
+                .expect("session with branch should exist");
+            assert_eq!(
+                worktree_branch_from_meta(with_branch),
+                Some("zed/agent/a4Xiu")
+            );
+
+            let without_branch = history
+                .sessions
+                .iter()
+                .find(|s| s.session_id == acp::SessionId::new("without-branch"))
+                .expect("session without branch should exist");
+            assert_eq!(worktree_branch_from_meta(without_branch), None);
+        });
+
+        // Verify that a meta update via SessionInfoUpdate sets the branch
+        session_list.send_update(SessionListUpdate::SessionInfo {
+            session_id: acp::SessionId::new("without-branch"),
+            update: acp::SessionInfoUpdate::new().meta(acp::Meta::from_iter([(
+                WORKTREE_BRANCH_META_KEY.into(),
+                "zed/agent/b9Zjk".into(),
+            )])),
+        });
+        cx.run_until_parked();
+
+        history.update(cx, |history, _cx| {
+            let updated = history
+                .sessions
+                .iter()
+                .find(|s| s.session_id == acp::SessionId::new("without-branch"))
+                .expect("session should still exist after update");
+            assert_eq!(worktree_branch_from_meta(updated), Some("zed/agent/b9Zjk"));
+        });
     }
 }
