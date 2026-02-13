@@ -157,7 +157,7 @@ fn open_mention_uri(
 
     workspace.update(cx, |workspace, cx| match mention_uri {
         MentionUri::File { abs_path } => {
-            open_file(workspace, abs_path, window, cx);
+            open_file(workspace, abs_path, None, window, cx);
         }
         MentionUri::Symbol {
             abs_path,
@@ -168,7 +168,7 @@ fn open_mention_uri(
             abs_path: Some(abs_path),
             line_range,
         } => {
-            open_file_at_line(workspace, abs_path, line_range, window, cx);
+            open_file(workspace, abs_path, Some(line_range), window, cx);
         }
         MentionUri::Directory { abs_path } => {
             reveal_in_project_panel(workspace, abs_path, cx);
@@ -194,36 +194,7 @@ fn open_mention_uri(
 fn open_file(
     workspace: &mut Workspace,
     abs_path: PathBuf,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let project = workspace.project();
-
-    if let Some(project_path) =
-        project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
-    {
-        workspace
-            .open_path(project_path, None, true, window, cx)
-            .detach_and_log_err(cx);
-    } else if abs_path.exists() {
-        workspace
-            .open_abs_path(
-                abs_path,
-                OpenOptions {
-                    focus: Some(true),
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
-            .detach_and_log_err(cx);
-    }
-}
-
-fn open_file_at_line(
-    workspace: &mut Workspace,
-    abs_path: PathBuf,
-    line_range: RangeInclusive<u32>,
+    line_range: Option<RangeInclusive<u32>>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -233,26 +204,30 @@ fn open_file_at_line(
         project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
     {
         let item = workspace.open_path(project_path, None, true, window, cx);
-        window
-            .spawn(cx, async move |cx| {
-                let Some(editor) = item.await?.downcast::<Editor>() else {
-                    return Ok(());
-                };
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        let range =
-                            Point::new(*line_range.start(), 0)..Point::new(*line_range.start(), 0);
-                        editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::center()),
-                            window,
-                            cx,
-                            |selections| selections.select_ranges(vec![range]),
-                        );
-                    })
-                    .ok();
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+        if let Some(line_range) = line_range {
+            window
+                .spawn(cx, async move |cx| {
+                    let Some(editor) = item.await?.downcast::<Editor>() else {
+                        return Ok(());
+                    };
+                    editor
+                        .update_in(cx, |editor, window, cx| {
+                            let range = Point::new(*line_range.start(), 0)
+                                ..Point::new(*line_range.start(), 0);
+                            editor.change_selections(
+                                SelectionEffects::scroll(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| selections.select_ranges(vec![range]),
+                            );
+                        })
+                        .ok();
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        } else {
+            item.detach_and_log_err(cx);
+        }
     } else if abs_path.exists() {
         workspace
             .open_abs_path(
