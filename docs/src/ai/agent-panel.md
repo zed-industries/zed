@@ -5,7 +5,7 @@ description: Use Zed's AI coding agent to generate, refactor, and debug code wit
 
 # Agent Panel
 
-The Agent Panel is where you interact with AI agents that can read, write, and run code in your project. Use it for code generation, refactoring, debugging, documentation, and general questions.
+The Agent Panel is where you interact with AI agents that can read, write, and run code in your project. It's the core of Zed's AI code editing experience — use it for code generation, refactoring, debugging, documentation, and general questions.
 
 Open it with `agent: new thread` from [the Command Palette](../getting-started.md#command-palette) or click the ✨ icon in the status bar.
 

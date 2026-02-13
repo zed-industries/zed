@@ -5,7 +5,7 @@ description: Set up AI in Zed with hosted models, your own API keys, or external
 
 # Configuration
 
-When using AI in Zed, you can configure multiple dimensions:
+Zed is an AI code editor with flexible configuration. You can configure multiple dimensions:
 
 1. Which LLM providers you can use
    - Zed's hosted models, which require [authentication](../authentication.md) and [subscription](./subscription.md)
