@@ -7521,7 +7521,7 @@ impl EditorElement {
                         let position_map: &PositionMap = &position_map;
 
                         let line_height = position_map.line_height;
-                        let glyph_width = position_map.em_rendered_width;
+                        let glyph_width = position_map.em_layout_width;
                         let (delta, axis) = match delta {
                             gpui::ScrollDelta::Pixels(mut pixels) => {
                                 //Trackpad
@@ -9537,15 +9537,7 @@ impl Element for EditorElement {
                     let line_height = style.text.line_height_in_pixels(rem_size);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
-                    let run = TextRun {
-                        len: 1,
-                        font: style.text.font(),
-                        ..Default::default()
-                    };
-                    let em_rendered_width = window
-                        .text_system()
-                        .layout_line("m", font_size, &[run], None)
-                        .width;
+                    let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
                     let glyph_grid_cell = size(em_advance, line_height);
 
                     let gutter_dimensions =
@@ -9599,7 +9591,7 @@ impl Element for EditorElement {
                             let wrap_width = calculate_wrap_width(
                                 editor.soft_wrap_mode(cx),
                                 editor_width,
-                                em_rendered_width,
+                                em_layout_width,
                             );
 
                             if editor.set_wrap_width(wrap_width, cx) {
@@ -10255,7 +10247,7 @@ impl Element for EditorElement {
 
                     let scroll_max: gpui::Point<ScrollPixelOffset> = point(
                         ScrollPixelOffset::from(
-                            ((scroll_width - editor_width) / em_rendered_width).max(0.0),
+                            ((scroll_width - editor_width) / em_layout_width).max(0.0),
                         ),
                         max_scroll_top,
                     );
@@ -10282,7 +10274,7 @@ impl Element for EditorElement {
                     });
 
                     let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_rendered_width),
+                        scroll_position.x * f64::from(em_layout_width),
                         scroll_position.y * f64::from(line_height),
                     );
                     let sticky_headers = if !is_minimap
@@ -10786,7 +10778,7 @@ impl Element for EditorElement {
                         line_height,
                         em_width,
                         em_advance,
-                        em_rendered_width,
+                        em_layout_width,
                         snapshot,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
@@ -11634,7 +11626,7 @@ pub(crate) struct PositionMap {
     pub scroll_max: gpui::Point<ScrollOffset>,
     pub em_width: Pixels,
     pub em_advance: Pixels,
-    pub em_rendered_width: Pixels,
+    pub em_layout_width: Pixels,
     pub visible_row_range: Range<DisplayRow>,
     pub line_layouts: Vec<LineWithInvisibles>,
     pub snapshot: EditorSnapshot,
@@ -11698,7 +11690,7 @@ impl PositionMap {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
-        let x = position.x + (scroll_position.x as f32 * self.em_rendered_width);
+        let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
         let row = ((y / self.line_height) as f64 + scroll_position.y) as u32;
 
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
@@ -11721,7 +11713,7 @@ impl PositionMap {
         let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
         let column_overshoot_after_line_end =
-            (x_overshoot_after_line_end / self.em_rendered_width) as u32;
+            (x_overshoot_after_line_end / self.em_layout_width) as u32;
         *exact_unclipped.column_mut() += column_overshoot_after_line_end;
         PointForPosition {
             previous_valid,
