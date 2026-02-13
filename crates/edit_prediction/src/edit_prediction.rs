@@ -245,6 +245,9 @@ impl StoredEvent {
         if self.old_snapshot.remote_id() != next_old_event.old_snapshot.remote_id() {
             return false;
         }
+        if self.old_snapshot.remote_id() != new_snapshot.remote_id() {
+            return false;
+        }
 
         let a_is_predicted = matches!(
             self.event.as_ref(),
@@ -2283,6 +2286,12 @@ fn merge_trailing_events_if_needed(
     latest_snapshot: &TextBufferSnapshot,
     latest_edit_range: &Range<Anchor>,
 ) {
+    if let Some(last_event) = events.back() {
+        if last_event.old_snapshot.remote_id() != latest_snapshot.remote_id() {
+            return;
+        }
+    }
+
     let mut next_old_event = None;
     let mut mergeable_count = 0;
     for old_event in events.iter().rev() {
