@@ -794,12 +794,12 @@ impl HoverState {
         if !self.visible() {
             return None;
         }
-        // If there is a diagnostic, position the popovers based on that.
+        // If there is a diagnostic, position the popovers at the cursor/hover position.
         // Otherwise use the start of the hover range
         let anchor = self
             .diagnostic_popover
             .as_ref()
-            .map(|diagnostic_popover| &diagnostic_popover.local_diagnostic.range.start)
+            .map(|diagnostic_popover| &diagnostic_popover.anchor)
             .or_else(|| {
                 self.info_popovers.iter().find_map(|info_popover| {
                     match &info_popover.symbol_range {
@@ -818,11 +818,11 @@ impl HoverState {
             })?;
         let mut point = anchor.to_display_point(&snapshot.display_snapshot);
         // Clamp the point within the visible rows in case the popup source spans multiple lines
-        if visible_rows.end <= point.row() {
+        if point.row() >= visible_rows.end {
             point = crate::movement::up_by_rows(
                 &snapshot.display_snapshot,
                 point,
-                1 + (point.row() - visible_rows.end).0,
+                (point.row() - visible_rows.end + 1).0,
                 text::SelectionGoal::None,
                 true,
                 text_layout_details,
