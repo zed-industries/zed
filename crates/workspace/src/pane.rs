@@ -4096,6 +4096,7 @@ impl Render for Pane {
             .contribute_context(&mut key_context, cx);
 
         let minimal_mode = WorkspaceSettings::get_global(cx).minimal_mode;
+        let display_toolbar = !minimal_mode || key_context.contains("buffer_search_deployed");
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = !minimal_mode && should_display_tab_bar(window, cx);
         let Some(project) = self.project.upgrade() else {
@@ -4269,7 +4270,7 @@ impl Render for Pane {
                                 .v_flex()
                                 .size_full()
                                 .overflow_hidden()
-                                .when(!minimal_mode, |div| div.child(self.toolbar.clone()))
+                                .when(display_toolbar, |div| div.child(self.toolbar.clone()))
                                 .child(item.to_any_view())
                         } else {
                             let placeholder = div
