@@ -304,6 +304,7 @@ impl DirectXRenderer {
     pub(crate) fn draw(
         &mut self,
         scene: &Scene,
+        overlay: Option<&Scene>,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
         if self.skip_draws {
@@ -315,10 +316,9 @@ impl DirectXRenderer {
             WindowBackgroundAppearance::Opaque => [1.0f32; 4],
             _ => [0.0f32; 4],
         })?;
-
         self.upload_scene_buffers(scene)?;
 
-        for batch in scene.batches() {
+        for batch in scene.batches_with_overlay(overlay) {
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),

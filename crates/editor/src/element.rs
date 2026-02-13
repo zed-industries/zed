@@ -12771,7 +12771,6 @@ fn paint_cursor_animation_frame(mut state: CursorAnimationState, window: &mut Wi
     cursor.paint(state.content_origin, window, cx);
 
     for other in &mut state.other_cursors {
-        other.opacity = blink_opacity;
         other.paint(state.content_origin, window, cx);
     }
 
