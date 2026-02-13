@@ -32,6 +32,7 @@ use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
+pub const POPOVER_LEFT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -790,10 +791,14 @@ impl HoverState {
         text_layout_details: &TextLayoutDetails,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
+    ) -> Option<(DisplayPoint, Vec<AnyElement>, bool)> {
         if !self.visible() {
             return None;
         }
+        // align the popover to the left of the cursor if there is a diagnostic (e.g. a warning or error)
+        // and to the right otherwise (e.g. an LSP hover)
+        let is_popover_left_aligned = self.diagnostic_popover.is_some();
+
         // If there is a diagnostic, position the popovers at the cursor/hover position.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -854,7 +859,7 @@ impl HoverState {
             elements.push(info_popover.render(max_size, window, cx));
         }
 
-        Some((point, elements))
+        Some((point, elements, is_popover_left_aligned))
     }
 
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {

@@ -24,7 +24,7 @@ use crate::{
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
-        POPOVER_RIGHT_OFFSET, hover_at,
+        POPOVER_LEFT_OFFSET, POPOVER_RIGHT_OFFSET, hover_at,
     },
     inlay_hint_settings,
     mouse_context_menu::{self, MenuPosition},
@@ -5268,7 +5268,8 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((popover_position, hover_popovers)) = hover_popovers else {
+        let Some((popover_position, hover_popovers, is_popover_left_aligned)) = hover_popovers
+        else {
             return;
         };
 
@@ -5291,9 +5292,14 @@ impl EditorElement {
         let mut measured_hover_popovers = Vec::new();
         for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let horizontal_offset =
-                (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
-                    .min(Pixels::ZERO);
+            let horizontal_offset = if is_popover_left_aligned {
+                (hitbox.left() + POPOVER_LEFT_OFFSET - (hovered_point.x - size.width))
+                    .max(Pixels::ZERO)
+                    - size.width
+            } else {
+                (hitbox.right() - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                    .min(Pixels::ZERO)
+            };
             match position {
                 itertools::Position::Middle | itertools::Position::Last => {
                     overall_height += HOVER_POPOVER_GAP
