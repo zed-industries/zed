@@ -93,7 +93,7 @@ jobs:
             --immediate \
             --preview \
             --output "$OUTPUT_FILE" \
-            --verbose 2>&1 || true
+            --verbose
           
           # Check if we got actionable suggestions (not "no updates needed")
           if grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
@@ -264,7 +264,7 @@ jobs:
             --immediate \
             --no-preview \
             --output "$OUTPUT_FILE" \
-            --verbose 2>&1 || true
+            --verbose
           
           # Check if we got actionable suggestions
           if [ -s "$OUTPUT_FILE" ] && \

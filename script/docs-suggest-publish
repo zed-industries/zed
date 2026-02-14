@@ -151,15 +151,23 @@ This PR contains documentation suggestions collected from recently merged PRs.
 2. For each suggestion, either:
    - Apply the changes to the docs (edit files directly in this PR)
    - Note why the suggestion doesn't apply (comment on the PR)
-3. Ensure all new feature docs include the Preview callout
+3. Ensure docs use the correct callout type:
+   - Additive features: Preview callout
+   - Behavior modifications: Changed in Preview callout
 4. Merge when ready
 
-## Preview Callout
+## Preview Callouts
 
-New features should include this callout:
+Use the Preview callout for new/additive features:
 
 ```markdown
 > **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+```
+
+Use this callout for behavior modifications to existing functionality:
+
+```markdown
+> **Changed in Preview (v0.XXX).** See [release notes](/releases#0.XXX).
 ```
 
 ---
