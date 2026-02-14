@@ -41,24 +41,11 @@ If you're coming from WebStorm, the fastest way to feel at home is to use the Je
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your `settings.json` directly.
 
 Settings WebStorm users typically configure first:
 
@@ -399,7 +386,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 "format_on_save": "on"
 ```
 
-**Configure Prettier as the default formatter:**
+**Configure Prettier as the default formatter** (requires manual JSON editing):
 
 ```json
 {
@@ -412,7 +399,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 }
 ```
 
-**Enable ESLint code actions:**
+**Enable ESLint code actions** (requires manual JSON editing):
 
 ```json
 {

@@ -152,7 +152,7 @@ TBD: Improve Julia REPL instructions
 ## Changing which kernel is used per language {#changing-kernels}
 
 Zed automatically detects the available kernels on your system. If you need to configure a different default kernel for a
-language, you can assign a kernel for any supported language in your `settings.json`.
+language, you can assign a kernel for any supported language in your `settings.json` (this setting requires manual JSON editing):
 
 ```json [settings]
 {

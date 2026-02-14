@@ -185,7 +185,7 @@ Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#anthropic-custom-models}
 
-You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
+You can add custom models to the Anthropic provider by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -239,7 +239,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 #### Custom Models {#deepseek-custom-models}
 
 The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
-If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -296,7 +296,7 @@ Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See
 
 By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
 
-Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
+Here is an example of a custom Google AI model you could add to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -351,7 +351,7 @@ Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 The Zed agent comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba).
 All the default models support tool use.
-If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+If you wish to use alternate models or customize their parameters, you can do so by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -396,9 +396,7 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 #### Ollama Autodiscovery
 
-Zed will automatically discover models that Ollama has pulled. You can turn this off by setting
-the `auto_discover` field in the Ollama settings. If you do this, you should manually specify which
-models are available.
+Zed will automatically discover models that Ollama has pulled. Configure auto-discovery in Settings ({#kb zed::OpenSettings}) by searching for "Ollama", or add the following to your settings file to manually specify models (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -427,7 +425,7 @@ Zed API requests to Ollama include the context length as the `num_ctx` parameter
 
 > **Note**: Token counts displayed in the Agent Panel are only estimates and will differ from the model's native tokenizer.
 
-You can set a context length for all Ollama models using the `context_window` setting. This can also be configured in the Ollama provider settings UI:
+Configure context length in Settings ({#kb zed::OpenSettings}) by searching for "Ollama" and adjusting "Context Window", or add to your settings file:
 
 ```json [settings]
 {
@@ -439,7 +437,7 @@ You can set a context length for all Ollama models using the `context_window` se
 }
 ```
 
-Alternatively, you can configure the context length per-model using the `max_tokens` field in `available_models`:
+Alternatively, you can configure the context length per-model using the `max_tokens` field (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -509,7 +507,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 #### Custom Models {#openai-custom-models}
 
 The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
-To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -560,7 +558,7 @@ You can add a custom, OpenAI-compatible model either via the UI or by editing yo
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
 
-To do it via your `settings.json`, add the following snippet under `language_models`:
+To do it via your settings file, add the following snippet under `language_models` (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -616,7 +614,7 @@ Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openrouter-custom-models}
 
-You can add custom models to the OpenRouter provider by adding the following to your Zed `settings.json`:
+You can add custom models to the OpenRouter provider by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -730,7 +728,7 @@ The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_K
 
 #### Custom Models {#xai-custom-models}
 
-The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -760,7 +758,7 @@ The Zed agent comes pre-configured with common Grok models. If you wish to use a
 ## Custom Provider Endpoints {#custom-provider-endpoint}
 
 You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
-To do so, add the following to your `settings.json`:
+To do so, add the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {

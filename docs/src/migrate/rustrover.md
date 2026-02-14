@@ -41,24 +41,11 @@ If you're coming from RustRover, the fastest way to feel at home is to use the J
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your `settings.json` directly.
 
 Settings RustRover users typically configure first:
 
@@ -434,7 +421,7 @@ Here are a few useful tweaks for Rust developers:
 }
 ```
 
-**Configure rust-analyzer settings:**
+**Configure rust-analyzer settings** (requires manual JSON editing):
 
 ```json
 {

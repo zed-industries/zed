@@ -18,7 +18,7 @@ The Erlang extension offers language server support for `erlang_ls` and `erlang-
 
 `erlang_ls` is enabled by default.
 
-To switch to `erlang-language-platform`, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Erlang, or add the following to your `settings.json`:
 
 ```json [settings]
 {

@@ -11,7 +11,7 @@ Settings for Zed's Agent Panel, including model selection, UI preferences, and t
 
 ### Default Model {#default-model}
 
-If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). You can also change the default model using the model selector in the Agent Panel. If you want to customize the model configuration, add the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -31,6 +31,8 @@ You can assign distinct and specific models for the following AI-powered feature
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
+
+Add the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -61,7 +63,7 @@ You can assign distinct and specific models for the following AI-powered feature
 
 With the Inline Assistant in particular, you can send the same prompt to multiple models at once.
 
-Here's how you can customize your `settings.json` to add this functionality:
+Add the following to your settings file to configure this (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -110,7 +112,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
 
 ### Model Temperature
 
-Specify a custom temperature for a provider and/or model:
+Specify a custom temperature for a provider and/or model by adding the following to your settings file (this setting requires manual JSON editing):
 
 ```json [settings]
 {
@@ -142,8 +144,7 @@ Note that some of these settings are also surfaced in the Agent Panel's settings
 
 ### Default View
 
-Use the `default_view` setting to change the default view of the Agent Panel.
-You can choose between `thread` (the default) and `text_thread`:
+Change the default view of the Agent Panel in Settings ({#kb zed::OpenSettings}) by searching for "Default View". You can choose between `thread` (the default) and `text_thread`, or add to your settings file:
 
 ```json [settings]
 {
@@ -155,7 +156,7 @@ You can choose between `thread` (the default) and `text_thread`:
 
 ### Font Size
 
-Use the `agent_ui_font_size` setting to change the font size of rendered agent responses in the panel.
+Change the font size of rendered agent responses in Settings ({#kb zed::OpenSettings}) by searching for "Agent UI Font Size", or add to your settings file:
 
 ```json [settings]
 {
@@ -163,7 +164,7 @@ Use the `agent_ui_font_size` setting to change the font size of rendered agent r
 }
 ```
 
-> Editors in the Agent Panel—such as the main message textarea—use monospace fonts and are controlled by `agent_buffer_font_size` (which defaults to `buffer_font_size` when unset).
+> Editors in the Agent Panel—such as the main message textarea—use monospace fonts and are controlled by "Agent Buffer Font Size" in Settings (which defaults to "Buffer Font Size" when unset).
 
 ### Default Tool Permissions
 
@@ -174,6 +175,8 @@ The `agent.tool_permissions.default` setting controls the baseline tool approval
 - `"confirm"` (default) — Prompts for approval before running any tool action
 - `"allow"` — Auto-approves tool actions without prompting
 - `"deny"` — Blocks all tool actions
+
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Tool Permissions", or add to your settings file:
 
 ```json [settings]
 {
@@ -283,6 +286,8 @@ See the [Tool Permissions](./tool-permissions.md) documentation for more example
 Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
 The default value is `true`.
 
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Single File Review", or add to your settings file:
+
 ```json [settings]
 {
   "agent": {
@@ -298,6 +303,8 @@ When set to `false`, these controls are only available in the multibuffer review
 Control whether to hear a notification sound when the agent is done generating changes or needs your input.
 The default value is `false`.
 
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Play Sound When Agent Done", or add to your settings file:
+
 ```json [settings]
 {
   "agent": {
@@ -308,8 +315,8 @@ The default value is `false`.
 
 ### Message Editor Size
 
-Use the `message_editor_min_lines` setting to control the minimum number of lines of height the agent message editor should have.
-It is set to `4` by default, and the max number of lines is always double of the minimum.
+Configure the minimum number of lines of height the agent message editor should have in Settings ({#kb zed::OpenSettings}) by searching for "Message Editor Min Lines".
+It is set to `4` by default, and the max number of lines is always double of the minimum. Or add to your settings file:
 
 ```json [settings]
 {
@@ -324,6 +331,8 @@ It is set to `4` by default, and the max number of lines is always double of the
 Require a modifier (`cmd` on macOS, `ctrl` on Linux) to send messages. Prevents accidental sends while editing.
 The default value is `false`.
 
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Use Modifier To Send", or add to your settings file:
+
 ```json [settings]
 {
   "agent": {
@@ -334,8 +343,8 @@ The default value is `false`.
 
 ### Edit Card
 
-Use the `expand_edit_card` setting to control whether edit cards show the full diff in the Agent Panel.
-It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded.
+Control whether edit cards show the full diff in the Agent Panel in Settings ({#kb zed::OpenSettings}) by searching for "Expand Edit Card".
+It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded. Or add to your settings file:
 
 ```json [settings]
 {
@@ -347,8 +356,8 @@ It is set to `true` by default, but if set to false, the card's height is capped
 
 ### Terminal Card
 
-Use the `expand_terminal_card` setting to control whether terminal cards show the command output in the Agent Panel.
-It is set to `true` by default, but if set to false, the card will be fully collapsed even while the command is running, requiring a click to be expanded.
+Control whether terminal cards show the command output in the Agent Panel in Settings ({#kb zed::OpenSettings}) by searching for "Expand Terminal Card".
+It is set to `true` by default, but if set to false, the card will be fully collapsed even while the command is running, requiring a click to be expanded. Or add to your settings file:
 
 ```json [settings]
 {
@@ -362,6 +371,8 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 
 Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing you to give Zed feedback about the agent's performance.
 The default value is `true`.
+
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Enable Feedback", or add to your settings file:
 
 ```json [settings]
 {

@@ -13,7 +13,7 @@ Configure which [Agent Panel](./agent-panel.md) actions run automatically and wh
 
 ## Quick Start
 
-You can use Zed's Settings UI to configure tool permissions, or add rules directly to your `settings.json`:
+Configure tool permissions in Settings ({#kb zed::OpenSettings}) by searching for "Tool Permissions", or add rules directly to your settings file (pattern-based rules require manual JSON editing):
 
 ```json [settings]
 {
@@ -235,7 +235,7 @@ From highest to lowest priority:
 
 ## Global Auto-Approve
 
-To auto-approve all tool actions:
+To auto-approve all tool actions, change "Tool Permissions Default" in Settings ({#kb zed::OpenSettings}) to "allow", or add to your settings file:
 
 ```json [settings]
 {

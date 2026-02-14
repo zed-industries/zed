@@ -61,7 +61,7 @@ See [Using lintr](https://lintr.r-lib.org/articles/lintr.html) for a complete li
 
 Ensure that you have installed both the [ocsmit/zed-r](https://github.com/ocsmit/zed-r) extension (for general R language awareness in Zed) and the [Air](https://posit-dev.github.io/air/) extension.
 
-Enable Air in your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > R, or add to your settings file:
 
 ```json [settings]
 {
@@ -73,7 +73,7 @@ Enable Air in your `settings.json`:
 }
 ```
 
-If you use the `"r_language_server"` from `REditorSupport/languageserver`, but would still like to use Air for formatting, use the following configuration:
+If you use the `"r_language_server"` from `REditorSupport/languageserver`, but would still like to use Air for formatting, configure in Settings ({#kb zed::OpenSettings}) under Languages > R, or add to your settings file:
 
 ```json [settings]
 {

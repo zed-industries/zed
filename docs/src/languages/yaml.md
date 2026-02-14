@@ -58,7 +58,7 @@ You can customize the formatting behavior of Prettier. For example to use single
 
 ### yaml-language-server Formatting
 
-To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your Zed `settings.json`:
+To use `yaml-language-server` instead of Prettier for YAML formatting, configure in Settings ({#kb zed::OpenSettings}) under Languages > YAML, or add to your settings file:
 
 ```json [settings]
   "languages": {

@@ -93,7 +93,7 @@ Then in your `.luarc.json`:
 
 To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Zed
 
-1. Add the following to your Zed settings.json:
+1. Configure inlay hints in Settings ({#kb zed::OpenSettings}) under Languages > Lua, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -123,7 +123,7 @@ To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle]
 }
 ```
 
-Then add the following to your Zed `settings.json`:
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Lua, or add to your settings file:
 
 ```json [settings]
 {
@@ -143,7 +143,7 @@ You can customize various EmmyLuaCodeStyle style options via `.editorconfig`, se
 Alternatively to use [StyLua](https://github.com/JohnnyMorganz/StyLua) for auto-formatting:
 
 1. Install [StyLua](https://github.com/JohnnyMorganz/StyLua): `brew install stylua` or `cargo install stylua --features lua52,lua53,lua54,luau,luajit` (feel free to remove any Lua versions you don't need).
-2. Add the following to your `settings.json`:
+2. Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Lua, or add to your settings file:
 
 ```json [settings]
 {

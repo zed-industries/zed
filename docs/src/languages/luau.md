@@ -30,7 +30,7 @@ brew install stylua
 cargo install stylua --features lua52,lua53,lua54,luau
 ```
 
-Then add the following to your Zed `settings.json`:
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Luau, or add to your settings file:
 
 ```json [settings]
   "languages": {

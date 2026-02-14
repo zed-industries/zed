@@ -170,12 +170,7 @@ Zed doesn’t import extensions or keybindings, but this is the fastest way to g
 
 ## Set Up Editor Preferences
 
-You can also configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your `settings.json` directly.
 
 Here’s how common VS Code settings translate:
 | VS Code | Zed | Notes |

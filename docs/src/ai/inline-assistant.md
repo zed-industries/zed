@@ -47,7 +47,7 @@ This works well with excerpts in [multibuffers](../multibuffers.md).
 
 You can use the Inline Assistant to send the same prompt to multiple models at once.
 
-Here's how you can customize your `settings.json` to add this functionality:
+Add the following to your settings file to configure this (this setting requires manual JSON editing):
 
 ```json [settings]
 {

@@ -24,7 +24,7 @@ The Elixir extension offers language server support for `expert`, `elixir-ls`, `
 
 ### Expert
 
-To switch to `expert`, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
 
 ```json [settings]
   "languages": {
@@ -39,7 +39,7 @@ To switch to `expert`, add the following to your `settings.json`:
 
 ### Next LS
 
-To switch to `next-ls`, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
 
 ```json [settings]
   "languages": {
@@ -54,7 +54,7 @@ To switch to `next-ls`, add the following to your `settings.json`:
 
 ### Lexical
 
-To switch to `lexical`, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
 
 ```json [settings]
   "languages": {
@@ -87,7 +87,9 @@ brew install elixir-ls
 
 ### Formatting with Mix
 
-If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), use the following snippet in your `settings.json` file to configure it as an external formatter. Formatting will occur on file save.
+If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), configure it as an external formatter. Formatting will occur on file save.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
 
 ```json [settings]
 {

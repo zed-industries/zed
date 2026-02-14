@@ -9,7 +9,7 @@ Zed's key binding system is fully customizable. You can rebind any action, creat
 
 ## Predefined Keymaps {#predefined-keymaps}
 
-If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
+If you're used to a specific editor's defaults, you can change your `base_keymap` in Settings ({#kb zed::OpenSettings}), or add the following to your `settings.json` ({#kb zed::OpenSettingsFile}).
 We currently support:
 
 - VS Code (default)
