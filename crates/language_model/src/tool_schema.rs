@@ -4,7 +4,7 @@ use schemars::{
     generate::SchemaSettings,
     transform::{Transform, transform_subschemas},
 };
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 /// Indicates the format used to define the input schema for a language model tool.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -59,6 +59,8 @@ pub fn adapt_schema_to_format(
     json: &mut Value,
     format: LanguageModelToolSchemaFormat,
 ) -> Result<()> {
+    log::trace!("Adapting schema to format {:?}: {}", format, json);
+
     if let Value::Object(obj) = json {
         obj.remove("$schema");
         obj.remove("title");
@@ -67,7 +69,10 @@ pub fn adapt_schema_to_format(
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
-    }
+    }?;
+
+    log::trace!("Adapted schema: {}", json);
+    Ok(())
 }
 
 fn preprocess_json_schema(json: &mut Value) -> Result<()> {
@@ -115,6 +120,9 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
+        convert_null_in_types_to_nullable(obj);
+        convert_types_to_any_of_defs(obj);
+
         // If a type is not specified for an input parameter, add a default type
         if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
@@ -131,7 +139,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         {
             let subschemas_clone = subschemas.clone();
             obj.remove("oneOf");
-            obj.insert("anyOf".to_string(), subschemas_clone);
+            push_any_of_constraint(obj, subschemas_clone);
         }
 
         // Recursively process all nested objects and arrays
@@ -148,10 +156,277 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
     Ok(())
 }
 
+fn convert_null_in_types_to_nullable(obj: &mut Map<String, Value>) {
+    let mut nullable_found_in_type = false;
+
+    if let Some(type_entry) = obj.get_mut("type") {
+        if let Some(types) = type_entry.as_array_mut() {
+            let mut had_null_type = false;
+            types.retain(|t| {
+                if t.as_str() == Some("null") {
+                    had_null_type = true;
+                    false
+                } else {
+                    true
+                }
+            });
+
+            if had_null_type {
+                nullable_found_in_type = true;
+                if types.len() == 1 {
+                    *type_entry = types.remove(0);
+                } else if types.is_empty() {
+                    obj.remove("type");
+                }
+            }
+        } else if let Some(type_str) = type_entry.as_str() {
+            if type_str == "null" {
+                nullable_found_in_type = true;
+                obj.remove("type");
+            }
+        }
+    }
+    if nullable_found_in_type {
+        obj.insert("nullable".to_string(), Value::Bool(true));
+    }
+}
+
+fn convert_types_to_any_of_defs(obj: &mut Map<String, Value>) {
+    if let Some(type_entry) = obj.get_mut("type") {
+        if let Some(types) = type_entry.as_array_mut() {
+            if types.len() > 1 {
+                let remaining_types = std::mem::take(types);
+                let mut any_of_schemas = Vec::new();
+                for t in remaining_types {
+                    any_of_schemas.push(json!({"type": t}));
+                }
+                obj.remove("type");
+                push_any_of_constraint(obj, Value::Array(any_of_schemas));
+            }
+        }
+    }
+}
+
+fn push_any_of_constraint(obj: &mut Map<String, Value>, any_of_schemas: Value) {
+    if let Some(existing_any_of) = obj.remove("anyOf") {
+        let mut all_of = obj
+            .remove("allOf")
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        if all_of.is_empty() {
+            all_of.push(json!({"anyOf": existing_any_of}));
+        }
+        all_of.push(json!({"anyOf": any_of_schemas}));
+        obj.insert("allOf".to_string(), Value::Array(all_of));
+    } else if let Some(all_of) = obj.get_mut("allOf").and_then(|v| v.as_array_mut()) {
+        all_of.push(json!({"anyOf": any_of_schemas}));
+    } else {
+        obj.insert("anyOf".to_string(), any_of_schemas);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_convert_null_in_types_to_nullable() {
+        // ["string", "null"] -> "string", nullable: true
+        let mut obj = json!({"type": ["string", "null"]})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"type": "string", "nullable": true})
+                .as_object()
+                .unwrap()
+                .to_owned()
+        );
+
+        // "null" -> nullable: true
+        let mut obj = json!({"type": "null"}).as_object_mut().unwrap().to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"nullable": true}).as_object().unwrap().to_owned()
+        );
+
+        // ["string", "number", "null"] -> ["string", "number"], nullable: true (anyOf handled elsewhere)
+        let mut obj = json!({"type": ["string", "number", "null"]})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"type": ["string", "number"], "nullable": true})
+                .as_object()
+                .unwrap()
+                .to_owned()
+        );
+
+        // "string" (no change, not nullable)
+        let mut obj = json!({"type": "string"})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"type": "string"}).as_object().unwrap().to_owned()
+        );
+
+        // ["string", "number"] (no change, not nullable)
+        let mut obj = json!({"type": ["string", "number"]})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"type": ["string", "number"]})
+                .as_object()
+                .unwrap()
+                .to_owned()
+        );
+
+        // object with other properties, ["boolean", "null"]
+        let mut obj = json!({
+            "description": "A test field",
+            "type": ["boolean", "null"]
+        })
+        .as_object_mut()
+        .unwrap()
+        .to_owned();
+        convert_null_in_types_to_nullable(&mut obj);
+        assert_eq!(
+            obj,
+            json!({
+                "description": "A test field",
+                "type": "boolean",
+                "nullable": true
+            })
+            .as_object()
+            .unwrap()
+            .to_owned()
+        );
+    }
+
+    #[test]
+    fn test_convert_types_to_any_of_defs() {
+        // ["string", "number"] -> anyOf with string and number
+        let mut obj = json!({"type": ["string", "number"]})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_types_to_any_of_defs(&mut obj);
+        assert_eq!(
+            obj,
+            json!({
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "number"}
+                ]
+            })
+            .as_object()
+            .unwrap()
+            .to_owned()
+        );
+
+        // "string" (no change)
+        let mut obj = json!({"type": "string"})
+            .as_object_mut()
+            .unwrap()
+            .to_owned();
+        convert_types_to_any_of_defs(&mut obj);
+        assert_eq!(
+            obj,
+            json!({"type": "string"}).as_object().unwrap().to_owned()
+        );
+
+        // object with other properties, ["string", "number"]
+        let mut obj = json!({
+            "description": "A test field",
+            "type": ["string", "number"]
+        })
+        .as_object_mut()
+        .unwrap()
+        .to_owned();
+        convert_types_to_any_of_defs(&mut obj);
+        assert_eq!(
+            obj,
+            json!({
+                "description": "A test field",
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "number"}
+                ]
+            })
+            .as_object()
+            .unwrap()
+            .to_owned()
+        );
+
+        // anyOf already present (no change)
+        let mut obj = json!({
+            "anyOf": [
+                {"type": "string"},
+                {"type": "number"}
+            ]
+        })
+        .as_object_mut()
+        .unwrap()
+        .to_owned();
+        convert_types_to_any_of_defs(&mut obj);
+        assert_eq!(
+            obj,
+            json!({
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "number"}
+                ]
+            })
+            .as_object()
+            .unwrap()
+            .to_owned()
+        );
+
+        // both type array and anyOf present
+        let mut obj = json!({
+            "type": ["string", "number"],
+            "anyOf": [
+                {"format": "email"}
+            ]
+        })
+        .as_object_mut()
+        .unwrap()
+        .to_owned();
+        convert_types_to_any_of_defs(&mut obj);
+        assert_eq!(
+            obj,
+            json!({
+                "allOf": [
+                    {
+                        "anyOf": [
+                            {"format": "email"}
+                        ]
+                    },
+                    {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "number"}
+                        ]
+                    }
+                ]
+            })
+            .as_object()
+            .unwrap()
+            .to_owned()
+        );
+    }
 
     #[test]
     fn test_transform_adds_type_when_missing() {
@@ -232,6 +507,69 @@ mod tests {
     }
 
     #[test]
+    fn test_transform_null_in_any_of() {
+        let mut json = json!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "null" }
+            ]
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "anyOf": [
+                    { "type": "string" },
+                    { "nullable": true }
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_conflicting_any_of_sources() {
+        let mut json = json!({
+            "type": ["string", "number"],
+            "anyOf": [
+                { "minLength": 5 }
+            ],
+            "oneOf": [
+                { "pattern": "^a" },
+                { "pattern": "^b" }
+            ]
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "allOf": [
+                    {
+                        "anyOf": [
+                            { "minLength": 5 },
+                        ]
+                    },
+                    {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "number"}
+                        ]
+                    },
+                    {
+                        "anyOf": [
+                            { "pattern": "^a" },
+                            { "pattern": "^b" }
+                        ]
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn test_transform_one_of_to_any_of() {
         let mut json = json!({
             "description": "A test field",
@@ -280,8 +618,8 @@ mod tests {
                     "nested": {
                         "anyOf": [
                             { "type": "string" },
-                            { "type": "null" }
-                        ]
+                            { "nullable": true }
+                        ],
                     }
                 }
             })
