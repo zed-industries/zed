@@ -61,30 +61,34 @@ impl<T> ResultExt for anyhow::Result<T> {
         match self {
             Ok(v) => v,
             Err(e) => {
+                eprintln!(
+                    "{msg}: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                );
+
                 use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
                 use futures::executor::block_on;
 
-                let proxy = block_on(NotificationProxy::new()).expect(msg);
+                if let Ok(proxy) = block_on(NotificationProxy::new()) {
+                    let notification_id = "dev.zed.Oops";
+                    block_on(
+                        proxy.add_notification(
+                            notification_id,
+                            Notification::new("Zed failed to launch")
+                                .body(Some(
+                                    format!(
+                                        "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
+                                    )
+                                    .as_str(),
+                                ))
+                                .priority(Priority::High)
+                                .icon(ashpd::desktop::Icon::with_names(&[
+                                    "dialog-question-symbolic",
+                                ])),
+                        )
+                    ).ok();
+                }
 
-                let notification_id = "dev.zed.Oops";
-                block_on(
-                    proxy.add_notification(
-                        notification_id,
-                        Notification::new("Zed failed to launch")
-                            .body(Some(
-                                format!(
-                                    "{e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
-                                )
-                                .as_str(),
-                            ))
-                            .priority(Priority::High)
-                            .icon(ashpd::desktop::Icon::with_names(&[
-                                "dialog-question-symbolic",
-                            ])),
-                    )
-                ).expect(msg);
-
-                panic!("{msg}");
+                std::process::exit(1);
             }
         }
     }
