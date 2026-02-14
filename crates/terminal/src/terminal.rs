@@ -2277,6 +2277,14 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
+    pub fn has_exited(&self) -> bool {
+        self.child_exited.is_some()
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.is_remote_terminal
+    }
+
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(

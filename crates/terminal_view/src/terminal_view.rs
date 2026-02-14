@@ -260,12 +260,23 @@ impl TerminalView {
             )
         });
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             focus_in,
             focus_out,
             cx.observe(&blink_manager, |_, _, cx| cx.notify()),
             cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
+        if let Some(project) = project.upgrade() {
+            subscriptions.push(cx.subscribe_in(
+                &project,
+                window,
+                |this, _project, event, window, cx| {
+                    if let project::Event::ReconnectedToRemote = event {
+                        this.handle_remote_reconnection(window, cx);
+                    }
+                },
+            ));
+        }
 
         Self {
             terminal,
@@ -294,6 +305,40 @@ impl TerminalView {
             _subscriptions: subscriptions,
             _terminal_subscriptions: terminal_subscriptions,
         }
+    }
+
+    fn handle_remote_reconnection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let is_remote = self.terminal.read(cx).is_remote();
+        let has_exited = self.terminal.read(cx).has_exited();
+
+        if !is_remote || !has_exited {
+            return;
+        }
+
+        let Ok(builder_task) = self.project.update(cx, |project, cx| {
+            project.clone_terminal(&self.terminal, cx, None)
+        }) else {
+            return;
+        };
+
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let new_terminal = builder_task.await?;
+            this.update_in(cx, |this, window, cx| {
+                let terminal_subscriptions = subscribe_for_terminal_events(
+                    &new_terminal,
+                    workspace,
+                    window,
+                    cx,
+                );
+                this._terminal_subscriptions = terminal_subscriptions;
+                this.terminal = new_terminal;
+                this.scroll_handle = TerminalScrollHandle::new(this.terminal.read(cx));
+                cx.notify();
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     /// Enable 'embedded' mode where the terminal displays the full content with an optional limit of lines.

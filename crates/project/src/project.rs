@@ -398,6 +398,7 @@ pub enum Event {
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited,
+    ReconnectedToRemote,
 }
 
 pub struct AgentLocationChanged;
@@ -3505,6 +3506,9 @@ impl Project {
                     lsp_store.disconnected_from_ssh_remote()
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
+            }
+            remote::RemoteClientEvent::Reconnected => {
+                cx.emit(Event::ReconnectedToRemote);
             }
         }
     }

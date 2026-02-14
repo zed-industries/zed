@@ -237,6 +237,10 @@ impl State {
         matches!(self, Self::ServerNotRunning)
     }
 
+    fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected { .. })
+    }
+
     fn is_reconnecting(&self) -> bool {
         matches!(self, Self::Reconnecting { .. })
     }
@@ -325,6 +329,7 @@ pub struct RemoteClient {
 #[derive(Debug)]
 pub enum RemoteClientEvent {
     Disconnected { server_not_running: bool },
+    Reconnected,
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -708,7 +713,10 @@ impl RemoteClient {
                     }
                 });
 
-                if this.state_is(State::is_reconnect_failed) {
+                if this.state_is(State::is_connected) {
+                    cx.emit(RemoteClientEvent::Reconnected);
+                    Ok(())
+                } else if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
                 } else if this.state_is(State::is_reconnect_exhausted) {
                     Ok(())
