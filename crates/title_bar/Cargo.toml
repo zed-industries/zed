@@ -38,9 +38,9 @@ chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
 db.workspace = true
+feature_flags.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
-menu.workspace = true
 notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true

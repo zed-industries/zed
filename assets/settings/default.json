@@ -486,6 +486,18 @@
     //
     // You need to rejoin a call for this setting to apply
     "experimental.legacy_audio_compatible": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific output audio device.
+    // `null` means use system default.
+    // Any unrecognized output device will fall back to system default.
+    "experimental.output_audio_device": null,
+    // Requires 'rodio_audio: true'
+    //
+    // Select specific input audio device.
+    // `null` means use system default.
+    // Any unrecognized input device will fall back to system default.
+    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -919,8 +931,6 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Where to dock the agents panel. Can be 'left' or 'right'.
-    "agents_panel_dock": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -1000,7 +1010,7 @@
       },
     },
     // When enabled, agent edits will be displayed in single-file editors for review
-    "single_file_review": true,
+    "single_file_review": false,
     // When enabled, show voting thumbs for feedback on agent edits.
     "enable_feedback": true,
     "default_profile": "write",
@@ -1122,6 +1132,13 @@
   // - "off": Use tree-sitter and indent-based folding (default).
   // - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
   "document_folding_ranges": "off",
+
+  // Controls the source of document symbols used for outlines and breadcrumbs.
+  //
+  // Options:
+  // - "off": Use tree-sitter queries to compute document symbols (default).
+  // - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+  "document_symbols": "off",
 
   // When to automatically save edited buffers. This setting can
   // take four values.

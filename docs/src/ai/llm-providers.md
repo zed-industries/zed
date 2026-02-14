@@ -1,3 +1,8 @@
+---
+title: LLM Providers - Use Your Own API Keys in Zed
+description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, and more.
+---
+
 # LLM Providers
 
 To use AI in Zed, you need to have at least one large language model provider set up.
@@ -143,6 +148,27 @@ All data will be transmitted encrypted across Amazon's secure network.
 We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+#### Extended Context Window {#bedrock-extended-context}
+
+Anthropic models on Bedrock support a [1M token extended context window](https://docs.anthropic.com/en/docs/build-with-claude/extended-context) beta. To enable this feature, add `"allow_extended_context": true` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "authentication_method": "named_profile",
+      "region": "your-aws-region",
+      "profile": "your-profile-name",
+      "allow_extended_context": true
+    }
+  }
+}
+```
+
+When enabled, Zed will include the `anthropic_beta` field in requests to Bedrock, enabling the 1M token context window for supported Anthropic models such as Claude Sonnet 4.5 and Claude Opus 4.6.
+
+> **Note**: Extended context usage may incur additional API costs. Refer to your AWS Bedrock pricing for details.
 
 ### Anthropic {#anthropic}
 
@@ -397,14 +423,23 @@ models are available.
 
 #### Ollama Context Length {#ollama-context}
 
-Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
-Zed API requests to Ollama include this as the `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of RAM are able to use most models out of the box.
-
-See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
+Zed API requests to Ollama include the context length as the `num_ctx` parameter. By default, Zed uses a context length of `4096` tokens for all Ollama models.
 
 > **Note**: Token counts displayed in the Agent Panel are only estimates and will differ from the model's native tokenizer.
 
-Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
+You can set a context length for all Ollama models using the `context_window` setting. This can also be configured in the Ollama provider settings UI:
+
+```json [settings]
+{
+  "language_models": {
+    "ollama": {
+      "context_window": 8192
+    }
+  }
+}
+```
+
+Alternatively, you can configure the context length per-model using the `max_tokens` field in `available_models`:
 
 ```json [settings]
 {
@@ -425,6 +460,8 @@ Depending on your hardware or use-case you may wish to limit or increase the con
   }
 }
 ```
+
+> **Note**: If `context_window` is set, it overrides any per-model `max_tokens` values.
 
 If you specify a context length that is too large for your hardware, Ollama will log an error.
 You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (macOS) or `journalctl -u ollama -f` (Linux).

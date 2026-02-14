@@ -1,20 +1,11 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
-#![cfg_attr(any(not(target_os = "macos"), feature = "macos-blade"), allow(unused))]
-
-//TODO: consider generating shader code for WGSL
-//TODO: deprecate "runtime-shaders" and "macos-blade"
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
 
 use std::env;
 
 fn main() {
     let target = env::var("CARGO_CFG_TARGET_OS");
     println!("cargo::rustc-check-cfg=cfg(gles)");
-
-    #[cfg(any(
-        not(any(target_os = "macos", target_os = "windows")),
-        all(target_os = "macos", feature = "macos-blade")
-    ))]
-    check_wgsl_shaders();
 
     match target.as_deref() {
         Ok("macos") => {
@@ -28,32 +19,6 @@ fn main() {
         _ => (),
     };
 }
-
-#[cfg(any(
-    not(any(target_os = "macos", target_os = "windows")),
-    all(target_os = "macos", feature = "macos-blade")
-))]
-fn check_wgsl_shaders() {
-    use std::path::PathBuf;
-    use std::process;
-    use std::str::FromStr;
-
-    let shader_source_path = "./src/platform/blade/shaders.wgsl";
-    let shader_path = PathBuf::from_str(shader_source_path).unwrap();
-    println!("cargo:rerun-if-changed={}", &shader_path.display());
-
-    let shader_source = std::fs::read_to_string(&shader_path).unwrap();
-
-    match naga::front::wgsl::parse_str(&shader_source) {
-        Ok(_) => {
-            // All clear
-        }
-        Err(e) => {
-            println!("cargo::error=WGSL shader compilation failed:\n{}", e);
-            process::exit(1);
-        }
-    }
-}
 #[cfg(target_os = "macos")]
 mod macos {
     use std::{
@@ -65,15 +30,13 @@ mod macos {
 
     pub(super) fn build() {
         generate_dispatch_bindings();
-        #[cfg(not(feature = "macos-blade"))]
-        {
-            let header_path = generate_shader_bindings();
 
-            #[cfg(feature = "runtime_shaders")]
-            emit_stitched_shaders(&header_path);
-            #[cfg(not(feature = "runtime_shaders"))]
-            compile_metal_shaders(&header_path);
-        }
+        let header_path = generate_shader_bindings();
+
+        #[cfg(feature = "runtime_shaders")]
+        emit_stitched_shaders(&header_path);
+        #[cfg(not(feature = "runtime_shaders"))]
+        compile_metal_shaders(&header_path);
     }
 
     fn generate_dispatch_bindings() {

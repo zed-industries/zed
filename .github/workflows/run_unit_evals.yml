@@ -42,6 +42,10 @@ jobs:
       run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -49,10 +53,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
-    - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
     - name: ./script/run-unit-evals
       run: ./script/run-unit-evals
       env:

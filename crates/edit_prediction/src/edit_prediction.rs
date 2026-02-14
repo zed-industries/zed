@@ -72,7 +72,6 @@ pub mod zeta2;
 #[cfg(test)]
 mod edit_prediction_tests;
 
-use crate::capture_example::should_send_testing_zeta2_request;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::ollama::Ollama;
@@ -231,6 +230,71 @@ pub enum UserActionType {
 pub struct StoredEvent {
     pub event: Arc<zeta_prompt::Event>,
     pub old_snapshot: TextBufferSnapshot,
+    pub edit_range: Range<Anchor>,
+}
+
+impl StoredEvent {
+    fn can_merge(
+        &self,
+        next_old_event: &&&StoredEvent,
+        new_snapshot: &TextBufferSnapshot,
+        last_edit_range: &Range<Anchor>,
+    ) -> bool {
+        // Events must be for the same buffer
+        if self.old_snapshot.remote_id() != next_old_event.old_snapshot.remote_id() {
+            return false;
+        }
+
+        let a_is_predicted = matches!(
+            self.event.as_ref(),
+            zeta_prompt::Event::BufferChange {
+                predicted: true,
+                ..
+            }
+        );
+        let b_is_predicted = matches!(
+            next_old_event.event.as_ref(),
+            zeta_prompt::Event::BufferChange {
+                predicted: true,
+                ..
+            }
+        );
+
+        // If events come from the same source (both predicted or both manual) then
+        // we would have coalesced them already.
+        if a_is_predicted == b_is_predicted {
+            return false;
+        }
+
+        let left_range = self.edit_range.to_point(new_snapshot);
+        let right_range = next_old_event.edit_range.to_point(new_snapshot);
+        let latest_range = last_edit_range.to_point(&new_snapshot);
+
+        // Events near to the latest edit are not merged if their sources differ.
+        if lines_between_ranges(&left_range, &latest_range)
+            .min(lines_between_ranges(&right_range, &latest_range))
+            <= CHANGE_GROUPING_LINE_SPAN
+        {
+            return false;
+        }
+
+        // Events that are distant from each other are not merged.
+        if lines_between_ranges(&left_range, &right_range) > CHANGE_GROUPING_LINE_SPAN {
+            return false;
+        }
+
+        true
+    }
+}
+
+fn lines_between_ranges(left: &Range<Point>, right: &Range<Point>) -> u32 {
+    if left.start > right.end {
+        return left.start.row - right.end.row;
+    }
+    if right.start > left.end {
+        return right.start.row - left.end.row;
+    }
+    0
 }
 
 struct ProjectState {
@@ -260,18 +324,6 @@ impl ProjectState {
     }
 
     pub fn events(&self, cx: &App) -> Vec<StoredEvent> {
-        self.events
-            .iter()
-            .cloned()
-            .chain(
-                self.last_event
-                    .as_ref()
-                    .and_then(|event| event.finalize(&self.license_detection_watchers, cx)),
-            )
-            .collect()
-    }
-
-    pub fn events_split_by_pause(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
             .cloned()
@@ -430,6 +482,7 @@ struct LastEvent {
     old_file: Option<Arc<dyn File>>,
     new_file: Option<Arc<dyn File>>,
     edit_range: Option<Range<Anchor>>,
+    predicted: bool,
     snapshot_after_last_editing_pause: Option<TextBufferSnapshot>,
     last_edit_time: Option<Instant>,
 }
@@ -454,7 +507,8 @@ impl LastEvent {
                     })
                 });
 
-        let diff = compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
+        let (diff, edit_range) =
+            compute_diff_between_snapshots(&self.old_snapshot, &self.new_snapshot)?;
 
         if path == old_path && diff.is_empty() {
             None
@@ -465,9 +519,10 @@ impl LastEvent {
                     path,
                     diff,
                     in_open_source_repo,
-                    // TODO: Actually detect if this edit was predicted or not
-                    predicted: false,
+                    predicted: self.predicted,
                 }),
+                edit_range: self.new_snapshot.anchor_before(edit_range.start)
+                    ..self.new_snapshot.anchor_before(edit_range.end),
                 old_snapshot: self.old_snapshot.clone(),
             })
         }
@@ -484,6 +539,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             edit_range: None,
+            predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -494,6 +550,7 @@ impl LastEvent {
             old_file: self.old_file.clone(),
             new_file: self.new_file.clone(),
             edit_range: None,
+            predicted: self.predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: self.last_edit_time,
         };
@@ -505,7 +562,7 @@ impl LastEvent {
 pub(crate) fn compute_diff_between_snapshots(
     old_snapshot: &TextBufferSnapshot,
     new_snapshot: &TextBufferSnapshot,
-) -> Option<String> {
+) -> Option<(String, Range<Point>)> {
     let edits: Vec<Edit<usize>> = new_snapshot
         .edits_since::<usize>(&old_snapshot.version)
         .collect();
@@ -545,7 +602,7 @@ pub(crate) fn compute_diff_between_snapshots(
         new_context_start_row,
     );
 
-    Some(diff)
+    Some((diff, new_start_point..new_end_point))
 }
 
 fn buffer_path_with_id_fallback(
@@ -716,17 +773,6 @@ impl EditPredictionStore {
             .unwrap_or_default()
     }
 
-    pub fn edit_history_for_project_with_pause_split_last_event(
-        &self,
-        project: &Entity<Project>,
-        cx: &App,
-    ) -> Vec<StoredEvent> {
-        self.projects
-            .get(&project.entity_id())
-            .map(|project_state| project_state.events_split_by_pause(cx))
-            .unwrap_or_default()
-    }
-
     pub fn context_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
@@ -734,10 +780,19 @@ impl EditPredictionStore {
     ) -> Vec<RelatedFile> {
         self.projects
             .get(&project.entity_id())
-            .map(|project| {
-                project
-                    .context
-                    .update(cx, |context, cx| context.related_files(cx))
+            .map(|project_state| {
+                project_state.context.update(cx, |context, cx| {
+                    context
+                        .related_files_with_buffers(cx)
+                        .map(|(mut related_file, buffer)| {
+                            related_file.in_open_source_repo = buffer
+                                .read(cx)
+                                .file()
+                                .map_or(false, |file| self.is_file_open_source(&project, file, cx));
+                            related_file
+                        })
+                        .collect()
+                })
             })
             .unwrap_or_default()
     }
@@ -785,9 +840,9 @@ impl EditPredictionStore {
         self.projects
             .get(&project.entity_id())
             .map(|project| {
-                project
-                    .context
-                    .update(cx, |context, cx| context.related_files_with_buffers(cx))
+                project.context.update(cx, |context, cx| {
+                    context.related_files_with_buffers(cx).collect()
+                })
             })
             .unwrap_or_default()
     }
@@ -1011,7 +1066,7 @@ impl EditPredictionStore {
                                 if let language::BufferEvent::Edited = event
                                     && let Some(project) = project.upgrade()
                                 {
-                                    this.report_changes_for_buffer(&buffer, &project, cx);
+                                    this.report_changes_for_buffer(&buffer, &project, false, cx);
                                 }
                             }
                         }),
@@ -1032,6 +1087,7 @@ impl EditPredictionStore {
         &mut self,
         buffer: &Entity<Buffer>,
         project: &Entity<Project>,
+        is_predicted: bool,
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
@@ -1065,30 +1121,32 @@ impl EditPredictionStore {
             last_offset = Some(edit.new.end);
         }
 
-        if num_edits > 0 {
-            let action_type = match (total_deleted, total_inserted, num_edits) {
-                (0, ins, n) if ins == n => UserActionType::InsertChar,
-                (0, _, _) => UserActionType::InsertSelection,
-                (del, 0, n) if del == n => UserActionType::DeleteChar,
-                (_, 0, _) => UserActionType::DeleteSelection,
-                (_, ins, n) if ins == n => UserActionType::InsertChar,
-                (_, _, _) => UserActionType::InsertSelection,
-            };
+        let Some(edit_range) = edit_range else {
+            return;
+        };
 
-            if let Some(offset) = last_offset {
-                let point = new_snapshot.offset_to_point(offset);
-                let timestamp_epoch_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                project_state.record_user_action(UserActionRecord {
-                    action_type,
-                    buffer_id: buffer.entity_id(),
-                    line_number: point.row,
-                    offset,
-                    timestamp_epoch_ms,
-                });
-            }
+        let action_type = match (total_deleted, total_inserted, num_edits) {
+            (0, ins, n) if ins == n => UserActionType::InsertChar,
+            (0, _, _) => UserActionType::InsertSelection,
+            (del, 0, n) if del == n => UserActionType::DeleteChar,
+            (_, 0, _) => UserActionType::DeleteSelection,
+            (_, ins, n) if ins == n => UserActionType::InsertChar,
+            (_, _, _) => UserActionType::InsertSelection,
+        };
+
+        if let Some(offset) = last_offset {
+            let point = new_snapshot.offset_to_point(offset);
+            let timestamp_epoch_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            project_state.record_user_action(UserActionRecord {
+                action_type,
+                buffer_id: buffer.entity_id(),
+                line_number: point.row,
+                offset,
+                timestamp_epoch_ms,
+            });
         }
 
         let events = &mut project_state.events;
@@ -1099,20 +1157,18 @@ impl EditPredictionStore {
                 == last_event.new_snapshot.remote_id()
                 && old_snapshot.version == last_event.new_snapshot.version;
 
+            let prediction_source_changed = is_predicted != last_event.predicted;
+
             let should_coalesce = is_next_snapshot_of_same_buffer
-                && edit_range
+                && !prediction_source_changed
+                && last_event
+                    .edit_range
                     .as_ref()
-                    .zip(last_event.edit_range.as_ref())
-                    .is_some_and(|(a, b)| {
-                        let a = a.to_point(&new_snapshot);
-                        let b = b.to_point(&new_snapshot);
-                        if a.start > b.end {
-                            a.start.row.abs_diff(b.end.row) <= CHANGE_GROUPING_LINE_SPAN
-                        } else if b.start > a.end {
-                            b.start.row.abs_diff(a.end.row) <= CHANGE_GROUPING_LINE_SPAN
-                        } else {
-                            true
-                        }
+                    .is_some_and(|last_edit_range| {
+                        lines_between_ranges(
+                            &edit_range.to_point(&new_snapshot),
+                            &last_edit_range.to_point(&new_snapshot),
+                        ) <= CHANGE_GROUPING_LINE_SPAN
                     });
 
             if should_coalesce {
@@ -1125,7 +1181,7 @@ impl EditPredictionStore {
                         Some(last_event.new_snapshot.clone());
                 }
 
-                last_event.edit_range = edit_range;
+                last_event.edit_range = Some(edit_range);
                 last_event.new_snapshot = new_snapshot;
                 last_event.last_edit_time = Some(now);
                 return;
@@ -1141,12 +1197,15 @@ impl EditPredictionStore {
             }
         }
 
+        merge_trailing_events_if_needed(events, &old_snapshot, &new_snapshot, &edit_range);
+
         project_state.last_event = Some(LastEvent {
             old_file,
             new_file,
             old_snapshot,
             new_snapshot,
-            edit_range,
+            edit_range: Some(edit_range),
+            predicted: is_predicted,
             snapshot_after_last_editing_pause: None,
             last_edit_time: Some(now),
         });
@@ -1193,11 +1252,18 @@ impl EditPredictionStore {
     }
 
     fn accept_current_prediction(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
+        let Some(current_prediction) = self
+            .projects
+            .get_mut(&project.entity_id())
+            .and_then(|project_state| project_state.current_prediction.take())
+        else {
             return;
         };
 
-        let Some(current_prediction) = project_state.current_prediction.take() else {
+        self.report_changes_for_buffer(&current_prediction.prediction.buffer, project, true, cx);
+
+        // can't hold &mut project_state ref across report_changes_for_buffer_call
+        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
 
@@ -1719,7 +1785,7 @@ impl EditPredictionStore {
 
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
-        let stored_events = project_state.events_split_by_pause(cx);
+        let stored_events = project_state.events(cx);
         let has_events = !stored_events.is_empty();
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.into_iter().map(|e| e.event).collect();
@@ -1771,15 +1837,18 @@ impl EditPredictionStore {
         };
 
         let task = match &self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => {
-                if should_send_testing_zeta2_request() {
-                    let mut zeta2_inputs = inputs.clone();
-                    zeta2_inputs.trigger = PredictEditsRequestTrigger::Testing;
-                    zeta2::request_prediction_with_zeta2(self, zeta2_inputs, cx).detach();
-                }
-                zeta1::request_prediction_with_zeta1(self, inputs, cx)
-            }
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(self, inputs, cx),
+            EditPredictionModel::Zeta1 => zeta2::request_prediction_with_zeta2(
+                self,
+                inputs,
+                Some(zeta_prompt::EditPredictionModelKind::Zeta1),
+                cx,
+            ),
+            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(
+                self,
+                inputs,
+                Some(zeta_prompt::EditPredictionModelKind::Zeta2),
+                cx,
+            ),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
             EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
@@ -2136,25 +2205,6 @@ impl EditPredictionStore {
             .is_some_and(|watcher| watcher.is_project_open_source())
     }
 
-    fn can_collect_file(&self, project: &Entity<Project>, file: &Arc<dyn File>, cx: &App) -> bool {
-        self.data_collection_choice.is_enabled(cx) && self.is_file_open_source(project, file, cx)
-    }
-
-    fn can_collect_events(&self, events: &[Arc<zeta_prompt::Event>], cx: &App) -> bool {
-        if !self.data_collection_choice.is_enabled(cx) {
-            return false;
-        }
-        events.iter().all(|event| {
-            matches!(
-                event.as_ref(),
-                zeta_prompt::Event::BufferChange {
-                    in_open_source_repo: true,
-                    ..
-                }
-            )
-        })
-    }
-
     fn load_data_collection_choice() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
@@ -2216,6 +2266,67 @@ impl EditPredictionStore {
         );
         self.client.telemetry().flush_events().detach();
         cx.notify();
+    }
+}
+
+fn merge_trailing_events_if_needed(
+    events: &mut VecDeque<StoredEvent>,
+    end_snapshot: &TextBufferSnapshot,
+    latest_snapshot: &TextBufferSnapshot,
+    latest_edit_range: &Range<Anchor>,
+) {
+    let mut next_old_event = None;
+    let mut mergeable_count = 0;
+    for old_event in events.iter().rev() {
+        if let Some(next_old_event) = &next_old_event
+            && !old_event.can_merge(&next_old_event, latest_snapshot, latest_edit_range)
+        {
+            break;
+        }
+        mergeable_count += 1;
+        next_old_event = Some(old_event);
+    }
+
+    if mergeable_count <= 1 {
+        return;
+    }
+
+    let mut events_to_merge = events.range(events.len() - mergeable_count..).peekable();
+    let oldest_event = events_to_merge.peek().unwrap();
+    let oldest_snapshot = oldest_event.old_snapshot.clone();
+
+    if let Some((diff, edited_range)) =
+        compute_diff_between_snapshots(&oldest_snapshot, end_snapshot)
+    {
+        let merged_event = match oldest_event.event.as_ref() {
+            zeta_prompt::Event::BufferChange {
+                old_path,
+                path,
+                in_open_source_repo,
+                ..
+            } => StoredEvent {
+                event: Arc::new(zeta_prompt::Event::BufferChange {
+                    old_path: old_path.clone(),
+                    path: path.clone(),
+                    diff,
+                    in_open_source_repo: *in_open_source_repo,
+                    predicted: events_to_merge.all(|e| {
+                        matches!(
+                            e.event.as_ref(),
+                            zeta_prompt::Event::BufferChange {
+                                predicted: true,
+                                ..
+                            }
+                        )
+                    }),
+                }),
+                old_snapshot: oldest_snapshot.clone(),
+                edit_range: end_snapshot.anchor_before(edited_range.start)
+                    ..end_snapshot.anchor_before(edited_range.end),
+            },
+        };
+        events.truncate(events.len() - mergeable_count);
+        events.push_back(merged_event);
     }
 }
 
