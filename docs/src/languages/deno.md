@@ -1,3 +1,8 @@
+---
+title: Deno
+description: "Configure Deno language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Deno
 
 Deno support is available through the [Deno extension](https://github.com/zed-extensions/deno).
@@ -6,7 +11,9 @@ Deno support is available through the [Deno extension](https://github.com/zed-ex
 
 ## Deno Configuration
 
-To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable deno by adding the following to your `settings.json`:
+To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable Deno.
+
+Configure language servers and formatters in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript/TypeScript/TSX, or add the following to your `settings.json`:
 
 ```json [settings]
 {

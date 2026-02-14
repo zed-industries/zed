@@ -3,15 +3,11 @@ title: Getting Started with Zed
 description: Get started with Zed, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
 ---
 
-# Getting Started
+# Getting Started {#getting-started}
 
-Welcome to Zed! We are excited to have you. Zed is a powerful multiplayer code editor designed to stay out of your way and help you build what's next.
+Zed is a code editor written in Rust with GPU-accelerated rendering and built-in multiplayer support. This guide covers the essential commands, configuration basics, and navigation patterns.
 
-This guide gets you from zero to productive in Zed. You'll learn the essential commands, configure your environment, and find your way around.
-
-## Quick Start
-
-### 1. Open a Project
+## Open a Project {#open-project}
 
 Open a folder from the command line:
 
@@ -19,50 +15,50 @@ Open a folder from the command line:
 zed ~/projects/my-app
 ```
 
-Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
+Or use {#kb workspace::Open} to open a folder from within Zed.
 
-### 2. Learn the Essential Commands
+## Essential Commands {#essential-commands}
 
-| Action          | macOS         | Linux/Windows  |
-| --------------- | ------------- | -------------- |
-| Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
-| Go to file      | `Cmd+P`       | `Ctrl+P`       |
-| Go to symbol    | `Cmd+Shift+O` | `Ctrl+Shift+O` |
-| Find in project | `Cmd+Shift+F` | `Ctrl+Shift+F` |
-| Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
-| Open settings   | `Cmd+,`       | `Ctrl+,`       |
+| Action          | Keybinding                        |
+| --------------- | --------------------------------- |
+| Command palette | {#kb command_palette::Toggle}     |
+| Go to file      | {#kb file_finder::Toggle}         |
+| Go to symbol    | {#kb project_symbols::Toggle}     |
+| Find in project | {#kb pane::DeploySearch}          |
+| Toggle terminal | {#kb terminal_panel::ToggleFocus} |
+| Open settings   | {#kb zed::OpenSettings}           |
 
-The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
+The command palette ({#kb command_palette::Toggle}) provides access to every action in Zed. If you forget a shortcut, search for it there.
 
-### 3. Configure Your Editor
+## Configure Your Editor {#configure}
 
-Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Search for any setting and change it directly.
+Open the Settings Editor with {#kb zed::OpenSettings}. Search for any setting and change it directly.
 
 Common first changes:
 
-- **Theme**: Press `Cmd+K Cmd+T` (macOS) or `Ctrl+K Ctrl+T` (Linux/Windows) to open the theme selector
+- **Theme**: {#kb theme_selector::Toggle} opens the theme selector
 - **Font**: Search for `buffer_font_family` in Settings
 - **Format on save**: Search for `format_on_save` and set to `on`
 
-### 4. Set Up Your Language
+## Set Up Your Language {#languages}
 
 Zed includes built-in support for many languages. For others, install the extension:
 
-1. Open Extensions with `Cmd+Shift+X` (macOS) or `Ctrl+Shift+X` (Linux/Windows)
+1. Open Extensions with {#kb zed::Extensions}
 2. Search for your language
 3. Click Install
 
 See [Languages](./languages.md) for language-specific setup instructions.
 
-### 5. Try AI Features
+## AI Features {#ai}
 
-Zed includes built-in AI assistance. Open the Agent Panel with `Cmd+Shift+A` (macOS) or `Ctrl+Shift+A` (Linux/Windows) to start a conversation, or use `Cmd+Enter` (macOS) / `Ctrl+Enter` (Linux/Windows) for inline assistance.
+Zed includes built-in AI assistance. Open the Agent Panel with {#kb agent::ToggleFocus} to start a conversation, or use {#kb assistant::InlineAssist} for inline assistance.
 
 See [AI Overview](./ai/overview.md) to configure providers and learn what's possible.
 
-## Coming from Another Editor?
+## Coming from Another Editor? {#migration}
 
-We have dedicated guides for switching from other editors:
+Migration guides for common editors:
 
 - [VS Code](./migrate/vs-code.md) — Import settings, map keybindings, find equivalent features
 - [IntelliJ IDEA](./migrate/intellij.md) — Adapt to Zed's approach to navigation and refactoring
@@ -70,14 +66,14 @@ We have dedicated guides for switching from other editors:
 - [WebStorm](./migrate/webstorm.md) — Configure JavaScript/TypeScript workflows
 - [RustRover](./migrate/rustrover.md) — Rust development in Zed
 
-You can also enable familiar keybindings:
+Familiar keybinding modes:
 
 - **Vim**: Enable `vim_mode` in settings. See [Vim Mode](./vim.md).
 - **Helix**: Enable `helix_mode` in settings. See [Helix Mode](./helix.md).
 
-## Join the Community
+## Community {#community}
 
-Zed is proudly open source, and we get better with every contribution. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
+Zed is open source. Contribute code, report bugs, or suggest features:
 
 - [Discord](https://discord.com/invite/zedindustries)
 - [GitHub Discussions](https://github.com/zed-industries/zed/discussions)

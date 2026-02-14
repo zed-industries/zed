@@ -1,3 +1,8 @@
+---
+title: Toolchains
+description: "Zed projects offer a dedicated UI for toolchain selection, which lets you pick a set of tools for working with a given language in a current project."
+---
+
 # Toolchains
 
 Zed projects offer a dedicated UI for toolchain selection, which lets you pick a set of tools for working with a given language in a current project.

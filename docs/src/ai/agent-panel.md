@@ -87,7 +87,7 @@ If you send a prompt to the Agent and then put Zed in the background, you can ch
 - a visual notification that appears in the top right of your screen
 - a sound notification
 
-These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.
+These notifications can be used together or individually. Configure them in Settings ({#kb zed::OpenSettings}) by searching for "Notify When Agent Waiting" or "Play Sound When Agent Done", or turn both off entirely.
 
 ### Reviewing Changes {#reviewing-changes}
 
@@ -99,7 +99,7 @@ You can accept or reject each individual change hunk, or the whole set of change
 
 Edit diffs also appear in singleton buffers.
 If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
-You can turn this off, though, through the `agent.single_file_review` setting.
+You can turn this off in Settings ({#kb zed::OpenSettings}) by searching for "Single File Review".
 
 ## Adding Context {#adding-context}
 
@@ -125,14 +125,14 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers (via [a custom API key](./llm-providers.md) or [Zed's hosted models](./models.md)), you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ### Favoriting Models
 
-You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
+You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or by configuring "Favorite Models" in Settings ({#kb zed::OpenSettings}).
 
 Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
 
@@ -170,7 +170,7 @@ In the Agent Profile modal, select a built-in profile, navigate to `Configure To
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your `settings.json` file.
+All custom profiles can be edited via the Agent Profile modal or by hand in your settings file ([how to edit](../configuring-zed.md#settings-files)).
 
 To delete a custom profile, open the Agent Profile modal, select the profile you want to remove, and click the delete button.
 
@@ -184,7 +184,7 @@ Zed's Agent Panel provides the `agent.tool_permissions.default` setting to contr
 - `"allow"` — Auto-approves tool actions without prompting
 - `"deny"` — Blocks all tool actions
 
-You can change this in either your `settings.json` or via the Agent Panel's settings view.
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Tool Permissions", or via the Agent Panel's settings view.
 
 Even with `"default": "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected — so you can auto-approve most actions while blocking or gating specific ones. For the `copy_path` and `move_path` tools, patterns are matched independently against both the source and destination paths. See [Per-tool Permission Rules](./agent-settings.md#per-tool-permission-rules) for details.
 

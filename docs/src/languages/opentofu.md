@@ -1,3 +1,8 @@
+---
+title: OpenTofu
+description: "Configure OpenTofu language support in Zed, including language servers, formatting, and debugging."
+---
+
 # OpenTofu
 
 OpenTofu support is available through the [OpenTofu extension](https://github.com/ashpool37/zed-extension-opentofu).

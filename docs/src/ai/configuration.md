@@ -16,7 +16,7 @@ Zed is an AI code editor with flexible configuration. You can configure multiple
 
 ## Turning AI Off Entirely
 
-To disable all AI features, add the following to your `settings.json`:
+Disable all AI features in Settings ({#kb zed::OpenSettings}) by searching for "Disable AI", or add to your settings file:
 
 ```json [settings]
 {

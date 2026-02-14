@@ -7,7 +7,7 @@ description: Full Vim emulation in Zed with motions, text objects, visual mode, 
 
 Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.
 
-## Zed's vim mode design
+## Zed's vim mode design {#vim-design}
 
 Vim mode replicates the behavior of motions and commands where it makes sense and uses Zed-specific functionality where Zed's approach is better. The goal is a familiar experience that works out of the box without requiring configuration.
 
@@ -26,7 +26,7 @@ There are four types of features in vim mode that use Zed's core functionality, 
 
 > **Note:** The foundations of Zed's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue on GitHub](https://github.com/zed-industries/zed/issues).
 
-## Enabling and disabling vim mode
+## Enabling and disabling vim mode {#enabling-vim}
 
 When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
@@ -40,7 +40,7 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
-## Zed-specific features
+## Zed-specific features {#zed-features}
 
 Zed is built on a modern foundation that (among other things) uses Tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
 
@@ -238,7 +238,7 @@ With this configuration, you can use commands like:
 - `ciq` - Change inside quotes using AnyQuotes behavior
 - `ciQ` - Change inside quotes using MiniQuotes behavior
 
-## Command palette
+## Command palette {#command-palette}
 
 Vim mode allows you to open Zed's command palette with `:`. You can then type to access any usual Zed command. Additionally, vim mode adds aliases for popular Vim commands to ensure your muscle memory transfers to Zed. For example, you can write `:w` or `:write` to save the file.
 
@@ -362,7 +362,7 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 - `:zlog` for "open zed log"
 - `:clank` for "cancel language server work"
 
-## Customizing key bindings
+## Customizing key bindings {#customizing-bindings}
 
 ### Selecting the correct context
 
@@ -476,7 +476,7 @@ Subword motion, which allows you to navigate and select individual words in `cam
 }
 ```
 
-> Note: Operations like `dw` remain unaffected. If you would like operations to
+> **Note:** Operations like `dw` remain unaffected. If you would like operations to
 > also use subword motion, remove `vim_mode != operator` from the `context`.
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
@@ -551,7 +551,7 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 },
 ```
 
-## Changing vim mode settings
+## Changing vim mode settings {#vim-settings}
 
 You can change the following settings to modify vim mode's behavior:
 
@@ -596,7 +596,7 @@ Here's an example of these settings changed:
 }
 ```
 
-## Useful core Zed settings for vim mode
+## Useful core Zed settings for vim mode {#core-settings}
 
 Here are a few general Zed settings that can help you fine-tune your Vim experience:
 

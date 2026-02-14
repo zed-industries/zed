@@ -1,3 +1,8 @@
+---
+title: Building Zed for macOS
+description: "Guide to building zed for macos for Zed development."
+---
+
 # Building Zed for macOS
 
 ## Repository

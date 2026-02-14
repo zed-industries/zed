@@ -1,3 +1,8 @@
+---
+title: Extension Capabilities
+description: "Extension Capabilities for Zed extensions."
+---
+
 # Extension Capabilities
 
 The operations that Zed extensions are able to perform are governed by a capability system.

@@ -1,6 +1,13 @@
-# Channels
+---
+title: Channels
+description: "Persistent collaboration rooms in Zed for sharing projects, voice chat, and real-time code editing."
+---
 
-Channels provide a way to streamline collaborating for software engineers in many ways, but particularly:
+# Channels {#channels}
+
+Channels are persistent rooms for team collaboration. Each channel can contain shared projects, voice chat, and collaborative notes.
+
+Channels support:
 
 - Pairing – when working on something together, you both have your own screen, mouse, and keyboard.
 - Mentoring – it's easy to jump in to someone else's context, and help them get unstuck, without the friction of pushing code up.
@@ -8,7 +15,7 @@ Channels provide a way to streamline collaborating for software engineers in man
 - Ambient awareness – you can see what everyone else is working on with no need for status emails or meetings.
 
 Each channel corresponds to an ongoing project or work-stream.
-You can see who's in a channel as their avatars will show up in the sidebar.
+You can see who's in a channel as their avatars will show up in the Collab Panel.
 This makes it easy to see what everyone is doing and where to find them if needed.
 
 Create a channel by clicking the `+` icon next to the `Channels` text in the collab panel.
@@ -28,14 +35,13 @@ You can invite collaborators by right clicking and selecting `Manage members`.
 When you have subchannels nested under others, permissions are inherited.
 For instance, adding people to the top-level channel in your channel tree will automatically give them access to its subchannels.
 
-Once you have added someone, they can either join your channel by clicking on it in their Zed sidebar, or you can share the link to the channel so that they can join directly.
+Once you have added someone, they can either join your channel by clicking on it in their Collab Panel, or you can share the link to the channel so that they can join directly.
 
 ## Voice Chat
 
 You can mute/unmute your microphone via the microphone icon in the upper right-hand side of the window.
 
-> Note: When joining a channel, Zed will automatically share your microphone with other users in the call, if your OS allows it.
-> If you'd prefer your microphone to be off when joining a channel, you can do so via the [`mute_on_join`](../reference/all-settings.md#calls) setting.
+> **Note:** When joining a channel, Zed automatically shares your microphone with other users in the call, if your OS allows it. To start muted, use the [`mute_on_join`](../reference/all-settings.md#calls) setting.
 
 ## Sharing Projects
 
@@ -64,7 +70,7 @@ This is similar to a Google Doc, except powered by Zed's collaborative software 
 
 Open the channel notes by clicking on the document icon to the right of the channel name in the collaboration panel.
 
-> Note: You can view a channel's notes without joining the channel, if you'd just like to read up on what has been written.
+> **Note:** You can view a channel's notes without joining the channel.
 
 ## Following Collaborators
 
@@ -104,8 +110,7 @@ If you have multiple displays, you can choose which one to share via the chevron
 After you've shared your screen, others can click on the `Screen` entry under your name in the collaboration panel to open a tab that always keeps it visible.
 If they are following you, Zed will automatically switch between following your cursor in their Zed instance and your screen share, depending on whether you are focused on Zed or another application, like a web browser.
 
-> Note: Collaborators can see your entire screen when you are screen sharing, so be careful not to share anything you don't want to share.
-> Remember to stop screen sharing when you are finished.
+> **Warning:** Collaborators can see your entire screen when sharing. Stop screen sharing when finished.
 
 ## Livestreaming & Guests
 

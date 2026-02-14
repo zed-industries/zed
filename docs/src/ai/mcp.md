@@ -44,7 +44,7 @@ Popular servers:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -143,7 +143,7 @@ Zed's Agent Panel provides the `agent.tool_permissions.default` setting to contr
 - `"allow"` — Auto-approves tool actions without prompting
 - `"deny"` — Blocks all tool actions
 
-You can change this in either your `settings.json` or through the Agent Panel settings.
+Configure this in Settings ({#kb zed::OpenSettings}) by searching for "Tool Permissions", or through the Agent Panel settings.
 
 Even with `"default": "allow"`, per-tool `always_deny` and `always_confirm` patterns are still respected, so you can auto-approve most actions while still blocking or gating sensitive ones.
 

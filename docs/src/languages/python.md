@@ -1,3 +1,8 @@
+---
+title: Python
+description: "Configure Python language support in Zed, including language servers, formatting, and debugging."
+---
+
 # How to Set Up Python in Zed
 
 Python support is available natively in Zed.
@@ -75,7 +80,9 @@ Other built-in language servers are:
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
-These are disabled by default, but can be enabled in your settings. For example:
+These are disabled by default, but can be enabled in your settings.
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
@@ -194,7 +201,9 @@ Zed uses [Ruff](https://github.com/astral-sh/ruff) for formatting and linting Py
 
 ### Configuring Formatting
 
-Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter:
+Formatting in Zed follows a two-phase pipeline: first, code actions on format (`code_actions_on_format`) are executed, followed by the configured formatter.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
@@ -213,7 +222,9 @@ Formatting in Zed follows a two-phase pipeline: first, code actions on format (`
 }
 ```
 
-These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase:
+These two phases are independent. For example, if you prefer [Black](https://github.com/psf/black) for code formatting, but want to keep Ruff's import sorting, you only need to change the formatter phase.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {
@@ -237,7 +248,9 @@ These two phases are independent. For example, if you prefer [Black](https://git
 
 To completely switch to another tool and prevent Ruff from modifying your code at all, you must explicitly set `source.organizeImports.ruff` to false in the `code_actions_on_format` section, in addition to changing the formatter.
 
-To prevent any formatting actions when you save, you can disable format-on-save for Python files in your `settings.json`:
+To prevent any formatting actions when you save, you can disable format-on-save for Python files.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Python, or add to your settings file:
 
 ```json [settings]
 {

@@ -1,3 +1,8 @@
+---
+title: Jsonnet
+description: "Configure Jsonnet language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Jsonnet
 
 Jsonnet language support in Zed is provided by the community-maintained [Jsonnet extension](https://github.com/narqo/zed-jsonnet).

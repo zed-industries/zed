@@ -1,3 +1,8 @@
+---
+title: Using a debugger
+description: "Guide to using a debugger for Zed development."
+---
+
 # Using a debugger
 
 > **DISCLAIMER**: This is not documentation for [configuring Zed's debugger](../debugger.md).

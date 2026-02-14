@@ -1,3 +1,8 @@
+---
+title: OCaml
+description: "Configure OCaml language support in Zed, including language servers, formatting, and debugging."
+---
+
 # OCaml
 
 OCaml support is available through the [OCaml extension](https://github.com/zed-extensions/ocaml).

@@ -7,9 +7,9 @@ description: Customize Zed's keyboard shortcuts. Rebind actions, create key sequ
 
 Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
 
-## Predefined Keymaps
+## Predefined Keymaps {#predefined-keymaps}
 
-If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
+If you're used to a specific editor's defaults, you can change your `base_keymap` in Settings ({#kb zed::OpenSettings}), or add the following to your `settings.json` ({#kb zed::OpenSettingsFile}).
 We currently support:
 
 - VS Code (default)
@@ -26,7 +26,7 @@ This setting can also be changed via the command palette through the `zed: toggl
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
-## Keymap Editor
+## Keymap Editor {#keymap-editor}
 
 You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
 
@@ -36,7 +36,7 @@ You can also customize them right from there, either by clicking on the pencil i
 
 Anything that you end up doing on the keymap editor also gets reflected on the `keymap.json` file.
 
-## User Keymaps
+## User Keymaps {#user-keymaps}
 
 The keymap file is stored in the following locations for each platform:
 
@@ -150,7 +150,7 @@ For example:
 
 It's worth noting that attributes are only available on the node they are defined on. This means that if you want to (for example) only enable a keybinding when the debugger is stopped in vim normal mode, you need to do `debugger_stopped > vim_mode == normal`.
 
-> Note: Before Zed v0.197.x, the `!` operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os == macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
+> **Note:** Before Zed v0.197.x, the `!` operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os == macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
 
 If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts). Helix mode is built on top of Vim mode and uses the same contexts.
 
@@ -203,7 +203,7 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 
 Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII character, then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts.
 
-We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much appreciated!
+We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is welcome.
 
 ## Tips and tricks
 

@@ -1,3 +1,8 @@
+---
+title: How to Migrate from PyCharm to Zed
+description: "Guide for migrating from How to Migrate from PyCharm to Zed to Zed, including settings and keybindings."
+---
+
 # How to Migrate from PyCharm to Zed
 
 This guide covers how to set up Zed if you're coming from PyCharm, including keybindings, settings, and the differences you should expect.
@@ -36,24 +41,11 @@ If you're coming from PyCharm, the fastest way to feel at home is to use the Jet
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your `settings.json` directly.
 
 Settings PyCharm users typically configure first:
 
@@ -84,7 +76,7 @@ Once inside a project:
 - Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like PyCharm's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like PyCharm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
 
 ## Differences in Keybindings
 
@@ -399,7 +391,7 @@ Here are a few useful tweaks:
 "load_direnv": "shell_hook"
 ```
 
-**Customize virtual environment detection:**
+**Customize virtual environment detection** (requires manual JSON editing):
 
 ```json
 {

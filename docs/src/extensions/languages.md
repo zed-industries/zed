@@ -1,3 +1,8 @@
+---
+title: Language Extensions
+description: "Overview of programming language support in Zed, including built-in and extension-based languages."
+---
+
 # Language Extensions
 
 Language support in Zed has several components:

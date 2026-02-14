@@ -1,3 +1,8 @@
+---
+title: Zed and trusted worktrees
+description: "Configure which folders Zed trusts for running code and extensions."
+---
+
 # Zed and trusted worktrees
 
 A worktree in Zed is either a directory or a single file that Zed opens as a standalone "project".
@@ -25,7 +30,7 @@ Restricted Mode prevents:
 
 ## Configuring broad worktree trust
 
-By default, Zed won't trust any new worktrees and users will be required to trust each new worktree. Though not recommended, users may elect to trust all worktrees by configuring the following setting:
+By default, Zed won't trust any new worktrees and users will be required to trust each new worktree. Though not recommended, users may elect to trust all worktrees by configuring the following setting in your `settings.json` ([how to edit](./configuring-zed.md#settings-files)):
 
 ```json [settings]
 "session": {

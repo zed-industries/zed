@@ -1,3 +1,8 @@
+---
+title: MCP Server Extensions
+description: "MCP Server Extensions for Zed extensions."
+---
+
 # MCP Server Extensions
 
 [Model Context Protocol servers](../ai/mcp.md) can be exposed as extensions for use in the Agent Panel.
@@ -31,7 +36,7 @@ impl zed::Extension for MyExtension {
 
 This method should return the command to start up an MCP server, along with any arguments or environment variables necessary for it to function.
 
-If you need to download the MCP server from an external source—like GitHub Releases or npm—you can also do that in this function.
+If you need to download the MCP server from an external source (GitHub Releases, npm, etc.), you can also do that in this function.
 
 ## Available Extensions
 
