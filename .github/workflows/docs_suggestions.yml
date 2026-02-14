@@ -265,7 +265,10 @@ jobs:
             --output "$OUTPUT_FILE" \
             --verbose 2>&1 || true
           
-          if [ -s "$OUTPUT_FILE" ]; then
+          # Check if we got actionable suggestions
+          if [ -s "$OUTPUT_FILE" ] && \
+             grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
+             ! grep -q "No Documentation Updates Needed" "$OUTPUT_FILE"; then
             echo "has_suggestions=true" >> "$GITHUB_OUTPUT"
             {
               echo 'suggestions<<EOF'
@@ -279,15 +282,66 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
+      - name: Post suggestions as PR comment
+        if: steps.analyze.outputs.has_suggestions == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const suggestions = `${{ steps.analyze.outputs.suggestions }}`;
+            
+            const body = `## 📚 Documentation Suggestions
+
+            This cherry-pick contains changes that may need documentation updates.
+
+            ${suggestions}
+
+            ---
+            <details>
+            <summary>About this comment</summary>
+
+            This comment was generated automatically by analyzing code changes in this cherry-pick.
+            Cherry-picks typically don't need new documentation since the feature was already 
+            documented when merged to main, but please verify.
+
+            </details>`;
+            
+            // Find existing comment to update (avoid spam)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }}
+            });
+            
+            const botComment = comments.find(c => 
+              c.user.type === 'Bot' && 
+              c.body.includes('Documentation Suggestions')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                body: body
+              });
+            }
+
       - name: Summary
         if: always()
         run: |
           echo "## 📚 Documentation Suggestions (Cherry-pick)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "This cherry-pick may need documentation updates:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
           
           if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
+            echo "Suggestions posted as PR comment." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "${{ steps.analyze.outputs.suggestions }}" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No documentation suggestions for this cherry-pick." >> "$GITHUB_STEP_SUMMARY"
