@@ -10,6 +10,7 @@ use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
+use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{Proxy, protocol::wl_surface};
@@ -1306,7 +1307,7 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-        state.renderer.draw(scene);
+        state.renderer.draw(scene).log_err();
     }
 
     fn completed_frame(&self) {

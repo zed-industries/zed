@@ -78,6 +78,7 @@ x11rb::atom_manager! {
         _NET_WM_SYNC,
         _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
+        _GPUI_FORCE_UPDATE_WINDOW,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
         _GTK_EDGE_CONSTRAINTS,
@@ -225,7 +226,7 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
     set
 }
 
-struct RawWindow {
+pub(crate) struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
     window_id: u32,
@@ -916,9 +917,126 @@ impl X11Window {
         xcb_flush(&self.0.xcb);
         Ok(())
     }
+
+    /// Handles draw failures by attempting GPU recovery
+    fn handle_draw_failure(&self, err: anyhow::Error) {
+        log::error!("Renderer draw failed: {}", err);
+
+        let inner = self.0.state.borrow();
+        let client = inner.client.clone();
+        let force_update_atom = inner.atoms._GPUI_FORCE_UPDATE_WINDOW;
+        drop(inner);
+
+        // Attempt GPU recovery
+        if let Err(recovery_err) = client.recover_gpu() {
+            // Recovery failed - this is unrecoverable, panic to trigger crash reporting
+            panic!(
+                "GPU device lost (recovery failed: {}), original error: {}",
+                recovery_err, err
+            );
+        }
+
+        // Recovery succeeded - send force update to trigger redraw
+        self.send_force_update(force_update_atom);
+    }
+
+    /// Sends a force update event to trigger window redraw after GPU recovery
+    fn send_force_update(&self, force_update_atom: xproto::Atom) {
+        let message = ClientMessageEvent::new(
+            32,
+            self.0.x_window,
+            force_update_atom,
+            [0, 0, 0, 0, 0],
+        );
+
+        check_reply(
+            || "X11 SendEvent for GPU recovery force update failed",
+            self.0.xcb.send_event(
+                false,
+                self.0.x_window,
+                EventMask::default(),
+                message,
+            ),
+        )
+        .log_err();
+
+        xcb_flush(&self.0.xcb);
+    }
 }
 
 impl X11WindowStatePtr {
+    /// Pauses rendering (sets skip_draws flag)
+    pub(crate) fn pause_rendering(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.pause_rendering();
+    }
+
+    /// Resumes rendering (clears skip_draws flag)
+    pub(crate) fn resume_rendering(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.resume_rendering();
+    }
+
+    /// Destroys the surface (marks it as invalid for wgpu)
+    pub(crate) fn destroy_surface(&self) {
+        let mut state = self.state.borrow_mut();
+        state.renderer.destroy_surface();
+    }
+
+    /// Gets renderer parameters needed for recreation
+    pub(crate) fn renderer_params(
+        &self,
+    ) -> (
+        RawWindow,
+        crate::Size<crate::DevicePixels>,
+        bool,
+    ) {
+        let state = self.state.borrow();
+        let screen_index = state.display.id().0 as usize;
+        let visual_set = find_visuals(&self.xcb, screen_index);
+        let visual = visual_set.transparent.unwrap_or(visual_set.inherit);
+
+        let raw_window = RawWindow {
+            connection: self.xcb.get_raw_xcb_connection(),
+            screen_id: screen_index,
+            window_id: self.x_window,
+            visual_id: visual.id,
+        };
+
+        let size = state.bounds.size;
+        let device_size = crate::Size {
+            width: crate::DevicePixels((size.width.0 * state.scale_factor) as i32),
+            height: crate::DevicePixels((size.height.0 * state.scale_factor) as i32),
+        };
+
+        let transparent = state.is_transparent();
+
+        (raw_window, device_size, transparent)
+    }
+
+    /// Gets the current atlas (for preservation during recovery)
+    pub(crate) fn get_atlas(&self) -> std::sync::Arc<crate::platform::wgpu::WgpuAtlas> {
+        let state = self.state.borrow();
+        std::sync::Arc::clone(state.renderer.sprite_atlas())
+    }
+
+    /// Prepares atlas for recovery (clears without destroying)
+    pub(crate) fn prepare_atlas(&self) {
+        let state = self.state.borrow();
+        state.renderer.prepare_atlas();
+    }
+
+    /// Replaces the renderer with a new one and adopts the atlas
+    pub(crate) fn replace_renderer(
+        &self,
+        mut new_renderer: crate::platform::wgpu::WgpuRenderer,
+        atlas: &std::sync::Arc<crate::platform::wgpu::WgpuAtlas>,
+    ) {
+        new_renderer.adopt_atlas(atlas);
+        let mut state = self.state.borrow_mut();
+        state.renderer = new_renderer;
+    }
+
     pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
@@ -1558,7 +1676,10 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        inner.renderer.draw(scene);
+        if let Err(err) = inner.renderer.draw(scene) {
+            drop(inner);
+            self.handle_draw_failure(err);
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

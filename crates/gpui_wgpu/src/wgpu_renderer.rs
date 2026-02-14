@@ -7,6 +7,7 @@ use gpui::{
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[repr(C)]
@@ -115,42 +116,48 @@ pub struct WgpuRenderer {
     adapter_info: wgpu::AdapterInfo,
     transparent_alpha_mode: wgpu::CompositeAlphaMode,
     opaque_alpha_mode: wgpu::CompositeAlphaMode,
+    skip_draws: bool,
+    device_lost: Arc<AtomicBool>,
 }
 
 impl WgpuRenderer {
+    fn monitor_device_loss(
+        device: &Arc<wgpu::Device>,
+        log_suffix: &'static str,
+    ) -> Arc<AtomicBool> {
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let device_clone = Arc::clone(device);
+        let flag = Arc::clone(&device_lost);
+
+        std::thread::spawn(move || {
+            smol::block_on(async {
+                let reason = device_clone.lost().await;
+                flag.store(true, Ordering::SeqCst);
+                log::error!(
+                    "GPU device lost detected by wgpu{}: {:?}",
+                    log_suffix,
+                    reason
+                );
+            });
+        });
+
+        device_lost
+    }
+
     /// Creates a new WgpuRenderer from raw window handles.
     ///
     /// # Safety
     /// The caller must ensure that the window handle remains valid for the lifetime
     /// of the returned renderer.
-    pub fn new<W: HasWindowHandle + HasDisplayHandle>(
-        context: &WgpuContext,
-        window: &W,
+    fn new_internal(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        adapter: &wgpu::Adapter,
+        surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
-    ) -> anyhow::Result<Self> {
-        let window_handle = window
-            .window_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
-        let display_handle = window
-            .display_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
-
-        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: display_handle.as_raw(),
-            raw_window_handle: window_handle.as_raw(),
-        };
-
-        // Safety: The caller guarantees that the window handle is valid for the
-        // lifetime of this renderer. In practice, the RawWindow struct is created
-        // from the native window handles and the surface is dropped before the window.
-        let surface = unsafe {
-            context
-                .instance
-                .create_surface_unsafe(target)
-                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
-        };
-
-        let surface_caps = surface.get_capabilities(&context.adapter);
+        log_suffix: &'static str,
+    ) -> Self {
+        let surface_caps = surface.get_capabilities(adapter);
         // Prefer standard 8-bit non-sRGB formats that don't require special features.
         // Other formats like Rgba16Unorm require TEXTURE_FORMAT_16BIT_NORM which may
         // not be available on all devices.
@@ -200,13 +207,13 @@ impl WgpuRenderer {
             alpha_mode,
             view_formats: vec![],
         };
-        surface.configure(&context.device, &surface_config);
+        surface.configure(&device, &surface_config);
 
-        let device = Arc::clone(&context.device);
-        let queue = Arc::clone(&context.queue);
-        let dual_source_blending = context.supports_dual_source_blending();
+        let dual_source_blending = adapter
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-        let rendering_params = RenderingParameters::new(&context.adapter, surface_format);
+        let rendering_params = RenderingParameters::new(adapter, surface_format);
         let bind_group_layouts = Self::create_bind_group_layouts(&device);
         let pipelines = Self::create_pipelines(
             &device,
@@ -310,9 +317,11 @@ impl WgpuRenderer {
             ],
         });
 
-        let adapter_info = context.adapter.get_info();
+        let adapter_info = adapter.get_info();
 
-        Ok(Self {
+        let device_lost = Self::monitor_device_loss(&device, log_suffix);
+
+        Self {
             device,
             queue,
             surface,
@@ -338,7 +347,119 @@ impl WgpuRenderer {
             adapter_info,
             transparent_alpha_mode,
             opaque_alpha_mode,
-        })
+            skip_draws: false,
+            device_lost,
+        }
+    }
+
+    pub fn new<W: HasWindowHandle + HasDisplayHandle>(
+        context: &WgpuContext,
+        window: &W,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        let window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: display_handle.as_raw(),
+            raw_window_handle: window_handle.as_raw(),
+        };
+
+        // Safety: The caller guarantees that the window handle is valid for the
+        // lifetime of this renderer. In practice, the RawWindow struct is created
+        // from the native window handles and the surface is dropped before the window.
+        let surface = unsafe {
+            context
+                .instance
+                .create_surface_unsafe(target)
+                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
+        };
+
+        Ok(Self::new_internal(
+            context.device.clone(),
+            context.queue.clone(),
+            &context.adapter,
+            surface,
+            config,
+            "",
+        ))
+    }
+
+    /// Creates a new renderer using existing device and queue (for GPU recovery)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn new_with_device_queue<W: HasWindowHandle + HasDisplayHandle>(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        window: &W,
+        config: WgpuSurfaceConfig,
+    ) -> anyhow::Result<Self> {
+        let window_handle = window
+            .window_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+        let display_handle = window
+            .display_handle()
+            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: display_handle.as_raw(),
+            raw_window_handle: window_handle.as_raw(),
+        };
+
+        let surface = unsafe {
+            instance
+                .create_surface_unsafe(target)
+                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
+        };
+
+        Ok(Self::new_internal(
+            device,
+            queue,
+            &adapter,
+            surface,
+            config,
+            " (recovered device)",
+        ))
+    }
+
+    /// Pauses rendering (used during GPU recovery)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn pause_rendering(&mut self) {
+        self.skip_draws = true;
+    }
+
+    /// Resumes rendering after GPU recovery
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn resume_rendering(&mut self) {
+        self.skip_draws = false;
+    }
+
+    /// Prepares atlas for GPU recovery by clearing it without destroying resources
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn prepare_atlas(&self) {
+        self.atlas.handle_device_lost();
+    }
+
+    /// Adopts a new atlas after GPU recovery
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn adopt_atlas(&mut self, atlas: &Arc<WgpuAtlas>) {
+        atlas.update_gpu_context(
+            Arc::clone(&self.device),
+            Arc::clone(&self.queue),
+        );
+        self.atlas = Arc::clone(atlas);
+    }
+
+    /// Destroys the surface (no-op for wgpu, surface is RAII)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn destroy_surface(&mut self) {
+        // In wgpu, surfaces are automatically cleaned up when dropped
+        // We just need to ensure we don't try to use it after this point
     }
 
     fn create_bind_group_layouts(device: &wgpu::Device) -> WgpuBindGroupLayouts {
@@ -822,18 +943,42 @@ impl WgpuRenderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
-        self.atlas.before_frame();
+    pub fn draw(&mut self, scene: &Scene) -> anyhow::Result<()> {
+        if self.skip_draws {
+            return Ok(());
+        }
 
+        if self.device_lost.load(Ordering::SeqCst) {
+            log::error!("Device loss detected by background monitor");
+            return Err(anyhow::anyhow!("GPU device was lost"));
+        }
+
+        self.atlas.before_frame();
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            Err(wgpu::SurfaceError::Outdated) => {
+                log::debug!("Surface outdated, reconfiguring");
                 self.surface.configure(&self.device, &self.surface_config);
-                return;
+                return Ok(());
             }
-            Err(e) => {
-                log::error!("Failed to acquire surface texture: {e}");
-                return;
+            Err(wgpu::SurfaceError::Lost) => {
+                log::warn!("Surface lost, reconfiguring");
+                self.surface.configure(&self.device, &self.surface_config);
+                match self.surface.get_current_texture() {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        return Err(anyhow::anyhow!(
+                            "Surface lost and cannot be reconfigured - possible device loss"
+                        ));
+                    }
+                }
+            }
+            Err(wgpu::SurfaceError::Timeout) => {
+                log::warn!("Surface timeout, skipping frame");
+                return Ok(());
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                return Err(anyhow::anyhow!("GPU out of memory"));
             }
         };
         let frame_view = frame
@@ -1002,7 +1147,7 @@ impl WgpuRenderer {
                         self.instance_buffer_capacity
                     );
                     frame.present();
-                    return;
+                    return Ok(());
                 }
                 self.grow_instance_buffer();
                 continue;
@@ -1010,7 +1155,7 @@ impl WgpuRenderer {
 
             self.queue.submit(std::iter::once(encoder.finish()));
             frame.present();
-            return;
+            return Ok(());
         }
     }
 
@@ -1069,7 +1214,9 @@ impl WgpuRenderer {
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+            return true; // Skip if texture not found
+        };
         let data = unsafe { Self::instance_bytes(sprites) };
         self.draw_instances_with_texture(
             data,
@@ -1088,7 +1235,9 @@ impl WgpuRenderer {
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+            return true; // Skip if texture not found
+        };
         let data = unsafe { Self::instance_bytes(sprites) };
         let pipeline = self
             .pipelines
@@ -1112,7 +1261,9 @@ impl WgpuRenderer {
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
-        let tex_info = self.atlas.get_texture_info(texture_id);
+        let Some(tex_info) = self.atlas.get_texture_info(texture_id) else {
+            return true; // Skip if texture not found
+        };
         let data = unsafe { Self::instance_bytes(sprites) };
         self.draw_instances_with_texture(
             data,

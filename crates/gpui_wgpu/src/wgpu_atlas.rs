@@ -55,12 +55,36 @@ impl WgpuAtlas {
         lock.flush_uploads();
     }
 
-    pub fn get_texture_info(&self, id: AtlasTextureId) -> WgpuTextureInfo {
+    /// Clears atlas state without destroying GPU resources (for device loss recovery)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn handle_device_lost(&self) {
+        let mut lock = self.0.lock();
+        lock.storage.clear_without_destroy();
+        lock.tiles_by_key.clear();
+        lock.pending_uploads.clear();
+    }
+
+    /// Updates the GPU context after device recovery
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn update_gpu_context(
+        &self,
+        new_device: Arc<wgpu::Device>,
+        new_queue: Arc<wgpu::Queue>,
+    ) {
+        let mut lock = self.0.lock();
+        lock.device = new_device;
+        lock.queue = new_queue;
+    }
+
+    /// Returns texture info, or None if the texture ID is invalid
+    /// (can happen after GPU recovery when old scene frames reference cleared atlas)
+    pub fn get_texture_info(&self, id: AtlasTextureId) -> Option<WgpuTextureInfo> {
         let lock = self.0.lock();
-        let texture = &lock.storage[id];
-        WgpuTextureInfo {
+        let textures = &lock.storage[id.kind];
+        let texture = textures.textures.get(id.index as usize)?.as_ref()?;
+        Some(WgpuTextureInfo {
             view: texture.view.clone(),
-        }
+        })
     }
 }
 
@@ -240,6 +264,19 @@ struct WgpuAtlasStorage {
     monochrome_textures: AtlasTextureList<WgpuAtlasTexture>,
     subpixel_textures: AtlasTextureList<WgpuAtlasTexture>,
     polychrome_textures: AtlasTextureList<WgpuAtlasTexture>,
+}
+
+impl WgpuAtlasStorage {
+    /// Clears all textures without destroying them (for device loss recovery)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn clear_without_destroy(&mut self) {
+        self.monochrome_textures.textures.clear();
+        self.subpixel_textures.textures.clear();
+        self.polychrome_textures.textures.clear();
+        self.monochrome_textures.free_list.clear();
+        self.subpixel_textures.free_list.clear();
+        self.polychrome_textures.free_list.clear();
+    }
 }
 
 impl ops::Index<AtlasTextureKind> for WgpuAtlasStorage {
