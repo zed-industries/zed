@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+#
+# Analyze code changes and suggest documentation updates.
+#
+# Usage:
+#   script/docs-suggest --pr 49177           # Analyze a PR
+#   script/docs-suggest --commit abc123      # Analyze a commit
+#   script/docs-suggest --diff file.patch    # Analyze a diff file
+#   script/docs-suggest --staged             # Analyze staged changes
+#
+# Options:
+#   --dry-run     Show assembled context without calling LLM
+#   --output FILE Write suggestions to file instead of stdout
+#   --verbose     Show detailed progress
+#   --model NAME  Override default model (default: claude-sonnet-4-20250514)
+#
+# Requirements:
+#   - gh CLI (for --pr mode)
+#   - droid CLI (unless --dry-run)
+#
+# Examples:
+#   # Test on a recent PR
+#   script/docs-suggest --pr 49100 --dry-run
+#
+#   # Generate suggestions for current staged changes
+#   script/docs-suggest --staged
+#
+#   # Analyze a specific commit
+#   script/docs-suggest --commit HEAD~1
+
+set -euo pipefail
+
+# Defaults
+MODE=""
+TARGET=""
+DRY_RUN=false
+VERBOSE=false
+OUTPUT=""
+MODEL="${DROID_MODEL:-claude-sonnet-4-5-20250929}"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[docs-suggest]${NC} $*" >&2
+    fi
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $*" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}Warning:${NC} $*" >&2
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --pr)
+            MODE="pr"
+            TARGET="$2"
+            shift 2
+            ;;
+        --commit)
+            MODE="commit"
+            TARGET="$2"
+            shift 2
+            ;;
+        --diff)
+            MODE="diff"
+            TARGET="$2"
+            shift 2
+            ;;
+        --staged)
+            MODE="staged"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            head -30 "$0" | tail -28
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Validate mode
+if [[ -z "$MODE" ]]; then
+    error "Must specify one of: --pr, --commit, --diff, or --staged"
+fi
+
+# Get repo root
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# Temp directory for context assembly
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+log "Mode: $MODE, Target: ${TARGET:-staged changes}"
+log "Temp dir: $TMPDIR"
+
+# ============================================================================
+# Step 1: Get the diff
+# ============================================================================
+
+get_diff() {
+    case $MODE in
+        pr)
+            if ! command -v gh &> /dev/null; then
+                error "gh CLI required for --pr mode. Install: https://cli.github.com"
+            fi
+            log "Fetching PR #$TARGET diff..."
+            gh pr diff "$TARGET" > "$TMPDIR/changes.diff"
+            gh pr diff "$TARGET" --name-only > "$TMPDIR/changed_files.txt"
+            ;;
+        commit)
+            log "Getting commit $TARGET diff..."
+            git show "$TARGET" --format="" > "$TMPDIR/changes.diff"
+            git show "$TARGET" --format="" --name-only > "$TMPDIR/changed_files.txt"
+            ;;
+        diff)
+            if [[ ! -f "$TARGET" ]]; then
+                error "Diff file not found: $TARGET"
+            fi
+            log "Using provided diff file..."
+            cp "$TARGET" "$TMPDIR/changes.diff"
+            # Extract filenames from diff
+            grep -E '^\+\+\+ b/' "$TARGET" | sed 's|^+++ b/||' > "$TMPDIR/changed_files.txt" || true
+            ;;
+        staged)
+            log "Getting staged changes..."
+            git diff --cached > "$TMPDIR/changes.diff"
+            git diff --cached --name-only > "$TMPDIR/changed_files.txt"
+            ;;
+    esac
+
+    if [[ ! -s "$TMPDIR/changes.diff" ]]; then
+        error "No changes found"
+    fi
+
+    log "Found $(wc -l < "$TMPDIR/changed_files.txt" | tr -d ' ') changed files"
+}
+
+# ============================================================================
+# Step 2: Filter to relevant changes
+# ============================================================================
+
+filter_changes() {
+    log "Filtering to documentation-relevant changes..."
+    
+    # Keep only source code changes (not tests, not CI, not docs themselves)
+    grep -E '^crates/.*\.rs$' "$TMPDIR/changed_files.txt" | \
+        grep -v '_test\.rs$' | \
+        grep -v '/tests/' | \
+        grep -v '/test_' > "$TMPDIR/source_files.txt" || true
+    
+    # Also track if settings/keybindings changed
+    grep -E '(settings|keymap|actions)' "$TMPDIR/changed_files.txt" > "$TMPDIR/config_files.txt" || true
+    
+    local source_count=$(wc -l < "$TMPDIR/source_files.txt" | tr -d ' ')
+    local config_count=$(wc -l < "$TMPDIR/config_files.txt" | tr -d ' ')
+    
+    log "Relevant files: $source_count source, $config_count config"
+    
+    if [[ "$source_count" -eq 0 && "$config_count" -eq 0 ]]; then
+        echo "No documentation-relevant changes detected (only tests, CI, or docs modified)."
+        exit 0
+    fi
+}
+
+# ============================================================================
+# Step 3: Assemble context
+# ============================================================================
+
+assemble_context() {
+    log "Assembling context..."
+    
+    # Start the prompt
+    cat > "$TMPDIR/prompt.md" << 'PROMPT_HEADER'
+# Documentation Suggestion Request
+
+You are analyzing code changes to determine if documentation updates are needed.
+
+## Your Task
+
+1. Analyze the diff below for user-facing changes
+2. Determine if any documentation updates are warranted
+3. If yes, provide specific, actionable suggestions
+4. If no, explain why no updates are needed
+
+## Guidelines
+
+PROMPT_HEADER
+
+    # Add conventions (truncated for token efficiency)
+    log "Adding documentation conventions..."
+    cat >> "$TMPDIR/prompt.md" << 'CONVENTIONS'
+### Documentation Conventions
+
+- **Voice**: Second person ("you"), present tense, direct and concise
+- **No hedging**: Avoid "simply", "just", "easily"
+- **Settings pattern**: Show Settings Editor UI first, then JSON as alternative
+- **Keybindings**: Use `{#kb action::Name}` syntax, not hardcoded keys
+- **Terminology**: "folder" not "directory", "project" not "workspace", "Settings Editor" not "settings UI"
+
+### What Requires Documentation
+
+- New user-facing features or commands
+- Changed keybindings or default behaviors
+- New or modified settings
+- Deprecated or removed functionality
+
+### What Does NOT Require Documentation
+
+- Internal refactoring without behavioral changes
+- Performance optimizations (unless user-visible)
+- Bug fixes that restore documented behavior
+- Test changes, CI changes
+CONVENTIONS
+
+    echo "" >> "$TMPDIR/prompt.md"
+    echo "## Changed Files" >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    echo '```' >> "$TMPDIR/prompt.md"
+    cat "$TMPDIR/changed_files.txt" >> "$TMPDIR/prompt.md"
+    echo '```' >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    
+    # Add the diff (truncated if huge)
+    echo "## Code Diff" >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    
+    local diff_lines=$(wc -l < "$TMPDIR/changes.diff" | tr -d ' ')
+    if [[ "$diff_lines" -gt 2000 ]]; then
+        warn "Diff is large ($diff_lines lines), truncating to 2000 lines"
+        echo '```diff' >> "$TMPDIR/prompt.md"
+        head -2000 "$TMPDIR/changes.diff" >> "$TMPDIR/prompt.md"
+        echo "" >> "$TMPDIR/prompt.md"
+        echo "[... truncated, $((diff_lines - 2000)) more lines ...]" >> "$TMPDIR/prompt.md"
+        echo '```' >> "$TMPDIR/prompt.md"
+    else
+        echo '```diff' >> "$TMPDIR/prompt.md"
+        cat "$TMPDIR/changes.diff" >> "$TMPDIR/prompt.md"
+        echo '```' >> "$TMPDIR/prompt.md"
+    fi
+    
+    # Add output format instructions
+    cat >> "$TMPDIR/prompt.md" << 'OUTPUT_FORMAT'
+
+## Output Format
+
+Respond with ONE of these formats:
+
+### If documentation updates ARE needed:
+
+```markdown
+## Documentation Suggestions
+
+### Summary
+[1-2 sentence summary of what changed and why docs need updating]
+
+### Suggested Changes
+
+#### 1. [docs/src/path/to/file.md]
+- **Section**: [existing section to update, or "New section"]
+- **Change**: [Add/Update/Remove]
+- **Suggestion**: [Specific text or description of what to add/change]
+
+#### 2. [docs/src/another/file.md]
+...
+
+### Notes for Reviewer
+[Any context or uncertainty worth flagging]
+```
+
+### If NO documentation updates are needed:
+
+```markdown
+## No Documentation Updates Needed
+
+**Reason**: [Brief explanation - e.g., "Internal refactoring only", "Test changes", "Bug fix restoring existing behavior"]
+
+**Changes reviewed**:
+- [Brief summary of what the code changes do]
+- [Why they don't affect user-facing documentation]
+```
+
+Be conservative. Only suggest documentation changes when there's a clear user-facing impact.
+OUTPUT_FORMAT
+
+    log "Context assembled: $(wc -l < "$TMPDIR/prompt.md" | tr -d ' ') lines"
+}
+
+# ============================================================================
+# Step 4: Run the analysis
+# ============================================================================
+
+run_analysis() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${GREEN}=== DRY RUN: Assembled Context ===${NC}"
+        echo ""
+        cat "$TMPDIR/prompt.md"
+        echo ""
+        echo -e "${GREEN}=== End Context ===${NC}"
+        echo ""
+        echo "To run for real, remove --dry-run flag"
+        return
+    fi
+    
+    # Check for droid CLI
+    if ! command -v droid &> /dev/null; then
+        error "droid CLI required. Install from: https://app.factory.ai/cli"
+    fi
+    
+    log "Running analysis with model: $MODEL"
+    
+    local result
+    if [[ -n "$OUTPUT" ]]; then
+        droid exec -m "$MODEL" -f "$TMPDIR/prompt.md" > "$OUTPUT"
+        echo "Suggestions written to: $OUTPUT"
+    else
+        droid exec -m "$MODEL" -f "$TMPDIR/prompt.md"
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    get_diff
+    filter_changes
+    assemble_context
+    run_analysis
+}
+
+main
