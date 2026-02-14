@@ -732,12 +732,15 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = cx.platform.keyboard_layout();
-                    cx.keyboard_mapper = cx.platform.keyboard_mapper();
-                    cx.keyboard_layout_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    // Use try_borrow_mut because this callback can be called asynchronously
+                    // from macOS while the app is already borrowed during an update.
+                    if let Ok(mut cx) = app.try_borrow_mut() {
+                        cx.keyboard_layout = cx.platform.keyboard_layout();
+                        cx.keyboard_mapper = cx.platform.keyboard_mapper();
+                        cx.keyboard_layout_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(&mut cx));
+                    }
                 }
             }
         }));
@@ -746,10 +749,13 @@ impl App {
             let app = Rc::downgrade(&app);
             move || {
                 if let Some(app) = app.upgrade() {
-                    let cx = &mut app.borrow_mut();
-                    cx.thermal_state_observers
-                        .clone()
-                        .retain(&(), move |callback| (callback)(cx));
+                    // Use try_borrow_mut because this callback can be called asynchronously
+                    // from macOS while the app is already borrowed during an update.
+                    if let Ok(mut cx) = app.try_borrow_mut() {
+                        cx.thermal_state_observers
+                            .clone()
+                            .retain(&(), move |callback| (callback)(&mut cx));
+                    }
                 }
             }
         }));
