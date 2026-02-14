@@ -1,3 +1,8 @@
+---
+title: Erlang
+description: "Configure Erlang language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Erlang
 
 Erlang support is available through the [Erlang extension](https://github.com/zed-extensions/erlang).

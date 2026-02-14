@@ -1,3 +1,8 @@
+---
+title: Yarn
+description: "Configure Yarn language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Yarn
 
 [Yarn](https://yarnpkg.com/) is a versatile package manager that improves dependency management and workflow efficiency for JavaScript and other languages. It ensures a deterministic dependency tree, offers offline support, and enhances security for reliable builds.

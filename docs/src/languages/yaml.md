@@ -1,3 +1,8 @@
+---
+title: YAML
+description: "Configure YAML language support in Zed, including language servers, formatting, and debugging."
+---
+
 # YAML
 
 YAML support is available natively in Zed.

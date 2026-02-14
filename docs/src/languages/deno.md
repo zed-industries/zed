@@ -1,3 +1,8 @@
+---
+title: Deno
+description: "Configure Deno language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Deno
 
 Deno support is available through the [Deno extension](https://github.com/zed-extensions/deno).

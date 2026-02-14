@@ -1,3 +1,8 @@
+---
+title: Themes
+description: "Themes for Zed extensions."
+---
+
 # Themes
 
 The `themes` directory in an extension should contain one or more theme files.

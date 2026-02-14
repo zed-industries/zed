@@ -1,3 +1,8 @@
+---
+title: Lua
+description: "Configure Lua language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Lua
 
 Lua support is available through the [Lua extension](https://github.com/zed-extensions/lua).

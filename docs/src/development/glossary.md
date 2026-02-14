@@ -1,3 +1,8 @@
+---
+title: Zed Development: Glossary
+description: "Guide to zed development: glossary for Zed development."
+---
+
 # Zed Development: Glossary
 
 These are some terms and structures frequently used throughout the zed codebase.

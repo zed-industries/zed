@@ -1,3 +1,8 @@
+---
+title: R
+description: "Configure R language support in Zed, including language servers, formatting, and debugging."
+---
+
 # R
 
 R support is available via multiple R Zed extensions:

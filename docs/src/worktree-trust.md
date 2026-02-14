@@ -1,3 +1,8 @@
+---
+title: Zed and trusted worktrees
+description: "Configure which folders Zed trusts for running code and extensions."
+---
+
 # Zed and trusted worktrees
 
 A worktree in Zed is either a directory or a single file that Zed opens as a standalone "project".

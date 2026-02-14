@@ -15,7 +15,7 @@ If you already have an API key for a provider like Anthropic or OpenAI, you can 
 
 To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
 
-> Note: API keys are _not_ stored as plain text in your `settings.json`, but rather in your OS's secure credential storage.
+> **Note:** API keys are _not_ stored as plain text in your `settings.json`, but rather in your OS's secure credential storage.
 
 ## Supported Providers
 

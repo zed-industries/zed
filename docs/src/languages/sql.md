@@ -1,3 +1,8 @@
+---
+title: SQL
+description: "Configure SQL language support in Zed, including language servers, formatting, and debugging."
+---
+
 # SQL
 
 SQL files are handled by the [SQL Extension](https://github.com/zed-extensions/sql).

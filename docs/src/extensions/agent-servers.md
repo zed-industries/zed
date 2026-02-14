@@ -1,3 +1,8 @@
+---
+title: Agent Server Extensions
+description: "Agent Server Extensions for Zed extensions."
+---
+
 # Agent Server Extensions
 
 <div class="warning">

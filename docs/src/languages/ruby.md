@@ -1,3 +1,8 @@
+---
+title: Ruby
+description: "Configure Ruby language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Ruby
 
 Ruby support is available through the [Ruby extension](https://github.com/zed-extensions/ruby).

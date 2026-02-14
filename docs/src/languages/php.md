@@ -1,3 +1,8 @@
+---
+title: PHP
+description: "Configure PHP language support in Zed, including language servers, formatting, and debugging."
+---
+
 # PHP
 
 PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).

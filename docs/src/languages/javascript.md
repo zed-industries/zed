@@ -1,3 +1,8 @@
+---
+title: JavaScript
+description: "Configure JavaScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # JavaScript
 
 JavaScript support is available natively in Zed.

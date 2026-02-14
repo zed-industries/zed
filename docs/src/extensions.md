@@ -1,3 +1,8 @@
+---
+title: Extensions
+description: "Extend Zed with themes, language support, AI tools, and more through the extension system."
+---
+
 # Extensions
 
 Zed lets you add new functionality using user-defined extensions.

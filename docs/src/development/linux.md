@@ -1,3 +1,8 @@
+---
+title: Building Zed for Linux
+description: "Guide to building zed for linux for Zed development."
+---
+
 # Building Zed for Linux
 
 ## Repository

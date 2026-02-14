@@ -1,3 +1,8 @@
+---
+title: TypeScript
+description: "Configure TypeScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # TypeScript
 
 TypeScript and TSX support are available natively in Zed.

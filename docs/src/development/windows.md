@@ -1,3 +1,8 @@
+---
+title: Building Zed for Windows
+description: "Guide to building zed for windows for Zed development."
+---
+
 # Building Zed for Windows
 
 > The following commands may be executed in any shell.

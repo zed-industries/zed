@@ -1,3 +1,8 @@
+---
+title: HTML
+description: "Configure HTML language support in Zed, including language servers, formatting, and debugging."
+---
+
 # HTML
 
 HTML support is available through the [HTML extension](https://github.com/zed-industries/zed/tree/main/extensions/html).

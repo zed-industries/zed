@@ -1,3 +1,8 @@
+---
+title: Telemetry
+description: "What data Zed collects and how to control telemetry settings."
+---
+
 # Telemetry in Zed
 
 Zed collects anonymous telemetry data to help the team understand how people are using the application and to see what sort of issues they are experiencing.

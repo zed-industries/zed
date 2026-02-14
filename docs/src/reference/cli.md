@@ -1,3 +1,8 @@
+---
+title: CLI Reference
+description: "Zed includes a command-line interface (CLI) for opening files and directories, integrating with other tools, and controlling Zed from scripts."
+---
+
 # CLI Reference
 
 Zed includes a command-line interface (CLI) for opening files and directories, integrating with other tools, and controlling Zed from scripts.

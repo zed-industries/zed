@@ -1,3 +1,8 @@
+---
+title: Debugging Crashes
+description: "Guide to debugging crashes for Zed development."
+---
+
 # Debugging Crashes
 
 When Zed panics or otherwise crashes, Zed sends a message to a sidecar process which inspects the memory of the crashing editor to create a [minidump](https://chromium.googlesource.com/breakpad/breakpad/+/master/docs/getting_started_with_breakpad.md#the-minidump-file-format) file in `~/Library/Logs/Zed` or `$XDG_DATA_HOME/zed/logs`. This minidump can be used to generate backtraces for the stacks of all threads.

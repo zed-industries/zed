@@ -1,3 +1,8 @@
+---
+title: All Settings
+description: "This is the complete reference for all Zed settings."
+---
+
 # All Settings
 
 This is the complete reference for all Zed settings.

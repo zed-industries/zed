@@ -1,3 +1,8 @@
+---
+title: Building Zed for FreeBSD
+description: "Guide to building zed for freebsd for Zed development."
+---
+
 # Building Zed for FreeBSD
 
 Note, FreeBSD is not currently a supported platform, and so this is a work-in-progress.

@@ -1,3 +1,8 @@
+---
+title: How to Migrate from RustRover to Zed
+description: "Guide for migrating from How to Migrate from RustRover to Zed to Zed, including settings and keybindings."
+---
+
 # How to Migrate from RustRover to Zed
 
 This guide covers how to set up Zed if you're coming from RustRover, including keybindings, settings, and the differences you should expect as a Rust developer.

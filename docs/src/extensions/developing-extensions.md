@@ -1,8 +1,15 @@
-# Developing Extensions
+---
+title: Developing Extensions
+description: "Create Zed extensions: languages, themes, debuggers, slash commands, and more."
+---
 
-## Extension Features
+# Developing Extensions {#developing-extensions}
 
-Extensions are able to provide the following features to Zed:
+Zed extensions are Git repositories containing an `extension.toml` manifest. They can provide languages, themes, debuggers, slash commands, and MCP servers.
+
+## Extension Features {#extension-features}
+
+Extensions can provide:
 
 - [Languages](./languages.md)
 - [Debuggers](./debugger-extensions.md)
@@ -40,7 +47,7 @@ description = "My cool extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
-> Note: If you are working on a theme extension with the intend of publishing it later, is is recommended that you suffix your theme's extension ID with `-theme`. This might otherwise be raised during the process of [releasing your extension](#publishing-your-extension).
+> **Note:** If you are working on a theme extension with the intend of publishing it later, is is recommended that you suffix your theme's extension ID with `-theme`. This might otherwise be raised during the process of [releasing your extension](#publishing-your-extension).
 
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
@@ -99,7 +106,7 @@ zed::register_extension!(MyExtension);
 
 1. Fork the repo
 
-> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
+> **Note:** It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
 2. Clone the repo to your local machine
 

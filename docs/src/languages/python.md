@@ -1,3 +1,8 @@
+---
+title: Python
+description: "Configure Python language support in Zed, including language servers, formatting, and debugging."
+---
+
 # How to Set Up Python in Zed
 
 Python support is available natively in Zed.

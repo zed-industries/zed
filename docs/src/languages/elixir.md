@@ -1,3 +1,8 @@
+---
+title: Elixir
+description: "Configure Elixir language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Elixir
 
 Elixir support is available through the [Elixir extension](https://github.com/zed-extensions/elixir).

@@ -1,3 +1,8 @@
+---
+title: Nim
+description: "Configure Nim language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Nim
 
 Nim language support in Zed is provided by the community-maintained [Nim extension](https://github.com/foxoman/zed-nim).

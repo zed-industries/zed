@@ -1,3 +1,8 @@
+---
+title: Release Notes
+description: "Guide to release notes for Zed development."
+---
+
 # Release Notes
 
 Whenever you open a pull request, the body is automatically populated based on this [pull request template](https://github.com/zed-industries/zed/blob/main/.github/pull_request_template.md).

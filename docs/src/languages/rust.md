@@ -1,3 +1,8 @@
+---
+title: Rust
+description: "Configure Rust language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Rust
 
 Rust support is available natively in Zed.

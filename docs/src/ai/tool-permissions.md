@@ -1,3 +1,8 @@
+---
+title: Tool Permissions
+description: "Configure which Agent Panel actions run automatically and which require your approval. For a list of available tools, see [Tools](./tools..."
+---
+
 # Tool Permissions
 
 Configure which [Agent Panel](./agent-panel.md) actions run automatically and which require your approval. For a list of available tools, see [Tools](./tools.md).

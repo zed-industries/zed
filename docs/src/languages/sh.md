@@ -1,3 +1,8 @@
+---
+title: Shell Script
+description: "Configure Shell Script language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Shell Scripts
 
 Shell Scripts (bash, zsh, dash, sh) are supported natively by Zed.

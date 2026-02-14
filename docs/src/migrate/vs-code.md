@@ -1,3 +1,8 @@
+---
+title: How to Migrate from VS Code to Zed
+description: "Guide for migrating from How to Migrate from VS Code to Zed to Zed, including settings and keybindings."
+---
+
 # How to Migrate from VS Code to Zed
 
 This guide is for developers who spent serious time in VS Code and want to try Zed without starting from scratch.

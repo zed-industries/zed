@@ -1,7 +1,11 @@
-# Contacts and Private Calls
+---
+title: Contacts and Private Calls
+description: "Add contacts and start private collaboration sessions in Zed."
+---
 
-Zed allows you to have private calls / collaboration sessions with those in your contacts.
-These calls can be one-on-ones or contain any number of users from your contacts.
+# Contacts and Private Calls {#contacts}
+
+Private calls provide ad-hoc collaboration sessions outside of channels. Add contacts to your list and start calls with one or more people.
 
 ## Adding a Contact
 

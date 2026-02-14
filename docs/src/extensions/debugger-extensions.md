@@ -1,3 +1,8 @@
+---
+title: Debugger Extensions
+description: "Debugger Extensions for Zed extensions."
+---
+
 # Debugger Extensions
 
 [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol) Servers can be exposed as extensions for use in the [debugger](../debugger.md).

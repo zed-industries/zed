@@ -1,3 +1,8 @@
+---
+title: C
+description: "Configure C language support in Zed, including language servers, formatting, and debugging."
+---
+
 # C
 
 C support is available natively in Zed.

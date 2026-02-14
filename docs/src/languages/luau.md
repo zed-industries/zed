@@ -1,3 +1,8 @@
+---
+title: Luau
+description: "Configure Luau language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Luau
 
 [Luau](https://luau.org/) is a fast, small, safe, gradually typed, embeddable scripting language derived from Lua. Luau was developed by Roblox and is available under the MIT license.
