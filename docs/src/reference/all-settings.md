@@ -3270,12 +3270,6 @@ Non-negative `integer` values
 - Setting: `regex`
 - Default: `false`
 
-### Search On Input
-
-- Description: Whether to search on input.
-- Setting: `search_on_input
-- Default: `true`
-
 ### Center On Match
 
 - Description: Whether to center the cursor on each search match when navigating.
@@ -3287,6 +3281,12 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
+
+## Center on Match
+
+- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
+- Setting: `center_on_match`
+- Default: `false`
 
 ## Seed Search Query From Cursor
 

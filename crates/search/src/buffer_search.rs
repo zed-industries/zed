@@ -3421,7 +3421,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3485,7 +3484,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3524,7 +3522,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3607,91 +3604,9 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
-                        search_on_input: Some(search_settings.search_on_input),
                     });
                 });
             });
-        });
-    }
-    #[gpui::test]
-    async fn test_search_on_input_setting(cx: &mut TestAppContext) {
-        let (editor, search_bar, cx) = init_test(cx);
-
-        update_search_settings(
-            SearchSettings {
-                button: true,
-                whole_word: false,
-                case_sensitive: false,
-                include_ignored: false,
-                regex: false,
-                center_on_match: false,
-                search_on_input: false,
-            },
-            cx,
-        );
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.show(window, cx);
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(
-                        [(MultiBufferOffset(0)..MultiBufferOffset(0), "expression")],
-                        None,
-                        cx,
-                    );
-                });
-            });
-        });
-
-        cx.background_executor.run_until_parked();
-
-        editor.update_in(cx, |editor, window, cx| {
-            let highlights = editor.all_text_background_highlights(window, cx);
-            assert!(
-                highlights.is_empty(),
-                "No highlights should appear when search_on_input is false"
-            );
-        });
-
-        update_search_settings(
-            SearchSettings {
-                button: true,
-                whole_word: false,
-                case_sensitive: false,
-                include_ignored: false,
-                regex: false,
-                center_on_match: false,
-                search_on_input: true,
-            },
-            cx,
-        );
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.dismiss(&Dismiss, window, cx);
-            search_bar.show(window, cx);
-        });
-
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression", None, true, window, cx)
-            })
-            .await
-            .unwrap();
-
-        editor.update_in(cx, |editor, window, cx| {
-            let highlights = display_points_of(editor.all_text_background_highlights(window, cx));
-            assert_eq!(
-                highlights.len(),
-                2,
-                "Should find 2 matches for 'expression' when search_on_input is true"
-            );
-            assert_eq!(
-                highlights,
-                &[
-                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
-                    DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
-                ]
-            );
         });
     }
 }

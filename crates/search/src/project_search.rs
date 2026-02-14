@@ -869,32 +869,15 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                if let EditorEvent::Edited { .. } = event {
-                    if EditorSettings::get_global(cx).use_smartcase_search {
-                        let query = this.search_query_text(cx);
-                        if !query.is_empty()
-                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                != contains_uppercase(&query)
-                        {
-                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-                        }
-                    }
-                    // Trigger search on input:
-                    if EditorSettings::get_global(cx).search.search_on_input {
-                        let query = this.search_query_text(cx);
-                        if query.is_empty() {
-                            // Clear results immediately when query is empty and abort ongoing search
-                            this.entity.update(cx, |model, cx| {
-                                model.pending_search = None;
-                                model.match_ranges.clear();
-                                model.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
-                                model.no_results = None;
-                                model.limit_reached = false;
-                                cx.notify();
-                            });
-                        } else {
-                            this.search(cx);
-                        }
+                if let EditorEvent::Edited { .. } = event
+                    && EditorSettings::get_global(cx).use_smartcase_search
+                {
+                    let query = this.search_query_text(cx);
+                    if !query.is_empty()
+                        && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                            != contains_uppercase(&query)
+                    {
+                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                     }
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
@@ -1546,11 +1529,7 @@ impl ProjectSearchView {
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
             });
-            let should_auto_focus = !EditorSettings::get_global(cx).search.search_on_input;
-            if is_new_search
-                && self.query_editor.focus_handle(cx).is_focused(window)
-                && should_auto_focus
-            {
+            if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
                 self.focus_results_editor(window, cx);
             }
         }
@@ -1613,13 +1592,9 @@ impl ProjectSearchView {
         v_flex()
             .gap_1()
             .child(
-                Label::new(if EditorSettings::get_global(cx).search.search_on_input {
-                    "Start typing to search. For more options:"
-                } else {
-                    "Hit enter to search. For more options:"
-                })
-                .color(Color::Muted)
-                .mb_2(),
+                Label::new("Hit enter to search. For more options:")
+                    .color(Color::Muted)
+                    .mb_2(),
             )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
@@ -2562,8 +2537,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::{
-        InlayHintSettingsContent, SearchSettingsContent, SettingsStore, ThemeColorsContent,
-        ThemeStyleContent,
+        InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
     };
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use util_macros::perf;
@@ -4781,15 +4755,6 @@ pub mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.editor.search = Some(SearchSettingsContent {
-                        search_on_input: Some(false),
-                        ..Default::default()
-                    });
-                });
-            });
 
             theme::init(theme::LoadThemes::JustBase, cx);
 
