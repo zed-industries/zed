@@ -654,6 +654,7 @@ impl App {
     ) -> Rc<AppCell> {
         let background_executor = platform.background_executor();
         let foreground_executor = platform.foreground_executor();
+        let callback_executor = foreground_executor.clone();
         assert!(
             background_executor.is_main_thread(),
             "must construct App on main thread"
@@ -730,32 +731,36 @@ impl App {
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
+            let executor = callback_executor.clone();
             move || {
                 if let Some(app) = app.upgrade() {
-                    // Use try_borrow_mut because this callback can be called asynchronously
-                    // from macOS while the app is already borrowed during an update.
-                    if let Ok(mut cx) = app.try_borrow_mut() {
-                        cx.keyboard_layout = cx.platform.keyboard_layout();
-                        cx.keyboard_mapper = cx.platform.keyboard_mapper();
-                        cx.keyboard_layout_observers
-                            .clone()
-                            .retain(&(), move |callback| (callback)(&mut cx));
-                    }
+                    executor
+                        .spawn(async move {
+                            let mut cx = app.borrow_mut();
+                            cx.keyboard_layout = cx.platform.keyboard_layout();
+                            cx.keyboard_mapper = cx.platform.keyboard_mapper();
+                            cx.keyboard_layout_observers
+                                .clone()
+                                .retain(&(), move |callback| (callback)(&mut cx));
+                        })
+                        .detach();
                 }
             }
         }));
 
         platform.on_thermal_state_change(Box::new({
             let app = Rc::downgrade(&app);
+            let executor = callback_executor;
             move || {
                 if let Some(app) = app.upgrade() {
-                    // Use try_borrow_mut because this callback can be called asynchronously
-                    // from macOS while the app is already borrowed during an update.
-                    if let Ok(mut cx) = app.try_borrow_mut() {
-                        cx.thermal_state_observers
-                            .clone()
-                            .retain(&(), move |callback| (callback)(&mut cx));
-                    }
+                    executor
+                        .spawn(async move {
+                            let mut cx = app.borrow_mut();
+                            cx.thermal_state_observers
+                                .clone()
+                                .retain(&(), move |callback| (callback)(&mut cx));
+                        })
+                        .detach();
                 }
             }
         }));
