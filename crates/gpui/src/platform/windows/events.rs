@@ -812,34 +812,8 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    /// The following conditions will trigger this event:
-    /// 1. The monitor on which the window is located goes offline or changes resolution.
-    /// 2. Another monitor goes offline, is plugged in, or changes resolution.
-    ///
-    /// In either case, the window will only receive information from the monitor on which
-    /// it is located.
-    ///
-    /// For example, in the case of condition 2, where the monitor on which the window is
-    /// located has actually changed nothing, it will still receive this event.
     fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
-        // NOTE:
-        // Even the `lParam` holds the resolution of the screen, we just ignore it.
-        // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
-        // are handled there.
-        // So we only care about if monitor is disconnected.
-        let previous_monitor = self.state.display.get();
-        if WindowsDisplay::is_connected(previous_monitor.handle) {
-            // we are fine, other display changed
-            return None;
-        }
-        // display disconnected
-        // in this case, the OS will move our window to another monitor, and minimize it.
-        // we deminimize the window and query the monitor after moving
-        unsafe {
-            let _ = ShowWindow(handle, SW_SHOWNORMAL);
-        };
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
-        // all monitors disconnected
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
             return None;
@@ -958,8 +932,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input);
-            let handled = !result.propagate || result.default_prevented;
+            let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));
 
             if handled {

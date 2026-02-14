@@ -44,7 +44,8 @@ use std::{
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar, prelude::*,
+    ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{
     ResultExt,
@@ -52,7 +53,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, MultiWorkspace, OpenLog, OpenOptions, Toast, Workspace,
+    AppState, ModalView, MultiWorkspace, OpenLog, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -257,9 +258,20 @@ impl PickerDelegate for DevContainerPickerDelegate {
             .update(cx, move |modal, cx| {
                 if secondary {
                     modal.edit_in_dev_container_json(selected_config.clone(), window, cx);
-                } else {
-                    modal.open_dev_container(selected_config, window, cx);
+                } else if let Some((app_state, context)) = modal
+                    .workspace
+                    .read_with(cx, |workspace, cx| {
+                        let app_state = workspace.app_state().clone();
+                        let context = DevContainerContext::from_workspace(workspace, cx)?;
+                        Some((app_state, context))
+                    })
+                    .ok()
+                    .flatten()
+                {
+                    modal.open_dev_container(selected_config, app_state, context, window, cx);
                     modal.view_in_progress_dev_container(window, cx);
+                } else {
+                    log::error!("No active project directory for Dev Container");
                 }
             })
             .ok();
@@ -806,14 +818,13 @@ impl RemoteServerProjects {
     /// Used when suggesting dev container connection from toast notification.
     pub fn new_dev_container(
         fs: Arc<dyn Fs>,
+        configs: Vec<DevContainerConfig>,
+        app_state: Arc<AppState>,
+        dev_container_context: Option<DevContainerContext>,
         window: &mut Window,
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let configs = workspace
-            .read_with(cx, |workspace, cx| find_devcontainer_configs(workspace, cx))
-            .unwrap_or_default();
-
         let initial_mode = if configs.len() > 1 {
             DevContainerCreationProgress::SelectingConfig
         } else {
@@ -833,10 +844,12 @@ impl RemoteServerProjects {
             let delegate = DevContainerPickerDelegate::new(configs, cx.weak_entity());
             this.dev_container_picker =
                 Some(cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false)));
-        } else {
+        } else if let Some(context) = dev_container_context {
             let config = configs.into_iter().next();
-            this.open_dev_container(config, window, cx);
+            this.open_dev_container(config, app_state, context, window, cx);
             this.view_in_progress_dev_container(window, cx);
+        } else {
+            log::error!("No active project directory for Dev Container");
         }
 
         this
@@ -1808,33 +1821,32 @@ impl RemoteServerProjects {
                 CreateRemoteDevContainer::new(DevContainerCreationProgress::SelectingConfig, cx);
             self.mode = Mode::CreateRemoteDevContainer(state);
             cx.notify();
-        } else {
-            let config = configs.into_iter().next();
-            self.open_dev_container(config, window, cx);
-            self.view_in_progress_dev_container(window, cx);
-        }
-    }
-
-    fn open_dev_container(
-        &self,
-        config: Option<DevContainerConfig>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((app_state, context)) = self
+        } else if let Some((app_state, context)) = self
             .workspace
             .read_with(cx, |workspace, cx| {
                 let app_state = workspace.app_state().clone();
                 let context = DevContainerContext::from_workspace(workspace, cx)?;
                 Some((app_state, context))
             })
-            .log_err()
+            .ok()
             .flatten()
-        else {
+        {
+            let config = configs.into_iter().next();
+            self.open_dev_container(config, app_state, context, window, cx);
+            self.view_in_progress_dev_container(window, cx);
+        } else {
             log::error!("No active project directory for Dev Container");
-            return;
-        };
+        }
+    }
 
+    fn open_dev_container(
+        &self,
+        config: Option<DevContainerConfig>,
+        app_state: Arc<AppState>,
+        context: DevContainerContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
 
         cx.spawn_in(window, async move |entity, cx| {
@@ -2749,31 +2761,15 @@ impl RemoteServerProjects {
         }
         let mut modal_section = modal_section.render(window, cx).into_any_element();
 
-        let (create_window, reuse_window) = if self.create_new_window {
-            (
-                window.keystroke_text_for(&menu::Confirm),
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-            )
-        } else {
-            (
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-                window.keystroke_text_for(&menu::Confirm),
-            )
-        };
-        let placeholder_text = Arc::from(format!(
-            "{reuse_window} reuses this window, {create_window} opens a new one",
-        ));
+        let is_project_selected = state.servers.iter().any(|server| match server {
+            RemoteEntry::Project { projects, .. } => projects
+                .iter()
+                .any(|(entry, _)| entry.focus_handle.contains_focused(window, cx)),
+            RemoteEntry::SshConfig { .. } => false,
+        });
 
         Modal::new("remote-projects", None)
-            .header(
-                ModalHeader::new()
-                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall))
-                    .child(
-                        Label::new(placeholder_text)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
+            .header(ModalHeader::new().headline("Remote Projects"))
             .section(
                 Section::new().padded(false).child(
                     v_flex()
@@ -2801,6 +2797,31 @@ impl RemoteServerProjects {
                         .vertical_scrollbar_for(&state.scroll_handle, window, cx),
                 ),
             )
+            .footer(ModalFooter::new().end_slot({
+                let confirm_button = |label: SharedString| {
+                    Button::new("select", label)
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        })
+                };
+
+                if is_project_selected {
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("open_new_window", "New Window")
+                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                }),
+                        )
+                        .child(confirm_button("Open".into()))
+                        .into_any_element()
+                } else {
+                    confirm_button("Select".into()).into_any_element()
+                }
+            }))
             .into_any_element()
     }
 

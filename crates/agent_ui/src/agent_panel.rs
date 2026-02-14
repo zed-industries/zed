@@ -67,6 +67,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+    WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -168,7 +169,9 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.new_text_thread(window, cx));
+                        panel.update(cx, |panel, cx| {
+                            panel.new_text_thread(window, cx);
+                        });
                     }
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
@@ -197,7 +200,7 @@ pub fn init(cx: &mut App) {
                         .and_then(|thread_view| {
                             thread_view
                                 .read(cx)
-                                .as_active_thread()
+                                .active_thread()
                                 .map(|r| r.read(cx).thread.clone())
                         });
 
@@ -453,6 +456,8 @@ impl ActiveView {
 
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
+    /// Workspace id is used as a database key
+    workspace_id: Option<WorkspaceId>,
     user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
@@ -485,14 +490,8 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
-    fn serialize(&mut self, cx: &mut Context<Self>) {
-        let workspace_id = self
-            .workspace
-            .read_with(cx, |workspace, _| workspace.database_id())
-            .ok()
-            .flatten();
-
-        let Some(workspace_id) = workspace_id else {
+    fn serialize(&mut self, cx: &mut App) {
+        let Some(workspace_id) = self.workspace_id else {
             return;
         };
 
@@ -579,22 +578,40 @@ impl AgentPanel {
                     });
                 }
 
-                if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
-                    let agent_type = thread_info.agent_type.clone();
-                    let session_info = AgentSessionInfo {
-                        session_id: acp::SessionId::new(thread_info.session_id),
-                        cwd: thread_info.cwd,
-                        title: thread_info.title.map(SharedString::from),
-                        updated_at: None,
-                        meta: None,
-                    };
-                    panel.update(cx, |panel, cx| {
-                        panel.selected_agent = agent_type;
-                        panel.load_agent_thread(session_info, window, cx);
-                    });
-                }
                 panel
             })?;
+
+            if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
+                let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                let load_task = panel.update(cx, |panel, cx| {
+                    let thread_store = panel.thread_store.clone();
+                    thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
+                });
+                let thread_exists = load_task
+                    .await
+                    .map(|thread: Option<agent::DbThread>| thread.is_some())
+                    .unwrap_or(false);
+
+                if thread_exists {
+                    panel.update_in(cx, |panel, window, cx| {
+                        panel.selected_agent = thread_info.agent_type.clone();
+                        let session_info = AgentSessionInfo {
+                            session_id: acp::SessionId::new(thread_info.session_id),
+                            cwd: thread_info.cwd,
+                            title: thread_info.title.map(SharedString::from),
+                            updated_at: None,
+                            meta: None,
+                        };
+                        panel.load_agent_thread(session_info, window, cx);
+                    })?;
+                } else {
+                    log::error!(
+                        "could not restore last active thread: \
+                         no thread found in database with ID {:?}",
+                        thread_info.session_id
+                    );
+                }
+            }
 
             Ok(panel)
         })
@@ -612,6 +629,7 @@ impl AgentPanel {
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
+        let workspace_id = workspace.database_id();
         let workspace = workspace.weak_handle();
 
         let context_server_registry =
@@ -717,6 +735,7 @@ impl AgentPanel {
         };
 
         let mut panel = Self {
+            workspace_id,
             active_view,
             workspace,
             user_store,
@@ -1005,7 +1024,7 @@ impl AgentPanel {
             return;
         };
 
-        let Some(active_thread) = thread_view.read(cx).as_active_thread() else {
+        let Some(active_thread) = thread_view.read(cx).active_thread().cloned() else {
             return;
         };
 
@@ -1279,7 +1298,7 @@ impl AgentPanel {
     ) {
         if let Some(workspace) = self.workspace.upgrade()
             && let Some(thread_view) = self.active_thread_view()
-            && let Some(active_thread) = thread_view.read(cx).as_active_thread()
+            && let Some(active_thread) = thread_view.read(cx).active_thread().cloned()
         {
             active_thread.update(cx, |thread, cx| {
                 thread
@@ -1477,6 +1496,10 @@ impl AgentPanel {
                 {
                     update_settings_file(self.fs.clone(), cx, move |settings, _| {
                         let provider = model.provider_id().0.to_string();
+                        let enable_thinking = model.supports_thinking();
+                        let effort = model
+                            .default_effort_level()
+                            .map(|effort| effort.value.to_string());
                         let model = model.id().0.to_string();
                         settings
                             .agent
@@ -1484,8 +1507,8 @@ impl AgentPanel {
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
-                                enable_thinking: false,
-                                effort: None,
+                                enable_thinking,
+                                effort,
                             })
                     });
                 }
@@ -1507,7 +1530,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::AgentThread { thread_view, .. } => thread_view
                 .read(cx)
-                .as_active_thread()
+                .active_thread()
                 .map(|r| r.read(cx).thread.clone()),
             _ => None,
         }
@@ -1952,8 +1975,8 @@ impl AgentPanel {
 
                 if let Some(title_editor) = thread_view
                     .read(cx)
-                    .as_active_thread()
-                    .and_then(|r| r.read(cx).title_editor.clone())
+                    .parent_thread(cx)
+                    .map(|r| r.read(cx).title_editor.clone())
                 {
                     let container = div()
                         .w_full()
@@ -3352,7 +3375,8 @@ impl Dismissable for TrialEndUpsell {
     const KEY: &'static str = "dismissed-trial-end-upsell";
 }
 
-#[cfg(feature = "test-support")]
+/// Test-only helper methods
+#[cfg(any(test, feature = "test-support"))]
 impl AgentPanel {
     /// Opens an external thread using an arbitrary AgentServer.
     ///
@@ -3395,7 +3419,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
-    use workspace::{MultiWorkspace, Workspace};
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
@@ -3422,9 +3446,7 @@ mod tests {
 
         let workspace_b = multi_workspace
             .update(cx, |multi_workspace, window, cx| {
-                let workspace = cx.new(|cx| Workspace::test_new(project_b.clone(), window, cx));
-                multi_workspace.activate(workspace.clone(), cx);
-                workspace
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
             })
             .unwrap();
 
@@ -3497,7 +3519,9 @@ mod tests {
             .expect("panel B load should succeed");
         cx.run_until_parked();
 
-        // Workspace A should restore its thread, width, and agent type
+        // Workspace A should restore width and agent type, but the thread
+        // should NOT be restored because the stub agent never persisted it
+        // to the database (the load-side validation skips missing threads).
         loaded_a.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.width,
@@ -3507,10 +3531,6 @@ mod tests {
             assert_eq!(
                 panel.selected_agent, agent_type_a,
                 "workspace A agent type should be restored"
-            );
-            assert!(
-                panel.active_thread_view().is_some(),
-                "workspace A should have its active thread restored"
             );
         });
 
@@ -3531,5 +3551,52 @@ mod tests {
                 "workspace B should have no active thread"
             );
         });
+    }
+
+    // Simple regression test
+    #[gpui::test]
+    async fn test_new_text_thread_action_handler(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        workspace_a.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        workspace_a.update_in(cx, |_, window, cx| {
+            window.dispatch_action(NewTextThread.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
     }
 }

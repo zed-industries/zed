@@ -1,8 +1,9 @@
 use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, Focusable, ManagedView,
-    MouseButton, Pixels, Render, Subscription, Task, Window, actions, deferred, px,
+    AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, actions,
+    deferred, px,
 };
 use project::Project;
 use std::path::PathBuf;
@@ -25,6 +26,8 @@ actions!(
         PreviousWorkspaceInWindow,
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Moves focus to or from the workspace sidebar without closing it.
+        FocusWorkspaceSidebar,
     ]
 );
 
@@ -42,6 +45,7 @@ pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
 pub trait SidebarHandle: 'static + Send + Sync {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
+    fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn focus(&self, window: &mut Window, cx: &mut App);
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
@@ -64,6 +68,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
         self.update(cx, |this, cx| this.set_width(width, cx))
+    }
+
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.read(cx).focus_handle(cx)
     }
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -145,8 +153,32 @@ impl MultiWorkspace {
 
         if self.sidebar_open {
             self.close_sidebar(window, cx);
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        } else {
+            self.open_sidebar(window, cx);
+            if let Some(sidebar) = &self.sidebar {
+                sidebar.focus(window, cx);
+            }
+        }
+    }
+
+    pub fn focus_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            let sidebar_is_focused = self
+                .sidebar
+                .as_ref()
+                .is_some_and(|s| s.focus_handle(cx).contains_focused(window, cx));
+
+            if sidebar_is_focused {
+                let pane = self.workspace().read(cx).active_pane().clone();
+                let pane_focus = pane.read(cx).focus_handle(cx);
+                window.focus(&pane_focus, cx);
+            } else if let Some(sidebar) = &self.sidebar {
+                sidebar.focus(window, cx);
+            }
         } else {
             self.open_sidebar(window, cx);
             if let Some(sidebar) = &self.sidebar {
@@ -157,12 +189,25 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = true;
+        for workspace in &self.workspaces {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_workspace_sidebar_open(true, cx);
+            });
+        }
         self.serialize(window, cx);
         cx.notify();
     }
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
+        for workspace in &self.workspaces {
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_workspace_sidebar_open(false, cx);
+            });
+        }
+        let pane = self.workspace().read(cx).active_pane().clone();
+        let pane_focus = pane.read(cx).focus_handle(cx);
+        window.focus(&pane_focus, cx);
         self.serialize(window, cx);
         cx.notify();
     }
@@ -204,6 +249,11 @@ impl MultiWorkspace {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
+            if self.sidebar_open {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.set_workspace_sidebar_open(true, cx);
+                });
+            }
             self.workspaces.push(workspace);
             cx.notify();
             self.workspaces.len() - 1
@@ -252,8 +302,28 @@ impl MultiWorkspace {
     }
 
     fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
-        let pane = self.workspace().read(cx).active_pane().clone();
-        let focus_handle = pane.read(cx).focus_handle(cx);
+        // If a dock panel is zoomed, focus it instead of the center pane.
+        // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
+        // which closes the zoomed dock.
+        let focus_handle = {
+            let workspace = self.workspace().read(cx);
+            let mut target = None;
+            for dock in workspace.all_docks() {
+                let dock = dock.read(cx);
+                if dock.is_open() {
+                    if let Some(panel) = dock.active_panel() {
+                        if panel.is_zoomed(window, cx) {
+                            target = Some(panel.panel_focus_handle(cx));
+                            break;
+                        }
+                    }
+                }
+            }
+            target.unwrap_or_else(|| {
+                let pane = workspace.active_pane().clone();
+                pane.read(cx).focus_handle(cx)
+            })
+        };
         window.focus(&focus_handle, cx);
     }
 
@@ -335,6 +405,18 @@ impl MultiWorkspace {
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
         Self::new(workspace, cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_add_workspace(
+        &mut self,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Workspace> {
+        let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+        self.activate(workspace.clone(), cx);
+        workspace
     }
 
     pub fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -484,6 +566,11 @@ impl Render for MultiWorkspace {
                         this.toggle_sidebar(window, cx);
                     },
                 ))
+                .on_action(
+                    cx.listener(|this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
+                        this.focus_sidebar(window, cx);
+                    }),
+                )
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
                     |this| {
@@ -508,6 +595,10 @@ impl Render for MultiWorkspace {
                 ),
             window,
             cx,
+            Tiling {
+                left: multi_workspace_enabled && self.sidebar_open,
+                ..Tiling::default()
+            },
         )
     }
 }

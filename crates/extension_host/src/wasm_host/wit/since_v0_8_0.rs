@@ -868,7 +868,7 @@ impl process::Host for WasmState {
             self.capability_granter
                 .grant_exec(&command.command, &command.args)?;
 
-            let output = util::command::new_smol_command(command.command.as_str())
+            let output = util::command::new_command(command.command.as_str())
                 .args(&command.args)
                 .envs(command.env)
                 .output()
@@ -1048,7 +1048,8 @@ impl ExtensionImports for WasmState {
 
             let destination_path = self
                 .host
-                .writeable_path_from_extension(&self.manifest.id, &path)?;
+                .writeable_path_from_extension(&self.manifest.id, &path)
+                .await?;
 
             let mut response = self
                 .host
@@ -1105,7 +1106,8 @@ impl ExtensionImports for WasmState {
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         let path = self
             .host
-            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))
+            .await?;
 
         make_file_executable(&path)
             .await

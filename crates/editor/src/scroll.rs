@@ -70,7 +70,7 @@ pub struct OngoingScroll {
     axis: Option<Axis>,
 }
 
-/// In the side-by-side diff view, the two sides share a ScrollAnchor using this struct.
+/// In the split diff view, the two sides share a ScrollAnchor using this struct.
 /// Either side can set a ScrollAnchor that points to its own multibuffer, and we store the ID of the display map
 /// that the last-written anchor came from so that we know how to resolve it to a DisplayPoint.
 ///
@@ -196,7 +196,7 @@ pub struct ScrollManager {
     anchor: Entity<SharedScrollAnchor>,
     /// Value to be used for clamping the x component of the SharedScrollAnchor's offset.
     ///
-    /// We store this outside the SharedScrollAnchor so that the two sides of a side-by-side diff can share
+    /// We store this outside the SharedScrollAnchor so that the two sides of a split diff can share
     /// a horizontal scroll offset that may be out of range for one of the editors (when one side is wider than the other).
     /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
@@ -286,7 +286,7 @@ impl ScrollManager {
 
     /// Get a ScrollAnchor whose `anchor` field is guaranteed to point into the multibuffer for the provided snapshot.
     ///
-    /// For normal editors, this just retrieves the internal ScrollAnchor and is lossless. When the editor is part of a side-by-side diff,
+    /// For normal editors, this just retrieves the internal ScrollAnchor and is lossless. When the editor is part of a split diff,
     /// we may need to translate the anchor to point to the "native" multibuffer first. That translation is lossy,
     /// so this method should be used sparingly---if you just need a scroll position or display point, call the appropriate helper method instead,
     /// since they can losslessly handle the case where the ScrollAnchor was last set from the other side.
@@ -669,9 +669,9 @@ impl Editor {
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.register_visible_buffers(cx);
+                        editor.colorize_brackets(false, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                         editor.update_lsp_data(None, window, cx);
-                        editor.colorize_brackets(false, cx);
                     })
                     .ok();
             });

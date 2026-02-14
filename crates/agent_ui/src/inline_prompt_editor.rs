@@ -443,7 +443,7 @@ impl<T: 'static> PromptEditor<T> {
                 self.mention_set
                     .update(cx, |mention_set, _cx| mention_set.remove_invalid(&snapshot));
 
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
                         let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 

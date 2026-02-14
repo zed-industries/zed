@@ -30,9 +30,9 @@ use terminal::terminal_settings::TerminalSettings;
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
-use std::process::Stdio;
+use util::command::Stdio;
 
-use util::command::new_smol_command;
+use util::command::new_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -1620,7 +1620,7 @@ impl PyLspAdapter {
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
-            util::command::new_smol_command(python_path)
+            util::command::new_command(python_path)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -1641,7 +1641,7 @@ impl PyLspAdapter {
             // Try to detect situations where `python3` exists but is not a real Python interpreter.
             // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
             // when run with no arguments, and just fails otherwise.
-            let Some(output) = new_smol_command(&path)
+            let Some(output) = new_command(&path)
                 .args(["-c", "print(1 + 2)"])
                 .output()
                 .await
@@ -1853,7 +1853,7 @@ impl LspInstaller for PyLspAdapter {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
-            util::command::new_smol_command(pip_path.as_path())
+            util::command::new_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
                 .arg("--upgrade")
@@ -1864,7 +1864,7 @@ impl LspInstaller for PyLspAdapter {
             "python-lsp-server[all] installation failed"
         );
         ensure!(
-            util::command::new_smol_command(pip_path)
+            util::command::new_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
                 .arg("--upgrade")
@@ -2421,7 +2421,7 @@ impl LspAdapter for RuffLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .args(&["config", "--output-format", "json"])
             .stdout(Stdio::piped())

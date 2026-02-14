@@ -224,7 +224,7 @@ pub struct EditorSettingsContent {
 
     /// How to display diffs in the editor.
     ///
-    /// Default: stacked
+    /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
 }
 
@@ -786,7 +786,7 @@ pub enum SnippetSortOrder {
 
 /// How to display diffs in the editor.
 ///
-/// Default: stacked
+/// Default: unified
 #[derive(
     Copy,
     Clone,
@@ -805,11 +805,11 @@ pub enum SnippetSortOrder {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiffViewStyle {
-    /// Show diffs in a single stacked view.
+    /// Show diffs in a single unified view.
+    Unified,
+    /// Show diffs in a split view.
     #[default]
-    Stacked,
-    /// Show diffs in a side-by-side split view.
-    SideBySide,
+    Split,
 }
 
 /// Default options for buffer and project search items.
@@ -828,6 +828,14 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Whether to search on input in project search.
+    pub search_on_input: Option<bool>,
+    /// Debounce time in milliseconds for search on input in project search.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 200
+    pub search_on_input_debounce_ms: Option<u64>,
 }
 
 #[with_fallible_options]

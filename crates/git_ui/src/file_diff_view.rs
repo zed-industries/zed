@@ -36,6 +36,7 @@ pub struct FileDiffView {
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl FileDiffView {
+    #[ztracing::instrument(skip_all)]
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
@@ -161,6 +162,7 @@ impl FileDiffView {
     }
 }
 
+#[ztracing::instrument(skip_all)]
 async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
@@ -371,7 +373,7 @@ mod tests {
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -397,8 +399,9 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -531,8 +534,9 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {

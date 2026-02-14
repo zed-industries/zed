@@ -3270,6 +3270,18 @@ Non-negative `integer` values
 - Setting: `regex`
 - Default: `false`
 
+### Search On Input
+
+- Description: Whether to search on input in project search.
+- Setting: `search_on_input`
+- Default: `false`
+
+### Search On Input Debounce Ms
+
+- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
+- Setting: `search_on_input_debounce_ms`
+- Default: `200`
+
 ### Center On Match
 
 - Description: Whether to center the cursor on each search match when navigating.
@@ -3281,12 +3293,6 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
-
-## Center on Match
-
-- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
-- Setting: `center_on_match`
-- Default: `false`
 
 ## Seed Search Query From Cursor
 
@@ -3360,6 +3366,37 @@ To enable LSP folding ranges for a specific language:
   "languages": {
     "Rust": {
       "document_folding_ranges": "on"
+    }
+  }
+}
+```
+
+## LSP Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter queries to compute document symbols.
+2. `on`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+
+To enable LSP document symbols globally:
+
+```json [settings]
+{
+  "document_symbols": "on"
+}
+```
+
+To enable LSP document symbols for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_symbols": "on"
     }
   }
 }
