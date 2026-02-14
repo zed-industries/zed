@@ -485,7 +485,7 @@ Users may want an LLM (Claude, GPT, etc.) to edit their Zed settings on their be
 
 **Example of LLM-friendly documentation:**
 
-```markdown
+````markdown
 ### Font Size
 
 Controls the editor font size in pixels.
@@ -499,7 +499,9 @@ Controls the editor font size in pixels.
   "buffer_font_size": 16
 }
 ```
-```
+````
+
+````
 
 **Action item:** Consider generating a machine-readable settings schema (JSON Schema or similar) that LLMs can reference directly.
 
@@ -557,7 +559,7 @@ Every doc needs to be scored against the 8-point rubric. Target: **4+ on all cri
 **Result:** [ ] Pass (32+) / [ ] Rewrite needed
 **Taboo phrases found:**
 **Action items:**
-```
+````
 
 ### Automated Pre-Screening
 
