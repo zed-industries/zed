@@ -336,8 +336,6 @@ jobs:
 
 - [ ] Audit Zed quickstart/getting-started for task-oriented headers
 - [ ] Add comparison tables where "vague vs specific" patterns help
-- [ ] Consider adding a "Cookbook" section for common workflows
-- [ ] Ensure every page has clear one-sentence opener
 
 ---
 
@@ -365,10 +363,11 @@ jobs:
 
 ### Action Items from Mintlify
 
-- [ ] Audit images for descriptive alt text
 - [ ] Add "minimize vague pronouns" to CONVENTIONS.md
-- [ ] Consider generating `llms.txt` for AI consumption
-- [ ] Review docs for interactive elements that may not parse well
+- [ ] Scan all docs for vague pronouns ("it", "this", "that") and fix
+- [ ] Audit images for descriptive alt text
+- [ ] Consider generating `llms.txt` for AI consumption (future)
+- [ ] Review docs for interactive elements that may not parse well (future)
 
 ---
 
@@ -397,6 +396,11 @@ Found **100+ references** to `settings.json` across docs. Many could reference t
 
 ### Action Items
 
+- [ ] **Research Settings UI capabilities** — Use subagent to explore:
+  - How does Zed's Settings Editor work? (crates/settings_ui/)
+  - Which settings are exposed in the UI vs JSON-only?
+  - How can we programmatically determine UI-supported settings?
+  - Document findings for use in automation
 - [ ] Audit high-priority files (llm-providers, edit-prediction, tool-permissions)
 - [ ] Add Settings UI mention before JSON examples where applicable
 - [ ] Create convention: "UI first, JSON for advanced/bulk configuration"
