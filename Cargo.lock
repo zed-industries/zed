@@ -6446,6 +6446,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "file_icons",
+ "gpui",
+ "language",
+ "mermaid-rs-renderer",
+ "multi_buffer",
+ "ui",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
