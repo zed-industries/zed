@@ -12,7 +12,7 @@ Lua support is available through the [Lua extension](https://github.com/zed-exte
 
 ## luarc.json
 
-To configure LuaLS you can create a `.luarc.json` file in the root of your workspace.
+To configure LuaLS you can create a `.luarc.json` file in the root of your project.
 
 ```json [settings]
 {
@@ -167,7 +167,7 @@ Alternatively to use [StyLua](https://github.com/JohnnyMorganz/StyLua) for auto-
 }
 ```
 
-You can specify various options to StyLua either on the command line above (like `--syntax=Lua54`) or in a `stylua.toml` in your workspace:
+You can specify various options to StyLua either on the command line above (like `--syntax=Lua54`) or in a `stylua.toml` in your project:
 
 ```toml
 syntax = "Lua54"

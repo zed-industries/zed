@@ -76,7 +76,7 @@ Once inside a project:
 - Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like PyCharm's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like PyCharm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
 
 ## Differences in Keybindings
 

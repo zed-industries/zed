@@ -195,7 +195,7 @@ You can also launch Zed from the terminal inside any folder with:
 
 Once inside a project, use `Cmd+P` to jump between files quickly. `Cmd+Shift+P` (`Ctrl+Shift+P` on Linux) opens the command palette for running actions / tasks, toggling settings, or starting a collaboration session.
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
 
 ## Differences in Keybindings
 
@@ -274,12 +274,12 @@ Open a folder → work inside that folder → no additional workspace layer.
 
 ### Navigating in a Project
 
-In VS Code, the standard entry point is opening a folder. From there, the left-hand sidebar is central to your navigation.
+In VS Code, the standard entry point is opening a folder. From there, the left-hand panel is central to your navigation.
 Zed takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
 - The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are your primary navigation tools. The File Finder searches across the entire workspace instantly; files, symbols, commands, even teammates if you're collaborating.
-- Instead of a persistent sidebar, Zed encourages you to:
+- Instead of a persistent panel, Zed encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)
   - Use split panes and tabs for context, rather than keeping a large file tree open (though you can do this with the Project Panel if you prefer).

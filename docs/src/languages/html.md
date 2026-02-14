@@ -34,7 +34,7 @@ Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > HTM
   }
 ```
 
-You can still trigger formatting manually with {#kb editor::Format} or by opening [the Command Palette](..//getting-started.md#command-palette) ({#kb command_palette::Toggle}) and selecting "Format Document".
+You can still trigger formatting manually with {#kb editor::Format} or by opening the [command palette](..//getting-started.md#command-palette) ({#kb command_palette::Toggle}) and selecting "Format Document".
 
 ### LSP Formatting
 

@@ -84,7 +84,7 @@ With that done, choose one of the three authentication methods:
 
 #### Authentication via Static Credentials
 
-While it's possible to configure through the Agent Panel settings UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
+While it's possible to configure through the Agent Panel Settings Editor by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
 To do this:
 
 1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).

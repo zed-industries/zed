@@ -15,7 +15,7 @@ Channels support:
 - Ambient awareness – you can see what everyone else is working on with no need for status emails or meetings.
 
 Each channel corresponds to an ongoing project or work-stream.
-You can see who's in a channel as their avatars will show up in the sidebar.
+You can see who's in a channel as their avatars will show up in the Collab Panel.
 This makes it easy to see what everyone is doing and where to find them if needed.
 
 Create a channel by clicking the `+` icon next to the `Channels` text in the collab panel.
@@ -35,7 +35,7 @@ You can invite collaborators by right clicking and selecting `Manage members`.
 When you have subchannels nested under others, permissions are inherited.
 For instance, adding people to the top-level channel in your channel tree will automatically give them access to its subchannels.
 
-Once you have added someone, they can either join your channel by clicking on it in their Zed sidebar, or you can share the link to the channel so that they can join directly.
+Once you have added someone, they can either join your channel by clicking on it in their Collab Panel, or you can share the link to the channel so that they can join directly.
 
 ## Voice Chat
 

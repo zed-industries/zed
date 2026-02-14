@@ -92,7 +92,7 @@ Note that `"air"` must come first in this list, otherwise [r-lib/styler](https:/
 
 #### Configuring Air
 
-Air is minimally configurable via an `air.toml` file placed in the root directory of your project:
+Air is minimally configurable via an `air.toml` file placed in the root folder of your project:
 
 ```toml
 [format]
