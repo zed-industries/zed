@@ -5,6 +5,7 @@
 GitHub Action that analyzes PRs and suggests documentation updates when warranted. Replaces the existing incomplete `docs_automation.yml` workflow.
 
 ## Status
+
 - **Phase:** Foundation Complete, Action Development Next
 - **Progress:** 65%
 - **Started:** 2026-02-01
@@ -82,21 +83,25 @@ Track when suggestions are modified vs applied directly to improve over time.
 Applied conventions to existing docs:
 
 **P0 Critical:**
+
 - [x] Rewrite `getting-started.md` — Remove taboo phrases, convert hardcoded keybindings to `{#kb}` syntax, add anchor IDs
 - [x] Remove empty `quick-start.md` stub
 - [x] Add YAML frontmatter to 118 docs missing it (batch script)
 
 **P1 High:**
+
 - [x] Fix `collaboration/` brand voice — Rewrite overview.md opening, improve channels.md and contacts docs
 - [x] Standardize callout format to `> **Note:**` across 9 files
 - [x] Improve extension docs openings (installing, developing)
 
 **P2 Medium:**
+
 - [x] Convert keybindings in `running-testing.md` to `{#kb}` syntax
 - [x] Add anchor IDs to key reference docs (configuring-zed, key-bindings, vim)
 - [ ] Add "See Also" sections where missing (lower priority)
 
 **P3 Lower:**
+
 - [ ] Version callouts where behavior differs
 - [ ] Remove TBD HTML comments
 
@@ -110,6 +115,7 @@ Apply Settings UI research findings across all docs:
 - [ ] Consider adding `zed://settings/` deep links
 
 **High-priority files (most settings.json refs):**
+
 - [ ] `ai/llm-providers.md` (15+ refs)
 - [ ] `ai/edit-prediction.md` (8+ refs)
 - [ ] `ai/tool-permissions.md` (3 refs, explicitly mentions UI)
@@ -162,6 +168,7 @@ Execute the brand voice audit defined in the audit framework below:
 ## Key Conventions (Summary)
 
 ### Document Structure
+
 1. YAML frontmatter (`title`, `description`)
 2. H1 title with anchor ID
 3. Opening paragraph (what + why)
@@ -171,6 +178,7 @@ Execute the brand voice audit defined in the audit framework below:
 7. See Also links
 
 ### Formatting
+
 - Settings in `code`: `vim_mode`, `buffer_font_size`
 - Keybindings via `{#kb action::Name}` syntax
 - Actions via `{#action action::Name}` syntax
@@ -179,6 +187,7 @@ Execute the brand voice audit defined in the audit framework below:
 - Anchor IDs on linkable sections: `## Section {#section-id}`
 
 ### Brand Voice (Must Score 4+ on All)
+
 1. Technical Grounding — Specific, verifiable claims
 2. Natural Syntax — Flows like developer speech
 3. Quiet Confidence — Facts without hype
@@ -189,6 +198,7 @@ Execute the brand voice audit defined in the audit framework below:
 8. Earned Claims — Assertions are supportable
 
 ### Taboo (Auto-Fail)
+
 - Exclamation points
 - "We're excited/thrilled"
 - "Revolutionary" or "game-changing"
@@ -205,7 +215,7 @@ name: Documentation Suggestions
 on:
   pull_request:
     paths:
-      - 'crates/**/*.rs'
+      - "crates/**/*.rs"
 
 jobs:
   suggest-docs:
@@ -230,7 +240,7 @@ jobs:
           # Start with conventions
           echo "## Documentation Conventions" > context.md
           cat docs/.conventions/CONVENTIONS.md >> context.md
-          
+
           # Add brand voice summary
           echo -e "\n## Brand Voice Quick Reference" >> context.md
           echo "Score 4+ on: Technical Grounding, Natural Syntax, Quiet Confidence, Developer Respect, Information Priority, Specificity, Voice Consistency, Earned Claims" >> context.md
@@ -316,11 +326,11 @@ jobs:
 
 ## Commits Made
 
-| Commit | Description | Files |
-|--------|-------------|-------|
-| `25a211b358` | Add documentation conventions and gold standard examples | 9 |
-| `0f223962c9` | P0/P1 remediation - frontmatter, brand voice, callouts | 127 |
-| `c9246012ef` | P2 remediation - keybinding syntax and anchor IDs | 5 |
+| Commit       | Description                                              | Files |
+| ------------ | -------------------------------------------------------- | ----- |
+| `25a211b358` | Add documentation conventions and gold standard examples | 9     |
+| `0f223962c9` | P0/P1 remediation - frontmatter, brand voice, callouts   | 127   |
+| `c9246012ef` | P2 remediation - keybinding syntax and anchor IDs        | 5     |
 
 ---
 
@@ -337,13 +347,16 @@ jobs:
 ### What Cursor Does Well
 
 1. **Clear opening sentences**: Every page starts with a single sentence explaining what it is
+
    - "Agent is Cursor's assistant that can complete complex coding tasks independently"
    - "This quickstart walks you through working with Cursor's Agent"
 
 2. **Task-oriented structure**: Quickstart uses action verbs as headers
+
    - "Start with Agent", "Plan before building", "Write specific prompts"
 
 3. **Inline keybindings**: Shows keybindings inline with actions
+
    - "Open the Agent panel with `Cmd I` / `Ctrl I`"
 
 4. **Comparison tables**: Vague vs Specific prompts table is highly effective
@@ -370,15 +383,18 @@ jobs:
 ### Key Takeaways
 
 1. **YAML frontmatter is critical for AI**: Metadata helps AI understand page purpose
+
    - ✓ We now have frontmatter on all docs
 
 2. **Minimal formatting for AI extraction**:
+
    - Clear hierarchical headings ✓
    - Short paragraphs and lists ✓
    - Avoid hidden/interactive content (tabs, collapsibles)
    - Separate code from text with fenced blocks ✓
 
 3. **Writing habits that help AI**:
+
    - Concise sentences, active voice ✓ (in brand voice guidelines)
    - Descriptive alt text for images — **Need to audit**
    - Consistent terminology — **Need to audit**
@@ -403,34 +419,39 @@ Found **100+ references** to `settings.json` across docs. Many could reference t
 
 ### Files with Most settings.json References
 
-| File | Count | Priority |
-|------|-------|----------|
-| ai/llm-providers.md | 15+ | High — many could use UI |
-| languages/python.md | 10+ | Medium |
-| ai/edit-prediction.md | 8+ | High — has UI controls |
-| configuring-languages.md | 8+ | Medium |
-| remote-development.md | 8+ | Low — advanced config |
-| ai/tool-permissions.md | 3 | High — explicitly mentions UI |
+| File                     | Count | Priority                      |
+| ------------------------ | ----- | ----------------------------- |
+| ai/llm-providers.md      | 15+   | High — many could use UI      |
+| languages/python.md      | 10+   | Medium                        |
+| ai/edit-prediction.md    | 8+    | High — has UI controls        |
+| configuring-languages.md | 8+    | Medium                        |
+| remote-development.md    | 8+    | Low — advanced config         |
+| ai/tool-permissions.md   | 3     | High — explicitly mentions UI |
 
 ### Pattern to Fix
 
 **Before:**
+
 > To disable all AI features, add the following to your `settings.json`:
 
 **After:**
+
 > Disable AI features in the Settings Editor ({#kb zed::OpenSettings}) by searching for "ai" and toggling off, or add to your settings file:
 
 ### Settings UI Research Findings (2026-02-14)
 
 **Key files:**
+
 - `crates/settings_ui/src/page_data.rs` — Settings registration (~9000 lines, 362 settings)
 - `crates/settings_ui/src/settings_ui.rs` — Main UI implementation
 
 **Statistics:**
+
 - **329 settings** have full UI support (~91%)
 - **33 settings** are JSON-only (marked with `.unimplemented()`)
 
 **JSON-only settings** (complex types the UI doesn't support):
+
 - `private_files`, `wrap_guides` — Arrays
 - `buffer_font_features`, `buffer_font_fallbacks` — Font configuration
 - `lsp` — Entire LSP configuration object
@@ -442,9 +463,11 @@ Found **100+ references** to `settings.json` across docs. Many could reference t
 ### Documentation Pattern
 
 **For UI-supported settings (~91%):**
+
 > Open Settings ({#kb zed::OpenSettings}) and search for "Font Size", or set `buffer_font_size` in your settings file.
 
 **For JSON-only settings (~9%):**
+
 > Add the following to your `settings.json` (this setting requires manual JSON editing):
 
 ### Action Items
@@ -470,35 +493,35 @@ Every doc needs to be scored against the 8-point rubric. Target: **4+ on all cri
 
 ### Priority Order for Audit
 
-| Priority | Directory | Files | Rationale |
-|----------|-----------|-------|-----------|
-| 1 | Root | ~15 | High-traffic entry points |
-| 2 | ai/ | ~17 | Core feature, brand-critical |
-| 3 | migrate/ | 5 | First impression for new users |
-| 4 | collaboration/ | 3 | Already partially fixed |
-| 5 | extensions/ | ~10 | Developer-facing |
-| 6 | languages/ | ~60 | Lower priority, template-based |
-| 7 | development/ | ~8 | Internal audience |
-| 8 | reference/ | 3 | Auto-generated content |
+| Priority | Directory      | Files | Rationale                      |
+| -------- | -------------- | ----- | ------------------------------ |
+| 1        | Root           | ~15   | High-traffic entry points      |
+| 2        | ai/            | ~17   | Core feature, brand-critical   |
+| 3        | migrate/       | 5     | First impression for new users |
+| 4        | collaboration/ | 3     | Already partially fixed        |
+| 5        | extensions/    | ~10   | Developer-facing               |
+| 6        | languages/     | ~60   | Lower priority, template-based |
+| 7        | development/   | ~8    | Internal audience              |
+| 8        | reference/     | 3     | Auto-generated content         |
 
 ### Quick Audit Checklist (Per Doc)
 
 ```markdown
 ## [filename.md]
 
-| Criterion | Score | Notes |
-|-----------|-------|-------|
-| Technical Grounding | /5 | |
-| Natural Syntax | /5 | |
-| Quiet Confidence | /5 | |
-| Developer Respect | /5 | |
-| Information Priority | /5 | |
-| Specificity | /5 | |
-| Voice Consistency | /5 | |
-| Earned Claims | /5 | |
+| Criterion            | Score | Notes |
+| -------------------- | ----- | ----- |
+| Technical Grounding  | /5    |       |
+| Natural Syntax       | /5    |       |
+| Quiet Confidence     | /5    |       |
+| Developer Respect    | /5    |       |
+| Information Priority | /5    |       |
+| Specificity          | /5    |       |
+| Voice Consistency    | /5    |       |
+| Earned Claims        | /5    |       |
 
 **Result:** [ ] Pass (32+) / [ ] Rewrite needed
-**Taboo phrases found:** 
+**Taboo phrases found:**
 **Action items:**
 ```
 
@@ -506,7 +529,7 @@ Every doc needs to be scored against the 8-point rubric. Target: **4+ on all cri
 
 Before manual audit, grep for auto-fail patterns:
 
-```bash
+````bash
 # Exclamation points
 grep -rn '!' docs/src/*.md | grep -v '```' | grep -v 'http'
 
@@ -518,24 +541,25 @@ grep -rni "revolutionary\|game-changing\|blazingly\|seamless" docs/src/
 
 # Em dash chains (2+ per line)
 grep -rn '—.*—' docs/src/
-```
+````
 
 ### Audit Tracking
 
-| Directory | Total | Audited | Pass | Needs Work | Complete |
-|-----------|-------|---------|------|------------|----------|
-| Root | 15 | 0 | 0 | 0 | [ ] |
-| ai/ | 17 | 0 | 0 | 0 | [ ] |
-| migrate/ | 5 | 0 | 0 | 0 | [ ] |
-| collaboration/ | 3 | 3 | 3 | 0 | [x] |
-| extensions/ | 10 | 2 | 2 | 0 | [ ] |
-| languages/ | 60 | 0 | 0 | 0 | [ ] |
-| development/ | 8 | 0 | 0 | 0 | [ ] |
-| reference/ | 3 | 0 | 0 | 0 | [ ] |
+| Directory      | Total | Audited | Pass | Needs Work | Complete |
+| -------------- | ----- | ------- | ---- | ---------- | -------- |
+| Root           | 15    | 0       | 0    | 0          | [ ]      |
+| ai/            | 17    | 0       | 0    | 0          | [ ]      |
+| migrate/       | 5     | 0       | 0    | 0          | [ ]      |
+| collaboration/ | 3     | 3       | 3    | 0          | [x]      |
+| extensions/    | 10    | 2       | 2    | 0          | [ ]      |
+| languages/     | 60    | 0       | 0    | 0          | [ ]      |
+| development/   | 8     | 0       | 0    | 0          | [ ]      |
+| reference/     | 3     | 0       | 0    | 0          | [ ]      |
 
 ### Pre-Screening Results (2026-02-14)
 
 **Exclamation points (potential issues):**
+
 - `command-palette.md:12` — "Try it!" (casual but borderline)
 - `helix.md:8` — "Work in progress!" (acceptable for WIP notice)
 - `key-bindings.md:206` — "help is very much appreciated!" (remove)
@@ -543,9 +567,11 @@ grep -rn '—.*—' docs/src/
 **"We're excited/thrilled":** None found ✓
 
 **Hype words:**
+
 - `ai/mcp.md:10` — "seamless integration" (in MCP protocol description quote, may be acceptable as external quote)
 
 **Em dash chains (2+ per paragraph):**
+
 - `environment.md:21` — Two em dashes in one sentence
 - `environment.md:97` — Two em dashes in one sentence
 - `troubleshooting.md:10, 40` — Borderline
@@ -554,6 +580,7 @@ grep -rn '—.*—' docs/src/
 - Several others in extensions/, ai/, toolchains.md
 
 **Summary:** Docs are in relatively good shape. Main issues:
+
 - ~3 exclamation points to remove
 - ~10 sentences with em dash chains to simplify
 - 1 "seamless" usage (in quote context)
@@ -570,15 +597,15 @@ grep -rn '—.*—' docs/src/
 
 ## Decisions
 
-| Question | Decision | Rationale |
-|----------|----------|-----------|
-| Where to post? | PR comment | Not inline - docs suggestions aren't tied to specific diff lines |
-| Large PRs? | Smart filtering | Focus on user-facing changes; internal refactors naturally filter out |
-| Skip mechanism? | None | Action should be smart enough to say "no docs needed" with high bar |
-| Existing workflow? | Replace | `docs_automation.yml` was half-finished; this fully ships it |
-| Brand voice enforcement? | Via conventions | Rubric in conventions, not runtime checking |
+| Question                 | Decision        | Rationale                                                             |
+| ------------------------ | --------------- | --------------------------------------------------------------------- |
+| Where to post?           | PR comment      | Not inline - docs suggestions aren't tied to specific diff lines      |
+| Large PRs?               | Smart filtering | Focus on user-facing changes; internal refactors naturally filter out |
+| Skip mechanism?          | None            | Action should be smart enough to say "no docs needed" with high bar   |
+| Existing workflow?       | Replace         | `docs_automation.yml` was half-finished; this fully ships it          |
+| Brand voice enforcement? | Via conventions | Rubric in conventions, not runtime checking                           |
 
 ---
 
-*Created: 2026-02-01*
-*Last Updated: 2026-02-14*
+_Created: 2026-02-01_
+_Last Updated: 2026-02-14_

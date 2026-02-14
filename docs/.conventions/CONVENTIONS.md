@@ -177,9 +177,11 @@ Keep tables scannable — avoid long prose in table cells.
 Minimize vague pronouns like "it", "this", and "that". Repeat the noun so readers know exactly what you're referring to.
 
 **Bad:**
+
 > The API creates a token after authentication. It should be stored securely.
 
 **Good:**
+
 > The API creates a token after authentication. The token should be stored securely.
 
 This improves clarity for both human readers and AI systems parsing the documentation.
