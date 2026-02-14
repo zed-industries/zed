@@ -161,7 +161,7 @@ Zed skips the indexing step. You open a folder and start working right away. Sin
 
 ### rust-analyzer: Shared Foundation, Different Integration
 
-Here's what makes the RustRover-to-Zed transition unique: **both editors use rust-analyzer** for Rust language intelligence. This means the core code analysis—completions, go-to-definition, find references, type inference—is fundamentally the same.
+Here's what makes the RustRover-to-Zed transition unique: **both editors use rust-analyzer** for Rust language intelligence. This means the core code analysis (completions, go-to-definition, find references, type inference) is fundamentally the same.
 
 RustRover integrates rust-analyzer into its JetBrains platform, adding a GUI layer, additional refactorings, and its own indexing on top. Zed uses rust-analyzer more directly through the Language Server Protocol (LSP).
 

@@ -180,7 +180,7 @@ Note that we'll automatically convert your icon to monochrome to preserve Zed's 
 
 ---
 
-This is all you need to distribute an agent server through Zed's extension system!
+This is all you need to distribute an agent server through Zed's extension system.
 
 ## Publishing
 

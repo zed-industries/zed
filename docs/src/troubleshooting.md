@@ -7,7 +7,7 @@ description: "Common issues and solutions for Zed on all platforms."
 
 This guide covers common troubleshooting techniques for Zed.
 Sometimes you'll be able to identify and resolve issues on your own using this information.
-Other times, troubleshooting means gathering the right information—logs, profiles, or reproduction steps—to help us diagnose and fix the problem.
+Other times, troubleshooting means gathering the right information (logs, profiles, or reproduction steps) to help us diagnose and fix the problem.
 
 > **Note**: To open the command palette, use `cmd-shift-p` on macOS or `ctrl-shift-p` on Windows / Linux.
 
@@ -37,7 +37,7 @@ The log may contain enough context to help you debug the issue yourself, or you 
 
 ## Performance Issues (Profiling)
 
-If you're running into performance issues in Zed—such as hitches, hangs, or general unresponsiveness—having a performance profile attached to your issue will help us zero in on what is getting stuck, so we can fix it.
+If you're running into performance issues in Zed (hitches, hangs, or general unresponsiveness), having a performance profile attached to your issue will help us zero in on what is getting stuck.
 
 ### macOS
 

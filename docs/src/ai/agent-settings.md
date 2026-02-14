@@ -164,7 +164,7 @@ Change the font size of rendered agent responses in Settings ({#kb zed::OpenSett
 }
 ```
 
-> Editors in the Agent Panel—such as the main message textarea—use monospace fonts and are controlled by "Agent Buffer Font Size" in Settings (which defaults to "Buffer Font Size" when unset).
+> Editors in the Agent Panel (such as the main message textarea) use monospace fonts and are controlled by "Agent Buffer Font Size" in Settings. This defaults to "Buffer Font Size" when unset.
 
 ### Default Tool Permissions
 

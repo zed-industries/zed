@@ -207,7 +207,7 @@ Title: Zed-Flavored Rust
 
 _The text in parentheses above are comments and are not part of the rule._
 
-> **Note:** While you technically _can_ nest a rule within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
+> **Note:** While you technically _can_ nest a rule within itself, this is strongly discouraged. Use at your own risk.
 
 By using nested rules, you can create modular and reusable rule components that can be combined in various ways to suit different scenarios.
 
