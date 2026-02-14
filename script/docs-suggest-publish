@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 #
-# Create a PR from batched documentation suggestions.
+# Create a documentation PR from batched suggestions.
 #
 # Usage:
 #   script/docs-suggest-publish [--dry-run]
 #
 # This script:
-# 1. Reads pending suggestions from docs/.suggestions/pending.md
-# 2. Creates a new branch with the documentation changes
-# 3. Opens a PR for review
+# 1. Reads pending suggestions from the docs/suggestions-pending branch
+# 2. Creates a new branch with a documentation PR
+# 3. Optionally resets the suggestions branch after successful PR creation
 #
 # Options:
-#   --dry-run    Show what would be done without creating PR
-#   --verbose    Show detailed progress
+#   --dry-run       Show what would be done without creating PR
+#   --keep-queue    Don't reset the suggestions branch after PR creation
+#   --verbose       Show detailed progress
 #
-# The batch file is cleared after successful PR creation.
+# Run this as part of the preview release workflow.
 
 set -euo pipefail
 
 DRY_RUN=false
+KEEP_QUEUE=false
 VERBOSE=false
+
+SUGGESTIONS_BRANCH="docs/suggestions-pending"
 
 # Colors
 RED='\033[0;31m'
@@ -46,12 +50,16 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --keep-queue)
+            KEEP_QUEUE=true
+            shift
+            ;;
         --verbose)
             VERBOSE=true
             shift
             ;;
         -h|--help)
-            head -20 "$0" | tail -18
+            head -22 "$0" | tail -20
             exit 0
             ;;
         *)
@@ -64,99 +72,210 @@ done
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BATCH_FILE="$REPO_ROOT/docs/.suggestions/pending.md"
-
-# Check for pending suggestions
-if [[ ! -f "$BATCH_FILE" ]]; then
-    echo "No pending suggestions found at $BATCH_FILE"
-    echo "Run 'script/docs-suggest --pr <number>' to analyze PRs first."
+# Check if suggestions branch exists
+log "Checking for suggestions branch..."
+if ! git ls-remote --exit-code --heads origin "$SUGGESTIONS_BRANCH" > /dev/null 2>&1; then
+    echo "No pending suggestions found (branch $SUGGESTIONS_BRANCH doesn't exist)."
+    echo "Suggestions are queued automatically when PRs are merged to main."
     exit 0
 fi
 
-# Count suggestions
-suggestion_count=$(grep -c "^## PR #" "$BATCH_FILE" || echo "0")
-if [[ "$suggestion_count" -eq 0 ]]; then
-    echo "No suggestions in batch file."
+# Fetch the suggestions branch
+log "Fetching suggestions branch..."
+git fetch origin "$SUGGESTIONS_BRANCH"
+
+# Check for manifest
+if ! git show "origin/$SUGGESTIONS_BRANCH:manifest.json" > /dev/null 2>&1; then
+    echo "No manifest found on suggestions branch."
     exit 0
 fi
 
-echo "Found $suggestion_count batched suggestion(s)"
+# Read manifest
+MANIFEST=$(git show "origin/$SUGGESTIONS_BRANCH:manifest.json")
+SUGGESTION_COUNT=$(echo "$MANIFEST" | jq '.suggestions | length')
+
+if [[ "$SUGGESTION_COUNT" -eq 0 ]]; then
+    echo "No pending suggestions in queue."
+    exit 0
+fi
+
+echo "Found $SUGGESTION_COUNT pending suggestion(s):"
+echo ""
+echo "$MANIFEST" | jq -r '.suggestions[] | "  PR #\(.pr): \(.title)"'
 echo ""
 
 if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "${YELLOW}=== DRY RUN ===${NC}"
     echo ""
-    echo "Would create PR with these suggestions:"
+    echo "Would create PR with the following suggestions:"
     echo ""
-    cat "$BATCH_FILE"
-    echo ""
+    
+    # Show each suggestion file
+    for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
+        echo "--- $file ---"
+        git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || echo "(file not found)"
+        echo ""
+    done
+    
     echo -e "${YELLOW}=== END DRY RUN ===${NC}"
+    echo ""
+    echo "Run without --dry-run to create the PR."
     exit 0
 fi
 
-# Check for clean git state
-if [[ -n "$(git status --porcelain docs/)" ]]; then
-    error "docs/ directory has uncommitted changes. Please commit or stash first."
+# Ensure clean working state
+if [[ -n "$(git status --porcelain)" ]]; then
+    error "Working directory has uncommitted changes. Please commit or stash first."
 fi
 
-# Create branch
-BRANCH_NAME="docs/suggestions-$(date +%Y-%m-%d-%H%M%S)"
-log "Creating branch: $BRANCH_NAME"
+# Remember current branch
+ORIGINAL_BRANCH=$(git branch --show-current)
+log "Current branch: $ORIGINAL_BRANCH"
 
-git checkout -b "$BRANCH_NAME"
+# Create new branch for docs PR
+DOCS_BRANCH="docs/preview-$(date +%Y-%m-%d)"
+log "Creating docs branch: $DOCS_BRANCH"
 
-# For now, we'll create a PR with the suggestions as the body
-# In a more advanced version, we could use AI to apply the suggestions automatically
+git checkout -b "$DOCS_BRANCH"
 
-# Create PR
-PR_BODY=$(cat << EOF
-# Documentation Suggestions for Preview Release
+# Build PR body from suggestions
+PR_BODY_FILE=$(mktemp)
+cat > "$PR_BODY_FILE" << 'EOF'
+# Documentation Updates for Preview Release
 
-This PR contains documentation suggestions batched from recent PRs to main.
+This PR contains documentation suggestions collected from recently merged PRs.
 
-## How to Review
+## How to Use This PR
 
 1. Review each suggestion below
-2. Apply relevant changes to the docs manually (or use AI assistance)
-3. Ensure all new feature docs include the Preview callout:
-   \`\`\`markdown
-   > **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-   \`\`\`
+2. For each suggestion, either:
+   - Apply the changes to the docs (edit files directly in this PR)
+   - Note why the suggestion doesn't apply (comment on the PR)
+3. Ensure all new feature docs include the Preview callout
+4. Merge when ready
+
+## Preview Callout
+
+New features should include this callout:
+
+```markdown
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+```
 
 ---
 
-$(cat "$BATCH_FILE")
+## Pending Suggestions
+
 EOF
-)
 
-# We need to make at least one change to create a PR
-# Add a marker file that will be removed after docs are written
+# Append each suggestion to PR body
+for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
+    log "Adding $file to PR body..."
+    echo "" >> "$PR_BODY_FILE"
+    git show "origin/$SUGGESTIONS_BRANCH:$file" >> "$PR_BODY_FILE" 2>/dev/null || true
+    echo "" >> "$PR_BODY_FILE"
+    echo "---" >> "$PR_BODY_FILE"
+done
+
+# Add tracking info
+cat >> "$PR_BODY_FILE" << EOF
+
+## PRs Included
+
+EOF
+
+echo "$MANIFEST" | jq -r '.suggestions[] | "- [PR #\(.pr)](\(.file)): \(.title)"' >> "$PR_BODY_FILE"
+
+# Create a marker file so the PR has changes
 mkdir -p docs/.suggestions
-echo "Documentation suggestions pending review. See PR description." > docs/.suggestions/PENDING_REVIEW.md
+cat > docs/.suggestions/PENDING_REVIEW.md << EOF
+# Documentation Suggestions Pending Review
+
+This file indicates that documentation suggestions are being reviewed.
+Delete this file after applying the documentation updates.
+
+## Suggestions from:
+$(echo "$MANIFEST" | jq -r '.suggestions[] | "- PR #\(.pr): \(.title)"')
+
+Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+
 git add docs/.suggestions/PENDING_REVIEW.md
-git commit -m "docs: Add documentation suggestions for preview release
+git commit -m "docs: Documentation suggestions for preview release
 
-This PR contains batched documentation suggestions.
-See PR description for details."
+This PR contains batched documentation suggestions from:
+$(echo "$MANIFEST" | jq -r '.suggestions[] | "- PR #\(.pr)"')
 
-git push -u origin "$BRANCH_NAME"
+Review and apply suggestions, then remove docs/.suggestions/PENDING_REVIEW.md"
 
-# Create the PR
+# Push and create PR
+log "Pushing branch..."
+git push -u origin "$DOCS_BRANCH"
+
+log "Creating PR..."
 gh pr create \
-    --title "docs: Documentation suggestions for preview release" \
-    --body "$PR_BODY" \
+    --title "docs: Documentation updates for preview release" \
+    --body-file "$PR_BODY_FILE" \
     --label "documentation"
 
+PR_URL=$(gh pr view --json url --jq '.url')
 echo ""
-echo -e "${GREEN}PR created successfully!${NC}"
+echo -e "${GREEN}PR created:${NC} $PR_URL"
+
+# Reset suggestions branch if not keeping
+if [[ "$KEEP_QUEUE" != "true" ]]; then
+    echo ""
+    echo "Resetting suggestions queue..."
+    
+    git checkout --orphan "${SUGGESTIONS_BRANCH}-reset"
+    git rm -rf . > /dev/null 2>&1 || true
+    
+    cat > README.md << 'EOF'
+# Documentation Suggestions Queue
+
+This branch contains batched documentation suggestions for the next Preview release.
+
+Each file represents suggestions from a merged PR. At preview branch cut time,
+run `script/docs-suggest-publish` to create a documentation PR from these suggestions.
+
+## Structure
+
+- `suggestions/PR-XXXXX.md` - Suggestions for PR #XXXXX
+- `manifest.json` - Index of all pending suggestions
+
+## Workflow
+
+1. PRs merged to main trigger documentation analysis
+2. Suggestions are committed here as individual files
+3. At preview release, suggestions are collected into a docs PR
+4. After docs PR is created, this branch is reset
+EOF
+    
+    mkdir -p suggestions
+    echo '{"suggestions":[]}' > manifest.json
+    git add README.md suggestions manifest.json
+    git commit -m "Reset documentation suggestions queue
+
+Previous suggestions published in: $PR_URL"
+    
+    git push -f origin "${SUGGESTIONS_BRANCH}-reset:$SUGGESTIONS_BRANCH"
+    git checkout "$ORIGINAL_BRANCH"
+    git branch -D "${SUGGESTIONS_BRANCH}-reset"
+    
+    echo "Suggestions queue reset."
+else
+    git checkout "$ORIGINAL_BRANCH"
+    echo ""
+    echo "Suggestions queue kept (--keep-queue). Remember to reset manually after PR is merged."
+fi
+
+# Cleanup
+rm -f "$PR_BODY_FILE"
+
+echo ""
+echo -e "${GREEN}Done!${NC}"
 echo ""
 echo "Next steps:"
-echo "1. Review the suggestions in the PR description"
-echo "2. Apply the documentation changes"
-echo "3. Remove docs/.suggestions/PENDING_REVIEW.md when done"
-echo "4. Merge the PR"
-
-# Clear the batch file
-rm "$BATCH_FILE"
-echo ""
-echo "Batch file cleared."
+echo "1. Review the PR and apply documentation changes"
+echo "2. Remove docs/.suggestions/PENDING_REVIEW.md when done"
+echo "3. Merge the PR"

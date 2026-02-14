@@ -1,12 +1,22 @@
 name: Documentation Suggestions
 
 on:
+  # Run when PRs are merged to main
   pull_request:
-    types: [opened, synchronize]
+    types: [closed]
+    branches: [main]
     paths:
       - 'crates/**/*.rs'
       - '!crates/**/*_test.rs'
       - '!crates/**/tests/**'
+  
+  # Run on cherry-picks to release branches
+  pull_request_target:
+    types: [opened, synchronize]
+    branches:
+      - 'v0.*'
+    paths:
+      - 'crates/**/*.rs'
   
   # Manual trigger for testing
   workflow_dispatch:
@@ -15,24 +25,210 @@ on:
         description: 'PR number to analyze'
         required: true
         type: string
+      mode:
+        description: 'Output mode'
+        required: true
+        type: choice
+        options:
+          - batch
+          - immediate
+        default: batch
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 env:
   DROID_MODEL: claude-sonnet-4-5-20250929
+  SUGGESTIONS_BRANCH: docs/suggestions-pending
 
 jobs:
-  suggest-docs:
+  # Job for PRs merged to main - batch suggestions to branch
+  batch-suggestions:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    
-    # Only run on PRs to main or release branches
     if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.base_ref == 'main' ||
-      startsWith(github.base_ref, 'v0.')
+      (github.event_name == 'pull_request' && 
+       github.event.pull_request.merged == true &&
+       github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'batch')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+
+      - name: Get PR info
+        id: pr
+        run: |
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            PR_NUM="${{ inputs.pr_number }}"
+          else
+            PR_NUM="${{ github.event.pull_request.number }}"
+          fi
+          echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
+          
+          # Get PR title
+          PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title')
+          echo "title=$PR_TITLE" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Analyze PR for documentation needs
+        id: analyze
+        run: |
+          OUTPUT_FILE=$(mktemp)
+          
+          ./script/docs-suggest \
+            --pr "${{ steps.pr.outputs.number }}" \
+            --immediate \
+            --preview \
+            --output "$OUTPUT_FILE" \
+            --verbose 2>&1 || true
+          
+          # Check if we got actionable suggestions (not "no updates needed")
+          if grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
+             ! grep -q "No Documentation Updates Needed" "$OUTPUT_FILE"; then
+            echo "has_suggestions=true" >> "$GITHUB_OUTPUT"
+            echo "output_file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_suggestions=false" >> "$GITHUB_OUTPUT"
+            echo "No actionable documentation suggestions for this PR"
+            cat "$OUTPUT_FILE"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+
+      - name: Commit suggestions to queue branch
+        if: steps.analyze.outputs.has_suggestions == 'true'
+        run: |
+          set -euo pipefail
+          
+          PR_NUM="${{ steps.pr.outputs.number }}"
+          PR_TITLE="${{ steps.pr.outputs.title }}"
+          OUTPUT_FILE="${{ steps.analyze.outputs.output_file }}"
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Retry loop for handling concurrent pushes
+          MAX_RETRIES=3
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES"
+            
+            # Fetch and checkout suggestions branch (create if doesn't exist)
+            if git ls-remote --exit-code --heads origin "$SUGGESTIONS_BRANCH" > /dev/null 2>&1; then
+              git fetch origin "$SUGGESTIONS_BRANCH"
+              git checkout -B "$SUGGESTIONS_BRANCH" "origin/$SUGGESTIONS_BRANCH"
+            else
+              # Create orphan branch for clean history
+              git checkout --orphan "$SUGGESTIONS_BRANCH"
+              git rm -rf . > /dev/null 2>&1 || true
+              
+              # Initialize with README
+              cat > README.md << 'EOF'
+          # Documentation Suggestions Queue
+
+          This branch contains batched documentation suggestions for the next Preview release.
+
+          Each file represents suggestions from a merged PR. At preview branch cut time,
+          run `script/docs-suggest-publish` to create a documentation PR from these suggestions.
+
+          ## Structure
+
+          - `suggestions/PR-XXXXX.md` - Suggestions for PR #XXXXX
+          - `manifest.json` - Index of all pending suggestions
+
+          ## Workflow
+
+          1. PRs merged to main trigger documentation analysis
+          2. Suggestions are committed here as individual files
+          3. At preview release, suggestions are collected into a docs PR
+          4. After docs PR is created, this branch is reset
+          EOF
+              
+              mkdir -p suggestions
+              echo '{"suggestions":[]}' > manifest.json
+              git add README.md suggestions manifest.json
+              git commit -m "Initialize documentation suggestions queue"
+            fi
+            
+            # Create suggestion file
+            SUGGESTION_FILE="suggestions/PR-${PR_NUM}.md"
+            
+            {
+              echo "# PR #${PR_NUM}: ${PR_TITLE}"
+              echo ""
+              echo "_Merged: $(date -u +%Y-%m-%dT%H:%M:%SZ)_"
+              echo "_PR: https://github.com/${{ github.repository }}/pull/${PR_NUM}_"
+              echo ""
+              cat "$OUTPUT_FILE"
+            } > "$SUGGESTION_FILE"
+            
+            # Update manifest
+            MANIFEST=$(cat manifest.json)
+            NEW_ENTRY="{\"pr\":${PR_NUM},\"title\":$(echo "$PR_TITLE" | jq -R .),\"file\":\"$SUGGESTION_FILE\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+            
+            # Add to manifest if not already present
+            if ! echo "$MANIFEST" | jq -e ".suggestions[] | select(.pr == $PR_NUM)" > /dev/null 2>&1; then
+              echo "$MANIFEST" | jq ".suggestions += [$NEW_ENTRY]" > manifest.json
+            fi
+            
+            # Commit
+            git add "$SUGGESTION_FILE" manifest.json
+            git commit -m "docs: Add suggestions for PR #${PR_NUM}
+
+          ${PR_TITLE}
+
+          Auto-generated documentation suggestions for review at next preview release."
+            
+            # Try to push
+            if git push origin "$SUGGESTIONS_BRANCH"; then
+              echo "Successfully pushed suggestions"
+              break
+            else
+              echo "Push failed, retrying..."
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "Failed after $MAX_RETRIES attempts"
+                exit 1
+              fi
+              sleep $((i * 2))
+            fi
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Documentation Suggestions" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          
+          if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
+            echo "✅ Suggestions queued for PR #${{ steps.pr.outputs.number }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "View pending suggestions: [docs/suggestions-pending branch](https://github.com/${{ github.repository }}/tree/${{ env.SUGGESTIONS_BRANCH }})" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No documentation updates needed for this PR." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Job for cherry-picks to release branches - immediate output to step summary
+  cherry-pick-suggestions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      (github.event_name == 'pull_request_target' && 
+       startsWith(github.event.pull_request.base.ref, 'v0.')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'immediate')
     
     steps:
       - name: Checkout repository
@@ -59,21 +255,18 @@ jobs:
       - name: Analyze PR for documentation needs
         id: analyze
         run: |
-          # Run docs-suggest and capture output
           OUTPUT_FILE=$(mktemp)
           
-          # Use immediate mode for CI (we'll post as comment, not batch)
+          # Cherry-picks don't get preview callout
           ./script/docs-suggest \
             --pr "${{ steps.pr.outputs.number }}" \
             --immediate \
+            --no-preview \
             --output "$OUTPUT_FILE" \
-            --verbose || true
+            --verbose 2>&1 || true
           
-          # Check if suggestions were generated
           if [ -s "$OUTPUT_FILE" ]; then
             echo "has_suggestions=true" >> "$GITHUB_OUTPUT"
-            
-            # Store output for comment (handle multi-line)
             {
               echo 'suggestions<<EOF'
               cat "$OUTPUT_FILE"
@@ -86,74 +279,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
 
-      - name: Post suggestions as PR comment
-        if: steps.analyze.outputs.has_suggestions == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const suggestions = `${{ steps.analyze.outputs.suggestions }}`;
-            
-            // Check if this is a "no updates needed" response
-            if (suggestions.includes('No Documentation Updates Needed')) {
-              console.log('No documentation updates needed, skipping comment');
-              return;
-            }
-            
-            const body = `## 📚 Documentation Suggestions
-
-            This PR contains changes that may need documentation updates.
-
-            ${suggestions}
-
-            ---
-            <details>
-            <summary>About this comment</summary>
-
-            This comment was generated automatically by analyzing code changes.
-            - For PRs to \`main\`: suggestions include Preview callouts for new features
-            - For cherry-picks: suggestions are for immediate review
-
-            If these suggestions are helpful, please apply them or create a follow-up PR.
-            If not applicable, feel free to ignore this comment.
-
-            </details>`;
-            
-            // Find existing comment to update (avoid spam)
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ steps.pr.outputs.number }}
-            });
-            
-            const botComment = comments.find(c => 
-              c.user.type === 'Bot' && 
-              c.body.includes('Documentation Suggestions')
-            );
-            
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ steps.pr.outputs.number }},
-                body: body
-              });
-            }
-
       - name: Summary
         if: always()
         run: |
-          echo "## Documentation Suggestions" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 📚 Documentation Suggestions (Cherry-pick)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This cherry-pick may need documentation updates:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           
           if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
             echo "${{ steps.analyze.outputs.suggestions }}" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No documentation suggestions generated for this PR." >> "$GITHUB_STEP_SUMMARY"
+            echo "No documentation suggestions for this cherry-pick." >> "$GITHUB_STEP_SUMMARY"
           fi
