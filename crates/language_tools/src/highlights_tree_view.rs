@@ -71,6 +71,7 @@ pub enum HighlightCategory {
     SemanticToken {
         token_type: Option<SharedString>,
         token_modifiers: Option<SharedString>,
+        theme_key: Option<SharedString>,
     },
 }
 
@@ -87,21 +88,25 @@ impl HighlightCategory {
                 theme_key: None,
             } => format!("syntax: {capture_name}").into(),
             HighlightCategory::SemanticToken {
-                token_type: Some(token_type),
-                token_modifiers: Some(modifiers),
-            } => format!("semantic token: {token_type} [{modifiers}]").into(),
-            HighlightCategory::SemanticToken {
-                token_type: Some(token_type),
-                token_modifiers: None,
-            } => format!("semantic token: {token_type}").into(),
-            HighlightCategory::SemanticToken {
-                token_type: None,
-                token_modifiers: Some(modifiers),
-            } => format!("semantic token [{modifiers}]").into(),
-            HighlightCategory::SemanticToken {
-                token_type: None,
-                token_modifiers: None,
-            } => "semantic token".into(),
+                token_type,
+                token_modifiers,
+                theme_key,
+            } => {
+                let label = match (token_type, token_modifiers) {
+                    (Some(token_type), Some(modifiers)) => {
+                        format!("semantic token: {token_type} [{modifiers}]")
+                    }
+                    (Some(token_type), None) => format!("semantic token: {token_type}"),
+                    (None, Some(modifiers)) => format!("semantic token [{modifiers}]"),
+                    (None, None) => "semantic token".to_string(),
+                };
+
+                if let Some(theme_key) = theme_key {
+                    format!("{label} \u{2192} {theme_key}").into()
+                } else {
+                    label.into()
+                }
+            }
         }
     }
 }
@@ -291,6 +296,7 @@ impl HighlightsTreeView {
 
         let mut entries = Vec::new();
 
+        let semantic_theme = cx.theme().syntax().clone();
         display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
@@ -334,6 +340,32 @@ impl HighlightsTreeView {
                         ) else {
                             continue;
                         };
+
+                        let theme_key =
+                            stylizer
+                                .rules_for_token(token.token_type)
+                                .and_then(|rules| {
+                                    rules
+                                        .iter()
+                                        .filter(|rule| {
+                                            rule.token_modifiers.iter().all(|modifier| {
+                                                stylizer
+                                                    .has_modifier(token.token_modifiers, modifier)
+                                            })
+                                        })
+                                        .fold(None, |theme_key, rule| {
+                                            rule.style
+                                                .iter()
+                                                .find(|style_name| {
+                                                    semantic_theme.get_opt(style_name).is_some()
+                                                })
+                                                .map(|style_name| {
+                                                    SharedString::from(style_name.clone())
+                                                })
+                                                .or(theme_key)
+                                        })
+                                });
+
                         entries.push(HighlightEntry {
                             excerpt_id,
                             range,
@@ -344,6 +376,7 @@ impl HighlightsTreeView {
                                 token_modifiers: stylizer
                                     .token_modifiers(token.token_modifiers)
                                     .map(SharedString::from),
+                                theme_key,
                             },
                             sort_key,
                         });
