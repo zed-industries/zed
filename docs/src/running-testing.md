@@ -17,12 +17,12 @@ This section covers how to run, test, and debug your code without leaving Zed.
 
 - **[REPL](./repl.md)**: Run code interactively using Jupyter kernels. Execute selections or cells and see results inline—useful for Python, TypeScript (Deno), R, Julia, and other supported languages.
 
-## Quick start
+## Quick start {#quick-start}
 
-**Open a terminal**: Press `` Ctrl+` `` to toggle the terminal panel, or `Ctrl+~` to open a new terminal.
+**Open a terminal**: Press {#kb terminal_panel::ToggleFocus} to toggle the terminal panel.
 
-**Run a command**: Press `Cmd+Shift+R` (macOS) or `Ctrl+Shift+R` (Linux/Windows) to open the task picker, then type any shell command.
+**Run a task**: Press {#kb task_picker::Toggle} to open the task picker, then type any shell command.
 
-**Start debugging**: Press `Cmd+Shift+D` (macOS) or `Ctrl+Shift+D` (Linux/Windows) to open the debug panel and select a configuration.
+**Start debugging**: Press {#kb debugger::Start} to open the debug panel and select a configuration.
 
-**Run code interactively**: In a Python or TypeScript file, select some code and press `Ctrl+Shift+Enter` to execute it in a REPL session.
+**Run code interactively**: In a Python or TypeScript file, select some code and press {#kb repl::Run} to execute it in a REPL session.

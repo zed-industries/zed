@@ -7,7 +7,7 @@ description: Customize Zed's keyboard shortcuts. Rebind actions, create key sequ
 
 Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
 
-## Predefined Keymaps
+## Predefined Keymaps {#predefined-keymaps}
 
 If you're used to a specific editor's defaults, you can change your `base_keymap` through the settings window ({#kb zed::OpenSettings}) or directly through your `settings.json` file ({#kb zed::OpenSettingsFile}).
 We currently support:
@@ -26,7 +26,7 @@ This setting can also be changed via the command palette through the `zed: toggl
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
-## Keymap Editor
+## Keymap Editor {#keymap-editor}
 
 You can access the keymap editor through the {#kb zed::OpenKeymap} action or by running {#action zed::OpenKeymap} action from the command palette. You can easily add or change a keybind for an action with the `Change Keybinding` or `Add Keybinding` button on the command pallets left bottom corner.
 
@@ -36,7 +36,7 @@ You can also customize them right from there, either by clicking on the pencil i
 
 Anything that you end up doing on the keymap editor also gets reflected on the `keymap.json` file.
 
-## User Keymaps
+## User Keymaps {#user-keymaps}
 
 The keymap file is stored in the following locations for each platform:
 

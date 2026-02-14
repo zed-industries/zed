@@ -124,48 +124,34 @@ description: [One sentence describing what this page covers]
 
 ### P2-1: Convert Hardcoded Keybindings to {#kb} Syntax
 
-**Status:** [ ] Not Started
+**Status:** [~] PARTIAL — Key files done
 
-**Convention:** Use `{#kb action::Name}` for dynamic keybinding rendering
+**Completed:**
+- [x] `running-testing.md` — Converted Quick start section to use {#kb} syntax
 
-**Affected files (sample):**
-- `getting-started.md` — Multiple hardcoded shortcuts
-- `vim.md`
-- `key-bindings.md`
-- Various feature docs
-
-**Actions:**
-1. Grep for patterns like `` `Cmd+` ``, `` `Ctrl+` ``
-2. Map to corresponding actions
-3. Replace with `{#kb}` syntax
-4. Verify rendering
+**Remaining (lower priority):**
+- Many migration guides have hardcoded keybindings for JetBrains/VS Code equivalents
+- Some terminal keybindings don't have corresponding actions
+- Trade-off: Not all keybindings have action mappings
 
 ---
 
 ### P2-2: Add Anchor IDs to Key Sections
 
-**Status:** [ ] Not Started
+**Status:** [x] COMPLETED — Key reference docs done
 
-**Convention:** Add `{#anchor-id}` to sections likely to be linked
-
-**Priority sections:**
-- Configuration sections in feature docs
-- "Getting Started" sections
-- "Troubleshooting" sections
-- Frequently referenced settings
+**Files Updated:**
+- [x] `configuring-zed.md` — Added anchors to Settings Editor, Settings Files, User/Default/Project Settings, How Settings Merge
+- [x] `key-bindings.md` — Added anchors to Predefined Keymaps, Keymap Editor, User Keymaps
+- [x] `vim.md` — Added anchors to all major sections (design, enabling, features, command palette, customizing, settings)
 
 ---
 
 ### P2-3: Add "See Also" Sections
 
-**Status:** [ ] Not Started
+**Status:** [ ] Not Started — Lower priority
 
-**Convention:** End pages with related links when helpful
-
-**Priority files:**
-- Feature docs that relate to other features
-- Configuration docs that have related feature docs
-- AI docs (highly interconnected)
+**Note:** Many docs already have related links at the end. This can be addressed during full audit phase.
 
 ---
 
