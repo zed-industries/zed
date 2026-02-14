@@ -1,0 +1,159 @@
+name: Documentation Suggestions
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'crates/**/*.rs'
+      - '!crates/**/*_test.rs'
+      - '!crates/**/tests/**'
+  
+  # Manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DROID_MODEL: claude-sonnet-4-5-20250929
+
+jobs:
+  suggest-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    # Only run on PRs to main or release branches
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.base_ref == 'main' ||
+      startsWith(github.base_ref, 'v0.')
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+
+      - name: Get PR number
+        id: pr
+        run: |
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            echo "number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Analyze PR for documentation needs
+        id: analyze
+        run: |
+          # Run docs-suggest and capture output
+          OUTPUT_FILE=$(mktemp)
+          
+          # Use immediate mode for CI (we'll post as comment, not batch)
+          ./script/docs-suggest \
+            --pr "${{ steps.pr.outputs.number }}" \
+            --immediate \
+            --output "$OUTPUT_FILE" \
+            --verbose || true
+          
+          # Check if suggestions were generated
+          if [ -s "$OUTPUT_FILE" ]; then
+            echo "has_suggestions=true" >> "$GITHUB_OUTPUT"
+            
+            # Store output for comment (handle multi-line)
+            {
+              echo 'suggestions<<EOF'
+              cat "$OUTPUT_FILE"
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "has_suggestions=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+
+      - name: Post suggestions as PR comment
+        if: steps.analyze.outputs.has_suggestions == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const suggestions = `${{ steps.analyze.outputs.suggestions }}`;
+            
+            // Check if this is a "no updates needed" response
+            if (suggestions.includes('No Documentation Updates Needed')) {
+              console.log('No documentation updates needed, skipping comment');
+              return;
+            }
+            
+            const body = `## 📚 Documentation Suggestions
+
+            This PR contains changes that may need documentation updates.
+
+            ${suggestions}
+
+            ---
+            <details>
+            <summary>About this comment</summary>
+
+            This comment was generated automatically by analyzing code changes.
+            - For PRs to \`main\`: suggestions include Preview callouts for new features
+            - For cherry-picks: suggestions are for immediate review
+
+            If these suggestions are helpful, please apply them or create a follow-up PR.
+            If not applicable, feel free to ignore this comment.
+
+            </details>`;
+            
+            // Find existing comment to update (avoid spam)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.pr.outputs.number }}
+            });
+            
+            const botComment = comments.find(c => 
+              c.user.type === 'Bot' && 
+              c.body.includes('Documentation Suggestions')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                body: body
+              });
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Documentation Suggestions" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          
+          if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
+            echo "${{ steps.analyze.outputs.suggestions }}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No documentation suggestions generated for this PR." >> "$GITHUB_STEP_SUMMARY"
+          fi
