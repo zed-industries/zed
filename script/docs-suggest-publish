@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#
+# Create a PR from batched documentation suggestions.
+#
+# Usage:
+#   script/docs-suggest-publish [--dry-run]
+#
+# This script:
+# 1. Reads pending suggestions from docs/.suggestions/pending.md
+# 2. Creates a new branch with the documentation changes
+# 3. Opens a PR for review
+#
+# Options:
+#   --dry-run    Show what would be done without creating PR
+#   --verbose    Show detailed progress
+#
+# The batch file is cleared after successful PR creation.
+
+set -euo pipefail
+
+DRY_RUN=false
+VERBOSE=false
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[docs-publish]${NC} $*" >&2
+    fi
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $*" >&2
+    exit 1
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            head -20 "$0" | tail -18
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Get repo root
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+BATCH_FILE="$REPO_ROOT/docs/.suggestions/pending.md"
+
+# Check for pending suggestions
+if [[ ! -f "$BATCH_FILE" ]]; then
+    echo "No pending suggestions found at $BATCH_FILE"
+    echo "Run 'script/docs-suggest --pr <number>' to analyze PRs first."
+    exit 0
+fi
+
+# Count suggestions
+suggestion_count=$(grep -c "^## PR #" "$BATCH_FILE" || echo "0")
+if [[ "$suggestion_count" -eq 0 ]]; then
+    echo "No suggestions in batch file."
+    exit 0
+fi
+
+echo "Found $suggestion_count batched suggestion(s)"
+echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${YELLOW}=== DRY RUN ===${NC}"
+    echo ""
+    echo "Would create PR with these suggestions:"
+    echo ""
+    cat "$BATCH_FILE"
+    echo ""
+    echo -e "${YELLOW}=== END DRY RUN ===${NC}"
+    exit 0
+fi
+
+# Check for clean git state
+if [[ -n "$(git status --porcelain docs/)" ]]; then
+    error "docs/ directory has uncommitted changes. Please commit or stash first."
+fi
+
+# Create branch
+BRANCH_NAME="docs/suggestions-$(date +%Y-%m-%d-%H%M%S)"
+log "Creating branch: $BRANCH_NAME"
+
+git checkout -b "$BRANCH_NAME"
+
+# For now, we'll create a PR with the suggestions as the body
+# In a more advanced version, we could use AI to apply the suggestions automatically
+
+# Create PR
+PR_BODY=$(cat << EOF
+# Documentation Suggestions for Preview Release
+
+This PR contains documentation suggestions batched from recent PRs to main.
+
+## How to Review
+
+1. Review each suggestion below
+2. Apply relevant changes to the docs manually (or use AI assistance)
+3. Ensure all new feature docs include the Preview callout:
+   \`\`\`markdown
+   > **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+   \`\`\`
+
+---
+
+$(cat "$BATCH_FILE")
+EOF
+)
+
+# We need to make at least one change to create a PR
+# Add a marker file that will be removed after docs are written
+mkdir -p docs/.suggestions
+echo "Documentation suggestions pending review. See PR description." > docs/.suggestions/PENDING_REVIEW.md
+git add docs/.suggestions/PENDING_REVIEW.md
+git commit -m "docs: Add documentation suggestions for preview release
+
+This PR contains batched documentation suggestions.
+See PR description for details."
+
+git push -u origin "$BRANCH_NAME"
+
+# Create the PR
+gh pr create \
+    --title "docs: Documentation suggestions for preview release" \
+    --body "$PR_BODY" \
+    --label "documentation"
+
+echo ""
+echo -e "${GREEN}PR created successfully!${NC}"
+echo ""
+echo "Next steps:"
+echo "1. Review the suggestions in the PR description"
+echo "2. Apply the documentation changes"
+echo "3. Remove docs/.suggestions/PENDING_REVIEW.md when done"
+echo "4. Merge the PR"
+
+# Clear the batch file
+rm "$BATCH_FILE"
+echo ""
+echo "Batch file cleared."
