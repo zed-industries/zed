@@ -394,17 +394,40 @@ Found **100+ references** to `settings.json` across docs. Many could reference t
 **After:**
 > Disable AI features in the Settings Editor ({#kb zed::OpenSettings}) by searching for "ai" and toggling off, or add to your settings file:
 
+### Settings UI Research Findings (2026-02-14)
+
+**Key files:**
+- `crates/settings_ui/src/page_data.rs` — Settings registration (~9000 lines, 362 settings)
+- `crates/settings_ui/src/settings_ui.rs` — Main UI implementation
+
+**Statistics:**
+- **329 settings** have full UI support (~91%)
+- **33 settings** are JSON-only (marked with `.unimplemented()`)
+
+**JSON-only settings** (complex types the UI doesn't support):
+- `private_files`, `wrap_guides` — Arrays
+- `buffer_font_features`, `buffer_font_fallbacks` — Font configuration
+- `lsp` — Entire LSP configuration object
+- `settings_profiles` — Complex profiles system
+- Various language-specific nested settings
+
+**Deep links work:** `zed://settings/buffer_font_size` opens Settings UI to that setting
+
+### Documentation Pattern
+
+**For UI-supported settings (~91%):**
+> Open Settings ({#kb zed::OpenSettings}) and search for "Font Size", or set `buffer_font_size` in your settings file.
+
+**For JSON-only settings (~9%):**
+> Add the following to your `settings.json` (this setting requires manual JSON editing):
+
 ### Action Items
 
-- [ ] **Research Settings UI capabilities** — Use subagent to explore:
-  - How does Zed's Settings Editor work? (crates/settings_ui/)
-  - Which settings are exposed in the UI vs JSON-only?
-  - How can we programmatically determine UI-supported settings?
-  - Document findings for use in automation
+- [x] Research Settings UI capabilities
 - [ ] Audit high-priority files (llm-providers, edit-prediction, tool-permissions)
 - [ ] Add Settings UI mention before JSON examples where applicable
-- [ ] Create convention: "UI first, JSON for advanced/bulk configuration"
-- [ ] Update CONVENTIONS.md with this pattern
+- [ ] Update CONVENTIONS.md with "UI first" pattern
+- [ ] Consider adding `zed://settings/` deep links in docs
 
 ---
 
