@@ -170,7 +170,7 @@ In the Agent Profile modal, select a built-in profile, navigate to `Configure To
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the Agent Profile modal or by hand in your settings file (this setting requires manual JSON editing).
+All custom profiles can be edited via the Agent Profile modal or by hand in your settings file ([how to edit](../configuring-zed.md#settings-files)).
 
 To delete a custom profile, open the Agent Profile modal, select the profile you want to remove, and click the delete button.
 

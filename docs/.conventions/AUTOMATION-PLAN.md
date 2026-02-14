@@ -468,15 +468,49 @@ Found **100+ references** to `settings.json` across docs. Many could reference t
 
 **For JSON-only settings (~9%):**
 
-> Add the following to your `settings.json` (this setting requires manual JSON editing):
+> Add the following to your `settings.json` ([how to edit](./configuring-zed.md#settings-files)):
+
+Note: Always link "(how to edit)" to `configuring-zed.md#settings-files` so users know how to open and edit the file.
+
+### LLM/Agent Settings Editing
+
+Users may want an LLM (Claude, GPT, etc.) to edit their Zed settings on their behalf. This happens by editing `settings.json` directly, not through the UI.
+
+**To support LLM-based settings editing, docs should include:**
+
+1. **The exact JSON path**: e.g., `buffer_font_size` at root, or `languages.Python.tab_size` for nested
+2. **Valid values/types**: e.g., "integer", "boolean", or specific enum values like `"on"`, `"off"`, `"language_server"`
+3. **Default value**: So the LLM knows what to set it back to
+4. **Full JSON example**: Complete, copy-pasteable snippet
+
+**Example of LLM-friendly documentation:**
+
+```markdown
+### Font Size
+
+Controls the editor font size in pixels.
+
+- **JSON path:** `buffer_font_size`
+- **Type:** integer
+- **Default:** `14`
+
+```json [settings]
+{
+  "buffer_font_size": 16
+}
+```
+```
+
+**Action item:** Consider generating a machine-readable settings schema (JSON Schema or similar) that LLMs can reference directly.
 
 ### Action Items
 
 - [x] Research Settings UI capabilities
-- [ ] Audit high-priority files (llm-providers, edit-prediction, tool-permissions)
-- [ ] Add Settings UI mention before JSON examples where applicable
+- [x] Add Settings UI mention before JSON examples (48 files updated)
 - [ ] Update CONVENTIONS.md with "UI first" pattern
+- [ ] Add "(how to edit)" links to JSON-only setting references
 - [ ] Consider adding `zed://settings/` deep links in docs
+- [ ] Consider generating machine-readable settings schema for LLMs
 
 ---
 

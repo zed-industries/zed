@@ -257,7 +257,7 @@ Still, you can trigger edit predictions manually by executing {#action editor::S
 
 ### For Specific Languages
 
-To disable automatic predictions for a specific language, add the following to your settings file (this setting requires manual JSON editing):
+To disable automatic predictions for a specific language, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -271,7 +271,7 @@ To disable automatic predictions for a specific language, add the following to y
 
 ### In Specific Directories
 
-To disable edit predictions for specific directories or files, add the following to your settings file (this setting requires manual JSON editing):
+To disable edit predictions for specific directories or files, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -311,7 +311,7 @@ To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A pop
 
 #### Using GitHub Copilot Enterprise
 
-If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by adding the following to your settings file (this setting requires manual JSON editing):
+If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by adding the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {

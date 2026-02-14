@@ -39,7 +39,7 @@ The first time you create a Gemini CLI thread, Zed will install [@google/gemini-
 This installation is only available to Zed and is kept up to date as you use the agent.
 
 By default, Zed will use this managed version of Gemini CLI even if you have it installed globally.
-However, you can configure it to use a version in your `PATH` by adding the following to your settings file (this setting requires manual JSON editing):
+However, you can configure it to use a version in your `PATH` by adding the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -109,7 +109,7 @@ This installation is only available to Zed and is kept up to date as you use the
 
 Zed will always use this managed version of the Claude Code adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
 
-If you want to override the executable used by the adapter, you can set the `CLAUDE_CODE_EXECUTABLE` environment variable in your settings to the path of your preferred executable. Add the following to your settings file (this setting requires manual JSON editing):
+If you want to override the executable used by the adapter, you can set the `CLAUDE_CODE_EXECUTABLE` environment variable in your settings to the path of your preferred executable. Add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json
 {
@@ -230,7 +230,7 @@ From there, you can click to install your preferred agent and it will become ava
 
 ### Custom Agents
 
-You can also add agents through your settings file by specifying fields under `agent_servers` (this setting requires manual JSON editing):
+You can also add agents through your settings file by specifying fields under `agent_servers` ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {

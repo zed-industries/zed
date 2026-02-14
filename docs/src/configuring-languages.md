@@ -136,7 +136,7 @@ Not all languages in Zed support toolchain discovery and selection, but for thos
 
 ### Configuring Language Servers
 
-Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json` (this setting requires manual JSON editing):
+Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json` ([how to edit](./configuring-zed.md#settings-files)):
 
 ```json [settings]
   "lsp": {

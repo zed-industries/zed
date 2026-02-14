@@ -11,7 +11,7 @@ Settings for Zed's Agent Panel, including model selection, UI preferences, and t
 
 ### Default Model {#default-model}
 
-If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). You can also change the default model using the model selector in the Agent Panel. If you want to customize the model configuration, add the following to your settings file (this setting requires manual JSON editing):
+If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). You can also change the default model using the model selector in the Agent Panel. If you want to customize the model configuration, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -32,7 +32,7 @@ You can assign distinct and specific models for the following AI-powered feature
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
 
-Add the following to your settings file (this setting requires manual JSON editing):
+Add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -63,7 +63,7 @@ Add the following to your settings file (this setting requires manual JSON editi
 
 With the Inline Assistant in particular, you can send the same prompt to multiple models at once.
 
-Add the following to your settings file to configure this (this setting requires manual JSON editing):
+Add the following to your settings file to configure this ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -112,7 +112,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
 
 ### Model Temperature
 
-Specify a custom temperature for a provider and/or model by adding the following to your settings file (this setting requires manual JSON editing):
+Specify a custom temperature for a provider and/or model by adding the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
