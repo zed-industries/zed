@@ -256,14 +256,16 @@ Keep language docs focused on Zed-specific configuration, not general language t
 
 When documenting settings:
 
-1. **State the setting key** in code formatting
-2. **Describe what it does** in one sentence
-3. **Show the type and default** if not obvious
-4. **Provide a JSON example**
+1. **Show the Settings Editor (UI) approach first** — Most settings have UI support
+2. **Then show JSON** as "or add to your settings file:"
+3. **State the setting key** in code formatting
+4. **Describe what it does** in one sentence
+5. **Show the type and default** if not obvious
+6. **Provide a complete JSON example**
 
 Example:
 
-> The `git.inline_blame.enabled` setting controls whether git blame appears inline. Defaults to `true`.
+> Configure inline blame in Settings ({#kb zed::OpenSettings}) by searching for "inline blame", or add to your settings file:
 >
 > ```json [settings]
 > {
@@ -275,6 +277,49 @@ Example:
 > }
 > ```
 
+For JSON-only settings (complex types without UI support), note this and link to instructions:
+
+> Add the following to your settings file ([how to edit](./configuring-zed.md#settings-files)):
+
+### Settings File Locations
+
+- **macOS/Linux:** `~/.config/zed/settings.json`
+- **Windows:** `%AppData%\Zed\settings.json`
+
+### Keymap File Locations
+
+- **macOS/Linux:** `~/.config/zed/keymap.json`
+- **Windows:** `%AppData%\Zed\keymap.json`
+
+---
+
+## Terminology
+
+Use consistent terminology throughout:
+
+| Use             | Instead of                             |
+| --------------- | -------------------------------------- |
+| folder          | directory                              |
+| project         | workspace                              |
+| Settings Editor | settings UI                            |
+| command palette | command bar                            |
+| panel           | sidebar (be specific: "Project Panel") |
+
+---
+
+## Formatting Requirements
+
+All documentation must pass **Prettier** formatting (80 character line width):
+
+```sh
+cd docs && npx prettier --check src/
+```
+
+Before any documentation change is considered complete:
+
+1. Run Prettier to format: `cd docs && npx prettier --write src/`
+2. Verify it passes: `cd docs && npx prettier --check src/`
+
 ---
 
 ## Quality Checklist
@@ -283,12 +328,13 @@ Before finalizing documentation:
 
 - [ ] Frontmatter includes `title` and `description`
 - [ ] Opening paragraph explains what and why
-- [ ] Settings include JSON examples
+- [ ] Settings show UI first, then JSON examples
 - [ ] Actions use `{#action ...}` and `{#kb ...}` syntax
 - [ ] All actions are documented (completeness matters)
 - [ ] Anchor IDs on sections likely to be linked
 - [ ] Version callouts where behavior differs by release
 - [ ] No orphan pages (linked from somewhere)
+- [ ] Passes Prettier formatting check
 - [ ] Passes brand voice rubric (see `brand-voice/rubric.md`)
 
 ---
@@ -296,3 +342,9 @@ Before finalizing documentation:
 ## Gold Standard Examples
 
 See `../.doc-examples/` for curated examples of well-documented features. Use these as templates when writing new documentation.
+
+---
+
+## Reference
+
+For automation-specific rules (safety constraints, change classification, output formats), see `docs/AGENTS.md`.
