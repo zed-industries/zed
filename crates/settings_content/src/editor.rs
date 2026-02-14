@@ -322,6 +322,10 @@ pub struct ToolbarContent {
     ///
     /// Default: false
     pub code_actions: Option<bool>,
+    /// Height of the editor toolbar row in pixels
+    ///
+    /// Default: 32
+    pub height: Option<u32>,
 }
 
 /// Scrollbar related settings

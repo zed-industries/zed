@@ -2354,7 +2354,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 6] {
+    fn toolbar_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2472,6 +2472,25 @@ fn editor_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .code_actions = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Height",
+                description: "Height of the editor toolbar row in pixels",
+                field: Box::new(SettingField {
+                    json_path: Some("toolbar.height"),
+                    pick: |settings_content| {
+                        settings_content.editor.toolbar.as_ref()?.height.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .toolbar
+                            .get_or_insert_default()
+                            .height = value;
                     },
                 }),
                 metadata: None,

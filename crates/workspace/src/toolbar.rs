@@ -1,9 +1,10 @@
-use crate::ItemHandle;
+use crate::{EditorToolbarSettings, ItemHandle};
 use gpui::{
     AnyView, App, Context, Div, Entity, EntityId, EventEmitter, Global, KeyContext,
     ParentElement as _, Render, Styled, Window,
 };
 use language::LanguageRegistry;
+use settings::Settings;
 use std::sync::Arc;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -117,6 +118,8 @@ impl Render for Toolbar {
         let has_left_items = self.left_items().count() > 0;
         let has_right_items = self.right_items().count() > 0;
 
+        let toolbar_height = px(EditorToolbarSettings::get_global(cx).height as f32);
+
         v_flex()
             .group("toolbar")
             .relative()
@@ -131,14 +134,16 @@ impl Render for Toolbar {
             .when(has_left_items || has_right_items, |this| {
                 this.child(
                     h_flex()
-                        .items_start()
+                        .items_center()
+                        .h(toolbar_height)
                         .justify_between()
                         .gap(DynamicSpacing::Base08.rems(cx))
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
-                                    .min_h_8()
+                                    .h_full()
                                     .flex_auto()
+                                    .items_center()
                                     .justify_start()
                                     .overflow_x_hidden()
                                     .children(self.left_items().map(|item| item.to_any())),
@@ -147,9 +152,10 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
-                                    .h_8()
+                                    .h_full()
                                     .flex_row_reverse()
                                     .when(has_left_items, |this| this.flex_none())
+                                    .items_center()
                                     .justify_end()
                                     .children(self.right_items().map(|item| item.to_any())),
                             )
