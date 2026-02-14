@@ -487,6 +487,10 @@ impl ExtensionsPage {
                         matches!(status, ExtensionStatus::NotInstalled)
                     }
                 })
+                .filter(|(_, extension)| match self.provides_filter {
+                    Some(provides) => extension.manifest.provides.contains(&provides),
+                    None => true,
+                })
                 .map(|(ix, _)| ix),
         );
         cx.notify();
