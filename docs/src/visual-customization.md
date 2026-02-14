@@ -1,6 +1,6 @@
 ---
 title: Visual Customization
-description: "Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::O..."
+description: "Various aspects of Zed's visual layout can be configured via either the settings window or the settings.json file."
 ---
 
 # Visual Customization

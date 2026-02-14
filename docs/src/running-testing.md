@@ -21,7 +21,7 @@ This section covers how to run, test, and debug your code without leaving Zed.
 
 **Open a terminal**: Press {#kb terminal_panel::ToggleFocus} to toggle the terminal panel.
 
-**Run a task**: Press {#kb task_picker::Toggle} to open the task picker, then type any shell command.
+**Run a task**: Press {#kb task::Spawn} to open the task picker, then type any shell command.
 
 **Start debugging**: Press {#kb debugger::Start} to open the debug panel and select a configuration.
 
