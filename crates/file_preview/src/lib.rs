@@ -1,6 +1,8 @@
 pub mod formats;
+mod preview_view;
 
 pub use formats::{FilePreviewFormat, MermaidFormat, SvgFormat};
+pub use preview_view::{FilePreviewView, PreviewMode};
 
 use gpui::App;
 
