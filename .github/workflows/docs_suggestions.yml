@@ -1,5 +1,13 @@
 name: Documentation Suggestions
 
+# Stable release callout stripping plan (not wired yet):
+# 1. Add a separate stable-only workflow trigger on `release.published`
+#    with `github.event.release.prerelease == false`.
+# 2. In that workflow, run `script/docs-strip-preview-callouts` on `main`.
+# 3. Open a PR with stripped preview callouts for human review.
+# 4. Fail loudly on script errors or when no callout changes are produced.
+# 5. Keep this workflow focused on suggestions only until that stable workflow is added.
+
 on:
   # Run when PRs are merged to main
   pull_request:
