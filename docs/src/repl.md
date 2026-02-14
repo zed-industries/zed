@@ -7,7 +7,7 @@ description: Run code interactively in Zed with built-in Jupyter kernel support.
 
 ## Getting started
 
-Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Zed includes a built-in REPL powered by [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html). Run code interactively in your editor, similarly to a notebook, using your own text files.
 
 <figure style="width: 100%; margin: 0; overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
     <video loop controls playsinline>

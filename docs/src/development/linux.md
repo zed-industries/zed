@@ -111,7 +111,7 @@ Zed supports both X11 and Wayland. By default, we pick whichever we can find at 
 
 ## Notes for packaging Zed
 
-Thank you for taking on the task of packaging Zed!
+This section is for distribution maintainers packaging Zed.
 
 ### Technical requirements
 
