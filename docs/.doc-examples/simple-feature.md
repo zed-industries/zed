@@ -1,9 +1,9 @@
-<!-- 
+<!--
   GOLD STANDARD EXAMPLE: Simple Feature / Overview Documentation
-  
+
   This example demonstrates concise documentation for a feature overview
   or navigation guide.
-  
+
   Key patterns to note:
   - Anchor IDs on all sections
   - Brief opening paragraph explains what this covers
@@ -12,9 +12,12 @@
   - Quick reference table at the end
   - Uses {#kb ...} syntax for all keybindings
 -->
+
 ---
+
 title: Finding and Navigating Code - Zed
 description: Navigate your codebase in Zed with file finder, project search, go to definition, symbol search, and the command palette.
+
 ---
 
 # Finding & Navigating

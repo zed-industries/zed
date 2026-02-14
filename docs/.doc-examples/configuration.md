@@ -1,8 +1,8 @@
-<!-- 
+<!--
   GOLD STANDARD EXAMPLE: Configuration Documentation
-  
+
   This example demonstrates documentation for settings and configuration.
-  
+
   Key patterns to note:
   - Anchor IDs on all major sections
   - Opening paragraph explains what this guide covers
@@ -11,9 +11,12 @@
   - Proper callout formatting
   - "See Also" section at the end (not "What's Next")
 -->
+
 ---
+
 title: Configuring Zed - Settings and Preferences
 description: Configure Zed with the Settings Editor, JSON files, and project-specific overrides. Covers all settings options.
+
 ---
 
 # Configuring Zed

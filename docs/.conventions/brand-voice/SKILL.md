@@ -100,6 +100,7 @@ If not, rewrite.
 ### Phase 1: Understand the Ask
 
 Ask clarifying questions:
+
 - What is this for? (homepage, release notes, docs, social, product page)
 - Who's the audience? (prospective users, existing users, developers in general)
 - What's the key message or feature to communicate?
@@ -108,6 +109,7 @@ Ask clarifying questions:
 ### Phase 2: Gather Context
 
 1. **Load reference files** (auto-loaded from skill folder):
+
    - `rubric.md` — 8 scoring criteria for validation
    - `taboo-phrases.md` — patterns to eliminate
    - `voice-examples.md` — transformation patterns and fact preservation rules
@@ -122,6 +124,7 @@ Ask clarifying questions:
 **Pass 1: First Draft with Fact Markers**
 
 Write initial copy. Mark all factual claims with `[FACT]` tags:
+
 - Technical specifications
 - Proper nouns and product names
 - Version numbers and dates
@@ -129,28 +132,30 @@ Write initial copy. Mark all factual claims with `[FACT]` tags:
 - Attribution and quotes
 
 Example:
+
 > Zed is [FACT: written in Rust] with [FACT: GPU-accelerated rendering at 120fps]. Built by [FACT: the team behind Atom and Tree-sitter].
 
 **Pass 2: Diagnosis**
 
 Score the draft against all 8 rubric criteria:
 
-| Criterion | Score | Issues |
-|-----------|-------|--------|
-| Technical Grounding | /5 | |
-| Natural Syntax | /5 | |
-| Quiet Confidence | /5 | |
-| Developer Respect | /5 | |
-| Information Priority | /5 | |
-| Specificity | /5 | |
-| Voice Consistency | /5 | |
-| Earned Claims | /5 | |
+| Criterion            | Score | Issues |
+| -------------------- | ----- | ------ |
+| Technical Grounding  | /5    |        |
+| Natural Syntax       | /5    |        |
+| Quiet Confidence     | /5    |        |
+| Developer Respect    | /5    |        |
+| Information Priority | /5    |        |
+| Specificity          | /5    |        |
+| Voice Consistency    | /5    |        |
+| Earned Claims        | /5    |        |
 
 Scan for taboo phrases. Flag each with line reference.
 
 **Pass 3: Reconstruction**
 
 For any criterion scoring <4 or any taboo phrase found:
+
 1. Identify the specific problem
 2. Rewrite the flagged section
 3. Verify `[FACT]` markers survived
@@ -193,13 +198,13 @@ Present final copy with scorecard:
 
 **Output formats by context:**
 
-| Context | Format |
-|---------|--------|
-| Homepage | H1 + H2 + supporting paragraph |
-| Product page | Section headers with explanatory copy |
-| Release notes | What changed, how it works, why it matters |
-| Docs intro | Clear explanation of what this is and when to use it |
-| Social | Concise, no hashtags, link to learn more |
+| Context       | Format                                               |
+| ------------- | ---------------------------------------------------- |
+| Homepage      | H1 + H2 + supporting paragraph                       |
+| Product page  | Section headers with explanatory copy                |
+| Release notes | What changed, how it works, why it matters           |
+| Docs intro    | Clear explanation of what this is and when to use it |
+| Social        | Concise, no hashtags, link to learn more             |
 
 ---
 
@@ -212,6 +217,7 @@ When invoked with `--review`:
 2. **Score the provided copy** against all 8 rubric criteria
 
 3. **Scan for taboo phrases** — list each with line number:
+
    ```
    Line 2: "revolutionary" (hype word)
    Line 5: "—" used 3 times (em dash overuse)
@@ -219,6 +225,7 @@ When invoked with `--review`:
    ```
 
 4. **Present diagnosis:**
+
    ```
    ## Review: [Copy Title]
 

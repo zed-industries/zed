@@ -1,9 +1,9 @@
-<!-- 
+<!--
   GOLD STANDARD EXAMPLE: Complex Feature Documentation
-  
-  This example demonstrates documentation for a major feature with multiple 
+
+  This example demonstrates documentation for a major feature with multiple
   sub-features, configuration options, and an action reference table.
-  
+
   Key patterns to note:
   - Anchor IDs on all major sections for stable deep-linking
   - Opening paragraph explains what and why
@@ -12,9 +12,12 @@
   - Comprehensive action reference table at the end
   - Uses {#action ...} and {#kb ...} syntax throughout
 -->
+
 ---
+
 description: Zed is a text editor that supports lots of Git features
 title: Zed Editor Git integration documentation
+
 ---
 
 # Git

@@ -3,6 +3,7 @@
 This document covers structural conventions for Zed documentation: what to document, how to organize it, and when to create new pages.
 
 For voice, tone, and writing style, see the [brand-voice/](./brand-voice/) directory, which contains:
+
 - `SKILL.md` — Core voice principles and workflow
 - `rubric.md` — 8-point scoring criteria for quality
 - `taboo-phrases.md` — Patterns and phrases to avoid
@@ -54,13 +55,13 @@ For voice, tone, and writing style, see the [brand-voice/](./brand-voice/) direc
 
 ### Examples
 
-| Change | Action |
-|--------|--------|
-| New "Stash" feature for Git | Add section to `git.md` |
-| New "Remote Development" capability | Create `remote-development.md` |
-| New setting `git.inline_blame.delay` | Add to existing Git config section |
-| New AI provider (e.g., "Ollama") | Add section to `llm-providers.md` |
-| New agent tool category | Potentially new page, depends on scope |
+| Change                               | Action                                 |
+| ------------------------------------ | -------------------------------------- |
+| New "Stash" feature for Git          | Add section to `git.md`                |
+| New "Remote Development" capability  | Create `remote-development.md`         |
+| New setting `git.inline_blame.delay` | Add to existing Git config section     |
+| New AI provider (e.g., "Ollama")     | Add section to `llm-providers.md`      |
+| New agent tool category              | Potentially new page, depends on scope |
 
 ---
 
@@ -107,6 +108,7 @@ Add explicit anchor IDs to sections users might link to directly:
 ```
 
 Use anchor IDs when:
+
 - The section is a common reference target
 - You need a stable link that won't break if the heading text changes
 - The heading contains special characters that would create ugly auto-generated anchors
@@ -118,6 +120,7 @@ Use anchor IDs when:
 ### Code Formatting
 
 Use inline `code` for:
+
 - Setting names: `vim_mode`, `buffer_font_size`
 - Keybindings: `cmd-shift-p`, `ctrl-w h`
 - Commands: `:w`, `:q`
@@ -128,6 +131,7 @@ Use inline `code` for:
 ### Action and Keybinding References
 
 Use Zed's special syntax for dynamic rendering:
+
 - `{#action git::Commit}` — Renders the action name
 - `{#kb git::Commit}` — Renders the keybinding for that action
 
@@ -155,6 +159,7 @@ Always use the `[settings]` or `[keymap]` annotation:
 ### Tables
 
 Use tables for:
+
 - Action/keybinding reference lists
 - Setting options with descriptions
 - Feature comparisons
@@ -196,6 +201,7 @@ Include the version number and what changed. This helps users on older versions 
 ### Internal Links
 
 Link to other docs using relative paths:
+
 - `[Vim mode](./vim.md)`
 - `[AI configuration](./ai/configuration.md)`
 

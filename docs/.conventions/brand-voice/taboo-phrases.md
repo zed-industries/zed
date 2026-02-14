@@ -8,30 +8,30 @@ These patterns signal AI-generated or marketing-heavy copy. Eliminate all instan
 
 Never use these unless quoting someone else:
 
-| Word/Phrase | Why It Fails |
-|-------------|--------------|
-| revolutionary | Unearned superlative |
-| game-changing | Unearned superlative |
-| cutting-edge | Vague tech buzzword |
-| next-generation | Meaningless without context |
-| blazingly fast | Cliché, unquantified |
-| lightning-fast | Cliché, unquantified |
-| powerful | Vague; what does it do? |
-| robust | Vague; how is it robust? |
-| seamless | Almost never true |
-| frictionless | Almost never true |
-| effortless | Dismisses real complexity |
-| leverage | Corporate jargon |
-| unlock | Marketing manipulation |
-| supercharge | Marketing manipulation |
-| turbocharge | Marketing manipulation |
-| best-in-class | Unverifiable claim |
-| world-class | Unverifiable claim |
-| state-of-the-art | Vague tech buzzword |
-| groundbreaking | Unearned superlative |
-| innovative | Show, don't tell |
-| intuitive | Often means "we didn't explain it" |
-| elegant | Self-congratulatory |
+| Word/Phrase      | Why It Fails                       |
+| ---------------- | ---------------------------------- |
+| revolutionary    | Unearned superlative               |
+| game-changing    | Unearned superlative               |
+| cutting-edge     | Vague tech buzzword                |
+| next-generation  | Meaningless without context        |
+| blazingly fast   | Cliché, unquantified               |
+| lightning-fast   | Cliché, unquantified               |
+| powerful         | Vague; what does it do?            |
+| robust           | Vague; how is it robust?           |
+| seamless         | Almost never true                  |
+| frictionless     | Almost never true                  |
+| effortless       | Dismisses real complexity          |
+| leverage         | Corporate jargon                   |
+| unlock           | Marketing manipulation             |
+| supercharge      | Marketing manipulation             |
+| turbocharge      | Marketing manipulation             |
+| best-in-class    | Unverifiable claim                 |
+| world-class      | Unverifiable claim                 |
+| state-of-the-art | Vague tech buzzword                |
+| groundbreaking   | Unearned superlative               |
+| innovative       | Show, don't tell                   |
+| intuitive        | Often means "we didn't explain it" |
+| elegant          | Self-congratulatory                |
 
 ---
 
@@ -40,18 +40,21 @@ Never use these unless quoting someone else:
 These constructions reveal AI authorship:
 
 ### Em Dash Chains
+
 ```
 ❌ "Zed is fast — really fast — and it shows in every interaction."
 ✅ "Zed is fast. You'll feel it in every interaction."
 ```
 
 ### "It's not X, it's Y"
+
 ```
 ❌ "It's not just an editor — it's a complete development environment."
 ✅ "Zed combines editing, collaboration, and AI assistance in one workspace."
 ```
 
 ### Triple Parallel Lists
+
 ```
 ❌ "Fast. Focused. Collaborative."
 ❌ "Write code. Ship faster. Stay in flow."
@@ -59,12 +62,14 @@ These constructions reveal AI authorship:
 ```
 
 ### Colon-Introduced Lists in Prose
+
 ```
 ❌ "Three things make Zed different: speed, collaboration, and AI."
 ✅ "Zed prioritizes speed, real-time collaboration, and AI integration."
 ```
 
 ### Rhetorical Questions as Openers
+
 ```
 ❌ "What if your editor could keep up with your thinking?"
 ✅ "Zed renders every keystroke instantly."
@@ -76,18 +81,18 @@ These constructions reveal AI authorship:
 
 Remove all emotional manipulation:
 
-| Pattern | Problem |
-|---------|---------|
-| "We're excited to announce..." | Nobody cares about your emotions |
-| "We're thrilled to share..." | Same |
-| "We can't wait for you to try..." | Presumptuous |
-| "You'll love..." | Telling reader how to feel |
-| "Get ready to..." | Marketing hype |
-| "Say goodbye to..." | Cliché setup |
-| "Say hello to..." | Cliché followup |
-| "Finally, an editor that..." | Implies all others failed |
-| "The wait is over" | Presumes anticipation |
-| "Introducing..." (as standalone) | Weak opener |
+| Pattern                           | Problem                          |
+| --------------------------------- | -------------------------------- |
+| "We're excited to announce..."    | Nobody cares about your emotions |
+| "We're thrilled to share..."      | Same                             |
+| "We can't wait for you to try..." | Presumptuous                     |
+| "You'll love..."                  | Telling reader how to feel       |
+| "Get ready to..."                 | Marketing hype                   |
+| "Say goodbye to..."               | Cliché setup                     |
+| "Say hello to..."                 | Cliché followup                  |
+| "Finally, an editor that..."      | Implies all others failed        |
+| "The wait is over"                | Presumes anticipation            |
+| "Introducing..." (as standalone)  | Weak opener                      |
 
 ---
 
@@ -95,49 +100,49 @@ Remove all emotional manipulation:
 
 Replace with specific outcomes:
 
-| Vague | Ask Instead |
-|-------|-------------|
+| Vague                   | Ask Instead                    |
+| ----------------------- | ------------------------------ |
 | "enhanced productivity" | How much faster? At what task? |
-| "improved workflow" | What specific improvement? |
-| "better experience" | Better how? Measurable? |
-| "streamlined process" | What steps were removed? |
-| "optimized performance" | What metric improved? |
-| "increased efficiency" | What takes less time/effort? |
-| "modern development" | What specific capability? |
-| "next-level coding" | Meaningless |
-| "superior quality" | By what measure? |
+| "improved workflow"     | What specific improvement?     |
+| "better experience"     | Better how? Measurable?        |
+| "streamlined process"   | What steps were removed?       |
+| "optimized performance" | What metric improved?          |
+| "increased efficiency"  | What takes less time/effort?   |
+| "modern development"    | What specific capability?      |
+| "next-level coding"     | Meaningless                    |
+| "superior quality"      | By what measure?               |
 
 ---
 
 ## Forbidden Punctuation
 
-| Pattern | Rule |
-|---------|------|
-| `!` | Never. Zero exclamation points. |
-| `...` | No dramatic ellipses |
-| ALL CAPS | No shouting for emphasis |
+| Pattern     | Rule                               |
+| ----------- | ---------------------------------- |
+| `!`         | Never. Zero exclamation points.    |
+| `...`       | No dramatic ellipses               |
+| ALL CAPS    | No shouting for emphasis           |
 | `?` as hook | No rhetorical questions as openers |
-| `—` overuse | Max one em dash per paragraph |
+| `—` overuse | Max one em dash per paragraph      |
 
 ---
 
 ## Corporate Euphemisms
 
-| Phrase | Problem |
-|--------|---------|
-| move the needle | Jargon |
-| synergy | Meme-tier corporate |
-| ecosystem | Often meaningless |
-| paradigm shift | Dated buzzword |
-| holistic approach | Vague |
-| scalable solution | What scales? How? |
-| actionable insights | Corporate speak |
-| value proposition | Never in customer-facing copy |
-| leverage (verb) | Use "use" instead |
-| utilize | Use "use" instead |
-| facilitate | Use clearer verb |
-| empower | Patronizing |
-| enable | Often vague; be specific |
+| Phrase              | Problem                       |
+| ------------------- | ----------------------------- |
+| move the needle     | Jargon                        |
+| synergy             | Meme-tier corporate           |
+| ecosystem           | Often meaningless             |
+| paradigm shift      | Dated buzzword                |
+| holistic approach   | Vague                         |
+| scalable solution   | What scales? How?             |
+| actionable insights | Corporate speak               |
+| value proposition   | Never in customer-facing copy |
+| leverage (verb)     | Use "use" instead             |
+| utilize             | Use "use" instead             |
+| facilitate          | Use clearer verb              |
+| empower             | Patronizing                   |
+| enable              | Often vague; be specific      |
 
 ---
 
@@ -175,6 +180,7 @@ Before finalizing, scan for:
 ## Quick Reference
 
 **Instant red flags (auto-fail if present):**
+
 - Any exclamation point
 - "We're excited/thrilled"
 - "Revolutionary" or "game-changing"
@@ -182,6 +188,7 @@ Before finalizing, scan for:
 - "It's not X, it's Y" construction
 
 **Yellow flags (review carefully):**
+
 - Any word from Hype Words list
 - Sentences starting with "And" or "But"
 - Questions in headlines

@@ -1,9 +1,9 @@
-<!-- 
+<!--
   GOLD STANDARD EXAMPLE: Reference Documentation
-  
+
   This example demonstrates documentation for API/reference content like tools,
   actions, or other enumerable items.
-  
+
   Key patterns to note:
   - Anchor IDs on categories and individual items for deep-linking
   - Opening paragraph explains what these are and where they're used
@@ -12,9 +12,12 @@
   - Links to related configuration docs
   - "See Also" section for related topics
 -->
+
 ---
+
 title: AI Agent Tools - Zed
 description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, and diagnostics.
+
 ---
 
 # Tools
