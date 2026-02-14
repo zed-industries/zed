@@ -1264,12 +1264,10 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        // We divide by the scale factor here because this value is queried to determine how much to draw,
-        // but it will be multiplied later by the scale to adjust for scaling.
-        let state = self.0.state.borrow();
-        state
-            .content_size()
-            .map(|size| size.div(state.scale_factor))
+        // After the wgpu migration, X11WindowState::content_size() returns logical pixels
+        // (bounds.size is already divided by scale_factor in set_bounds), so no further
+        // division is needed here. This matches the Wayland implementation.
+        self.0.state.borrow().content_size()
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
