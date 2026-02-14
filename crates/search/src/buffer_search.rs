@@ -40,8 +40,7 @@ use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        CollapseDirection, Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle,
-        WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle,
     },
 };
 
@@ -91,7 +90,6 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
-    is_collapsed: bool,
     splittable_editor: Option<WeakEntity<SplittableEditor>>,
     _splittable_editor_subscription: Option<Subscription>,
 }
@@ -160,7 +158,7 @@ impl Render for BufferSearchBar {
                 .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
                 .and_then(|item| item.downcast::<Editor>().ok())
                 .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
-                .unwrap_or(self.is_collapsed);
+                .unwrap_or_default();
             let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
@@ -836,7 +834,6 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
-            is_collapsed: false,
             splittable_editor: None,
             _splittable_editor_subscription: None,
         }
@@ -1006,7 +1003,7 @@ impl BufferSearchBar {
             if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
                 let editor = item.downcast::<Editor>().expect("Is an editor");
                 editor.update(cx, |editor, cx| {
-                    let is_collapsed = self.is_collapsed || editor.has_any_buffer_folded(cx);
+                    let is_collapsed = editor.has_any_buffer_folded(cx);
                     if is_collapsed {
                         editor.unfold_all(&UnfoldAll, window, cx);
                     } else {
@@ -1383,13 +1380,7 @@ impl BufferSearchBar {
                 drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
-            SearchEvent::ResultsCollapsedChanged(collapse_direction) => {
-                if self.needs_expand_collapse_option(cx) {
-                    match collapse_direction {
-                        CollapseDirection::Collapsed => self.is_collapsed = true,
-                        CollapseDirection::Expanded => self.is_collapsed = false,
-                    }
-                }
+            SearchEvent::ResultsCollapsedChanged(_) => {
                 cx.notify();
             }
         }
@@ -3343,16 +3334,14 @@ mod tests {
             editor.fold_all(&FoldAll, window, cx);
         });
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(!is_collapsed);
     }
 
