@@ -230,12 +230,41 @@ pub fn init(cx: &mut App) {
                 cx,
             );
 
+            let app_state = workspace.app_state().clone();
+            let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+
             cx.spawn_in(window, async move |workspace, cx| {
                 use util::paths::SanitizedPath;
 
                 let Some(paths) = paths.await.log_err().flatten() else {
                     return;
                 };
+
+                let wsl_path = paths
+                    .iter()
+                    .find_map(util::paths::WslPath::from_path);
+
+                if let Some(util::paths::WslPath { distro, path }) = wsl_path {
+                    use remote::WslConnectionOptions;
+
+                    let connection_options = RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                        distro_name: distro.to_string(),
+                        user: None,
+                    });
+
+                    let replace_window = match create_new_window {
+                        false => window_handle,
+                        true => None,
+                    };
+
+                    let open_options = workspace::OpenOptions {
+                        replace_window,
+                        ..Default::default()
+                    };
+
+                    open_remote_project(connection_options, vec![path.into()], app_state, open_options, cx).await.log_err();
+                    return;
+                }
 
                 let paths = paths
                     .into_iter()
