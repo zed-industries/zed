@@ -99,9 +99,35 @@ Applied conventions to existing docs:
 **P3 Lower:**
 - [ ] Version callouts where behavior differs
 - [ ] Remove TBD HTML comments
-- [ ] Full audit of each doc against 8-point rubric
 
-### Phase 2: Action Development (NEXT)
+### Phase 2: Settings UI References (NEXT)
+
+Apply Settings UI research findings across all docs:
+
+- [ ] Update docs to mention Settings UI before JSON examples where applicable
+- [ ] Use pattern: "Open Settings ({#kb zed::OpenSettings}) and search for X, or set in JSON"
+- [ ] For JSON-only settings, note: "(this setting requires manual JSON editing)"
+- [ ] Consider adding `zed://settings/` deep links
+
+**High-priority files (most settings.json refs):**
+- [ ] `ai/llm-providers.md` (15+ refs)
+- [ ] `ai/edit-prediction.md` (8+ refs)
+- [ ] `ai/tool-permissions.md` (3 refs, explicitly mentions UI)
+- [ ] `configuring-languages.md` (8+ refs)
+- [ ] `languages/python.md` (10+ refs)
+
+### Phase 3: Full Brand Voice Audit
+
+Execute the brand voice audit defined in the audit framework below:
+
+- [ ] Run pre-screening grep commands (exclamation points, hype words, em dashes)
+- [ ] Fix quick wins (~3 exclamation points, ~10 em dash chains)
+- [ ] Audit root-level docs (Priority 1)
+- [ ] Audit ai/ docs (Priority 2)
+- [ ] Audit migrate/ docs (Priority 3)
+- [ ] Audit remaining directories as time permits
+
+### Phase 4: GitHub Action Development
 
 - [ ] Create new workflow: `.github/workflows/docs_suggestions.yml`
 - [ ] Build context assembly script:
@@ -116,7 +142,7 @@ Applied conventions to existing docs:
   - Updates to existing features → suggests edits to existing docs
   - Large PRs → filters to user-facing changes
 
-### Phase 3: Rollout
+### Phase 6: Rollout
 
 - [ ] Test on 5-10 recent PRs (run manually, don't post)
 - [ ] Gather feedback from team on suggestion quality
@@ -124,7 +150,7 @@ Applied conventions to existing docs:
 - [ ] Enable on all PRs to `crates/**/*.rs`
 - [ ] Document the system itself
 
-### Phase 4: Iteration (Future)
+### Phase 7: Iteration (Future)
 
 - [ ] Track acceptance rate of suggestions
 - [ ] Log modifications made before applying
