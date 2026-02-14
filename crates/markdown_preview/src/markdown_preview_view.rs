@@ -528,7 +528,7 @@ impl Item for MarkdownPreviewView {
             .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
                 let title = buffer.title(cx);
-                format!("Preview {}", title.to_string()).into()
+                format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
