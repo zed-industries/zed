@@ -3,14 +3,15 @@
 # Remove Preview callouts from documentation for stable release.
 #
 # Usage:
-#   script/docs-strip-preview-callouts [--dry-run] [--create-pr]
+#   script/docs-strip-preview-callouts [--dry-run]
 #
 # This script finds and removes all Preview callouts from docs:
 #   > **Preview:** This feature is available in Zed Preview...
 #
+# Then creates a PR with the changes.
+#
 # Options:
-#   --dry-run     Show what would be changed without modifying files
-#   --create-pr   Create a PR with the changes (otherwise just modifies files)
+#   --dry-run     Show what would be changed without modifying files or creating PR
 #   --verbose     Show detailed progress
 #
 # Run this as part of the stable release workflow.
@@ -18,7 +19,6 @@
 set -euo pipefail
 
 DRY_RUN=false
-CREATE_PR=false
 VERBOSE=false
 
 # Colors
@@ -46,16 +46,12 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
-        --create-pr)
-            CREATE_PR=true
-            shift
-            ;;
         --verbose)
             VERBOSE=true
             shift
             ;;
         -h|--help)
-            head -22 "$0" | tail -20
+            head -18 "$0" | tail -16
             exit 0
             ;;
         *)
@@ -70,21 +66,13 @@ cd "$REPO_ROOT"
 
 DOCS_DIR="$REPO_ROOT/docs/src"
 
-# Preview callout pattern - matches the blockquote format
-# > **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-PREVIEW_PATTERN='> \*\*Preview:\*\*.*'
-
-# Also match multi-line callouts that might have additional text
-# We'll use a simple approach: remove lines starting with "> **Preview:**"
-# and any immediately following lines that are part of the same blockquote
-
 echo "Searching for Preview callouts in $DOCS_DIR..."
 
 # Find files with preview callouts
 files_with_callouts=$(grep -rl "> \*\*Preview:\*\*" "$DOCS_DIR" 2>/dev/null || true)
 
 if [[ -z "$files_with_callouts" ]]; then
-    echo "No Preview callouts found."
+    echo "No Preview callouts found. Nothing to do."
     exit 0
 fi
 
@@ -108,23 +96,27 @@ echo ""
 if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "${YELLOW}=== DRY RUN ===${NC}"
     echo ""
-    echo "Would remove Preview callouts from the files above."
+    echo "Would remove Preview callouts from the files above and create a PR."
     echo ""
-    echo "Preview of changes:"
+    echo "Lines to be removed:"
     echo ""
     
     for file in $files_with_callouts; do
         relative_path="${file#$REPO_ROOT/}"
         echo "--- $relative_path ---"
-        # Show what would be removed
         grep -n "> \*\*Preview:\*\*" "$file" || true
         echo ""
     done
     
     echo -e "${YELLOW}=== END DRY RUN ===${NC}"
     echo ""
-    echo "Run without --dry-run to apply changes."
+    echo "Run without --dry-run to apply changes and create PR."
     exit 0
+fi
+
+# Check for clean working state
+if [[ -n "$(git status --porcelain docs/)" ]]; then
+    error "docs/ directory has uncommitted changes. Please commit or stash first."
 fi
 
 # Apply changes
@@ -133,12 +125,9 @@ echo "Removing Preview callouts..."
 for file in $files_with_callouts; do
     log "Processing: $file"
     
-    # Create temp file
     tmp_file=$(mktemp)
     
-    # Remove lines that are preview callouts
-    # This handles single-line callouts: > **Preview:** ...
-    # For multi-line, we remove the callout line and any continuation lines
+    # Remove preview callout lines and their continuations
     awk '
     BEGIN { in_callout = 0 }
     /^> \*\*Preview:\*\*/ { 
@@ -146,11 +135,9 @@ for file in $files_with_callouts; do
         next 
     }
     in_callout && /^>/ && !/^> \*\*/ {
-        # Continuation of blockquote callout
         next
     }
     in_callout && /^$/ {
-        # Empty line after callout - keep it but end callout mode
         in_callout = 0
         next
     }
@@ -160,46 +147,67 @@ for file in $files_with_callouts; do
     }
     ' "$file" > "$tmp_file"
     
-    # Replace original file
     mv "$tmp_file" "$file"
-    
     echo "  Updated: ${file#$REPO_ROOT/}"
 done
 
 echo ""
 echo -e "${GREEN}Preview callouts removed from $file_count file(s).${NC}"
 
-if [[ "$CREATE_PR" == "true" ]]; then
+# Check if there are actual changes (in case callouts were in comments or something)
+if [[ -z "$(git status --porcelain docs/)" ]]; then
     echo ""
-    echo "Creating PR..."
-    
-    # Check for changes
-    if [[ -z "$(git status --porcelain docs/)" ]]; then
-        echo "No changes to commit."
-        exit 0
-    fi
-    
-    # Create branch and PR
-    BRANCH_NAME="docs/stable-release-$(date +%Y-%m-%d)"
-    git checkout -b "$BRANCH_NAME"
-    git add docs/src/
-    git commit -m "docs: Remove Preview callouts for stable release
+    echo "No effective changes to commit (callouts may have been in non-rendered content)."
+    exit 0
+fi
 
-Features documented with Preview callouts are now in Stable."
-    
-    git push -u origin "$BRANCH_NAME"
-    
-    gh pr create \
-        --title "docs: Remove Preview callouts for stable release" \
-        --body "This PR removes Preview callouts from documentation for features that are now in Stable.
+# Create branch and PR
+echo ""
+echo "Creating PR..."
+
+BRANCH_NAME="docs/stable-release-$(date +%Y-%m-%d)"
+log "Branch: $BRANCH_NAME"
+
+git checkout -b "$BRANCH_NAME"
+git add docs/src/
+
+# Build file list for commit message
+FILE_LIST=$(echo "$files_with_callouts" | sed "s|$REPO_ROOT/||" | sed 's/^/- /')
+
+git commit -m "docs: Remove Preview callouts for stable release
+
+Features documented with Preview callouts are now in Stable.
 
 Files updated:
-$(echo "$files_with_callouts" | sed 's|^|• |' | sed "s|$REPO_ROOT/||")" \
-        --label "documentation"
-    
-    echo ""
-    echo -e "${GREEN}PR created!${NC}"
-else
-    echo ""
-    echo "Changes applied locally. Review with 'git diff docs/' and commit when ready."
-fi
+$FILE_LIST"
+
+git push -u origin "$BRANCH_NAME"
+
+gh pr create \
+    --title "docs: Remove Preview callouts for stable release" \
+    --body "This PR removes Preview callouts from documentation for features that are now in Stable.
+
+## Files Updated
+
+$(echo "$files_with_callouts" | sed "s|$REPO_ROOT/|• |")
+
+## What This Does
+
+Removes callouts like:
+\`\`\`markdown
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+\`\`\`
+
+These features are now in Stable, so the callouts are no longer needed." \
+    --label "documentation"
+
+PR_URL=$(gh pr view --json url --jq '.url')
+
+echo ""
+echo -e "${GREEN}Done!${NC}"
+echo ""
+echo "PR created: $PR_URL"
+echo ""
+echo "Next steps:"
+echo "1. Review the PR to ensure callouts were removed correctly"
+echo "2. Merge the PR as part of the stable release"
