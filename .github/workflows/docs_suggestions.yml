@@ -124,7 +124,7 @@ jobs:
           
           # Retry loop for handling concurrent pushes
           MAX_RETRIES=3
-          for i in $(seq 1 $MAX_RETRIES); do
+          for i in $(seq 1 "$MAX_RETRIES"); do
             echo "Attempt $i of $MAX_RETRIES"
             
             # Fetch and checkout suggestions branch (create if doesn't exist)
@@ -199,7 +199,7 @@ jobs:
               break
             else
               echo "Push failed, retrying..."
-              if [ $i -eq $MAX_RETRIES ]; then
+              if [ "$i" -eq "$MAX_RETRIES" ]; then
                 echo "Failed after $MAX_RETRIES attempts"
                 exit 1
               fi
@@ -210,16 +210,17 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "## Documentation Suggestions" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          
-          if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
-            echo "✅ Suggestions queued for PR #${{ steps.pr.outputs.number }}" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "View pending suggestions: [docs/suggestions-pending branch](https://github.com/${{ github.repository }}/tree/${{ env.SUGGESTIONS_BRANCH }})" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No documentation updates needed for this PR." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo "## Documentation Suggestions"
+            echo ""
+            if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
+              echo "✅ Suggestions queued for PR #${{ steps.pr.outputs.number }}"
+              echo ""
+              echo "View pending suggestions: [docs/suggestions-pending branch](https://github.com/${{ github.repository }}/tree/${{ env.SUGGESTIONS_BRANCH }})"
+            else
+              echo "No documentation updates needed for this PR."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Job for cherry-picks to release branches - immediate output to step summary
   cherry-pick-suggestions:
@@ -336,13 +337,14 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "## 📚 Documentation Suggestions (Cherry-pick)" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          
-          if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
-            echo "Suggestions posted as PR comment." >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "${{ steps.analyze.outputs.suggestions }}" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No documentation suggestions for this cherry-pick." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo "## 📚 Documentation Suggestions (Cherry-pick)"
+            echo ""
+            if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
+              echo "Suggestions posted as PR comment."
+              echo ""
+              echo "${{ steps.analyze.outputs.suggestions }}"
+            else
+              echo "No documentation suggestions for this cherry-pick."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
