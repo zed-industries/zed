@@ -27496,7 +27496,7 @@ impl EditorSnapshot {
             }
         }
 
-        is_foldable |= self.starts_indent(buffer_row);
+        is_foldable |= !self.use_lsp_folding_ranges && self.starts_indent(buffer_row);
 
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
