@@ -116,6 +116,9 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Per-panel settings.
+    #[serde(default)]
+    pub panels: HashMap<String, PanelDockSettingsContent>,
 }
 
 #[with_fallible_options]
@@ -789,6 +792,19 @@ pub enum ProjectPanelSortMode {
 )]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct PanelDockSettingsContent {
+    pub size: Option<PanelSize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelSize {
+    Fixed(f32),
+    Responsive(f32),
 }
 
 /// Controls how semantic tokens from language servers are used for syntax highlighting.

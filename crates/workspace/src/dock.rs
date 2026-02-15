@@ -4,13 +4,16 @@ use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
 
+use crate::workspace_settings::{PanelDockSettings, PanelSize, WorkspaceSettings};
+
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
+use std::collections::HashMap;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
@@ -208,6 +211,8 @@ pub struct Dock {
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
+    responsive_overrides: HashMap<EntityId, f32>,
+    last_settings: HashMap<EntityId, PanelDockSettings>,
 }
 
 impl Focusable for Dock {
@@ -303,6 +308,8 @@ impl Dock {
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
+                responsive_overrides: Default::default(),
+                last_settings: Default::default(),
             }
         });
 
@@ -472,6 +479,25 @@ impl Dock {
                 let panel = panel.clone();
 
                 move |this, window, cx| {
+                    let settings = WorkspaceSettings::get_global(cx);
+                    let panel_settings = settings
+                        .panels
+                        .get(panel.persistent_name())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    if let Some(last_settings) = this.last_settings.get(&panel.panel_id()) {
+                        if last_settings != &panel_settings {
+                            this.responsive_overrides.remove(&panel.panel_id());
+                            this.last_settings
+                                .insert(panel.panel_id(), panel_settings.clone());
+                            cx.notify();
+                        }
+                    } else {
+                        this.last_settings
+                            .insert(panel.panel_id(), panel_settings.clone());
+                    }
+
                     let new_position = panel.read(cx).position(window, cx);
                     if new_position == this.position {
                         return;
@@ -734,12 +760,32 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(entry) = self.active_panel_entry() {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+        let panel = if let Some(entry) = self.active_panel_entry() {
+            entry.panel.clone()
+        } else {
+            return;
+        };
 
-            entry.panel.set_size(size, window, cx);
-            cx.notify();
+        let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+
+        if let Some(size) = size {
+            let settings = WorkspaceSettings::get_global(cx);
+            if let Some(panel_settings) = settings.panels.get(panel.persistent_name()) {
+                if let Some(PanelSize::Responsive(_)) = &panel_settings.size {
+                    let viewport_size = window.viewport_size();
+                    let dimension = match self.position().axis() {
+                        Axis::Horizontal => viewport_size.width,
+                        Axis::Vertical => viewport_size.height,
+                    };
+                    let fraction = size / dimension;
+                    self.responsive_overrides
+                        .insert(panel.panel_id(), fraction);
+                }
+            }
         }
+
+        panel.set_size(size, window, cx);
+        cx.notify();
     }
 
     pub fn resize_all_panels(
@@ -748,8 +794,27 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+        let viewport_size = window.viewport_size();
+        let dimension = match self.position().axis() {
+            Axis::Horizontal => viewport_size.width,
+            Axis::Vertical => viewport_size.height,
+        };
+
+        if let Some(size) = size {
+            let settings = WorkspaceSettings::get_global(cx);
+            for entry in &self.panel_entries {
+                if let Some(panel_settings) = settings.panels.get(entry.panel.persistent_name()) {
+                    if let Some(PanelSize::Responsive(_)) = &panel_settings.size {
+                        let fraction = size / dimension;
+                        self.responsive_overrides
+                            .insert(entry.panel.panel_id(), fraction);
+                    }
+                }
+            }
+        }
+
         for entry in &mut self.panel_entries {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
             entry.panel.set_size(size, window, cx);
         }
         cx.notify();
@@ -783,8 +848,28 @@ impl Dock {
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
+        let settings = WorkspaceSettings::get_global(cx);
         if let Some(entry) = self.visible_entry() {
-            let size = entry.panel.size(window, cx);
+            let mut size = entry.panel.size(window, cx);
+            if let Some(panel_settings) = settings.panels.get(entry.panel.persistent_name()) {
+                if let Some(mode) = &panel_settings.size {
+                    match mode {
+                        PanelSize::Fixed(pixels) => size = px(*pixels),
+                        PanelSize::Responsive(fraction) => {
+                            let fraction = *self
+                                .responsive_overrides
+                                .get(&entry.panel.panel_id())
+                                .unwrap_or(fraction);
+                            let viewport_size = window.viewport_size();
+                            let dimension = match self.position().axis() {
+                                Axis::Horizontal => viewport_size.width,
+                                Axis::Vertical => viewport_size.height,
+                            };
+                            size = dimension * fraction;
+                        }
+                    }
+                }
+            }
 
             let position = self.position;
             let create_resize_handle = || {
