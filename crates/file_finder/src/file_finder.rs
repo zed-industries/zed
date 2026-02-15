@@ -1200,11 +1200,10 @@ impl FileFinderDelegate {
 
     /// Attempts to resolve an absolute file path and update the search matches if found.
     ///
-    /// If the query path resolves to an absolute file that exists in the project,
-    /// this method will find the corresponding worktree and relative path, create a
-    /// match for it, and update the picker's search results.
-    ///
-    /// Returns `true` if the absolute path exists, otherwise returns `false`.
+    /// Returns `false` immediately if the query does not look like an absolute path
+    /// (i.e., does not start with `/`, `~`, or a Windows drive letter).
+    /// Otherwise, resolves the path asynchronously and returns `true` if a matching
+    /// file was found in the project's worktrees.
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
@@ -1213,7 +1212,6 @@ impl FileFinderDelegate {
     ) -> Task<bool> {
         let query_str = query.path_query().trim();
 
-        // Only try to resolve absolute paths, skip for simple relative queries
         let looks_like_absolute = query_str.starts_with('/')
             || query_str.starts_with('~')
             || (cfg!(windows) && query_str.len() > 1 && query_str.chars().nth(1) == Some(':'));
@@ -1230,55 +1228,45 @@ impl FileFinderDelegate {
                 return false;
             };
 
-            let mut path_matches = Vec::new();
-
-            // Expand ~ to home directory if present
-            let query_path = if query.path_query().starts_with('~') {
-                let home = util::paths::home_dir();
-                query
-                    .path_query()
-                    .replacen("~", home.to_string_lossy().as_ref(), 1)
-            } else {
-                query.path_query().to_string()
-            };
-
+            // resolve_abs_file_path handles tilde expansion internally via shellexpand
             let resolved_path = project
-                .update(cx, |this, cx| this.resolve_abs_file_path(&query_path, cx))
+                .update(cx, |project, cx| {
+                    project.resolve_abs_file_path(query.path_query(), cx)
+                })
                 .await;
 
-            if let Some(resolved_path) = resolved_path {
-                let abs_path_str = match &resolved_path {
-                    project::ResolvedPath::AbsPath { path, .. } => path.clone(),
-                    project::ResolvedPath::ProjectPath { .. } => query.path_query().to_string(),
-                };
-                let abs_path = Path::new(&abs_path_str);
+            let Some(project::ResolvedPath::AbsPath { path: abs_path, .. }) = resolved_path else {
+                return false;
+            };
 
-                project.update(cx, |project, cx| {
-                    if let Some((worktree, relative_path)) = project.find_worktree(abs_path, cx) {
-                        path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                            score: 1.0,
-                            positions: Vec::new(),
-                            worktree_id: worktree.read(cx).id().to_usize(),
-                            path: relative_path,
-                            path_prefix: RelPath::empty().into(),
-                            is_dir: false, // File finder doesn't support directories
-                            distance_to_relative_ancestor: usize::MAX,
-                        }));
-                    }
-                });
-            }
+            let mut path_matches = Vec::new();
+            project.update(cx, |project, cx| {
+                if let Some((worktree, relative_path)) =
+                    project.find_worktree(Path::new(&abs_path), cx)
+                {
+                    path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                        score: 1.0,
+                        positions: Vec::new(),
+                        worktree_id: worktree.read(cx).id().to_usize(),
+                        path: relative_path,
+                        path_prefix: RelPath::empty().into(),
+                        is_dir: false,
+                        distance_to_relative_ancestor: usize::MAX,
+                    }));
+                }
+            });
 
             let found_match = !path_matches.is_empty();
 
             picker
                 .update_in(cx, |picker, _, cx| {
-                    let picker_delegate = &mut picker.delegate;
-                    let search_id = util::post_inc(&mut picker_delegate.search_count);
-                    picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
-
+                    let delegate = &mut picker.delegate;
+                    let search_id = util::post_inc(&mut delegate.search_count);
+                    delegate.set_search_matches(search_id, false, query, path_matches, cx);
                     anyhow::Ok(())
                 })
                 .log_err();
+
             found_match
         })
     }
