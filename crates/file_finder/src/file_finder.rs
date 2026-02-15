@@ -1232,10 +1232,18 @@ impl FileFinderDelegate {
 
             let mut path_matches = Vec::new();
 
+            // Expand ~ to home directory if present
+            let query_path = if query.path_query().starts_with('~') {
+                let home = util::paths::home_dir();
+                query
+                    .path_query()
+                    .replacen("~", home.to_string_lossy().as_ref(), 1)
+            } else {
+                query.path_query().to_string()
+            };
+
             let resolved_path = project
-                .update(cx, |this, cx| {
-                    this.resolve_abs_file_path(query.path_query(), cx)
-                })
+                .update(cx, |this, cx| this.resolve_abs_file_path(&query_path, cx))
                 .await;
 
             if let Some(resolved_path) = resolved_path {
