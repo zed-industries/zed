@@ -5268,7 +5268,7 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((popover_position, hover_popovers, is_popover_left_aligned)) = hover_popovers
+        let Some((popover_position, hover_popovers, popover_alignment)) = hover_popovers
         else {
             return;
         };
@@ -5293,7 +5293,7 @@ impl EditorElement {
         for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
             let horizontal_offset = hover_popover_horizontal_offset(
-                is_popover_left_aligned,
+                popover_alignment,
                 hovered_point.x,
                 size.width,
                 hitbox.bounds,

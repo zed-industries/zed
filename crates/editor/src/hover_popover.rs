@@ -35,22 +35,31 @@ pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const POPOVER_LEFT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
-/// Computes the horizontal offset for a hover popover. If `is_popover_left_aligned` is true,
-/// the popover ends at cursor and does not extend past the left side of `bounds`. Otherwise,
-/// the popover starts at cursor and does not extend past the right side of `bounds`.
+#[derive(Clone, Copy)]
+pub enum PopoverAlignment {
+    Left,
+    Right,
+}
+
+/// Computes the horizontal offset for a hover popover. If `popover_alignment` is `Left`,
+/// the popover ends at cursor and does not extend past the left side of `hitbox_bounds`. Otherwise,
+/// the popover starts at cursor and does not extend past the right side of `hitbox_bounds`.
 pub(crate) fn hover_popover_horizontal_offset(
-    is_popover_left_aligned: bool,
+    popover_alignment: PopoverAlignment,
     hovered_point_x: Pixels,
     popover_width: Pixels,
     hitbox_bounds: Bounds<Pixels>,
 ) -> Pixels {
-    if is_popover_left_aligned {
-        (hitbox_bounds.left() + POPOVER_LEFT_OFFSET - (hovered_point_x - popover_width))
-            .max(Pixels::ZERO)
-            - popover_width
-    } else {
-        (hitbox_bounds.right() - POPOVER_RIGHT_OFFSET - (hovered_point_x + popover_width))
-            .min(Pixels::ZERO)
+    match popover_alignment {
+        PopoverAlignment::Left => {
+            (hitbox_bounds.left() + POPOVER_LEFT_OFFSET - (hovered_point_x - popover_width))
+                .max(Pixels::ZERO)
+                - popover_width
+        }
+        PopoverAlignment::Right => {
+            (hitbox_bounds.right() - POPOVER_RIGHT_OFFSET - (hovered_point_x + popover_width))
+                .min(Pixels::ZERO)
+        }
     }
 }
 
@@ -810,13 +819,18 @@ impl HoverState {
         text_layout_details: &TextLayoutDetails,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<(DisplayPoint, Vec<AnyElement>, bool)> {
+    ) -> Option<(DisplayPoint, Vec<AnyElement>, PopoverAlignment)> {
         if !self.visible() {
             return None;
         }
+
         // align the popover to the left of the cursor if there is a diagnostic (e.g. a warning or error)
         // and to the right otherwise (e.g. an LSP hover)
-        let is_popover_left_aligned = self.diagnostic_popover.is_some();
+        let popover_alignment = if self.diagnostic_popover.is_some() {
+            PopoverAlignment::Left
+        } else {
+            PopoverAlignment::Right
+        };
 
         // If there is a diagnostic, position the popovers at the cursor/hover position.
         // Otherwise use the start of the hover range
@@ -878,7 +892,7 @@ impl HoverState {
             elements.push(info_popover.render(max_size, window, cx));
         }
 
-        Some((point, elements, is_popover_left_aligned))
+        Some((point, elements, popover_alignment))
     }
 
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
