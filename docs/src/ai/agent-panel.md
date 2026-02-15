@@ -158,11 +158,11 @@ Zed offers three built-in profiles and you can create as many custom ones as you
 #### Built-in Profiles {#built-in-profiles}
 
 - `Write`: A profile with tools to allow the LLM to write to your files and run terminal commands.
-This one essentially has all built-in tools turned on.
+  This one essentially has all built-in tools turned on.
 - `Ask`: A profile with read-only tools.
-Best for asking questions about your code base without the concern of the agent making changes.
+  Best for asking questions about your code base without the concern of the agent making changes.
 - `Minimal`: A profile with no tools.
-Best for general conversations with the LLM where no knowledge of your code base is necessary.
+  Best for general conversations with the LLM where no knowledge of your code base is necessary.
 
 You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure` button > the one you want to check out.
 
