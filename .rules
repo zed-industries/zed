@@ -168,3 +168,419 @@ Rules emerge from validated patterns, not one-off observations. The workflow is:
 1. Agent notes a pattern during a session.
 2. Team validates the pattern in code review.
 3. A dedicated commit adds the rule with context on *why* it exists.
+
+# Pull Request Workflow
+
+This section covers how to create, manage, and submit pull requests to Zed. Following these guidelines helps maintainers review your changes efficiently and increases the likelihood of your PR being merged.
+
+## Branch Naming
+
+Use descriptive branch names that indicate what the branch contains. This makes it easier to track changes and understand the purpose of each branch at a glance.
+
+**Format:** `type/short-description`
+
+**Types:**
+- `fix/` - Bug fixes
+- `feat/` - New features
+- `refactor/` - Code refactoring (no behavior change)
+- `docs/` - Documentation changes only
+- `test/` - Adding or fixing tests
+
+**Examples:**
+- `fix/preserve-indentation-case-conversion`
+- `feat/add-dark-mode-toggle`
+- `refactor/simplify-buffer-management`
+- `docs/improve-contributing-guide`
+
+Avoid vague names like `work`, `stuff`, or `fixes`. The branch name should give a reviewer a hint about what they'll find in the code.
+
+## Commit Messages
+
+Write clear, concise commit messages that explain what changed and why. Think of them as a mini changelog for each change.
+
+**Structure:**
+```
+<type>: <short description>
+
+<longer explanation if needed>
+
+Fixes #<issue-number>
+```
+
+**Rules:**
+- Use imperative mood ("add feature" not "added feature")
+- First line should be under 72 characters
+- Reference issue numbers at the end
+- Be specific about what changed
+
+**Examples:**
+```
+editor: preserve indentation when converting to title case or camel case
+
+The convert_to_title_case, convert_to_upper_camel_case, and
+convert_to_lower_camel_case functions were applying case conversion
+to the entire line including leading whitespace.
+
+Fixes #48945
+```
+
+```
+gpui: add error boundary for element rendering
+
+Add try_render method to handle panics in render methods,
+preventing one element from crashing the entire view.
+
+Related to #48123
+```
+
+## One Change Per Pull Request
+
+Keep PRs focused on a single concern. This principle is emphasized throughout Zed's CONTRIBUTING.md, and for good reason.
+
+**Why this matters:**
+- Smaller PRs are easier to review thoroughly
+- It's clearer what behavior is changing
+- If something breaks, it's obvious what caused it
+- Reviewers can approve or request changes without needing to understand unrelated code
+- Merges are cleaner and git history is more readable
+
+**When you have multiple fixes:**
+Create separate branches and PRs for each issue. Even if the issues are related, keep them separate. This allows:
+- Independent review
+- Independent rollback if needed
+- Clearer changelog entries
+
+**What counts as "one change":**
+- A single bug fix = one PR
+- A feature implementation = one PR
+- Related tests for that fix/feature = same PR (encouraged)
+- Unrelated cleanup or refactoring = separate PR
+
+**When to combine (rare):**
+Only combine changes when they are truly inseparable. For example, if fixing a bug requires refactoring the code around it, that can be one PR if the refactoring cannot exist independently.
+
+**Common mistake to avoid:**
+Don't bundle multiple bug fixes into one PR because they're "quick" or "related." This makes review harder and if one fix has issues, all are blocked. If you find multiple issues while working, note them down and create separate branches for each.
+
+## Rebasing vs Merging
+
+When updating your branch with main, prefer rebasing over merging for a cleaner history:
+
+**Why rebase:**
+- Creates a linear history without merge commits
+- Makes it easier to see exactly what changed
+- Keeps your branch looking like it was built off current main
+
+**When to rebase:**
+- Before pushing your branch for the first time
+- When main has changed and you want to incorporate those changes
+- Before marking a PR as ready for review
+
+**When merging is okay:**
+- When you've already pushed and others might be working on the same branch
+- As a final step before merge (maintainers will handle this)
+
+**How to rebase safely:**
+```bash
+# First, fetch latest main
+git fetch upstream
+
+# If you're on your branch
+git rebase upstream/main
+
+# If there are conflicts, resolve them and continue
+git add .
+git rebase --continue
+
+# Force push (your branch, be careful!)
+git push --force-with-lease origin fix/your-branch
+```
+
+## Handling Multiple Fixes in One Branch
+
+There are two approaches to consider:
+
+**Approach A: One branch per issue (Recommended)**
+Create a new branch for each issue you work on:
+```bash
+git checkout -b fix/issue-12345
+# fix issue 12345
+git push -u origin fix/issue-12345
+# create PR
+
+git checkout main
+git checkout -b fix/issue-67890
+# fix issue 67890
+git push -u origin fix/issue-67890
+# create another PR
+```
+
+This is the cleanest approach because:
+- Each PR can be reviewed and merged independently
+- If one PR needs changes, others aren't blocked
+- The git history is easy to follow
+- You can work on multiple issues in parallel without confusion
+
+**Approach B: Multiple fixes in one branch (Avoid unless necessary)**
+Only do this when fixes are truly inseparable:
+```bash
+git checkout -b fix/multiple-related-fixes
+# fix issue A
+git commit -m "fix: issue A"
+# fix issue B (cannot be separated from A)
+git commit -m "fix: issue B"
+# single PR for both
+```
+
+Even then, consider if you can split them. Most of the time you can.
+
+**When multiple branches are needed:**
+- Different issues reported separately
+- Different areas of the codebase
+- One fix is ready while another needs more work
+- You want independent changelog entries
+
+## Working with Forks
+
+Zed accepts contributions from forks. Here's how to set up your workflow:
+
+**Initial setup:**
+1. Fork the Zed repository on GitHub
+2. Clone your fork locally:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/zed.git
+   cd zed
+   ```
+3. Add the main repo as upstream:
+   ```bash
+   git remote add upstream https://github.com/zed-industries/zed.git
+   ```
+
+**Verify your setup:**
+```bash
+git remote -v
+# Should show:
+# origin    https://github.com/YOUR_USERNAME/zed.git (fetch)
+# origin    https://github.com/YOUR_USERNAME/zed.git (push)
+# upstream  https://github.com/zed-industries/zed.git (fetch)
+# upstream  https://github.com/zed-industries/zed.git (push)
+```
+
+**Keeping your fork updated:**
+```bash
+# Fetch latest from upstream
+git fetch upstream
+
+# Update your main branch
+git checkout main
+git merge upstream/main
+git push origin main
+```
+
+**Creating a fix branch:**
+```bash
+# Make sure you're starting from updated main
+git checkout main
+git pull origin main
+
+# Create a new branch for your fix
+git checkout -b fix/issue-description
+
+# Now make your changes, commit, and push
+git add -A
+git commit -m "your commit message"
+git push -u origin fix/issue-description
+```
+
+**Syncing a branch to main:**
+If your branch gets stale while waiting for review:
+```bash
+git fetch upstream
+git rebase upstream/main
+git push --force-with-lease origin fix/issue-description
+```
+
+## Pull Request Structure
+
+A well-structured PR makes review much easier. Include these elements:
+
+**Title:** Clear and descriptive, matching commit message style
+- Good: `editor: preserve indentation when converting to title case`
+- Bad: `Fixed something`, `My changes`
+
+**Title format:**
+Use the same format as commit messages: `area: description`
+- Start with the crate or area (editor, gpui, ui, etc.)
+- Follow with a brief description of what changed
+- Keep it under 72 characters
+
+**Description:**
+A good PR description answers these questions:
+
+1. **What does this change?**
+   - Summarize what the code does in plain language
+   - Don't just repeat the code - explain the intent
+
+2. **Why is this needed?**
+   - Reference the issue number: "Fixes #48945"
+   - Explain the user problem being solved
+
+3. **How did you test it?**
+   - Describe testing approach
+   - Note any manual testing done
+
+4. **Screenshots (for UI changes)**
+   - Before/after screenshots are crucial for UI PRs
+   - GIFs for animated behavior are even better
+
+**Template:**
+```markdown
+## Summary
+
+Brief description of what this changes and why.
+
+## Changes
+
+- Detail 1
+- Detail 2
+- Detail 3
+
+## Testing
+
+How did you verify this works?
+
+## Screenshots
+
+If UI-related, include before/after screenshots.
+```
+
+**What to include:**
+- Issue reference (Fixes #12345)
+- Notes on how to test
+- Any known limitations
+- Related PRs or discussions
+
+**What NOT to include:**
+- Giant diffs in the description
+- Unrelated context
+- Excuses for incomplete work
+
+## PR Titles and Descriptions Examples
+
+**Good PR titles:**
+```
+editor: preserve indentation when converting to title case
+gpui: add error boundary for element rendering
+ui: fix button hover state on dark themes
+docs: update contributing guide with PR workflow
+```
+
+**Good PR descriptions:**
+```
+## Summary
+
+Fixes a bug where converting text to title case removed leading whitespace.
+
+## Problem
+
+When users selected indented text and converted to title case, the
+indentation was stripped. For example:
+"    hello world" → "Hello World" (wrong)
+"    hello world" → "    Hello World" (correct)
+
+## Solution
+
+Modified the case conversion functions to preserve leading whitespace
+by splitting each line into prefix and content, applying the case
+conversion to content only, then rejoining.
+
+## Testing
+
+- Ran existing tests: all pass
+- Tested manually with multi-line indented text
+- Verified behavior matches upper/lower case commands
+
+Fixes #48945
+```
+
+**Bad PR descriptions:**
+- Just code without explanation
+- "Fixed it" with no context
+- Linking to issue but not explaining the solution
+
+## Draft vs Ready PRs
+
+Use GitHub's draft PR feature when your changes are incomplete:
+
+**Create as draft when:**
+- You're still working on the implementation
+- You want early feedback on approach
+- Tests are failing and you're debugging
+
+**Mark as ready when:**
+- Code is complete
+- Tests pass
+- You've self-reviewed your changes
+
+**Don't:**
+- Create a draft and abandon it for weeks
+- Create a "ready" PR that clearly needs more work
+
+## Responding to Review Feedback
+
+Review is a conversation. Here's how to handle it:
+
+**Do:**
+- Respond to every comment
+- Push fixes as additional commits (easier to review)
+- Ask for clarification if you don't understand feedback
+- Explain your reasoning if you disagree
+- Thank reviewers for their time
+
+**Don't:**
+- Take feedback personally - it's about the code
+- Push dozens of small fixup commits - squash them first
+- Argue endlessly - if you strongly disagree, explain once and defer
+- Ignore feedback - it won't go away
+
+**Squashing vs commits:**
+During review, keep fixing commits separate. After approval, you may be asked to squash. If not, the maintainers will handle it during merge.
+
+## Handling Stale or Rejected PRs
+
+**If your PR goes stale:**
+- Respond to comments promptly
+- If you need more time, explain that
+- Don't be discouraged if feedback requires significant changes
+
+**If your PR is rejected:**
+- Read the reasoning carefully
+- Don't argue or take it personally
+- If you disagree, explain once respectfully
+- Move on to other contributions
+
+Zed's maintainers are transparent about why they reject PRs. Common reasons include:
+- Feature belongs in an extension, not core
+- Too much complexity for the benefit
+- Not aligned with Zed's design philosophy
+- Missing tests or documentation
+
+## Signing the CLA
+
+Before your first PR can be merged, you must sign the Zed Contributor License Agreement. This is a one-time process:
+
+1. Visit https://zed.dev/cla
+2. Sign with your GitHub account
+3. Comment on your PR: `@cla-bot check`
+
+The CLA bot will verify your signature. Without this, your PR cannot be merged.
+
+## Summary
+
+The key principles are:
+1. **One change per PR** - keep it focused and reviewable
+2. **Clear communication** - descriptive titles, thorough descriptions
+3. **Respect the process** - sign the CLA, respond to reviews, be patient
+4. **Keep it clean** - good branch names, clear commit messages
+
+Following these guidelines helps everyone - you get your changes merged faster, reviewers can do their job effectively, and Zed maintains the quality its users expect.
