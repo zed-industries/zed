@@ -1442,18 +1442,20 @@ impl PickerDelegate for FileFinderDelegate {
 
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
-                    // Try to resolve absolute paths first (e.g., /path/to/file or ~/file)
-                    this.update_in(cx, |this, window, cx| {
-                        this.delegate
-                            .lookup_absolute_path(query.clone(), window, cx)
-                    })?
-                    .await;
+                    let did_resolve_abs_path = this
+                        .update_in(cx, |this, window, cx| {
+                            this.delegate
+                                .lookup_absolute_path(query.clone(), window, cx)
+                        })?
+                        .await;
 
-                    // Always do a regular file search - results are combined with absolute path results
-                    this.update_in(cx, |this, window, cx| {
-                        this.delegate.spawn_search(query, window, cx)
-                    })?
-                    .await;
+                    // Only check for relative paths if no absolute paths were found.
+                    if !did_resolve_abs_path {
+                        this.update_in(cx, |this, window, cx| {
+                            this.delegate.spawn_search(query, window, cx)
+                        })?
+                        .await;
+                    }
                     anyhow::Ok(())
                 })
                 .await;
