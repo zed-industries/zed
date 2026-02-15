@@ -22,6 +22,35 @@ pub enum ParsedMarkdownElement {
 }
 
 impl ParsedMarkdownElement {
+    pub fn to_text(&self) -> String {
+        match self {
+            Self::Heading(heading) => heading.to_text(),
+            Self::ListItem(list_item) => list_item.to_text(),
+            Self::Table(table) => table.to_text(),
+            Self::BlockQuote(block_quote) => block_quote.to_text(),
+            Self::CodeBlock(code_block) => code_block.contents.to_string(),
+            Self::MermaidDiagram(mermaid) => mermaid.contents.contents.to_string(),
+            Self::Paragraph(text) => text
+                .iter()
+                .map(|chunk| match chunk {
+                    MarkdownParagraphChunk::Text(t) => t.contents.to_string(),
+                    MarkdownParagraphChunk::Image(image) => image
+                        .alt_text
+                        .as_ref()
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|| image.link.to_string()),
+                })
+                .collect::<Vec<_>>()
+                .join(""),
+            Self::HorizontalRule(_) => "---".to_string(),
+            Self::Image(image) => image
+                .alt_text
+                .as_ref()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| image.link.to_string()),
+        }
+    }
+
     pub fn source_range(&self) -> Option<Range<usize>> {
         Some(match self {
             Self::Heading(heading) => heading.source_range.clone(),
@@ -59,6 +88,16 @@ pub struct ParsedMarkdown {
     pub children: Vec<ParsedMarkdownElement>,
 }
 
+impl ParsedMarkdown {
+    pub fn to_text(&self) -> String {
+        self.children
+            .iter()
+            .map(|child| child.to_text())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownListItem {
@@ -69,6 +108,25 @@ pub struct ParsedMarkdownListItem {
     pub content: Vec<ParsedMarkdownElement>,
     /// Whether we can expect nested list items inside of this items `content`.
     pub nested: bool,
+}
+
+impl ParsedMarkdownListItem {
+    pub fn to_text(&self) -> String {
+        let mut text = self
+            .content
+            .iter()
+            .map(|child| child.to_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if self.nested {
+            text = text
+                .lines()
+                .map(|line| format!("  {}", line))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        text
+    }
 }
 
 #[derive(Debug)]
@@ -109,6 +167,23 @@ pub struct ParsedMarkdownHeading {
     pub contents: MarkdownParagraph,
 }
 
+impl ParsedMarkdownHeading {
+    pub fn to_text(&self) -> String {
+        self.contents
+            .iter()
+            .map(|chunk| match chunk {
+                MarkdownParagraphChunk::Text(t) => t.contents.to_string(),
+                MarkdownParagraphChunk::Image(image) => image
+                    .alt_text
+                    .as_ref()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|| image.link.to_string()),
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum HeadingLevel {
     H1,
@@ -125,6 +200,36 @@ pub struct ParsedMarkdownTable {
     pub header: Vec<ParsedMarkdownTableRow>,
     pub body: Vec<ParsedMarkdownTableRow>,
     pub caption: Option<MarkdownParagraph>,
+}
+
+impl ParsedMarkdownTable {
+    pub fn to_text(&self) -> String {
+        let mut text = String::new();
+        for row in self.header.iter().chain(self.body.iter()) {
+            let row_text = row
+                .columns
+                .iter()
+                .map(|col| {
+                    col.children
+                        .iter()
+                        .map(|chunk| match chunk {
+                            MarkdownParagraphChunk::Text(t) => t.contents.to_string(),
+                            MarkdownParagraphChunk::Image(image) => image
+                                .alt_text
+                                .as_ref()
+                                .map(|a| a.to_string())
+                                .unwrap_or_else(|| image.link.to_string()),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+            text.push_str(&row_text);
+            text.push('\n');
+        }
+        text
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -176,6 +281,20 @@ impl ParsedMarkdownTableRow {
 pub struct ParsedMarkdownBlockQuote {
     pub source_range: Range<usize>,
     pub children: Vec<ParsedMarkdownElement>,
+}
+
+impl ParsedMarkdownBlockQuote {
+    pub fn to_text(&self) -> String {
+        self.children
+            .iter()
+            .map(|child| child.to_text())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .lines()
+            .map(|line| format!("> {}", line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[derive(Debug, Clone)]
