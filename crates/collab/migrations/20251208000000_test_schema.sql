@@ -423,11 +423,6 @@ CREATE TABLE public.shared_threads (
     updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.user_features (
-    user_id integer NOT NULL,
-    feature_id integer NOT NULL
-);
-
 CREATE TABLE public.users (
     id integer NOT NULL,
     github_login character varying,
@@ -616,9 +611,6 @@ ALTER TABLE ONLY public.servers
 ALTER TABLE ONLY public.shared_threads
     ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_pkey PRIMARY KEY (user_id, feature_id);
-
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
@@ -717,12 +709,6 @@ CREATE UNIQUE INDEX index_rooms_on_channel_id ON public.rooms USING btree (chann
 CREATE INDEX index_settings_files_on_project_id ON public.worktree_settings_files USING btree (project_id);
 
 CREATE INDEX index_settings_files_on_project_id_and_wt_id ON public.worktree_settings_files USING btree (project_id, worktree_id);
-
-CREATE INDEX index_user_features_on_feature_id ON public.user_features USING btree (feature_id);
-
-CREATE INDEX index_user_features_on_user_id ON public.user_features USING btree (user_id);
-
-CREATE UNIQUE INDEX index_user_features_user_id_and_feature_id ON public.user_features USING btree (user_id, feature_id);
 
 CREATE UNIQUE INDEX index_users_github_login ON public.users USING btree (github_login);
 
@@ -865,12 +851,6 @@ ALTER TABLE ONLY public.rooms
 
 ALTER TABLE ONLY public.shared_threads
     ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.feature_flags(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;
