@@ -502,7 +502,7 @@ impl ExtensionsPage {
                 .iter()
                 .enumerate()
                 .filter(|(_, manifest)| match self.provides_filter {
-                    Some(provides) => dev_extension_matches_provides(manifest, provides),
+                    Some(provides) => manifest.provides().contains(&provides),
                     None => true,
                 })
                 .map(|(ix, _)| ix),
@@ -1882,24 +1882,5 @@ impl Item for ExtensionsPage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
-    }
-}
-
-fn dev_extension_matches_provides(
-    manifest: &ExtensionManifest,
-    provides: ExtensionProvides,
-) -> bool {
-    match provides {
-        ExtensionProvides::Themes => !manifest.themes.is_empty(),
-        ExtensionProvides::IconThemes => !manifest.icon_themes.is_empty(),
-        ExtensionProvides::Languages => !manifest.languages.is_empty(),
-        ExtensionProvides::Grammars => !manifest.grammars.is_empty(),
-        ExtensionProvides::LanguageServers => !manifest.language_servers.is_empty(),
-        ExtensionProvides::ContextServers => !manifest.context_servers.is_empty(),
-        ExtensionProvides::AgentServers => !manifest.agent_servers.is_empty(),
-        ExtensionProvides::SlashCommands => !manifest.slash_commands.is_empty(),
-        ExtensionProvides::IndexedDocsProviders => false,
-        ExtensionProvides::Snippets => manifest.snippets.is_some(),
-        ExtensionProvides::DebugAdapters => !manifest.debug_adapters.is_empty(),
     }
 }
