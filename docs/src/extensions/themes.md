@@ -55,4 +55,4 @@ The core components a Theme object include:
 You can use [Zed's Theme Builder](https://zed.dev/theme-builder) to design your own custom theme based on an existing one.
 
 This tool lets you fine-tune and preview how every surface in the Zed app will look.
-You can then export the JSON for more easily [publishing it in Zed's extension store](./extensions/themes.md).
+You can then export the JSON for more easily publishing it in Zed's extension store.
