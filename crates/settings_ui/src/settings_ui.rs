@@ -1930,23 +1930,18 @@ impl SettingsWindow {
                 async move {
                     let query_lower = query.to_lowercase();
                     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
-                    let mut scored: Vec<(usize, usize)> = search_index
+                    search_index
                         .documents
                         .iter()
-                        .filter_map(|doc| {
-                            let hits = query_words
-                                .iter()
-                                .filter(|query_word| {
-                                    doc.words
-                                        .iter()
-                                        .any(|doc_word| doc_word.starts_with(*query_word))
-                                })
-                                .count();
-                            (hits > 0).then_some((doc.id, hits))
+                        .filter(|doc| {
+                            query_words.iter().any(|query_word| {
+                                doc.words
+                                    .iter()
+                                    .any(|doc_word| doc_word.starts_with(query_word))
+                            })
                         })
-                        .collect();
-                    scored.sort_by(|a, b| b.1.cmp(&a.1));
-                    scored
+                        .map(|doc| doc.id)
+                        .collect::<Vec<usize>>()
                 }
             });
             let cancel_flag = std::sync::atomic::AtomicBool::new(false);
@@ -1965,7 +1960,7 @@ impl SettingsWindow {
 
             _ = this
                 .update(cx, |this, cx| {
-                    let exact_indices = exact_matches.into_iter().map(|(id, _)| id);
+                    let exact_indices = exact_matches.into_iter();
                     let fuzzy_indices = fuzzy_matches
                         .into_iter()
                         .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
