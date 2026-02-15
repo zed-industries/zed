@@ -213,22 +213,6 @@ CREATE SEQUENCE public.extensions_id_seq
 
 ALTER SEQUENCE public.extensions_id_seq OWNED BY public.extensions.id;
 
-CREATE TABLE public.feature_flags (
-    id integer NOT NULL,
-    flag character varying(255) NOT NULL,
-    enabled_for_all boolean DEFAULT false NOT NULL
-);
-
-CREATE SEQUENCE public.feature_flags_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.feature_flags_id_seq OWNED BY public.feature_flags.id;
-
 CREATE TABLE public.followers (
     id integer NOT NULL,
     room_id integer NOT NULL,
@@ -536,8 +520,6 @@ ALTER TABLE ONLY public.contacts ALTER COLUMN id SET DEFAULT nextval('public.con
 
 ALTER TABLE ONLY public.extensions ALTER COLUMN id SET DEFAULT nextval('public.extensions_id_seq'::regclass);
 
-ALTER TABLE ONLY public.feature_flags ALTER COLUMN id SET DEFAULT nextval('public.feature_flags_id_seq'::regclass);
-
 ALTER TABLE ONLY public.followers ALTER COLUMN id SET DEFAULT nextval('public.followers_id_seq'::regclass);
 
 ALTER TABLE ONLY public.notification_kinds ALTER COLUMN id SET DEFAULT nextval('public.notification_kinds_id_seq'::regclass);
@@ -594,12 +576,6 @@ ALTER TABLE ONLY public.extension_versions
 
 ALTER TABLE ONLY public.extensions
     ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_flag_key UNIQUE (flag);
-
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.followers
     ADD CONSTRAINT followers_pkey PRIMARY KEY (id);
@@ -691,8 +667,6 @@ CREATE UNIQUE INDEX index_contacts_user_ids ON public.contacts USING btree (user
 CREATE UNIQUE INDEX index_extensions_external_id ON public.extensions USING btree (external_id);
 
 CREATE INDEX index_extensions_total_download_count ON public.extensions USING btree (total_download_count);
-
-CREATE UNIQUE INDEX index_feature_flags ON public.feature_flags USING btree (id);
 
 CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_id_a ON public.followers USING btree (project_id, leader_connection_server_id, leader_connection_id, follower_connection_server_id, follower_connection_id);
 
