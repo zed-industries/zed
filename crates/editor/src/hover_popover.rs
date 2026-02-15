@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    AnyElement, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
     Window, div, px,
@@ -34,6 +34,25 @@ pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const POPOVER_LEFT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+
+/// Computes the horizontal offset for a hover popover. If `is_popover_left_aligned` is true,
+/// the popover ends at cursor and does not extend past the left side of `bounds`. Otherwise,
+/// the popover starts at cursor and does not extend past the right side of `bounds`.
+pub(crate) fn hover_popover_horizontal_offset(
+    is_popover_left_aligned: bool,
+    hovered_point_x: Pixels,
+    popover_width: Pixels,
+    hitbox_bounds: Bounds<Pixels>,
+) -> Pixels {
+    if is_popover_left_aligned {
+        (hitbox_bounds.left() + POPOVER_LEFT_OFFSET - (hovered_point_x - popover_width))
+            .max(Pixels::ZERO)
+            - popover_width
+    } else {
+        (hitbox_bounds.right() - POPOVER_RIGHT_OFFSET - (hovered_point_x + popover_width))
+            .min(Pixels::ZERO)
+    }
+}
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
