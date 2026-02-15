@@ -1937,9 +1937,9 @@ impl SettingsWindow {
                             let hits = query_words
                                 .iter()
                                 .filter(|query_word| {
-                                    doc.words.iter().any(|doc_word| {
-                                        doc_word.starts_with(*query_word)
-                                    })
+                                    doc.words
+                                        .iter()
+                                        .any(|doc_word| doc_word.starts_with(*query_word))
                                 })
                                 .count();
                             (hits > 0).then_some((doc.id, hits))
@@ -1965,9 +1965,7 @@ impl SettingsWindow {
 
             _ = this
                 .update(cx, |this, cx| {
-                    let exact_indices = exact_matches
-                        .into_iter()
-                        .map(|(id, _)| id);
+                    let exact_indices = exact_matches.into_iter().map(|(id, _)| id);
                     let fuzzy_indices = fuzzy_matches
                         .into_iter()
                         .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
@@ -2038,7 +2036,12 @@ impl SettingsWindow {
                             .map(|path| path.trim_end_matches('$'));
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[page.title, header_str, item.title, item.description]),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                item.title,
+                                item.description,
+                            ]),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
@@ -2056,7 +2059,11 @@ impl SettingsWindow {
                         json_path = sub_page_link.json_path;
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[page.title, header_str, sub_page_link.title.as_ref()]),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                sub_page_link.title.as_ref(),
+                            ]),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
@@ -2067,7 +2074,11 @@ impl SettingsWindow {
                     SettingsPageItem::ActionLink(action_link) => {
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[page.title, header_str, action_link.title.as_ref()]),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                action_link.title.as_ref(),
+                            ]),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
