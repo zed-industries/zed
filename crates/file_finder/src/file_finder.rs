@@ -1211,6 +1211,17 @@ impl FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<bool> {
+        let query_str = query.path_query().trim();
+
+        // Only try to resolve absolute paths, skip for simple relative queries
+        let looks_like_absolute = query_str.starts_with('/')
+            || query_str.starts_with('~')
+            || (cfg!(windows) && query_str.len() > 1 && query_str.chars().nth(1) == Some(':'));
+
+        if !looks_like_absolute {
+            return Task::ready(false);
+        }
+
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
                 .read_with(cx, |picker, _| picker.delegate.project.clone())
@@ -1431,13 +1442,14 @@ impl PickerDelegate for FileFinderDelegate {
 
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
+                    // Try to resolve absolute paths first (e.g., /path/to/file or ~/file)
                     this.update_in(cx, |this, window, cx| {
                         this.delegate
                             .lookup_absolute_path(query.clone(), window, cx)
                     })?
                     .await;
 
-                    // Always check for relative paths as well
+                    // Always do a regular file search - results are combined with absolute path results
                     this.update_in(cx, |this, window, cx| {
                         this.delegate.spawn_search(query, window, cx)
                     })?
