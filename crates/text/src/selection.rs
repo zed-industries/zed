@@ -128,6 +128,14 @@ impl<T: Copy> Selection<T> {
     pub fn range(&self) -> Range<T> {
         self.start..self.end
     }
+
+    pub fn directed_range(&self) -> Range<T> {
+        if self.reversed {
+            self.end..self.start
+        } else {
+            self.start..self.end
+        }
+    }
 }
 
 impl<T: std::ops::Sub + Copy> Selection<T> {
