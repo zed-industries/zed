@@ -46,7 +46,7 @@ a > .hljs {
   position: sticky;
   top: 0;
   z-index: 100;
-  padding: 12px 24px;
+  padding: 12px 16px;
   background-color: var(--sidebar-bg);
   border-bottom: 1px solid var(--divider);
   display: flex;
@@ -494,7 +494,8 @@ ul#searchresults span.teaser em {
 
 .chapter {
   list-style: none outside none;
-  padding: 8px 20px 20px 20px;
+  padding: 16px;
+  padding-top: 8px;
   line-height: 2.2em;
   margin: 0;
 }
