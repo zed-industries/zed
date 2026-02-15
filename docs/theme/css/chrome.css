@@ -552,6 +552,14 @@ ul#searchresults span.teaser em {
   margin-block-start: 0.6em;
 }
 
+.section li.chapter-item {
+  margin-block-start: 0;
+}
+
+.chapter li.part-title + li.chapter-item {
+  margin-block-start: 0.2em;
+}
+
 .chapter li.chapter-item > a:first-child {
   flex: 1;
   min-width: 0;
@@ -581,7 +589,7 @@ ul#searchresults span.teaser em {
 .chapter li.part-title.collapsible::after {
   content: "❯";
   display: inline-block;
-  font-size: 1.2rem;
+  font-size: 1rem;
   opacity: 0.6;
   transition: transform 0.2s ease;
   flex-shrink: 0;
@@ -592,7 +600,7 @@ ul#searchresults span.teaser em {
 }
 
 .chapter li.section-spacer {
-  height: 2rem;
+  height: 1.5rem;
   list-style: none;
 }
 
@@ -602,8 +610,14 @@ ul#searchresults span.teaser em {
 
 .section {
   list-style: none outside none;
-  padding-inline-start: 3ch;
+  padding-inline-start: 1.5ch;
+  margin-inline-start: 1ch;
+  margin-top: 6px;
+  border-left: 1px solid var(--border-light);
   line-height: 1.9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
 }
 
 .theme-popup {
