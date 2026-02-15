@@ -128,16 +128,19 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
 
         // Kind priority within same visibility level
         let kind_priority = match item.kind {
-            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '0',
-            Some(lsp::CompletionItemKind::FIELD) => '1',
-            Some(lsp::CompletionItemKind::PROPERTY) => '2',
-            Some(lsp::CompletionItemKind::VARIABLE) => '3',
-            Some(lsp::CompletionItemKind::CONSTANT) => '4',
-            Some(lsp::CompletionItemKind::METHOD) => '5',
-            Some(lsp::CompletionItemKind::FUNCTION) => '5',
-            Some(lsp::CompletionItemKind::CLASS) => '6',
-            Some(lsp::CompletionItemKind::MODULE) => '7',
-            _ => '8',
+            Some(lsp::CompletionItemKind::KEYWORD) => '0',
+            Some(lsp::CompletionItemKind::ENUM_MEMBER) => '1',
+            Some(lsp::CompletionItemKind::FIELD) => '2',
+            Some(lsp::CompletionItemKind::PROPERTY) => '3',
+            Some(lsp::CompletionItemKind::VARIABLE) => '4',
+            Some(lsp::CompletionItemKind::CONSTANT) => '5',
+            Some(lsp::CompletionItemKind::METHOD) => '6',
+            Some(lsp::CompletionItemKind::FUNCTION) => '6',
+            Some(lsp::CompletionItemKind::CLASS) => '7',
+            Some(lsp::CompletionItemKind::MODULE) => '8',
+
+            Some(lsp::CompletionItemKind::TEXT) => 'z',
+            _ => 'z',
         };
 
         // Named arguments get higher priority
