@@ -723,6 +723,8 @@ pub mod preview {
                 OpenPreview,
                 /// Opens an SVG preview in a split pane.
                 OpenPreviewToTheSide,
+                /// Opens a following SVG preview that syncs with the active editor.
+                OpenFollowingPreview,
             ]
         );
     }
@@ -737,6 +739,8 @@ pub mod preview {
                 OpenPreview,
                 /// Opens a Mermaid diagram preview in a split pane.
                 OpenPreviewToTheSide,
+                /// Opens a following Mermaid preview that syncs with the active editor.
+                OpenFollowingPreview,
             ]
         );
     }

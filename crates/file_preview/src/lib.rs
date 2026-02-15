@@ -6,12 +6,9 @@ pub use preview_view::{FilePreviewView, PreviewMode};
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Window, actions};
+use gpui::{App, Context, Window};
 use workspace::Workspace;
 use zed_actions::preview::{mermaid, svg};
-
-actions!(svg, [OpenFollowingSvgPreview]);
-actions!(mermaid, [OpenFollowingMermaidPreview]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -37,7 +34,7 @@ fn register_svg(
     workspace.register_action(move |w, _: &svg::OpenPreviewToTheSide, win, cx| {
         FilePreviewView::open_to_side(fmt2.clone(), w, win, cx);
     });
-    workspace.register_action(move |w, _: &OpenFollowingSvgPreview, win, cx| {
+    workspace.register_action(move |w, _: &svg::OpenFollowingPreview, win, cx| {
         FilePreviewView::open_following(fmt3.clone(), w, win, cx);
     });
 }
@@ -57,7 +54,7 @@ fn register_mermaid(
     workspace.register_action(move |w, _: &mermaid::OpenPreviewToTheSide, win, cx| {
         FilePreviewView::open_to_side(fmt2.clone(), w, win, cx);
     });
-    workspace.register_action(move |w, _: &OpenFollowingMermaidPreview, win, cx| {
+    workspace.register_action(move |w, _: &mermaid::OpenFollowingPreview, win, cx| {
         FilePreviewView::open_following(fmt3.clone(), w, win, cx);
     });
 }

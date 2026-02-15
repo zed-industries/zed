@@ -215,22 +215,23 @@ impl FilePreviewView {
         let Some(buffer) = Self::resolve_active_buffer(format.as_ref(), workspace, cx) else {
             return;
         };
-        let workspace_handle = workspace.weak_handle();
-        let view = Self::new(
-            PreviewMode::Default,
-            format,
-            buffer.clone(),
-            workspace_handle,
-            window,
-            cx,
-        );
-        workspace.active_pane().update(cx, |pane, cx| {
-            if let Some(idx) = Self::find_existing_in_pane(pane, &buffer, cx) {
-                pane.activate_item(idx, true, true, window, cx);
-            } else {
-                pane.add_item(Box::new(view), true, true, None, window, cx);
-            }
+        let active_pane = workspace.active_pane().clone();
+        // Check for an existing preview before allocating a new one.
+        let existing_idx = active_pane.update(cx, |pane, cx| {
+            Self::find_existing_in_pane(pane, &buffer, cx)
         });
+        if let Some(idx) = existing_idx {
+            active_pane.update(cx, |pane, cx| {
+                pane.activate_item(idx, true, true, window, cx);
+            });
+        } else {
+            let workspace_handle = workspace.weak_handle();
+            let view =
+                Self::new(PreviewMode::Default, format, buffer, workspace_handle, window, cx);
+            active_pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(view), true, true, None, window, cx);
+            });
+        }
         cx.notify();
     }
 
@@ -244,15 +245,6 @@ impl FilePreviewView {
         let Some(buffer) = Self::resolve_active_buffer(format.as_ref(), workspace, cx) else {
             return;
         };
-        let workspace_handle = workspace.weak_handle();
-        let view = Self::new(
-            PreviewMode::Default,
-            format,
-            buffer.clone(),
-            workspace_handle,
-            window,
-            cx,
-        );
         let pane = workspace
             .find_pane_in_direction(workspace::SplitDirection::Right, cx)
             .unwrap_or_else(|| {
@@ -263,13 +255,22 @@ impl FilePreviewView {
                     cx,
                 )
             });
-        pane.update(cx, |pane, cx| {
-            if let Some(idx) = Self::find_existing_in_pane(pane, &buffer, cx) {
-                pane.activate_item(idx, true, true, window, cx);
-            } else {
-                pane.add_item(Box::new(view), false, false, None, window, cx);
-            }
+        // Check for an existing preview before allocating a new one.
+        let existing_idx = pane.update(cx, |pane, cx| {
+            Self::find_existing_in_pane(pane, &buffer, cx)
         });
+        if let Some(idx) = existing_idx {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(idx, true, true, window, cx);
+            });
+        } else {
+            let workspace_handle = workspace.weak_handle();
+            let view =
+                Self::new(PreviewMode::Default, format, buffer, workspace_handle, window, cx);
+            pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(view), false, false, None, window, cx);
+            });
+        }
         cx.notify();
     }
 
