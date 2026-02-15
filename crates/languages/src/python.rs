@@ -126,6 +126,13 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
             '0' // public
         };
 
+        let is_external = item
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail == "Auto-import");
+
+        let source_priority = if is_external { '1' } else { '0' };
+
         // Kind priority within same visibility level
         let kind_priority = match item.kind {
             Some(lsp::CompletionItemKind::KEYWORD) => '0',
@@ -147,8 +154,8 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
         let argument_priority = if is_named_argument { '0' } else { '1' };
 
         item.sort_text = Some(format!(
-            "{}{}{}{}",
-            argument_priority, visibility_priority, kind_priority, item.label
+            "{}{}{}{}{}",
+            argument_priority, source_priority, visibility_priority, kind_priority, item.label
         ));
     }
 }
