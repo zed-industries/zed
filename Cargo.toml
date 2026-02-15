@@ -111,7 +111,6 @@ members = [
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
-    "crates/mermaid_preview",
     "crates/media",
     "crates/menu",
     "crates/migrator",
@@ -176,7 +175,6 @@ members = [
     "crates/supermaven",
     "crates/supermaven_api",
     "crates/codestral",
-    "crates/svg_preview",
     "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
@@ -354,8 +352,6 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
-mermaid_preview = { path = "crates/mermaid_preview" }
-svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }

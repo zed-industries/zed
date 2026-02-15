@@ -3,12 +3,10 @@ use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
     markdown_preview_view::MarkdownPreviewView,
 };
-use svg_preview::{
-    OpenPreview as SvgOpenPreview, OpenPreviewToTheSide as SvgOpenPreviewToTheSide,
-    svg_preview_view::SvgPreviewView,
-};
+use file_preview::{FilePreviewView, SvgFormat};
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 use workspace::Workspace;
+use zed_actions::preview::svg;
 
 use super::QuickActionBar;
 
@@ -32,7 +30,8 @@ impl QuickActionBar {
                     .is_some()
                 {
                     preview_type = Some(PreviewType::Markdown);
-                } else if SvgPreviewView::resolve_active_item_as_svg_buffer(workspace, cx).is_some()
+                } else if FilePreviewView::resolve_active_buffer(&SvgFormat, workspace, cx)
+                    .is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
                 }
@@ -53,9 +52,9 @@ impl QuickActionBar {
                 PreviewType::Svg => (
                     "toggle-svg-preview",
                     "Preview SVG",
-                    Box::new(SvgOpenPreview) as Box<dyn gpui::Action>,
-                    Box::new(SvgOpenPreviewToTheSide) as Box<dyn gpui::Action>,
-                    &svg_preview::OpenPreview as &dyn gpui::Action,
+                    Box::new(svg::OpenPreview) as Box<dyn gpui::Action>,
+                    Box::new(svg::OpenPreviewToTheSide) as Box<dyn gpui::Action>,
+                    &svg::OpenPreview as &dyn gpui::Action,
                 ),
             };
 

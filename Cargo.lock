@@ -10344,21 +10344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mermaid_preview"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "file_icons",
- "gpui",
- "language",
- "mermaid-rs-renderer",
- "multi_buffer",
- "ui",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "metal"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16559,19 +16544,6 @@ name = "svg_fmt"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
-
-[[package]]
-name = "svg_preview"
-version = "0.1.0"
-dependencies = [
- "file_icons",
- "gpui",
- "language",
- "multi_buffer",
- "ui",
- "workspace",
- "zed_actions",
-]
 
 [[package]]
 name = "svgtypes"
