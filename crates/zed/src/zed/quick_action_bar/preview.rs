@@ -3,10 +3,10 @@ use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
     markdown_preview_view::MarkdownPreviewView,
 };
-use file_preview::{FilePreviewView, SvgFormat};
+use file_preview::{FilePreviewView, MermaidFormat, SvgFormat};
 use ui::{Tooltip, prelude::*, text_for_keystroke};
 use workspace::Workspace;
-use zed_actions::preview::svg;
+use zed_actions::preview::{mermaid, svg};
 
 use super::QuickActionBar;
 
@@ -14,6 +14,7 @@ use super::QuickActionBar;
 enum PreviewType {
     Markdown,
     Svg,
+    Mermaid,
 }
 
 impl QuickActionBar {
@@ -34,6 +35,10 @@ impl QuickActionBar {
                     .is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
+                } else if FilePreviewView::resolve_active_buffer(&MermaidFormat, workspace, cx)
+                    .is_some()
+                {
+                    preview_type = Some(PreviewType::Mermaid);
                 }
             });
         }
@@ -55,6 +60,13 @@ impl QuickActionBar {
                     Box::new(svg::OpenPreview) as Box<dyn gpui::Action>,
                     Box::new(svg::OpenPreviewToTheSide) as Box<dyn gpui::Action>,
                     &svg::OpenPreview as &dyn gpui::Action,
+                ),
+                PreviewType::Mermaid => (
+                    "toggle-mermaid-preview",
+                    "Preview Mermaid",
+                    Box::new(mermaid::OpenPreview) as Box<dyn gpui::Action>,
+                    Box::new(mermaid::OpenPreviewToTheSide) as Box<dyn gpui::Action>,
+                    &mermaid::OpenPreview as &dyn gpui::Action,
                 ),
             };
 
