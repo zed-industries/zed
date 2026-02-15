@@ -50,17 +50,23 @@ impl Pasteboard {
 
             if msg_send![pasteboard_types, containsObject: string_type] {
                 let data = self.inner.dataForType(string_type);
-                if data == nil {
-                    return None;
-                } else if data.bytes().is_null() {
-                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                    // "If the length of the NSData object is 0, this property returns nil."
-                    return Some(self.read_string(&[]));
-                } else {
+                if data != nil && !data.bytes().is_null() {
                     let bytes =
                         slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
-
                     return Some(self.read_string(bytes));
+                }
+            }
+
+            let html_type: id = ns_string("public.html");
+            if msg_send![pasteboard_types, containsObject: html_type] {
+                let data = self.inner.dataForType(html_type);
+                if data != nil && !data.bytes().is_null() {
+                    let bytes =
+                        slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
+                    let html = String::from_utf8_lossy(bytes).to_string();
+                    return Some(ClipboardItem {
+                        entries: vec![ClipboardEntry::Html(html)],
+                    });
                 }
             }
 
@@ -135,53 +141,26 @@ impl Pasteboard {
 
     pub fn write(&self, item: ClipboardItem) {
         unsafe {
-            match item.entries.as_slice() {
-                [] => {
-                    // Writing an empty list of entries just clears the clipboard.
-                    self.inner.clearContents();
-                }
-                [ClipboardEntry::String(string)] => {
-                    self.write_plaintext(string);
-                }
-                [ClipboardEntry::Image(image)] => {
-                    self.write_image(image);
-                }
-                [ClipboardEntry::ExternalPaths(_)] => {}
-                _ => {
-                    // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
-                    //
-                    // This was the existing behavior before I refactored the outer clipboard code:
-                    // https://github.com/zed-industries/zed/blob/65f7412a0265552b06ce122655369d6cc7381dd6/crates/gpui/src/platform/mac/platform.rs#L1060-L1110
-                    //
-                    // Note how `any_images` is always `false`. We should fix that, but that's orthogonal to the refactor.
-
-                    let mut combined = ClipboardString {
-                        text: String::new(),
-                        metadata: None,
-                    };
-
-                    for entry in item.entries {
-                        match entry {
-                            ClipboardEntry::String(text) => {
-                                combined.text.push_str(&text.text());
-                                if combined.metadata.is_none() {
-                                    combined.metadata = text.metadata;
-                                }
-                            }
-                            _ => {}
-                        }
+            self.inner.clearContents();
+            for entry in item.entries {
+                match entry {
+                    ClipboardEntry::String(string) => {
+                        self.write_plaintext_inner(&string);
                     }
-
-                    self.write_plaintext(&combined);
+                    ClipboardEntry::Html(html) => {
+                        self.write_html_inner(&html);
+                    }
+                    ClipboardEntry::Image(image) => {
+                        self.write_image_inner(&image);
+                    }
+                    ClipboardEntry::ExternalPaths(_) => {}
                 }
             }
         }
     }
 
-    fn write_plaintext(&self, string: &ClipboardString) {
+    fn write_plaintext_inner(&self, string: &ClipboardString) {
         unsafe {
-            self.inner.clearContents();
-
             let text_bytes = NSData::dataWithBytes_length_(
                 nil,
                 string.text.as_ptr() as *const c_void,
@@ -210,10 +189,20 @@ impl Pasteboard {
         }
     }
 
-    unsafe fn write_image(&self, image: &Image) {
+    fn write_html_inner(&self, html: &str) {
         unsafe {
-            self.inner.clearContents();
+            let html_bytes = NSData::dataWithBytes_length_(
+                nil,
+                html.as_ptr() as *const c_void,
+                html.len() as u64,
+            );
+            self.inner
+                .setData_forType(html_bytes, ns_string("public.html"));
+        }
+    }
 
+    unsafe fn write_image_inner(&self, image: &Image) {
+        unsafe {
             let bytes = NSData::dataWithBytes_length_(
                 nil,
                 image.bytes.as_ptr() as *const c_void,

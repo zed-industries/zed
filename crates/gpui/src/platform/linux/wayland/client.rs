@@ -839,6 +839,9 @@ impl LinuxClient for WaylandClient {
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
+                if mime_type == TEXT_HTML_MIME_TYPE && !item.has_html() {
+                    continue;
+                }
                 data_source.offer(mime_type.to_string());
             }
             data_source.offer(state.clipboard.self_mime());
@@ -859,6 +862,9 @@ impl LinuxClient for WaylandClient {
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
+                if mime_type == TEXT_HTML_MIME_TYPE && !item.has_html() {
+                    continue;
+                }
                 data_source.offer(mime_type.to_string());
             }
             data_source.offer(state.clipboard.self_mime());

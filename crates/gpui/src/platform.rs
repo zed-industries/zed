@@ -1650,6 +1650,8 @@ pub struct ClipboardItem {
 pub enum ClipboardEntry {
     /// A string entry
     String(ClipboardString),
+    /// An HTML entry
+    Html(String),
     /// An image entry
     Image(Image),
     /// A file entry
@@ -1662,6 +1664,19 @@ impl ClipboardItem {
         Self {
             entries: vec![ClipboardEntry::String(ClipboardString::new(text))],
         }
+    }
+
+    /// Create a new ClipboardItem::Html
+    pub fn new_html(html: String) -> Self {
+        Self {
+            entries: vec![ClipboardEntry::Html(html)],
+        }
+    }
+
+    /// Add an HTML entry to the item
+    pub fn with_html(mut self, html: String) -> Self {
+        self.entries.push(ClipboardEntry::Html(html));
+        self
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
@@ -1688,6 +1703,21 @@ impl ClipboardItem {
         Self {
             entries: vec![ClipboardEntry::Image(image.clone())],
         }
+    }
+
+    pub fn entries(&self) -> &[ClipboardEntry] {
+        &self.entries
+    }
+
+    pub fn into_entries(self) -> Vec<ClipboardEntry> {
+        self.entries
+    }
+
+    /// Returns true if the item contains an HTML entry.
+    pub fn has_html(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|e| matches!(e, ClipboardEntry::Html(_)))
     }
 
     /// Concatenates together all the ClipboardString entries in the item.

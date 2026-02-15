@@ -29,7 +29,9 @@ actions!(
         /// Opens a following markdown preview that syncs with the editor.
         OpenFollowingPreview,
         /// Copies the rendered markdown as text.
-        Copy
+        Copy,
+        /// Copies the rendered markdown as plain text only.
+        CopyAsPlainText
     ]
 );
 

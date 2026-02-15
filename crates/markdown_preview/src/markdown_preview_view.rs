@@ -21,7 +21,7 @@ use workspace::{Pane, Workspace};
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
 use crate::{
-    Copy, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
+    Copy, CopyAsPlainText, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -509,6 +509,14 @@ impl MarkdownPreviewView {
     fn copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(contents) = &self.contents {
             let text = contents.to_text();
+            let html = contents.to_html();
+            cx.write_to_clipboard(ClipboardItem::new_string(text).with_html(html));
+        }
+    }
+
+    fn copy_as_plain_text(&mut self, _: &CopyAsPlainText, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(contents) = &self.contents {
+            let text = contents.to_text();
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -570,6 +578,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::copy))
+            .on_action(cx.listener(MarkdownPreviewView::copy_as_plain_text))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
@@ -581,6 +590,9 @@ impl Render for MarkdownPreviewView {
                         ContextMenu::build(window, cx, |menu, _, _| {
                             menu.entry("Copy Rendered Text", None, move |window, cx| {
                                 window.dispatch_action(Box::new(Copy), cx)
+                            })
+                            .entry("Copy as Plaintext", None, move |window, cx| {
+                                window.dispatch_action(Box::new(CopyAsPlainText), cx)
                             })
                         })
                     })

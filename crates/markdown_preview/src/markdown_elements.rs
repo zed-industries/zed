@@ -6,6 +6,21 @@ use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
 use urlencoding;
 
+fn escape_html(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
@@ -48,6 +63,27 @@ impl ParsedMarkdownElement {
                 .as_ref()
                 .map(|a| a.to_string())
                 .unwrap_or_else(|| image.link.to_string()),
+        }
+    }
+
+    pub fn to_html(&self) -> String {
+        match self {
+            Self::Heading(heading) => heading.to_html(),
+            Self::ListItem(list_item) => list_item.to_html(),
+            Self::Table(table) => table.to_html(),
+            Self::BlockQuote(block_quote) => block_quote.to_html(),
+            Self::CodeBlock(code_block) => code_block.to_html(),
+            Self::MermaidDiagram(mermaid) => {
+                format!(
+                    "<pre class=\"mermaid\">{}</pre>",
+                    escape_html(&mermaid.contents.contents)
+                )
+            }
+            Self::Paragraph(text) => {
+                format!("<p>{}</p>", render_paragraph_html(text))
+            }
+            Self::HorizontalRule(_) => "<hr />".to_string(),
+            Self::Image(image) => image.to_html(),
         }
     }
 
@@ -96,6 +132,52 @@ impl ParsedMarkdown {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    pub fn to_html(&self) -> String {
+        let mut html = String::new();
+        let mut in_list = None;
+
+        for child in &self.children {
+            if let ParsedMarkdownElement::ListItem(li) = child {
+                let current_is_ordered =
+                    matches!(li.item_type, ParsedMarkdownListItemType::Ordered(_));
+                match in_list {
+                    Some(ordered) if ordered == current_is_ordered => {}
+                    _ => {
+                        if let Some(ordered) = in_list {
+                            html.push_str(if ordered { "</ol>\n" } else { "</ul>\n" });
+                        }
+                        html.push_str(if current_is_ordered { "<ol>\n" } else { "<ul>\n" });
+                        in_list = Some(current_is_ordered);
+                    }
+                }
+                html.push_str(&li.to_html());
+                html.push('\n');
+            } else {
+                if let Some(ordered) = in_list {
+                    html.push_str(if ordered { "</ol>\n" } else { "</ul>\n" });
+                    in_list = None;
+                }
+                html.push_str(&child.to_html());
+                html.push('\n');
+            }
+        }
+        if let Some(ordered) = in_list {
+            html.push_str(if ordered { "</ol>\n" } else { "</ul>\n" });
+        }
+        html
+    }
+}
+
+fn render_paragraph_html(chunks: &[MarkdownParagraphChunk]) -> String {
+    chunks
+        .iter()
+        .map(|chunk| match chunk {
+            MarkdownParagraphChunk::Text(t) => t.to_html(),
+            MarkdownParagraphChunk::Image(i) => i.to_html(),
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[derive(Debug)]
@@ -127,6 +209,23 @@ impl ParsedMarkdownListItem {
         }
         text
     }
+
+    pub fn to_html(&self) -> String {
+        let mut html = String::new();
+        html.push_str("<li>");
+        if let ParsedMarkdownListItemType::Task(checked, _) = self.item_type {
+            html.push_str(if checked {
+                "<input type=\"checkbox\" checked disabled /> "
+            } else {
+                "<input type=\"checkbox\" disabled /> "
+            });
+        }
+        for child in &self.content {
+            html.push_str(&child.to_html());
+        }
+        html.push_str("</li>");
+        html
+    }
 }
 
 #[derive(Debug)]
@@ -144,6 +243,21 @@ pub struct ParsedMarkdownCodeBlock {
     pub language: Option<String>,
     pub contents: SharedString,
     pub highlights: Option<Vec<(Range<usize>, HighlightId)>>,
+}
+
+impl ParsedMarkdownCodeBlock {
+    pub fn to_html(&self) -> String {
+        let lang_class = self
+            .language
+            .as_ref()
+            .map(|l| format!(" class=\"language-{}\"", escape_html(l)))
+            .unwrap_or_default();
+        format!(
+            "<pre><code{}>{}</code></pre>",
+            lang_class,
+            escape_html(&self.contents)
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -181,6 +295,23 @@ impl ParsedMarkdownHeading {
             })
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    pub fn to_html(&self) -> String {
+        let tag = match self.level {
+            HeadingLevel::H1 => "h1",
+            HeadingLevel::H2 => "h2",
+            HeadingLevel::H3 => "h3",
+            HeadingLevel::H4 => "h4",
+            HeadingLevel::H5 => "h5",
+            HeadingLevel::H6 => "h6",
+        };
+        format!(
+            "<{}>{}</{}>",
+            tag,
+            render_paragraph_html(&self.contents),
+            tag
+        )
     }
 }
 
@@ -230,6 +361,47 @@ impl ParsedMarkdownTable {
         }
         text
     }
+
+    pub fn to_html(&self) -> String {
+        let mut html = String::new();
+        html.push_str("<table>\n");
+        if !self.header.is_empty() {
+            html.push_str("<thead>\n");
+            for row in &self.header {
+                html.push_str("<tr>\n");
+                for col in &row.columns {
+                    html.push_str("<th");
+                    if let Some(align) = col.alignment_str() {
+                        html.push_str(&format!(" align=\"{}\"", align));
+                    }
+                    html.push_str(">");
+                    html.push_str(&render_paragraph_html(&col.children));
+                    html.push_str("</th>\n");
+                }
+                html.push_str("</tr>\n");
+            }
+            html.push_str("</thead>\n");
+        }
+        if !self.body.is_empty() {
+            html.push_str("<tbody>\n");
+            for row in &self.body {
+                html.push_str("<tr>\n");
+                for col in &row.columns {
+                    html.push_str("<td");
+                    if let Some(align) = col.alignment_str() {
+                        html.push_str(&format!(" align=\"{}\"", align));
+                    }
+                    html.push_str(">");
+                    html.push_str(&render_paragraph_html(&col.children));
+                    html.push_str("</td>\n");
+                }
+                html.push_str("</tr>\n");
+            }
+            html.push_str("</tbody>\n");
+        }
+        html.push_str("</table>");
+        html
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -250,6 +422,17 @@ pub struct ParsedMarkdownTableColumn {
     pub is_header: bool,
     pub children: MarkdownParagraph,
     pub alignment: ParsedMarkdownTableAlignment,
+}
+
+impl ParsedMarkdownTableColumn {
+    fn alignment_str(&self) -> Option<&'static str> {
+        match self.alignment {
+            ParsedMarkdownTableAlignment::None => None,
+            ParsedMarkdownTableAlignment::Left => Some("left"),
+            ParsedMarkdownTableAlignment::Center => Some("center"),
+            ParsedMarkdownTableAlignment::Right => Some("right"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -295,6 +478,16 @@ impl ParsedMarkdownBlockQuote {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    pub fn to_html(&self) -> String {
+        let inner = self
+            .children
+            .iter()
+            .map(|child| child.to_html())
+            .collect::<Vec<_>>()
+            .join("");
+        format!("<blockquote>{}</blockquote>", inner)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +500,86 @@ pub struct ParsedMarkdownText {
     pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     /// The regions of the Markdown document.
     pub regions: Vec<(Range<usize>, ParsedRegion)>,
+}
+
+impl ParsedMarkdownText {
+    pub fn to_html(&self) -> String {
+        let mut html = String::new();
+        let content = self.contents.as_ref();
+        let mut events = Vec::new();
+
+        for (range, highlight) in &self.highlights {
+            events.push((range.start, true, Some(highlight), None));
+            events.push((range.end, false, Some(highlight), None));
+        }
+
+        for (range, region) in &self.regions {
+            if let Some(link) = &region.link {
+                events.push((range.start, true, None, Some(link)));
+                events.push((range.end, false, None, Some(link)));
+            }
+        }
+
+        events.sort_by(|a, b| {
+            if a.0 != b.0 {
+                a.0.cmp(&b.0)
+            } else {
+                // End tags should come before start tags at the same position for same content?
+                // Actually for HTML nesting, it's better if we sort them correctly.
+                b.1.cmp(&a.1)
+            }
+        });
+
+        let mut last_pos = 0;
+        for (pos, is_start, highlight, link) in events {
+            if pos > last_pos {
+                html.push_str(&escape_html(&content[last_pos..pos]));
+                last_pos = pos;
+            }
+
+            if let Some(h) = highlight {
+                if let MarkdownHighlight::Style(style) = h {
+                    if is_start {
+                        if style.weight == FontWeight::BOLD {
+                            html.push_str("<b>");
+                        }
+                        if style.italic {
+                            html.push_str("<i>");
+                        }
+                        if style.strikethrough {
+                            html.push_str("<strike>");
+                        }
+                        if style.underline {
+                            html.push_str("<u>");
+                        }
+                    } else {
+                        if style.underline {
+                            html.push_str("</u>");
+                        }
+                        if style.strikethrough {
+                            html.push_str("</strike>");
+                        }
+                        if style.italic {
+                            html.push_str("</i>");
+                        }
+                        if style.weight == FontWeight::BOLD {
+                            html.push_str("</b>");
+                        }
+                    }
+                }
+            }
+
+            if let Some(l) = link {
+                if is_start {
+                    html.push_str(&format!("<a href=\"{}\">", escape_html(&l.to_string())));
+                } else {
+                    html.push_str("</a>");
+                }
+            }
+        }
+        html.push_str(&escape_html(&content[last_pos..]));
+        html
+    }
 }
 
 /// A run of highlighted Markdown text.
@@ -488,5 +761,18 @@ impl Image {
 
     pub fn set_height(&mut self, height: DefiniteLength) {
         self.height = Some(height);
+    }
+
+    pub fn to_html(&self) -> String {
+        let alt = self
+            .alt_text
+            .as_ref()
+            .map(|a| format!(" alt=\"{}\"", escape_html(a)))
+            .unwrap_or_default();
+        format!(
+            "<img src=\"{}\"{} />",
+            escape_html(&self.link.to_string()),
+            alt
+        )
     }
 }
