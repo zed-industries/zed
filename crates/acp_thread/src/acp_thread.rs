@@ -935,7 +935,7 @@ pub struct AcpThread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    send_task: Option<Task<()>>,
+    running_turn: Option<(u32, Task<()>)>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1169,7 +1169,7 @@ impl AcpThread {
             plan: Default::default(),
             title: title.into(),
             project,
-            send_task: None,
+            running_turn: None,
             connection,
             session_id,
             token_usage: None,
@@ -1214,7 +1214,7 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() {
+        if self.running_turn.is_some() {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
@@ -1915,10 +1915,15 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
-        self.send_task = Some(cx.spawn(async move |this, cx| {
-            cancel_task.await;
-            tx.send(f(this, cx).await).ok();
-        }));
+        let turn_id = 1;
+
+        self.running_turn = Some((
+            turn_id,
+            cx.spawn(async move |this, cx| {
+                cancel_task.await;
+                tx.send(f(this, cx).await).ok();
+            }),
+        ));
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
@@ -1935,23 +1940,30 @@ impl AcpThread {
                     return Ok(None);
                 };
 
+                let is_same_turn = this
+                    .running_turn
+                    .as_ref()
+                    .is_some_and(|(id, _)| turn_id == *id);
+
+                // We only take the task if the current prompt wasn't canceled.
+                //
+                // This prompt may have been canceled because another one was sent
+                // while it was still generating. In these cases, dropping `send_task`
+                // would cause the next generation to be canceled.
+                if is_same_turn {
+                    this.running_turn.take();
+                }
+
                 match response {
                     Ok(r) => {
                         if r.stop_reason == acp::StopReason::MaxTokens {
-                            this.send_task.take();
                             cx.emit(AcpThreadEvent::Error);
                             return Err(anyhow!("Max tokens reached"));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-
-                        // We only take the task if the current prompt wasn't canceled.
-                        //
-                        // This prompt may have been canceled because another one was sent
-                        // while it was still generating. In these cases, dropping `send_task`
-                        // would cause the next generation to be canceled.
-                        if !canceled {
-                            this.send_task.take();
+                        if canceled {
+                            this.mark_pending_tools_as_canceled();
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -1993,7 +2005,6 @@ impl AcpThread {
                         Ok(Some(r))
                     }
                     Err(e) => {
-                        this.send_task.take();
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -2004,10 +2015,18 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some(send_task) = self.send_task.take() else {
+        let Some((_, send_task)) = self.running_turn.take() else {
             return Task::ready(());
         };
+        self.connection.cancel(&self.session_id, cx);
 
+        self.mark_pending_tools_as_canceled();
+
+        // Wait for the send task to complete
+        cx.foreground_executor().spawn(send_task)
+    }
+
+    fn mark_pending_tools_as_canceled(&mut self) {
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
                 let cancel = matches!(
@@ -2022,11 +2041,6 @@ impl AcpThread {
                 }
             }
         }
-
-        self.connection.cancel(&self.session_id, cx);
-
-        // Wait for the send task to complete
-        cx.foreground_executor().spawn(send_task)
     }
 
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
@@ -4265,7 +4279,7 @@ mod tests {
 
         // Verify that no send_task is in progress after restore
         // (cancel() clears the send_task)
-        let has_send_task_after = thread.read_with(cx, |thread, _| thread.send_task.is_some());
+        let has_send_task_after = thread.read_with(cx, |thread, _| thread.running_turn.is_some());
         assert!(
             !has_send_task_after,
             "Should not have a send_task after restore (cancel should have cleared it)"
