@@ -203,20 +203,20 @@
   {
     "context": "Editor && editor_agent_diff",
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
       "shift-ctrl-r": "agent::OpenAgentDiff",
     },
   },
   {
     "context": "AgentDiff",
     "bindings": {
-      "ctrl-y": "agent::Keep",
-      "ctrl-n": "agent::Reject",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-alt-y": "agent::Keep",
+      "ctrl-alt-z": "agent::Reject",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
     },
   },
   {
@@ -247,8 +247,11 @@
       "ctrl-alt-p": "agent::ManageProfiles",
       "ctrl-alt-l": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
+      "alt-l": "agent::CycleFavoriteModels",
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
@@ -256,17 +259,9 @@
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
-      "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode",
       "ctrl-y": "agent::AllowOnce",
-      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-alt-a": "agent::OpenPermissionDropdown",
       "ctrl-alt-z": "agent::RejectOnce",
-    },
-  },
-  {
-    "context": "AgentPanel > NavigationMenu",
-    "bindings": {
-      "shift-backspace": "agent::DeleteRecentlyOpenThread",
     },
   },
   {
@@ -307,20 +302,35 @@
     },
   },
   {
+    "context": "AcpThread",
+    "bindings": {
+      "ctrl--": "pane::GoBack",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-r": "agent::OpenAgentDiff",
-      "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll",
+      "ctrl-shift-d": "git::Diff",
+      "shift-alt-y": "agent::KeepAll",
+      "shift-alt-z": "agent::RejectAll",
       "ctrl-enter": "agent::ChatWithFollow",
-      "ctrl-shift-enter": "agent::QueueMessage",
+      "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
-      "ctrl-shift-backspace": "agent::ClearMessageQueue",
+      "ctrl-shift-backspace": "agent::RemoveFirstQueuedMessage",
+      "ctrl-alt-e": "agent::EditFirstQueuedMessage",
+      "ctrl-alt-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
+      // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AcpThread > Editor` context
+      "alt-l": "agent::CycleFavoriteModels",
+      "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-k": "agent::ToggleThinkingMode",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
+      "ctrl-'": "agent::CycleThinkingEffort",
     },
   },
   {
@@ -592,6 +602,8 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
+      "ctrl-alt-j": "multi_workspace::ToggleWorkspaceSidebar",
+      "ctrl-alt-;": "multi_workspace::FocusWorkspaceSidebar",
       "ctrl-alt-y": "workspace::ToggleAllDocks",
       "ctrl-alt-0": "workspace::ResetActiveDockSize",
       // For 0px parameter, uses UI font size value.
@@ -622,6 +634,7 @@
       "ctrl-?": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
+      "ctrl-k n": "encoding_selector::Toggle",
       "ctrl-k m": "language_selector::Toggle",
       "ctrl-k ctrl-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
@@ -648,6 +661,13 @@
       "f5": "debugger::Rerun",
       "ctrl-f4": "workspace::CloseActiveDock",
       "ctrl-w": "workspace::CloseActiveDock",
+    },
+  },
+  {
+    "context": "WorkspaceSidebar",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
     },
   },
   {
@@ -738,8 +758,8 @@
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
       "tab": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -747,8 +767,8 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "alt-right": "editor::AcceptNextWordEditPrediction",
-      "alt-down": "editor::AcceptNextLineEditPrediction",
+      "alt-k": "editor::AcceptNextWordEditPrediction",
+      "alt-j": "editor::AcceptNextLineEditPrediction",
     },
   },
   {
@@ -1074,6 +1094,13 @@
     },
   },
   {
+    "context": "RecentProjects || (RecentProjects > Picker > Editor)",
+    "bindings": {
+      "ctrl-k": "recent_projects::ToggleActionsMenu",
+      "ctrl-shift-a": "workspace::AddFolderToProject",
+    },
+  },
+  {
     "context": "TabSwitcher",
     "bindings": {
       "ctrl-shift-tab": "menu::SelectPrevious",
@@ -1133,6 +1160,7 @@
       "ctrl-alt-r": "terminal::RerunTask",
       "alt-t": "terminal::RerunTask",
       "ctrl-shift-5": "pane::SplitRight",
+      "ctrl->": "agent::AddSelectionToThread",
     },
   },
   {
@@ -1339,11 +1367,68 @@
     },
   },
   {
+    "context": "NotebookEditor",
+    "bindings": {
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel",
+    },
+  },
+  {
+    "context": "NotebookEditor > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "shift-enter": "notebook::Run",
+      "ctrl-enter": "notebook::Run",
+      "ctrl-shift-enter": "notebook::RunAll",
+      "alt-up": "notebook::MoveCellUp",
+      "alt-down": "notebook::MoveCellDown",
+      "ctrl-m": "notebook::AddCodeBlock",
+      "ctrl-shift-m": "notebook::AddMarkdownBlock",
+      "ctrl-shift-r": "notebook::RestartKernel",
+      "ctrl-c": "notebook::InterruptKernel",
+    },
+  },
+  {
     "context": "GitBranchSelector || (GitBranchSelector > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-backspace": "branch_picker::DeleteBranch",
       "ctrl-shift-i": "branch_picker::FilterRemotes",
+    },
+  },
+  {
+    "context": "ImageViewer",
+    "bindings": {
+      "ctrl-=": "image_viewer::ZoomIn",
+      "ctrl-+": "image_viewer::ZoomIn",
+      "ctrl--": "image_viewer::ZoomOut",
+      "ctrl-0": "image_viewer::ResetZoom",
+      "ctrl-1": "image_viewer::ZoomToActualSize",
+      "ctrl-shift-0": "image_viewer::FitToView",
+    },
+  },
+  {
+    "context": "RunModal",
+    "bindings": {
+      "alt-1": "new_process_modal::ActivateTaskTab",
+      "alt-2": "new_process_modal::ActivateDebugTab",
+      "alt-3": "new_process_modal::ActivateAttachTab",
+      "alt-4": "new_process_modal::ActivateLaunchTab",
+    },
+  },
+  {
+    "context": "GitPicker",
+    "bindings": {
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateWorktreesTab",
+      "alt-3": "git_picker::ActivateStashTab",
     },
   },
 ]

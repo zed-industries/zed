@@ -59,12 +59,7 @@ impl TelemetryWorktreeSnapshot {
                 (path, snapshot)
             });
 
-            let Ok((worktree_path, _snapshot)) = worktree_info else {
-                return TelemetryWorktreeSnapshot {
-                    worktree_path: String::new(),
-                    git_state: None,
-                };
-            };
+            let (worktree_path, _snapshot) = worktree_info;
 
             let git_state = git_store
                 .update(cx, |git_store, cx| {
@@ -78,8 +73,6 @@ impl TelemetryWorktreeSnapshot {
                         })
                         .cloned()
                 })
-                .ok()
-                .flatten()
                 .map(|repo| {
                     repo.update(cx, |repo, _| {
                         let current_branch =
@@ -111,10 +104,7 @@ impl TelemetryWorktreeSnapshot {
                 });
 
             let git_state = match git_state {
-                Some(git_state) => match git_state.ok() {
-                    Some(git_state) => git_state.await.ok(),
-                    None => None,
-                },
+                Some(receiver) => receiver.await.ok(),
                 None => None,
             };
 

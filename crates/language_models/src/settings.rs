@@ -59,6 +59,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 role_arn: None, // todo(was never a setting for this...)
                 authentication_method: bedrock.authentication_method.map(Into::into),
                 allow_global: bedrock.allow_global,
+                allow_extended_context: bedrock.allow_extended_context,
             },
             deepseek: DeepSeekSettings {
                 api_url: deepseek.api_url.unwrap(),
@@ -80,6 +81,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 api_url: ollama.api_url.unwrap(),
                 auto_discover: ollama.auto_discover.unwrap_or(true),
                 available_models: ollama.available_models.unwrap_or_default(),
+                context_window: ollama.context_window,
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),

@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
-    zeno::{Format, Transform, Vector},
+    zeno::{Format, Vector},
 };
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
@@ -241,7 +241,7 @@ impl CosmicTextSystemState {
         for (font_id, postscript_name) in families {
             let font = self
                 .font_system
-                .get_font(font_id)
+                .get_font(font_id, cosmic_text::Weight::NORMAL)
                 .context("Could not load font")?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
@@ -334,7 +334,7 @@ impl CosmicTextSystemState {
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
-            .size(pixel_size)
+            .size(pixel_size * params.scale_factor)
             .hint(true)
             .build();
 
@@ -349,15 +349,6 @@ impl CosmicTextSystemState {
         };
 
         let mut renderer = Render::new(sources);
-        renderer.transform(Some(Transform {
-            xx: params.scale_factor,
-            xy: 0.0,
-            yx: 0.0,
-            yy: params.scale_factor,
-            x: 0.0,
-            y: 0.0,
-        }));
-
         if params.subpixel_rendering {
             // There seems to be a bug in Swash where the B and R values are swapped.
             renderer
@@ -389,7 +380,10 @@ impl CosmicTextSystemState {
         {
             FontId(ix)
         } else {
-            let font = self.font_system.get_font(id).unwrap();
+            let font = self
+                .font_system
+                .get_font(id, cosmic_text::Weight::NORMAL)
+                .unwrap();
             let face = self.font_system.db().face(id).unwrap();
 
             let font_id = FontId(self.loaded_fonts.len());
@@ -440,6 +434,7 @@ impl CosmicTextSystemState {
             None,
             &mut layout_lines,
             None,
+            cosmic_text::Hinting::Disabled,
         );
         let layout = layout_lines.first().unwrap();
 

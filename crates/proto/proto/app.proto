@@ -61,5 +61,5 @@ message AskPassRequest {
 }
 
 message AskPassResponse {
-    string response = 1;
+  string response = 1;
 }

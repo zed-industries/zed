@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -14,18 +13,18 @@ use bedrock::bedrock_client::types::{
     ReasoningContentBlockDelta, StopReason,
 };
 use bedrock::{
-    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
-    BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock,
-    BedrockThinkingTextBlock, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockImageBlock,
+    BedrockImageFormat, BedrockImageSource, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
+    BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
+    BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
+    Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, FontWeight, Subscription, Task, Window,
-    actions,
+    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -44,11 +43,12 @@ use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore}
 use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
-use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::util::parse_tool_arguments;
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -112,6 +112,7 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
+    pub allow_extended_context: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -147,6 +148,9 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -154,6 +158,7 @@ impl From<ModelMode> for BedrockModelMode {
         match value {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -163,6 +168,7 @@ impl From<BedrockModelMode> for ModelMode {
         match value {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -378,6 +384,13 @@ impl State {
             .and_then(|s| s.allow_global)
             .unwrap_or(false)
     }
+
+    fn get_allow_extended_context(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_extended_context)
+            .unwrap_or(false)
+    }
 }
 
 pub struct BedrockLanguageModelProvider {
@@ -527,7 +540,7 @@ impl BedrockModel {
                     let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
                     let region = state.get_region();
                     (state.auth.clone(), endpoint, region)
-                })?;
+                });
 
                 let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
                     .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
@@ -597,10 +610,8 @@ impl BedrockModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        match Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request)) {
-            Ok(res) => async { res.await.map_err(|err| anyhow!(err))? }.boxed(),
-            Err(err) => futures::future::ready(Err(anyhow!(err))).boxed(),
-        }
+        let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
+        async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
     }
 }
 
@@ -626,7 +637,14 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(
+            self.model.mode(),
+            BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
+        )
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -670,11 +688,14 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let Ok((region, allow_global)) = cx.read_entity(&self.state, |state, _cx| {
-            (state.get_region(), state.get_allow_global())
-        }) else {
-            return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
-        };
+        let (region, allow_global, allow_extended_context) =
+            cx.read_entity(&self.state, |state, _cx| {
+                (
+                    state.get_region(),
+                    state.get_allow_global(),
+                    state.get_allow_extended_context(),
+                )
+            });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -685,6 +706,8 @@ impl LanguageModel for BedrockModel {
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
+        let use_extended_context = allow_extended_context && self.model.supports_extended_context();
+
         let request = match into_bedrock(
             request,
             model_id,
@@ -692,6 +715,7 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
             self.model.mode(),
             self.model.supports_caching(),
+            use_extended_context,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -747,6 +771,7 @@ pub fn into_bedrock(
     max_output_tokens: u64,
     mode: BedrockModelMode,
     supports_caching: bool,
+    allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
@@ -773,6 +798,12 @@ pub fn into_bedrock(
                             if model.contains(Model::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
+                                return None;
+                            }
+                            if signature.is_none() {
+                                // Thinking blocks without a signature are invalid
+                                // (e.g. from cancellation mid-think) and must be
+                                // stripped to avoid API errors.
                                 return None;
                             }
                             let thinking = BedrockThinkingTextBlock::builder()
@@ -812,7 +843,7 @@ pub fn into_bedrock(
                                 .context("failed to build Bedrock tool use block")
                                 .log_err()
                                 .map(BedrockInnerContent::ToolUse)
-                        },
+                        }
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
@@ -820,11 +851,42 @@ pub fn into_bedrock(
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
-                                    LanguageModelToolResultContent::Image(_) => {
-                                        BedrockToolResultContentBlock::Text(
-                                            // TODO: Bedrock image support
-                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
-                                        )
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        use base64::Engine;
+
+                                        match base64::engine::general_purpose::STANDARD
+                                            .decode(image.source.as_bytes())
+                                        {
+                                            Ok(image_bytes) => {
+                                                match BedrockImageBlock::builder()
+                                                    .format(BedrockImageFormat::Png)
+                                                    .source(BedrockImageSource::Bytes(
+                                                        BedrockBlob::new(image_bytes),
+                                                    ))
+                                                    .build()
+                                                {
+                                                    Ok(image_block) => {
+                                                        BedrockToolResultContentBlock::Image(
+                                                            image_block,
+                                                        )
+                                                    }
+                                                    Err(err) => {
+                                                        BedrockToolResultContentBlock::Text(
+                                                            format!(
+                                                                "[Failed to build image block: {}]",
+                                                                err
+                                                            ),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                BedrockToolResultContentBlock::Text(format!(
+                                                    "[Failed to decode tool result image: {}]",
+                                                    err
+                                                ))
+                                            }
+                                        }
                                     }
                                 })
                                 .status({
@@ -839,7 +901,22 @@ pub fn into_bedrock(
                                 .log_err()
                                 .map(BedrockInnerContent::ToolResult)
                         }
-                        _ => None,
+                        MessageContent::Image(image) => {
+                            use base64::Engine;
+
+                            let image_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(image.source.as_bytes())
+                                .context("failed to decode base64 image data")
+                                .log_err()?;
+
+                            BedrockImageBlock::builder()
+                                .format(BedrockImageFormat::Png)
+                                .source(BedrockImageSource::Bytes(BedrockBlob::new(image_bytes)))
+                                .build()
+                                .context("failed to build Bedrock image block")
+                                .log_err()
+                                .map(BedrockInnerContent::Image)
+                        }
                     })
                     .collect();
                 if message.cache && supports_caching {
@@ -855,6 +932,10 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if bedrock_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == bedrock_role
                 {
@@ -927,10 +1008,16 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if request.thinking_allowed
-            && let BedrockModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                BedrockModelMode::Thinking { budget_tokens } => {
+                    Some(bedrock::Thinking::Enabled { budget_tokens })
+                }
+                BedrockModelMode::AdaptiveThinking { effort } => {
+                    Some(bedrock::Thinking::Adaptive { effort })
+                }
+                BedrockModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -939,6 +1026,7 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        allow_extended_context,
     })
 }
 
@@ -1083,12 +1171,8 @@ pub fn map_to_language_model_completion_events(
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
-                                let input = if tool_use.input_json.is_empty() {
-                                    Value::Null
-                                } else {
-                                    serde_json::Value::from_str(&tool_use.input_json)
-                                        .unwrap_or(Value::Null)
-                                };
+                                let input = parse_tool_arguments(&tool_use.input_json)
+                                    .unwrap_or_else(|_| Value::Object(Default::default()));
 
                                 Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {
@@ -1194,10 +1278,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -1273,7 +1354,7 @@ impl ConfigurationView {
                     };
 
                     state.set_static_credentials(credentials, cx)
-                })?
+                })
                 .await
         })
         .detach_and_log_err(cx);
@@ -1290,7 +1371,7 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx))?.await)
+        cx.spawn(async move |_, cx| state.update(cx, |state, cx| state.reset_auth(cx)).await)
             .detach_and_log_err(cx);
     }
 
@@ -1393,95 +1474,118 @@ impl Render for ConfigurationView {
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
-            .child(Label::new("But, to access models on AWS, you need to:").mt_1())
+            .child(Label::new("To use Zed's agent with Bedrock, you can set a custom authentication strategy through your settings file or use static credentials."))
+            .child(Label::new("But first, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Grant permissions to the strategy you'll use according to the:"))
-                            .child(ButtonLink::new("Prerequisites", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
+                            .child(Label::new(
+                                "Grant permissions to the strategy you'll use according to the:",
+                            ))
+                            .child(ButtonLink::new(
+                                "Prerequisites",
+                                "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
+                            )),
                     )
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Select the models you would like access to:"))
-                            .child(ButtonLink::new("Bedrock Model Catalog", "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"))
-                    )
+                            .child(ButtonLink::new(
+                                "Bedrock Model Catalog",
+                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog",
+                            )),
+                    ),
             )
             .child(self.render_static_credentials_ui())
-            .child(
-                Label::new(
-                    format!("You can also set the {}, {} AND {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.", ZED_BEDROCK_ACCESS_KEY_ID_VAR.name, ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name, ZED_BEDROCK_REGION_VAR.name, ZED_BEDROCK_BEARER_TOKEN_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .my_1(),
-            )
-            .child(
-                Label::new(
-                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.", ZED_AWS_PROFILE_VAR.name, ZED_AWS_ENDPOINT_VAR.name, ZED_BEDROCK_SESSION_TOKEN_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
             .into_any()
     }
 }
 
 impl ConfigurationView {
     fn render_static_credentials_ui(&self) -> impl IntoElement {
+        let section_header = |title: SharedString| {
+            h_flex()
+                .gap_2()
+                .child(Label::new(title).size(LabelSize::Default))
+                .child(Divider::horizontal())
+        };
+
+        let list_item = List::new()
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new(
+                        "For access keys: Create an IAM user in the AWS console with programmatic access",
+                    ))
+                    .child(ButtonLink::new(
+                        "IAM Console",
+                        "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users",
+                    )),
+            )
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
+                    .child(ButtonLink::new(
+                        "Bedrock Console",
+                        "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html",
+                    )),
+            )
+            .child(
+                ListBulletItem::new("")
+                    .child(Label::new("Attach the necessary Bedrock permissions to"))
+                    .child(ButtonLink::new(
+                        "this user",
+                        "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html",
+                    )),
+            )
+            .child(ListBulletItem::new(
+                "Enter either access keys OR a Bedrock API Key below (not both)",
+            ));
+
         v_flex()
             .my_2()
             .tab_group()
             .gap_1p5()
-            .child(
-                Label::new("Static Keys")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD),
-            )
-            .child(
-                Label::new(
-                    "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
-                )
-            )
-            .child(
-                List::new()
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("For access keys: Create an IAM user in the AWS console with programmatic access"))
-                            .child(ButtonLink::new("IAM Console", "https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"))
-                    )
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("For Bedrock API Keys: Generate an API key from the"))
-                            .child(ButtonLink::new("Bedrock Console", "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html"))
-                    )
-                    .child(
-                        ListBulletItem::new("")
-                            .child(Label::new("Attach the necessary Bedrock permissions to this"))
-                            .child(ButtonLink::new("user", "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"))
-                    )
-                    .child(
-                        ListBulletItem::new("Enter either access keys OR a Bedrock API Key below (not both)")
-                    ),
-            )
+            .child(section_header("Static Credentials".into()))
+            .child(Label::new(
+                "This method uses your AWS access key ID and secret access key, or a Bedrock API Key.",
+            ))
+            .child(list_item)
             .child(self.access_key_id_editor.clone())
             .child(self.secret_access_key_editor.clone())
             .child(self.session_token_editor.clone())
             .child(
-                Label::new("OR")
-                    .size(LabelSize::Default)
-                    .weight(FontWeight::BOLD)
-                    .my_1(),
+                Label::new(format!(
+                    "You can also set the {}, {} and {} environment variables (or {} for Bedrock API Key authentication) and restart Zed.",
+                    ZED_BEDROCK_ACCESS_KEY_ID_VAR.name,
+                    ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.name,
+                    ZED_BEDROCK_REGION_VAR.name,
+                    ZED_BEDROCK_BEARER_TOKEN_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             )
+            .child(
+                Label::new(format!(
+                    "Optionally, if your environment uses AWS CLI profiles, you can set {}; if it requires a custom endpoint, you can set {}; and if it requires a Session Token, you can set {}.",
+                    ZED_AWS_PROFILE_VAR.name,
+                    ZED_AWS_ENDPOINT_VAR.name,
+                    ZED_BEDROCK_SESSION_TOKEN_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .mt_1()
+                .mb_2p5(),
+            )
+            .child(section_header("Using the an API key".into()))
             .child(self.bearer_token_editor.clone())
             .child(
-                Label::new(
-                    format!("Region is configured via {} environment variable or settings.json (defaults to us-east-1).", ZED_BEDROCK_REGION_VAR.name),
-                )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_2(),
+                Label::new(format!(
+                    "Region is configured via {} environment variable or settings.json (defaults to us-east-1).",
+                    ZED_BEDROCK_REGION_VAR.name
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted)
             )
     }
 }

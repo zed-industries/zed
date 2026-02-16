@@ -298,13 +298,13 @@ impl AudioStack {
                                         num_channels,
                                         sample_rate,
                                         output_config.channels() as u32,
-                                        output_config.sample_rate().0,
+                                        output_config.sample_rate(),
                                     );
                                     buf = sampled.to_vec();
                                     apm.lock()
                                         .process_reverse_stream(
                                             &mut buf,
-                                            output_config.sample_rate().0 as i32,
+                                            output_config.sample_rate() as i32,
                                             output_config.channels() as i32,
                                         )
                                         .ok();
@@ -348,14 +348,14 @@ impl AudioStack {
                 .name("AudioCapture".to_owned())
                 .spawn(move || {
                     maybe!({
-                        if let Some(name) = device.name().ok() {
-                            log::info!("Using microphone: {}", name)
+                        if let Some(desc) = device.description().ok() {
+                            log::info!("Using microphone: {}", desc.name())
                         } else {
                             log::info!("Using microphone: <unknown>");
                         }
 
                         let ten_ms_buffer_size =
-                            (config.channels() as u32 * config.sample_rate().0 / 100) as usize;
+                            (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
 
                         let stream = device
@@ -380,9 +380,9 @@ impl AudioStack {
                                             let mut sampled = resampler
                                                 .remix_and_resample(
                                                     buf.as_slice(),
-                                                    config.sample_rate().0 / 100,
+                                                    config.sample_rate() / 100,
                                                     config.channels() as u32,
-                                                    config.sample_rate().0,
+                                                    config.sample_rate(),
                                                     num_channels,
                                                     sample_rate,
                                                 )
@@ -478,7 +478,7 @@ pub(crate) async fn capture_local_video_track(
             width: metadata.resolution.width.0 as u32,
             height: metadata.resolution.height.0 as u32,
         })
-    })?
+    })
     .await?;
 
     let capture_stream = capture_source
@@ -551,9 +551,11 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
 pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
+    executor: &BackgroundExecutor,
 ) -> impl Stream<Item = RemoteVideoFrame> + use<> {
     #[cfg(target_os = "macos")]
     {
+        _ = executor;
         let mut pool = None;
         let most_recent_frame_size = (0, 0);
         NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
@@ -577,8 +579,10 @@ pub fn play_remote_video_track(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        NativeVideoStream::new(track.0.rtc_track())
-            .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
+        let executor = executor.clone();
+        NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
+            executor.spawn(async move { video_frame_buffer_from_webrtc(frame.buffer) })
+        })
     }
 }
 
@@ -845,8 +849,10 @@ mod macos {
         pub fn new() -> Self {
             unsafe {
                 let process_info = NSProcessInfo::processInfo(nil);
+                #[allow(clippy::disallowed_methods)]
                 let reason = NSString::alloc(nil).init_str("Audio playback in progress");
                 let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
+                let _: () = msg_send![reason, release];
                 let _: () = msg_send![activity, retain];
                 Self { activity }
             }

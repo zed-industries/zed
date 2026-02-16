@@ -31,6 +31,7 @@ rand = { workspace = true, optional = true }
 rope.workspace = true
 schemars.workspace = true
 serde.workspace = true
+smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
@@ -41,6 +42,7 @@ urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
 futures.workspace = true
+ztracing.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

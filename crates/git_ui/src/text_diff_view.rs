@@ -256,10 +256,11 @@ async fn update_diff_buffer(
     clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let language = source_buffer_snapshot.language().cloned();
+    let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
-    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let base_text = base_buffer_snapshot.text();
 
     let update = diff
@@ -267,16 +268,17 @@ async fn update_diff_buffer(
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
                 Some(Arc::from(base_text.as_str())),
-                true,
-                language,
+                Some(true),
+                language.clone(),
                 cx,
             )
-        })?
+        })
         .await;
 
     diff.update(cx, |diff, cx| {
+        diff.language_changed(language, language_registry, cx);
         diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
-    })?
+    })
     .await;
     Ok(())
 }
@@ -367,7 +369,7 @@ impl Item for TextDiffView {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -448,6 +450,7 @@ mod tests {
     use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -673,8 +676,9 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_local_buffer(file_path, cx))

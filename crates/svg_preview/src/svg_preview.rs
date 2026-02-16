@@ -3,13 +3,11 @@ use workspace::Workspace;
 
 pub mod svg_preview_view;
 
+pub use zed_actions::preview::svg::{OpenPreview, OpenPreviewToTheSide};
+
 actions!(
     svg,
     [
-        /// Opens an SVG preview for the current file.
-        OpenPreview,
-        /// Opens an SVG preview in a split pane.
-        OpenPreviewToTheSide,
         /// Opens a following SVG preview that syncs with the editor.
         OpenFollowingPreview
     ]

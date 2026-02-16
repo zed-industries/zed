@@ -18,7 +18,7 @@ use workspace::{ModalView, Workspace};
 
 fn single_line_input(
     label: impl Into<SharedString>,
-    placeholder: impl Into<SharedString>,
+    placeholder: &str,
     text: Option<&str>,
     tab_index: isize,
     window: &mut Window,
@@ -31,9 +31,7 @@ fn single_line_input(
             .tab_stop(true);
 
         if let Some(text) = text {
-            input
-                .editor()
-                .update(cx, |editor, cx| editor.set_text(text, window, cx));
+            input.set_text(text, window, cx);
         }
         input
     })
@@ -119,7 +117,7 @@ impl ModelInput {
 
         let model_name = single_line_input(
             "Model Name",
-            "e.g. gpt-4o, claude-opus-4, gemini-2.5-pro",
+            "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
             window,
@@ -262,7 +260,7 @@ fn save_provider_to_settings(
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
     cx.spawn(async move |cx| {
         task.await
-            .map_err(|_| "Failed to write API key to keychain")?;
+            .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
         cx.update(|cx| {
             update_settings_file(fs, cx, |settings, _cx| {
                 settings
@@ -278,8 +276,7 @@ fn save_provider_to_settings(
                         },
                     );
             });
-        })
-        .ok();
+        });
         Ok(())
     })
 }
@@ -543,6 +540,7 @@ impl Render for AddLlmProviderModal {
                                     .max_h(modal_max_height)
                                     .pl_3()
                                     .pr_4()
+                                    .pb_2()
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)
@@ -602,6 +600,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_save_provider_invalid_inputs(cx: &mut TestAppContext) {
@@ -722,9 +721,7 @@ mod tests {
         cx.update(|window, cx| {
             let model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
             assert_eq!(
                 model_input.capabilities.supports_tools,
@@ -763,9 +760,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Unselected;
@@ -790,9 +785,7 @@ mod tests {
         cx.update(|window, cx| {
             let mut model_input = ModelInput::new(0, window, cx);
             model_input.name.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text("somemodel", window, cx);
-                });
+                input.set_text("somemodel", window, cx);
             });
 
             model_input.capabilities.supports_tools = ToggleState::Selected;
@@ -818,13 +811,15 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
 
             language_model::init_settings(cx);
+            editor::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (_, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let _workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx
     }
@@ -838,9 +833,7 @@ mod tests {
     ) -> Option<SharedString> {
         fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
-                input.editor().update(cx, |editor, cx| {
-                    editor.set_text(text, window, cx);
-                });
+                input.set_text(text, window, cx);
             });
         }
 

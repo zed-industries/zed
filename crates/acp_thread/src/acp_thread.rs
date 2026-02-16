@@ -3,7 +3,33 @@ mod diff;
 mod mention;
 mod terminal;
 
-use agent_settings::AgentSettings;
+/// Key used in ACP ToolCall meta to store the tool's programmatic name.
+/// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
+pub const TOOL_NAME_META_KEY: &str = "tool_name";
+
+/// Key used in ACP ToolCall meta to store the session id when a subagent is spawned.
+pub const SUBAGENT_SESSION_ID_META_KEY: &str = "subagent_session_id";
+
+/// Helper to extract tool name from ACP meta
+pub fn tool_name_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(TOOL_NAME_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to extract subagent session id from ACP meta
+pub fn subagent_session_id_from_meta(meta: &Option<acp::Meta>) -> Option<acp::SessionId> {
+    meta.as_ref()
+        .and_then(|m| m.get(SUBAGENT_SESSION_ID_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| acp::SessionId::from(s.to_string()))
+}
+
+/// Helper to create meta with tool name
+pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
+}
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
@@ -12,14 +38,13 @@ pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
-use settings::Settings as _;
+
 use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result, anyhow};
-use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -34,6 +59,7 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
+use text::Bias;
 use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -195,6 +221,8 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_input_markdown: Option<Entity<Markdown>>,
     pub raw_output: Option<serde_json::Value>,
+    pub tool_name: Option<SharedString>,
+    pub subagent_session_id: Option<acp::SessionId>,
 }
 
 impl ToolCall {
@@ -206,7 +234,9 @@ impl ToolCall {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<Self> {
-        let title = if let Some((first_line, _)) = tool_call.title.split_once("\n") {
+        let title = if tool_call.kind == acp::ToolKind::Execute {
+            tool_call.title
+        } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
             tool_call.title
@@ -229,6 +259,10 @@ impl ToolCall {
             .as_ref()
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
 
+        let tool_name = tool_name_from_meta(&tool_call.meta);
+
+        let subagent_session = subagent_session_id_from_meta(&tool_call.meta);
+
         let result = Self {
             id: tool_call.tool_call_id,
             label: cx
@@ -241,6 +275,8 @@ impl ToolCall {
             raw_input: tool_call.raw_input,
             raw_input_markdown,
             raw_output: tool_call.raw_output,
+            tool_name,
+            subagent_session_id: subagent_session,
         };
         Ok(result)
     }
@@ -248,6 +284,7 @@ impl ToolCall {
     fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
+        meta: Option<acp::Meta>,
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
@@ -272,10 +309,16 @@ impl ToolCall {
             self.status = status.into();
         }
 
+        if let Some(subagent_session_id) = subagent_session_id_from_meta(&meta) {
+            self.subagent_session_id = Some(subagent_session_id);
+        }
+
         if let Some(title) = title {
             self.label.update(cx, |label, cx| {
-                if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx)
+                if self.kind == acp::ToolKind::Execute {
+                    label.replace(title, cx);
+                } else if let Some((first_line, _)) = title.split_once("\n") {
+                    label.replace(first_line.to_owned() + "…", cx);
                 } else {
                     label.replace(title, cx);
                 }
@@ -349,7 +392,12 @@ impl ToolCall {
         })
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn is_subagent(&self) -> bool {
+        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+            || self.subagent_session_id.is_some()
+    }
+
+    pub fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
@@ -375,18 +423,16 @@ impl ToolCall {
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
-        let position = buffer
-            .update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                if let Some(row) = location.line {
-                    let column = snapshot.indent_size_for_line(row).len;
-                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
-                    snapshot.anchor_before(point)
-                } else {
-                    Anchor::min_for_buffer(snapshot.remote_id())
-                }
-            })
-            .ok()?;
+        let position = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            if let Some(row) = location.line {
+                let column = snapshot.indent_size_for_line(row).len;
+                let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                snapshot.anchor_before(point)
+            } else {
+                Anchor::min_for_buffer(snapshot.remote_id())
+            }
+        });
 
         Some(ResolvedLocation { buffer, position })
     }
@@ -433,7 +479,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
-        options: Vec<acp::PermissionOption>,
+        options: PermissionOptions,
         respond_tx: oneshot::Sender<acp::PermissionOptionId>,
     },
     /// The tool call is currently running.
@@ -837,6 +883,8 @@ impl PlanEntry {
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 impl TokenUsage {
@@ -863,7 +911,7 @@ impl TokenUsage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenUsageRatio {
     Normal,
     Warning,
@@ -880,6 +928,7 @@ pub struct RetryStatus {
 }
 
 pub struct AcpThread {
+    parent_session_id: Option<acp::SessionId>,
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
@@ -895,6 +944,9 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
+    // subagent cancellation fields
+    user_stopped: Arc<std::sync::atomic::AtomicBool>,
+    user_stop_tx: watch::Sender<bool>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -915,6 +967,7 @@ pub enum AcpThreadEvent {
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Retry(RetryStatus),
+    SubagentSpawned(acp::SessionId),
     Stopped,
     Error,
     LoadError(LoadError),
@@ -1091,6 +1144,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
+        parent_session_id: Option<acp::SessionId>,
         title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -1110,7 +1164,10 @@ impl AcpThread {
             }
         });
 
+        let (user_stop_tx, _user_stop_rx) = watch::channel(false);
+
         Self {
+            parent_session_id,
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
@@ -1126,11 +1183,33 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
+            user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            user_stop_tx,
         }
+    }
+
+    pub fn parent_session_id(&self) -> Option<&acp::SessionId> {
+        self.parent_session_id.as_ref()
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    /// Marks this thread as stopped by user action and signals any listeners.
+    pub fn stop_by_user(&mut self) {
+        self.user_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.user_stop_tx.send(true).ok();
+        self.send_task.take();
+    }
+
+    pub fn was_stopped_by_user(&self) -> bool {
+        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
+        self.user_stop_tx.receiver()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1179,6 +1258,23 @@ impl AcpThread {
                         ..
                     },
                 ) if call.diffs().next().is_some() => {
+                    return true;
+                }
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
+    pub fn has_in_progress_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::InProgress | ToolCallStatus::Pending,
+                    ..
+                }) => {
                     return true;
                 }
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
@@ -1371,6 +1467,10 @@ impl AcpThread {
         Task::ready(Ok(()))
     }
 
+    pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
         self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
@@ -1409,6 +1509,8 @@ impl AcpThread {
                     raw_input: None,
                     raw_input_markdown: None,
                     raw_output: None,
+                    tool_name: None,
+                    subagent_session_id: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -1421,7 +1523,14 @@ impl AcpThread {
         match update {
             ToolCallUpdate::UpdateFields(update) => {
                 let location_updated = update.fields.locations.is_some();
-                call.update_fields(update.fields, languages, path_style, &self.terminals, cx)?;
+                call.update_fields(
+                    update.fields,
+                    update.meta,
+                    languages,
+                    path_style,
+                    &self.terminals,
+                    cx,
+                )?;
                 if location_updated {
                     self.resolve_locations(update.tool_call_id, cx);
                 }
@@ -1486,6 +1595,7 @@ impl AcpThread {
 
             call.update_fields(
                 update.fields,
+                update.meta,
                 language_registry,
                 path_style,
                 &self.terminals,
@@ -1620,31 +1730,10 @@ impl AcpThread {
     pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCallUpdate,
-        options: Vec<acp::PermissionOption>,
-        respect_always_allow_setting: bool,
+        options: PermissionOptions,
         cx: &mut Context<Self>,
     ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
-
-        if respect_always_allow_setting && AgentSettings::get_global(cx).always_allow_tool_actions {
-            // Don't use AllowAlways, because then if you were to turn off always_allow_tool_actions,
-            // some tools would (incorrectly) continue to auto-accept.
-            if let Some(allow_once_option) = options.iter().find_map(|option| {
-                if matches!(option.kind, acp::PermissionOptionKind::AllowOnce) {
-                    Some(option.option_id.clone())
-                } else {
-                    None
-                }
-            }) {
-                self.upsert_tool_call_inner(tool_call, ToolCallStatus::Pending, cx)?;
-                return Ok(async {
-                    acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(
-                        allow_once_option,
-                    ))
-                }
-                .boxed());
-            }
-        }
 
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
@@ -1803,7 +1892,7 @@ impl AcpThread {
             .ok();
 
             let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))?
+                .update(cx, |git, cx| git.checkpoint(cx))
                 .await
                 .context("failed to get old checkpoint")
                 .log_err();
@@ -1820,18 +1909,18 @@ impl AcpThread {
         })
     }
 
-    pub fn can_resume(&self, cx: &App) -> bool {
-        self.connection.resume(&self.session_id, cx).is_some()
+    pub fn can_retry(&self, cx: &App) -> bool {
+        self.connection.retry(&self.session_id, cx).is_some()
     }
 
-    pub fn resume(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
+    pub fn retry(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
-                    .resume(&this.session_id, cx)
-                    .map(|resume| resume.run(cx))
+                    .retry(&this.session_id, cx)
+                    .map(|retry| retry.run(cx))
             })?
-            .context("resuming a session is not supported")?
+            .context("retrying a session is not supported")?
             .await
         })
     }
@@ -1865,6 +1954,11 @@ impl AcpThread {
                         this.send_task.take();
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
+                    }
+                    Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        Err(anyhow!("Max tokens reached"))
                     }
                     result => {
                         let canceled = matches!(
@@ -1983,7 +2077,7 @@ impl AcpThread {
             rewind.await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
                     .await?;
             }
 
@@ -2001,7 +2095,7 @@ impl AcpThread {
 
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx))?.await?;
+            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
                     // Collect all terminals from entries that will be removed
@@ -2060,7 +2154,7 @@ impl AcpThread {
             let equal = git_store
                 .update(cx, |git, cx| {
                     git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })?
+                })
                 .await
                 .unwrap_or(true);
 
@@ -2119,17 +2213,14 @@ impl AcpThread {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project
-                .update(cx, |project, cx| {
-                    let path = project
-                        .project_path_for_absolute_path(&path, cx)
-                        .ok_or_else(|| {
-                            acp::Error::resource_not_found(Some(path.display().to_string()))
-                        })?;
-                    Ok(project.open_buffer(path, cx))
-                })
-                .map_err(|e| acp::Error::internal_error().data(e.to_string()))
-                .flatten()?;
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .ok_or_else(|| {
+                        acp::Error::resource_not_found(Some(path.display().to_string()))
+                    })?;
+                Ok::<_, acp::Error>(project.open_buffer(path, cx))
+            })?;
 
             let buffer = load.await?;
 
@@ -2148,9 +2239,9 @@ impl AcpThread {
             } else {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
-                })?;
+                });
 
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
                     this.shared_buffers.insert(buffer.clone(), snapshot.clone());
                 })?;
@@ -2179,7 +2270,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
@@ -2200,7 +2291,7 @@ impl AcpThread {
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
-            let buffer = load??.await?;
+            let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
                     .get(&buffer)
@@ -2235,7 +2326,7 @@ impl AcpThread {
                     }),
                     cx,
                 );
-            })?;
+            });
 
             let format_on_save = cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
@@ -2257,7 +2348,7 @@ impl AcpThread {
                     action_log.buffer_edited(buffer.clone(), cx);
                 });
                 format_on_save
-            })?;
+            });
 
             if format_on_save {
                 let format_task = project.update(cx, |project, cx| {
@@ -2268,16 +2359,16 @@ impl AcpThread {
                         FormatTrigger::Save,
                         cx,
                     )
-                })?;
+                });
                 format_task.await.log_err();
 
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_edited(buffer.clone(), cx);
-                })?;
+                });
             }
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))
                 .await
         })
     }
@@ -2323,7 +2414,7 @@ impl AcpThread {
                         project
                             .remote_client()
                             .and_then(|r| r.read(cx).default_system_shell())
-                    })?
+                    })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
                 let (task_command, task_args) =
                     ShellBuilder::new(&Shell::Program(shell), is_windows)
@@ -2341,10 +2432,10 @@ impl AcpThread {
                             },
                             cx,
                         )
-                    })?
+                    })
                     .await?;
 
-                cx.new(|cx| {
+                anyhow::Ok(cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
                         &format!("{} {}", command, args.join(" ")),
@@ -2354,7 +2445,7 @@ impl AcpThread {
                         language_registry,
                         cx,
                     )
-                })
+                }))
             }
         });
 
@@ -2521,7 +2612,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2545,6 +2636,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2583,7 +2676,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, std::path::Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, std::path::Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2618,6 +2711,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2648,6 +2743,130 @@ mod tests {
         );
     }
 
+    /// Test that killing a terminal via Terminal::kill properly:
+    /// 1. Causes wait_for_exit to complete (doesn't hang forever)
+    /// 2. The underlying terminal still has the output that was written before the kill
+    ///
+    /// This test verifies that the fix to kill_active_task (which now also kills
+    /// the shell process in addition to the foreground process) properly allows
+    /// wait_for_exit to complete instead of hanging indefinitely.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_kill_allows_wait_for_exit_to_complete(cx: &mut gpui::TestAppContext) {
+        use std::collections::HashMap;
+        use task::Shell;
+        use util::shell_builder::ShellBuilder;
+
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_session(project.clone(), Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+
+        // Create a real PTY terminal that runs a command which prints output then sleeps
+        // We use printf instead of echo and chain with && sleep to ensure proper execution
+        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(&Shell::System, false).build(
+            Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
+            &[],
+        );
+
+        let builder = cx
+            .update(|cx| {
+                ::terminal::TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    ::terminal::terminal_settings::CursorShape::default(),
+                    ::terminal::terminal_settings::AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+
+        let lower_terminal = cx.new(|cx| builder.subscribe(cx));
+
+        // Create the acp_thread Terminal wrapper
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "printf output_before_kill && sleep 60".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower_terminal.clone(),
+                },
+                cx,
+            );
+        });
+
+        // Wait for the printf command to execute and produce output
+        // Use real time since parking is enabled
+        cx.executor().timer(Duration::from_millis(500)).await;
+
+        // Get the acp_thread Terminal and kill it
+        let wait_for_exit = thread.update(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            let wait_for_exit = term.read(cx).wait_for_exit();
+            term.update(cx, |term, cx| {
+                term.kill(cx);
+            });
+            wait_for_exit
+        });
+
+        // KEY ASSERTION: wait_for_exit should complete within a reasonable time (not hang).
+        // Before the fix to kill_active_task, this would hang forever because
+        // only the foreground process was killed, not the shell, so the PTY
+        // child never exited and wait_for_completed_task never completed.
+        let exit_result = futures::select! {
+            result = futures::FutureExt::fuse(wait_for_exit) => Some(result),
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5))) => None,
+        };
+
+        assert!(
+            exit_result.is_some(),
+            "wait_for_exit should complete after kill, but it timed out. \
+            This indicates kill_active_task is not properly killing the shell process."
+        );
+
+        // Give the system a chance to process any pending updates
+        cx.run_until_parked();
+
+        // Verify that the underlying terminal still has the output that was
+        // written before the kill. This verifies that killing doesn't lose output.
+        let inner_content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminals.get(&terminal_id).unwrap();
+            term.read(cx).inner().read(cx).get_content()
+        });
+
+        assert!(
+            inner_content.contains("output_before_kill"),
+            "Underlying terminal should contain output from before kill, got: {}",
+            inner_content
+        );
+    }
+
     #[gpui::test]
     async fn test_push_user_content_block(cx: &mut gpui::TestAppContext) {
         init_test(cx);
@@ -2656,7 +2875,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2750,7 +2969,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -2831,7 +3050,7 @@ mod tests {
             .unwrap();
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -2872,7 +3091,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -2947,7 +3166,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3021,7 +3240,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/tmp")), cx))
             .await
             .unwrap();
 
@@ -3069,7 +3288,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3160,7 +3379,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3219,7 +3438,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3392,7 +3611,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3468,7 +3687,7 @@ mod tests {
         }));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3541,7 +3760,7 @@ mod tests {
             }
         }));
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3604,7 +3823,7 @@ mod tests {
         });
 
         select! {
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))) => {
+            _ = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(10))) => {
                 panic!("Timeout waiting for tool call")
             }
             ix = rx.next().fuse() => {
@@ -3668,7 +3887,7 @@ mod tests {
             &self.auth_methods
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -3684,6 +3903,7 @@ mod tests {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,
@@ -3773,7 +3993,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3839,7 +4059,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 
@@ -3869,6 +4089,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -3914,6 +4136,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -3973,6 +4197,8 @@ mod tests {
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
+                cx.background_executor(),
+                PathStyle::local(),
             )
             .unwrap();
             builder.subscribe(cx)
@@ -4146,7 +4372,7 @@ mod tests {
         ));
 
         let thread = cx
-            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
             .await
             .unwrap();
 

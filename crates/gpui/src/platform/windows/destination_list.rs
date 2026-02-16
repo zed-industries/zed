@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use itertools::Itertools;
 use smallvec::SmallVec;
@@ -20,25 +20,25 @@ use windows::{
     core::{GUID, HSTRING, Interface},
 };
 
-use crate::{Action, MenuItem};
+use crate::{Action, MenuItem, SharedString};
 
 pub(crate) struct JumpList {
     pub(crate) dock_menus: Vec<DockMenuItem>,
-    pub(crate) recent_workspaces: Vec<SmallVec<[PathBuf; 2]>>,
+    pub(crate) recent_workspaces: Arc<[SmallVec<[PathBuf; 2]>]>,
 }
 
 impl JumpList {
     pub(crate) fn new() -> Self {
         Self {
-            dock_menus: Vec::new(),
-            recent_workspaces: Vec::new(),
+            dock_menus: Vec::default(),
+            recent_workspaces: Arc::default(),
         }
     }
 }
 
 pub(crate) struct DockMenuItem {
-    pub(crate) name: String,
-    pub(crate) description: String,
+    pub(crate) name: SharedString,
+    pub(crate) description: SharedString,
     pub(crate) action: Box<dyn Action>,
 }
 
@@ -46,11 +46,11 @@ impl DockMenuItem {
     pub(crate) fn new(item: MenuItem) -> anyhow::Result<Self> {
         match item {
             MenuItem::Action { name, action, .. } => Ok(Self {
-                name: name.clone().into(),
+                name: name.clone(),
                 description: if name == "New Window" {
-                    "Opens a new window".to_string()
+                    "Opens a new window".into()
                 } else {
-                    name.into()
+                    name
                 },
                 action,
             }),
@@ -62,11 +62,12 @@ impl DockMenuItem {
 // This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
-    jump_list: &JumpList,
+    recent_workspaces: &[SmallVec<[PathBuf; 2]>],
+    dock_menus: &[(SharedString, SharedString)],
 ) -> anyhow::Result<Vec<SmallVec<[PathBuf; 2]>>> {
     let (list, removed) = create_destination_list()?;
-    add_recent_folders(&list, &jump_list.recent_workspaces, removed.as_ref())?;
-    add_dock_menu(&list, &jump_list.dock_menus)?;
+    add_recent_folders(&list, recent_workspaces, removed.as_ref())?;
+    add_dock_menu(&list, dock_menus)?;
     unsafe { list.CommitList() }?;
     Ok(removed)
 }
@@ -110,14 +111,17 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Smal
     Ok((list, removed))
 }
 
-fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> anyhow::Result<()> {
+fn add_dock_menu(
+    list: &ICustomDestinationList,
+    dock_menus: &[(SharedString, SharedString)],
+) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-        for (idx, dock_menu) in dock_menus.iter().enumerate() {
+        for (idx, (name, description)) in dock_menus.iter().enumerate() {
             let argument = HSTRING::from(format!("--dock-action {}", idx));
-            let description = HSTRING::from(dock_menu.description.as_str());
-            let display = dock_menu.name.as_str();
+            let description = HSTRING::from(description.as_str());
+            let display = name.as_str();
             let task = create_shell_link(argument, description, None, display)?;
             tasks.AddObject(&task)?;
         }

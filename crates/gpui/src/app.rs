@@ -36,15 +36,15 @@ pub use visual_test_context::*;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
+    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
+    DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
+    KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
     PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -138,10 +138,8 @@ impl Application {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
-        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(false, Arc::downgrade(&liveness)),
-            liveness,
+            current_platform(false),
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -151,16 +149,14 @@ impl Application {
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
-        let liveness = Arc::new(());
         Self(App::new_app(
-            current_platform(true, Arc::downgrade(&liveness)),
-            liveness,
+            current_platform(true),
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
     }
 
-    /// Assign
+    /// Assigns the source of assets for the application.
     pub fn with_assets(self, asset_source: impl AssetSource) -> Self {
         let mut context_lock = self.0.borrow_mut();
         let asset_source = Arc::new(asset_source);
@@ -588,7 +584,6 @@ impl GpuiMode {
 /// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
-    pub(crate) _liveness: Arc<()>,
     pub(crate) platform: Rc<dyn Platform>,
     pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
@@ -623,6 +618,7 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -644,13 +640,15 @@ pub struct App {
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     quit_mode: QuitMode,
     quitting: bool,
+    /// Per-App element arena. This isolates element allocations between different
+    /// App instances (important for tests where multiple Apps run concurrently).
+    pub(crate) element_arena: RefCell<Arena>,
 }
 
 impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
-        liveness: Arc<()>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Rc<AppCell> {
@@ -669,7 +667,6 @@ impl App {
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
                 this: this.clone(),
-                _liveness: liveness,
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
@@ -706,6 +703,7 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                thermal_state_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -723,6 +721,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
+                element_arena: RefCell::new(Arena::new(1024 * 1024)),
             }),
         });
 
@@ -737,6 +736,18 @@ impl App {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_thermal_state_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.thermal_state_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
                 }
@@ -769,7 +780,7 @@ impl App {
 
         let futures = futures::future::join_all(futures);
         if self
-            .background_executor
+            .foreground_executor
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
@@ -1083,6 +1094,27 @@ impl App {
             .iter()
             .find(|display| display.id() == id)
             .cloned()
+    }
+
+    /// Returns the current thermal state of the system.
+    pub fn thermal_state(&self) -> ThermalState {
+        self.platform.thermal_state()
+    }
+
+    /// Invokes a handler when the thermal state changes
+    pub fn on_thermal_state_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.thermal_state_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Returns the appearance of the application's windows.
@@ -1465,29 +1497,33 @@ impl App {
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.window_update_stack.pop();
+            fn trail(id: WindowId, window: Box<Window>, cx: &mut App) -> Option<()> {
+                cx.window_update_stack.pop();
 
-            if window.removed {
-                cx.window_handles.remove(&id);
-                cx.windows.remove(id);
+                if window.removed {
+                    cx.window_handles.remove(&id);
+                    cx.windows.remove(id);
 
-                cx.window_closed_observers.clone().retain(&(), |callback| {
-                    callback(cx);
-                    true
-                });
+                    cx.window_closed_observers.clone().retain(&(), |callback| {
+                        callback(cx);
+                        true
+                    });
 
-                let quit_on_empty = match cx.quit_mode {
-                    QuitMode::Explicit => false,
-                    QuitMode::LastWindowClosed => true,
-                    QuitMode::Default => cfg!(not(target_os = "macos")),
-                };
+                    let quit_on_empty = match cx.quit_mode {
+                        QuitMode::Explicit => false,
+                        QuitMode::LastWindowClosed => true,
+                        QuitMode::Default => cfg!(not(target_os = "macos")),
+                    };
 
-                if quit_on_empty && cx.windows.is_empty() {
-                    cx.quit();
+                    if quit_on_empty && cx.windows.is_empty() {
+                        cx.quit();
+                    }
+                } else {
+                    cx.windows.get_mut(id)?.replace(window);
                 }
-            } else {
-                cx.windows.get_mut(id)?.replace(window);
+                Some(())
             }
+            trail(id, window, cx)?;
 
             Some(result)
         })
@@ -1532,7 +1568,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn(async move { f(&mut cx).await })
+            .spawn(async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Spawns the future returned by the given function on the main thread with
@@ -1550,7 +1586,7 @@ impl App {
         let mut cx = self.to_async();
 
         self.foreground_executor
-            .spawn_with_priority(priority, async move { f(&mut cx).await })
+            .spawn_with_priority(priority, async move { f(&mut cx).await }.boxed_local())
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1879,6 +1915,18 @@ impl App {
         self.actions.action_schemas(generator)
     }
 
+    /// Get the schema for a specific action by name.
+    /// Returns `None` if the action is not found.
+    /// Returns `Some(None)` if the action exists but has no schema.
+    /// Returns `Some(Some(schema))` if the action exists and has a schema.
+    pub fn action_schema_by_name(
+        &self,
+        name: &str,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Option<Option<schemars::Schema>> {
+        self.actions.action_schema_by_name(name, generator)
+    }
+
     /// Get a map from a deprecated action name to the canonical name.
     pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
         self.actions.deprecated_aliases()
@@ -2001,7 +2049,7 @@ impl App {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.platform.update_jump_list(menus, entries)
     }
 
@@ -2235,8 +2283,6 @@ impl App {
 }
 
 impl AppContext for App {
-    type Result<T> = T;
-
     /// Builds an entity that is owned by the application.
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
@@ -2258,7 +2304,7 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
         Reservation(self.entities.reserve())
     }
 
@@ -2266,7 +2312,7 @@ impl AppContext for App {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>> {
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = reservation.0;
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
@@ -2299,11 +2345,7 @@ impl AppContext for App {
         GpuiBorrow::new(handle.clone(), self)
     }
 
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
     {
@@ -2348,7 +2390,7 @@ impl AppContext for App {
         self.background_executor.spawn(future)
     }
 
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global,
     {
@@ -2545,6 +2587,13 @@ impl<'a, T> Drop for GpuiBorrow<'a, T> {
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.foreground_executor.close();
+        self.background_executor.close();
     }
 }
 

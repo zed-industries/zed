@@ -1,3 +1,8 @@
+---
+title: Snippets - Zed
+description: Create and use code snippets in Zed with tab stops, placeholders, variables, and language-scoped triggers.
+---
+
 # Snippets
 
 Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit an existing snippets file for a specified [scope](#scopes).
@@ -13,6 +18,7 @@ The snippets are located in `~/.config/zed/snippets` directory to which you can 
   // Use placeholders like $1, $2 or ${1:defaultValue} to define tab stops.
   // The $0 determines the final cursor position.
   // Placeholders with the same value are linked.
+  // If the snippet contains the $ symbol outside of a placeholder, it must be escaped with two slashes (e.g. \\$var).
   "Log to console": {
     "prefix": "log",
     "body": ["console.info(\"Hello, ${1:World}!\")", "$0"],

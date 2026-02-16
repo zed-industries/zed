@@ -6,7 +6,7 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, BackgroundExecutor, Context, DismissEvent, Entity, FocusHandle,
-    Focusable, SharedString, Subscription, Task, Window,
+    Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -103,6 +103,7 @@ impl ProfileSelector {
                 self.fs.clone(),
                 self.provider.clone(),
                 self.profiles.clone(),
+                cx.foreground_executor().clone(),
                 cx.background_executor().clone(),
                 self.focus_handle.clone(),
                 cx,
@@ -166,7 +167,6 @@ impl Render for ProfileSelector {
         let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
-        let focus_handle = self.focus_handle.clone();
 
         let icon = if self.picker_handle.is_deployed() {
             IconName::ChevronUp
@@ -191,20 +191,18 @@ impl Render for ProfileSelector {
                     let container = || h_flex().gap_1().justify_between();
                     v_flex()
                         .gap_1()
-                        .child(container().child(Label::new("Toggle Profile Menu")).child(
-                            KeyBinding::for_action_in(&ToggleProfileSelector, &focus_handle, cx),
-                        ))
                         .child(
                             container()
-                                .pb_1()
-                                .border_b_1()
+                                .child(Label::new("Change Profile"))
+                                .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
+                        )
+                        .child(
+                            container()
+                                .pt_1()
+                                .border_t_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .child(Label::new("Cycle Through Profiles"))
-                                .child(KeyBinding::for_action_in(
-                                    &CycleModeSelector,
-                                    &focus_handle,
-                                    cx,
-                                )),
+                                .child(KeyBinding::for_action(&CycleModeSelector, cx)),
                         )
                         .into_any()
                 }
@@ -236,9 +234,10 @@ enum ProfilePickerEntry {
     Profile(ProfileMatchEntry),
 }
 
-pub(crate) struct ProfilePickerDelegate {
+pub struct ProfilePickerDelegate {
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
+    foreground: ForegroundExecutor,
     background: BackgroundExecutor,
     candidates: Vec<ProfileCandidate>,
     string_candidates: Arc<Vec<StringMatchCandidate>>,
@@ -255,6 +254,7 @@ impl ProfilePickerDelegate {
         fs: Arc<dyn Fs>,
         provider: Arc<dyn ProfileProvider>,
         profiles: AvailableProfiles,
+        foreground: ForegroundExecutor,
         background: BackgroundExecutor,
         focus_handle: FocusHandle,
         cx: &mut Context<ProfileSelector>,
@@ -266,6 +266,7 @@ impl ProfilePickerDelegate {
         let mut this = Self {
             fs,
             provider,
+            foreground,
             background,
             candidates,
             string_candidates,
@@ -401,7 +402,7 @@ impl ProfilePickerDelegate {
 
         let cancel_flag = AtomicBool::new(false);
 
-        self.background.block(match_strings(
+        self.foreground.block_on(match_strings(
             self.string_candidates.as_ref(),
             query,
             false,
@@ -734,6 +735,7 @@ mod tests {
             let delegate = ProfilePickerDelegate {
                 fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+                foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
                 candidates,
                 string_candidates: Arc::new(Vec::new()),
@@ -771,6 +773,7 @@ mod tests {
             let delegate = ProfilePickerDelegate {
                 fs: FakeFs::new(cx.background_executor().clone()),
                 provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+                foreground: cx.foreground_executor().clone(),
                 background: cx.background_executor().clone(),
                 candidates,
                 string_candidates: Arc::new(Vec::new()),

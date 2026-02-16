@@ -30,6 +30,8 @@ body:
       label: Attach Zed log file
       description: |
         Open the command palette in Zed, then type `zed: open log` to see the last 1000 lines. Or type `zed: reveal log in file manager` in the command palette to reveal the log file itself.
+
+        ⚠️ **Please review your log file for secrets (API keys, tokens, etc.) and partially or fully redact them before posting.**
       value: |
         <details><summary>Zed.log</summary>
 

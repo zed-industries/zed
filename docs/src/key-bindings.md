@@ -1,6 +1,11 @@
+---
+title: Key Bindings and Shortcuts - Zed
+description: Customize Zed's keyboard shortcuts. Rebind actions, create key sequences, and set context-specific bindings.
+---
+
 # Key bindings
 
-Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
+Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
 
 ## Predefined Keymaps
 

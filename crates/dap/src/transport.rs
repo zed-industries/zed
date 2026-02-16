@@ -178,9 +178,7 @@ impl TransportDelegate {
         self.tasks.lock().clear();
 
         let log_dap_communications =
-            cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications)
-                .with_context(|| "Failed to get Debugger Setting log dap communications error in transport::start_handlers. Defaulting to false")
-                .unwrap_or(false);
+            cx.update(|cx| DebuggerSettings::get_global(cx).log_dap_communications);
 
         let connect = self.transport.lock().connect();
         let (input, output) = connect.await?;
@@ -223,10 +221,7 @@ impl TransportDelegate {
             }));
         }
 
-        {
-            let mut lock = self.server_tx.lock().await;
-            *lock = Some(server_tx.clone());
-        }
+        *self.server_tx.lock().await = Some(server_tx.clone());
 
         Ok(())
     }
@@ -550,10 +545,9 @@ impl TcpTransport {
             process = Some(p);
         };
 
-        let timeout = connection_args.timeout.unwrap_or_else(|| {
-            cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
-                .unwrap_or(20000u64)
-        });
+        let timeout = connection_args
+            .timeout
+            .unwrap_or_else(|| cx.update(|cx| DebuggerSettings::get_global(cx).timeout));
 
         log::info!(
             "Debug adapter has connected to TCP server {}:{}",

@@ -935,7 +935,52 @@ impl InlaySnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        self.inlay_point_cursor().map(point)
+        self.inlay_point_cursor().map(point, Bias::Left)
+    }
+
+    /// Converts a buffer offset range into one or more `InlayOffset` ranges that
+    /// cover only the actual buffer text, skipping any inlay hint text that falls
+    /// within the range. When there are no inlays the returned vec contains a
+    /// single element identical to the input mapped into inlay-offset space.
+    pub fn buffer_offset_to_inlay_ranges(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> impl Iterator<Item = Range<InlayOffset>> {
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<MultiBufferOffset, InlayOffset>>(());
+        cursor.seek(&range.start, Bias::Right);
+
+        std::iter::from_fn(move || {
+            loop {
+                match cursor.item()? {
+                    Transform::Isomorphic(_) => {
+                        let seg_buffer_start = cursor.start().0;
+                        let seg_buffer_end = cursor.end().0;
+                        let seg_inlay_start = cursor.start().1;
+
+                        let overlap_start = cmp::max(range.start, seg_buffer_start);
+                        let overlap_end = cmp::min(range.end, seg_buffer_end);
+
+                        let past_end = seg_buffer_end >= range.end;
+                        cursor.next();
+
+                        if overlap_start < overlap_end {
+                            let inlay_start =
+                                InlayOffset(seg_inlay_start.0 + (overlap_start - seg_buffer_start));
+                            let inlay_end =
+                                InlayOffset(seg_inlay_start.0 + (overlap_end - seg_buffer_start));
+                            return Some(inlay_start..inlay_end);
+                        }
+
+                        if past_end {
+                            return None;
+                        }
+                    }
+                    Transform::Inlay(_) => cursor.next(),
+                }
+            }
+        })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1158,6 +1203,7 @@ impl InlaySnapshot {
             buffer_range,
             language_aware,
             highlights.text_highlights,
+            highlights.semantic_token_highlights,
             &self.buffer,
         );
 
@@ -1211,7 +1257,7 @@ pub struct InlayPointCursor<'transforms> {
 
 impl InlayPointCursor<'_> {
     #[ztracing::instrument(skip_all)]
-    pub fn map(&mut self, point: Point) -> InlayPoint {
+    pub fn map(&mut self, point: Point, bias: Bias) -> InlayPoint {
         let cursor = &mut self.cursor;
         if cursor.did_seek() {
             cursor.seek_forward(&point, Bias::Left);
@@ -1223,7 +1269,7 @@ impl InlayPointCursor<'_> {
                 Some(Transform::Isomorphic(_)) => {
                     if point == cursor.end().0 {
                         while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
+                            if bias == Bias::Left && inlay.position.bias() == Bias::Right {
                                 break;
                             } else {
                                 cursor.next();
@@ -1236,7 +1282,7 @@ impl InlayPointCursor<'_> {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
+                    if inlay.position.bias() == Bias::Left || bias == Bias::Right {
                         cursor.next();
                     } else {
                         return cursor.start().1;
@@ -1283,7 +1329,7 @@ mod tests {
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
+    use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::{Patch, Rope};
     use util::RandomCharIter;
@@ -1852,7 +1898,7 @@ mod tests {
             text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
             log::info!("highlighting text ranges {text_highlight_ranges:?}");
             text_highlights.insert(
-                HighlightKey::Type(TypeId::of::<()>()),
+                HighlightKey::ColorizeBracket(0),
                 Arc::new((
                     HighlightStyle::default(),
                     text_highlight_ranges
@@ -1906,7 +1952,7 @@ mod tests {
                         .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight))),
                 );
                 log::info!("highlighting inlay ranges {new_highlights:?}");
-                inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
+                inlay_highlights.insert(HighlightKey::Editor, new_highlights);
             }
 
             for _ in 0..5 {
@@ -2177,7 +2223,7 @@ mod tests {
         inlay_id: InlayId,
         highlight_range: Range<usize>,
         position: Anchor,
-    ) -> TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+    ) -> TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let mut inlay_highlights = TreeMap::default();
         let mut type_highlights = TreeMap::default();
         type_highlights.insert(
@@ -2191,7 +2237,7 @@ mod tests {
                 },
             ),
         );
-        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+        inlay_highlights.insert(HighlightKey::Editor, type_highlights);
         inlay_highlights
     }
 
@@ -2227,6 +2273,7 @@ mod tests {
         let highlights = crate::display_map::Highlights {
             text_highlights: None,
             inlay_highlights: Some(&inlay_highlights),
+            semantic_token_highlights: None,
             styles: crate::display_map::HighlightStyles::default(),
         };
 
@@ -2342,6 +2389,7 @@ mod tests {
             let highlights = crate::display_map::Highlights {
                 text_highlights: None,
                 inlay_highlights: Some(&inlay_highlights),
+                semantic_token_highlights: None,
                 styles: crate::display_map::HighlightStyles::default(),
             };
 

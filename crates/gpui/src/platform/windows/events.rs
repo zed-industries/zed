@@ -29,7 +29,6 @@ pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
-const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
 
 impl WindowsWindowInner {
     pub(crate) fn handle_msg(
@@ -632,22 +631,34 @@ impl WindowsWindowInner {
             })?;
             Some(0)
         } else {
+            if lparam & GCS_RESULTSTR.0 > 0 {
+                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
+                self.with_input_handler(|input_handler| {
+                    input_handler
+                        .replace_text_in_range(None, &String::from_utf16_lossy(&comp_result));
+                })?;
+            }
             if lparam & GCS_COMPSTR.0 > 0 {
                 let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
                 let caret_pos =
                     (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
-                        let pos = retrieve_composition_cursor_position(ctx);
+                        let cursor_pos = retrieve_composition_cursor_position(ctx);
+                        let pos = if should_use_ime_cursor_position(ctx, cursor_pos) {
+                            cursor_pos
+                        } else {
+                            comp_string.len()
+                        };
                         pos..pos
                     });
                 self.with_input_handler(|input_handler| {
-                    input_handler.replace_and_mark_text_in_range(None, &comp_string, caret_pos);
+                    input_handler.replace_and_mark_text_in_range(
+                        None,
+                        &String::from_utf16_lossy(&comp_string),
+                        caret_pos,
+                    );
                 })?;
             }
-            if lparam & GCS_RESULTSTR.0 > 0 {
-                let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
-                self.with_input_handler(|input_handler| {
-                    input_handler.replace_text_in_range(None, &comp_result);
-                })?;
+            if lparam & (GCS_RESULTSTR.0 | GCS_COMPSTR.0) > 0 {
                 return Some(0);
             }
 
@@ -656,7 +667,6 @@ impl WindowsWindowInner {
         }
     }
 
-    /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
     fn handle_calc_client_size(
         &self,
         handle: HWND,
@@ -667,43 +677,17 @@ impl WindowsWindowInner {
             return None;
         }
 
-        let is_maximized = self.state.is_maximized();
-        let insets = get_client_area_insets(handle, is_maximized, self.windows_version);
-        // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
-        let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
-        let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
-
-        requested_client_rect[0].left += insets.left;
-        requested_client_rect[0].top += insets.top;
-        requested_client_rect[0].right -= insets.right;
-        requested_client_rect[0].bottom -= insets.bottom;
-
-        // Fix auto hide taskbar not showing. This solution is based on the approach
-        // used by Chrome. However, it may result in one row of pixels being obscured
-        // in our client area. But as Chrome says, "there seems to be no better solution."
-        if is_maximized
-            && let Some(taskbar_position) = self.system_settings().auto_hide_taskbar_position.get()
-        {
-            // For the auto-hide taskbar, adjust in by 1 pixel on taskbar edge,
-            // so the window isn't treated as a "fullscreen app", which would cause
-            // the taskbar to disappear.
-            match taskbar_position {
-                AutoHideTaskbarPosition::Left => {
-                    requested_client_rect[0].left += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Top => {
-                    requested_client_rect[0].top += AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Right => {
-                    requested_client_rect[0].right -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
-                AutoHideTaskbarPosition::Bottom => {
-                    requested_client_rect[0].bottom -= AUTO_HIDE_TASKBAR_THICKNESS_PX
-                }
+        unsafe {
+            let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+            let saved_top = (*params).rgrc[0].top;
+            let result = DefWindowProcW(handle, WM_NCCALCSIZE, wparam, lparam);
+            (*params).rgrc[0].top = saved_top;
+            if self.state.is_maximized() {
+                let dpi = GetDpiForWindow(handle);
+                (*params).rgrc[0].top += get_frame_thicknessx(dpi);
             }
+            Some(result.0 as isize)
         }
-
-        Some(0)
     }
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
@@ -800,34 +784,8 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    /// The following conditions will trigger this event:
-    /// 1. The monitor on which the window is located goes offline or changes resolution.
-    /// 2. Another monitor goes offline, is plugged in, or changes resolution.
-    ///
-    /// In either case, the window will only receive information from the monitor on which
-    /// it is located.
-    ///
-    /// For example, in the case of condition 2, where the monitor on which the window is
-    /// located has actually changed nothing, it will still receive this event.
     fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
-        // NOTE:
-        // Even the `lParam` holds the resolution of the screen, we just ignore it.
-        // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
-        // are handled there.
-        // So we only care about if monitor is disconnected.
-        let previous_monitor = self.state.display.get();
-        if WindowsDisplay::is_connected(previous_monitor.handle) {
-            // we are fine, other display changed
-            return None;
-        }
-        // display disconnected
-        // in this case, the OS will move our window to another monitor, and minimize it.
-        // we deminimize the window and query the monitor after moving
-        unsafe {
-            let _ = ShowWindow(handle, SW_SHOWNORMAL);
-        };
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
-        // all monitors disconnected
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
             return None;
@@ -946,8 +904,7 @@ impl WindowsWindowInner {
                 click_count,
                 first_mouse: false,
             });
-            let result = func(input);
-            let handled = !result.propagate || result.default_prevented;
+            let handled = !func(input).propagate;
             self.state.callbacks.input.set(Some(func));
 
             if handled {
@@ -1079,18 +1036,14 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> Option<isize> {
         if wparam.0 != 0 {
-            let display = self.state.display.get();
             self.state.click_state.system_update(wparam.0);
             self.state.border_offset.update(handle).log_err();
             // system settings may emit a window message which wants to take the refcell self.state, so drop it
 
-            self.system_settings().update(display, wparam.0);
+            self.system_settings().update(wparam.0);
         } else {
             self.handle_system_theme_changed(handle, lparam)?;
         };
-        // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
-        // taskbar correctly.
-        notify_frame_changed(handle);
 
         Some(0)
     }
@@ -1450,7 +1403,7 @@ fn process_key(vkey: VIRTUAL_KEY, scan_code: u16) -> (Option<String>, bool) {
     )
 }
 
-fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
+fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<Vec<u16>> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if string_len >= 0 {
@@ -1465,7 +1418,7 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
                 buffer.as_mut_ptr().cast::<u16>(),
                 string_len as usize / 2,
             );
-            Some(String::from_utf16_lossy(wstring))
+            Some(wstring.to_vec())
         } else {
             None
         }
@@ -1475,6 +1428,35 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
 #[inline]
 fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
     unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
+}
+
+fn should_use_ime_cursor_position(ctx: HIMC, cursor_pos: usize) -> bool {
+    let attrs_size = unsafe { ImmGetCompositionStringW(ctx, GCS_COMPATTR, None, 0) } as usize;
+    if attrs_size == 0 {
+        return false;
+    }
+
+    let mut attrs = vec![0u8; attrs_size];
+    let result = unsafe {
+        ImmGetCompositionStringW(
+            ctx,
+            GCS_COMPATTR,
+            Some(attrs.as_mut_ptr() as *mut _),
+            attrs_size as u32,
+        )
+    };
+    if result <= 0 {
+        return false;
+    }
+
+    // Keep the cursor adjacent to the inserted text by only using the suggested position
+    // if it's adjacent to unconverted text.
+    let at_cursor_is_input = cursor_pos < attrs.len() && attrs[cursor_pos] == (ATTR_INPUT as u8);
+    let before_cursor_is_input = cursor_pos > 0
+        && (cursor_pos - 1) < attrs.len()
+        && attrs[cursor_pos - 1] == (ATTR_INPUT as u8);
+
+    at_cursor_is_input || before_cursor_is_input
 }
 
 #[inline]
@@ -1497,44 +1479,6 @@ pub(crate) fn current_modifiers() -> Modifiers {
 pub(crate) fn current_capslock() -> Capslock {
     let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
     Capslock { on }
-}
-
-fn get_client_area_insets(
-    handle: HWND,
-    is_maximized: bool,
-    windows_version: WindowsVersion,
-) -> RECT {
-    // For maximized windows, Windows outdents the window rect from the screen's client rect
-    // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
-    // on all sides (including the top) to avoid the client area extending onto adjacent
-    // monitors.
-    //
-    // For non-maximized windows, things become complicated:
-    //
-    // - On Windows 10
-    // The top inset must be zero, since if there is any nonclient area, Windows will draw
-    // a full native titlebar outside the client area. (This doesn't occur in the maximized
-    // case.)
-    //
-    // - On Windows 11
-    // The top inset is calculated using an empirical formula that I derived through various
-    // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
-    let dpi = unsafe { GetDpiForWindow(handle) };
-    let frame_thickness = get_frame_thicknessx(dpi);
-    let top_insets = if is_maximized {
-        frame_thickness
-    } else {
-        match windows_version {
-            WindowsVersion::Win10 => 0,
-            WindowsVersion::Win11 => (dpi as f32 / USER_DEFAULT_SCREEN_DPI as f32).round() as i32,
-        }
-    };
-    RECT {
-        left: frame_thickness,
-        top: top_insets,
-        right: frame_thickness,
-        bottom: frame_thickness,
-    }
 }
 
 // there is some additional non-visible space when talking about window

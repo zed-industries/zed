@@ -7,13 +7,15 @@ use ui::{
     HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
     ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
 };
-use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
+use workspace::{
+    ModalView, MultiWorkspace, OpenOptions, Workspace, notifications::DetachAndPromptErr,
+};
 
 use crate::open_remote_project;
 
 enum Host {
     CollabGuestProject,
-    RemoteServerProject(RemoteConnectionOptions),
+    RemoteServerProject(RemoteConnectionOptions, bool),
 }
 
 pub struct DisconnectedOverlay {
@@ -57,7 +59,8 @@ impl DisconnectedOverlay {
             |workspace, project, event, window, cx| {
                 if !matches!(
                     event,
-                    project::Event::DisconnectedFromHost | project::Event::DisconnectedFromRemote
+                    project::Event::DisconnectedFromHost
+                        | project::Event::DisconnectedFromRemote { .. }
                 ) {
                     return;
                 }
@@ -65,7 +68,15 @@ impl DisconnectedOverlay {
 
                 let remote_connection_options = project.read(cx).remote_connection_options(cx);
                 let host = if let Some(remote_connection_options) = remote_connection_options {
-                    Host::RemoteServerProject(remote_connection_options)
+                    Host::RemoteServerProject(
+                        remote_connection_options,
+                        matches!(
+                            event,
+                            project::Event::DisconnectedFromRemote {
+                                server_not_running: true
+                            }
+                        ),
+                    )
                 } else {
                     Host::CollabGuestProject
                 };
@@ -85,7 +96,7 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        if let Host::RemoteServerProject(remote_connection_options) = &self.host {
+        if let Host::RemoteServerProject(remote_connection_options, _) = &self.host {
             self.reconnect_to_remote_project(remote_connection_options.clone(), window, cx);
         }
     }
@@ -100,7 +111,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
 
@@ -137,13 +148,13 @@ impl DisconnectedOverlay {
 
 impl Render for DisconnectedOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let can_reconnect = matches!(self.host, Host::RemoteServerProject(_));
+        let can_reconnect = matches!(self.host, Host::RemoteServerProject(..));
 
         let message = match &self.host {
             Host::CollabGuestProject => {
                 "Your connection to the remote project has been lost.".to_string()
             }
-            Host::RemoteServerProject(options) => {
+            Host::RemoteServerProject(options, server_not_running) => {
                 let autosave = if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
@@ -152,10 +163,14 @@ impl Render for DisconnectedOverlay {
                 } else {
                     ""
                 };
+                let reason = if *server_not_running {
+                    "process exiting unexpectedly"
+                } else {
+                    "not responding"
+                };
                 format!(
-                    "Your connection to {} has been lost.{}",
+                    "Your connection to {} has been lost due to the server {reason}.{autosave}",
                     options.display_name(),
-                    autosave
                 )
             }
         };

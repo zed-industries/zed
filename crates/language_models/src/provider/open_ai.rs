@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::Stream;
-use futures::{FutureExt, StreamExt, future, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -14,6 +14,10 @@ use language_model::{
     TokenUsage, env_var,
 };
 use menu;
+use open_ai::responses::{
+    ResponseFunctionCallItem, ResponseFunctionCallOutputItem, ResponseInputContent,
+    ResponseInputItem, ResponseMessageItem,
+};
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
     responses::{
@@ -22,15 +26,15 @@ use open_ai::{
     },
     stream_completion,
 };
-use serde_json::{Value, json};
 use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -215,12 +219,10 @@ impl OpenAiLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let provider = PROVIDER_NAME;
@@ -249,12 +251,10 @@ impl OpenAiLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let provider = PROVIDER_NAME;
         let future = self.request_limiter.stream(async move {
@@ -300,10 +300,7 @@ impl LanguageModel for OpenAiLanguageModel {
     fn supports_images(&self) -> bool {
         use open_ai::Model;
         match &self.model {
-            Model::FourOmni
-            | Model::FourOmniMini
-            | Model::FourPointOne
-            | Model::FourPointOneMini
+            Model::FourOmniMini
             | Model::FourPointOneNano
             | Model::Five
             | Model::FiveCodex
@@ -311,9 +308,9 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FiveNano
             | Model::FivePointOne
             | Model::FivePointTwo
+            | Model::FivePointTwoCodex
             | Model::O1
-            | Model::O3
-            | Model::O4Mini => true,
+            | Model::O3 => true,
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
@@ -328,6 +325,14 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.reasoning_effort().is_some()
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -413,7 +418,14 @@ pub fn into_open_ai(
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                    if !text.trim().is_empty() {
+                    let should_add = if message.role == Role::User {
+                        // Including whitespace-only user messages can cause error with OpenAI compatible APIs
+                        // See https://github.com/zed-industries/zed/issues/40097
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
                         add_message_content_part(
                             open_ai::MessagePart::Text { text },
                             message.role,
@@ -535,13 +547,13 @@ pub fn into_open_ai_response(
         thread_id,
         prompt_id: _,
         intent: _,
-        mode: _,
         messages,
         tools,
         tool_choice,
         stop: _,
         temperature,
         thinking_allowed: _,
+        thinking_effort: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -589,9 +601,9 @@ pub fn into_open_ai_response(
 fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
-    input_items: &mut Vec<Value>,
+    input_items: &mut Vec<ResponseInputItem>,
 ) {
-    let mut content_parts: Vec<Value> = Vec::new();
+    let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
     for content in message.content {
         match content {
@@ -608,20 +620,20 @@ fn append_message_to_response_items(
             MessageContent::ToolUse(tool_use) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
                 let call_id = tool_use.id.to_string();
-                input_items.push(json!({
-                    "type": "function_call",
-                    "call_id": call_id,
-                    "name": tool_use.name,
-                    "arguments": tool_use.raw_input,
+                input_items.push(ResponseInputItem::FunctionCall(ResponseFunctionCallItem {
+                    call_id,
+                    name: tool_use.name.to_string(),
+                    arguments: tool_use.raw_input,
                 }));
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
-                input_items.push(json!({
-                    "type": "function_call_output",
-                    "call_id": tool_result.tool_use_id.to_string(),
-                    "output": tool_result_output(&tool_result),
-                }));
+                input_items.push(ResponseInputItem::FunctionCallOutput(
+                    ResponseFunctionCallOutputItem {
+                        call_id: tool_result.tool_use_id.to_string(),
+                        output: tool_result_output(&tool_result),
+                    },
+                ));
             }
         }
     }
@@ -629,67 +641,59 @@ fn append_message_to_response_items(
     flush_response_parts(&message.role, index, &mut content_parts, input_items);
 }
 
-fn push_response_text_part(role: &Role, text: impl Into<String>, parts: &mut Vec<Value>) {
+fn push_response_text_part(
+    role: &Role,
+    text: impl Into<String>,
+    parts: &mut Vec<ResponseInputContent>,
+) {
     let text = text.into();
     if text.trim().is_empty() {
         return;
     }
 
     match role {
-        Role::Assistant => parts.push(json!({
-            "type": "output_text",
-            "text": text,
-            "annotations": [],
-        })),
-        _ => parts.push(json!({
-            "type": "input_text",
-            "text": text,
-        })),
+        Role::Assistant => parts.push(ResponseInputContent::OutputText {
+            text,
+            annotations: Vec::new(),
+        }),
+        _ => parts.push(ResponseInputContent::Text { text }),
     }
 }
 
-fn push_response_image_part(role: &Role, image: LanguageModelImage, parts: &mut Vec<Value>) {
+fn push_response_image_part(
+    role: &Role,
+    image: LanguageModelImage,
+    parts: &mut Vec<ResponseInputContent>,
+) {
     match role {
-        Role::Assistant => parts.push(json!({
-            "type": "output_text",
-            "text": "[image omitted]",
-            "annotations": [],
-        })),
-        _ => parts.push(json!({
-            "type": "input_image",
-            "image_url": image.to_base64_url(),
-        })),
+        Role::Assistant => parts.push(ResponseInputContent::OutputText {
+            text: "[image omitted]".to_string(),
+            annotations: Vec::new(),
+        }),
+        _ => parts.push(ResponseInputContent::Image {
+            image_url: image.to_base64_url(),
+        }),
     }
 }
 
 fn flush_response_parts(
     role: &Role,
     _index: usize,
-    parts: &mut Vec<Value>,
-    input_items: &mut Vec<Value>,
+    parts: &mut Vec<ResponseInputContent>,
+    input_items: &mut Vec<ResponseInputItem>,
 ) {
     if parts.is_empty() {
         return;
     }
 
-    let item = match role {
-        Role::Assistant => json!({
-            "type": "message",
-            "role": "assistant",
-            "status": "completed",
-            "content": parts.clone(),
-        }),
-        Role::User => json!({
-            "type": "message",
-            "role": "user",
-            "content": parts.clone(),
-        }),
-        Role::System => json!({
-            "type": "message",
-            "role": "system",
-            "content": parts.clone(),
-        }),
-    };
+    let item = ResponseInputItem::Message(ResponseMessageItem {
+        role: match role {
+            Role::User => open_ai::Role::User,
+            Role::Assistant => open_ai::Role::Assistant,
+            Role::System => open_ai::Role::System,
+        },
+        content: parts.clone(),
+    });
 
     input_items.push(item);
     parts.clear();
@@ -787,8 +791,18 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_content) = delta.reasoning_content.clone() {
+                if !reasoning_content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: reasoning_content,
+                        signature: None,
+                    }));
+                }
+            }
             if let Some(content) = delta.content.clone() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                if !content.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
             }
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
@@ -818,7 +832,7 @@ impl OpenAiEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -891,7 +905,7 @@ impl OpenAiResponseEventMapper {
         })
     }
 
-    fn map_event(
+    pub fn map_event(
         &mut self,
         event: ResponsesStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
@@ -950,7 +964,7 @@ impl OpenAiResponseEventMapper {
                     }
                     let raw_input = entry.arguments.clone();
                     self.pending_stop_reason = Some(StopReason::ToolUse);
-                    match serde_json::from_str::<serde_json::Value>(&entry.arguments) {
+                    match parse_tool_arguments(&entry.arguments) {
                         Ok(input) => {
                             vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -1074,29 +1088,27 @@ impl OpenAiResponseEventMapper {
                 };
                 let name: Arc<str> = Arc::from(function_call.name.clone().unwrap_or_default());
                 let arguments = &function_call.arguments;
-                if !arguments.is_empty() {
-                    self.pending_stop_reason = Some(StopReason::ToolUse);
-                    match serde_json::from_str::<serde_json::Value>(arguments) {
-                        Ok(input) => {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: LanguageModelToolUseId::from(call_id.clone()),
-                                    name: name.clone(),
-                                    is_input_complete: true,
-                                    input,
-                                    raw_input: arguments.clone(),
-                                    thought_signature: None,
-                                },
-                            )));
-                        }
-                        Err(error) => {
-                            events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                self.pending_stop_reason = Some(StopReason::ToolUse);
+                match parse_tool_arguments(arguments) {
+                    Ok(input) => {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
                                 id: LanguageModelToolUseId::from(call_id.clone()),
-                                tool_name: name.clone(),
-                                raw_input: Arc::<str>::from(arguments.clone()),
-                                json_parse_error: error.to_string(),
-                            }));
-                        }
+                                name: name.clone(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
+                    }
+                    Err(error) => {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: LanguageModelToolUseId::from(call_id.clone()),
+                            tool_name: name.clone(),
+                            raw_input: Arc::<str>::from(arguments.clone()),
+                            json_parse_error: error.to_string(),
+                        }));
                     }
                 }
             }
@@ -1143,7 +1155,7 @@ pub fn count_open_ai_tokens(
         match model {
             Model::Custom { max_tokens, .. } => {
                 let model = if max_tokens >= 100_000 {
-                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
+                    // If the max tokens is 100k or more, it likely uses the o200k_base tokenizer
                     "gpt-4o"
                 } else {
                     // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
@@ -1159,21 +1171,17 @@ pub fn count_open_ai_tokens(
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
-            | Model::FourOmni
             | Model::FourOmniMini
-            | Model::FourPointOne
-            | Model::FourPointOneMini
             | Model::FourPointOneNano
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini
             | Model::Five
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1 and 5.2 don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne | Model::FivePointTwo => {
+            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
                 tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
             }
         }
@@ -1206,10 +1214,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -1241,7 +1246,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1254,7 +1259,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1365,7 +1370,6 @@ impl Render for ConfigurationView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use futures::{StreamExt, executor::block_on};
     use gpui::TestAppContext;
     use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
@@ -1374,6 +1378,9 @@ mod tests {
         ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
     };
     use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::*;
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -1412,7 +1419,6 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("message".into())],
@@ -1424,13 +1430,14 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         // Validate that all models are supported by tiktoken-rs
         for model in Model::iter() {
             let count = cx
-                .executor()
-                .block(count_open_ai_tokens(
+                .foreground_executor()
+                .block_on(count_open_ai_tokens(
                     request.clone(),
                     model,
                     &cx.app.borrow(),
@@ -1519,7 +1526,6 @@ mod tests {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
             intent: None,
-            mode: None,
             messages: vec![
                 LanguageModelRequestMessage {
                     role: Role::System,
@@ -1561,6 +1567,7 @@ mod tests {
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
+            thinking_effort: None,
         };
 
         let response = into_open_ai_response(
@@ -1594,7 +1601,6 @@ mod tests {
                 {
                     "type": "message",
                     "role": "assistant",
-                    "status": "completed",
                     "content": [
                         { "type": "output_text", "text": "Looking that up.", "annotations": [] }
                     ]
@@ -1915,6 +1921,51 @@ mod tests {
         assert!(matches!(
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_handles_empty_tool_arguments() {
+        // Test that tools with no arguments (empty string) are handled correctly
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: response_item_function_call("item_fn", Some("")),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 2);
+
+        // Should produce a ToolUse event with an empty object
+        assert!(matches!(
+            &mapped[0],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                id,
+                name,
+                raw_input,
+                input,
+                ..
+            }) if id.to_string() == "call_123"
+                && name.as_ref() == "get_weather"
+                && raw_input == ""
+                && input.is_object()
+                && input.as_object().unwrap().is_empty()
+        ));
+
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
         ));
     }
 }

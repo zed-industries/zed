@@ -1,12 +1,13 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, Timer, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
-    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, DisplayLink, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
+    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
+    px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -398,7 +399,8 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 
 struct MacWindowState {
     handle: AnyWindowHandle,
-    executor: ForegroundExecutor,
+    foreground_executor: ForegroundExecutor,
+    background_executor: BackgroundExecutor,
     native_window: id,
     native_view: NonNull<Object>,
     blurred_view: Option<id>,
@@ -597,7 +599,8 @@ impl MacWindow {
             window_min_size,
             tabbing_identifier,
         }: WindowParams,
-        executor: ForegroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
     ) -> Self {
         unsafe {
@@ -703,7 +706,8 @@ impl MacWindow {
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
-                executor,
+                foreground_executor,
+                background_executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
@@ -987,7 +991,7 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     if let Some(parent) = sheet_parent {
@@ -1021,7 +1025,7 @@ impl PlatformWindow for MacWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
         let window = this.native_window;
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     window.setContentSize_(NSSize {
@@ -1244,7 +1248,7 @@ impl PlatformWindow for MacWindow {
             });
             let block = block.copy();
             let native_window = self.0.lock().native_window;
-            let executor = self.0.lock().executor.clone();
+            let executor = self.0.lock().foreground_executor.clone();
             executor
                 .spawn(async move {
                     let _: () = msg_send![
@@ -1261,7 +1265,7 @@ impl PlatformWindow for MacWindow {
 
     fn activate(&self) {
         let window = self.0.lock().native_window;
-        let executor = self.0.lock().executor.clone();
+        let executor = self.0.lock().foreground_executor.clone();
         executor
             .spawn(async move {
                 unsafe {
@@ -1383,7 +1387,7 @@ impl PlatformWindow for MacWindow {
     fn show_character_palette(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     let app = NSApplication::sharedApplication(nil);
@@ -1403,7 +1407,7 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     window.zoom_(nil);
@@ -1415,7 +1419,7 @@ impl PlatformWindow for MacWindow {
     fn toggle_fullscreen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     window.toggleFullScreen_(nil);
@@ -1542,7 +1546,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
-        let executor = self.0.lock().executor.clone();
+        let executor = self.0.lock().foreground_executor.clone();
         executor
             .spawn(async move {
                 unsafe {
@@ -1560,7 +1564,7 @@ impl PlatformWindow for MacWindow {
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        this.executor
+        this.foreground_executor
             .spawn(async move {
                 unsafe {
                     let defaults: id = NSUserDefaults::standardUserDefaults();
@@ -1936,12 +1940,13 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 // with these ones.
                 if !lock.external_files_dragged {
                     lock.synthetic_drag_counter += 1;
-                    let executor = lock.executor.clone();
+                    let executor = lock.foreground_executor.clone();
                     executor
                         .spawn(synthetic_drag(
                             weak_window_state,
                             lock.synthetic_drag_counter,
                             event.clone(),
+                            lock.background_executor.clone(),
                         ))
                         .detach();
                 }
@@ -2096,7 +2101,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         }
     }
 
-    let executor = lock.executor.clone();
+    let executor = lock.foreground_executor.clone();
     drop(lock);
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
@@ -2111,7 +2116,6 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
         if lock.activated_least_once {
             if let Some(mut callback) = lock.request_frame_callback.take() {
-                #[cfg(not(feature = "macos-blade"))]
                 lock.renderer.set_presents_with_transaction(true);
                 lock.stop_display_link();
                 drop(lock);
@@ -2119,7 +2123,6 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
                 let mut lock = window_state.lock();
                 lock.request_frame_callback = Some(callback);
-                #[cfg(not(feature = "macos-blade"))]
                 lock.renderer.set_presents_with_transaction(false);
                 lock.start_display_link();
             }
@@ -2219,7 +2222,6 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.lock();
     if let Some(mut callback) = lock.request_frame_callback.take() {
-        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(true);
         lock.stop_display_link();
         drop(lock);
@@ -2227,7 +2229,6 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
 
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
-        #[cfg(not(feature = "macos-blade"))]
         lock.renderer.set_presents_with_transaction(false);
         lock.start_display_link();
     }
@@ -2449,11 +2450,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
-    if let Some(event) =
-        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-        && send_new_event(&window_state, event)
+    if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
+        && send_file_drop_event(window_state, event)
     {
-        window_state.lock().external_files_dragged = true;
         return NSDragOperationCopy;
     }
     NSDragOperationNone
@@ -2462,10 +2461,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    if send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Pending { position }),
-    ) {
+    if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -2474,21 +2470,13 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
-    window_state.lock().external_files_dragged = false;
+    send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Submit { position }),
-    )
-    .to_objc()
+    send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
 }
 
 fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
@@ -2510,19 +2498,17 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
+    send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
     event: MouseMoveEvent,
+    executor: BackgroundExecutor,
 ) {
     loop {
-        Timer::after(Duration::from_millis(16)).await;
+        executor.timer(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
             let mut lock = window_state.lock();
             if lock.synthetic_drag_counter == drag_id {
@@ -2538,11 +2524,26 @@ async fn synthetic_drag(
     }
 }
 
-fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
-    let window_state = window_state_lock.lock().event_callback.take();
-    if let Some(mut callback) = window_state {
-        callback(e);
-        window_state_lock.lock().event_callback = Some(callback);
+/// Sends the specified FileDropEvent using `PlatformInput::FileDrop` to the window
+/// state and updates the window state according to the event passed.
+fn send_file_drop_event(
+    window_state: Arc<Mutex<MacWindowState>>,
+    file_drop_event: FileDropEvent,
+) -> bool {
+    let mut window_state = window_state.lock();
+    let window_event_callback = window_state.event_callback.as_mut();
+    if let Some(mut callback) = window_event_callback {
+        let external_files_dragged = match file_drop_event {
+            FileDropEvent::Entered { .. } => Some(true),
+            FileDropEvent::Exited => Some(false),
+            _ => None,
+        };
+
+        callback(PlatformInput::FileDrop(file_drop_event));
+
+        if let Some(external_files_dragged) = external_files_dragged {
+            window_state.external_files_dragged = external_files_dragged;
+        }
         true
     } else {
         false

@@ -45,6 +45,7 @@ pub struct OllamaSettings {
     pub api_url: String,
     pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
+    pub context_window: Option<u64>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -202,6 +203,10 @@ impl OllamaLanguageModelProvider {
             SharedString::new(api_url.as_str())
         }
     }
+
+    fn has_custom_url(cx: &App) -> bool {
+        Self::settings(cx).api_url != OLLAMA_API_URL
+    }
 }
 
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
@@ -242,14 +247,20 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         let settings = OllamaLanguageModelProvider::settings(cx);
 
         // Add models from the Ollama API
-        if settings.auto_discover {
-            for model in self.state.read(cx).fetched_models.iter() {
-                models.insert(model.name.clone(), model.clone());
+        for model in self.state.read(cx).fetched_models.iter() {
+            let mut model = model.clone();
+            if let Some(context_window) = settings.context_window {
+                model.max_tokens = context_window;
             }
+            models.insert(model.name.clone(), model);
         }
 
         // Override with available models from settings
-        merge_settings_into_models(&mut models, &settings.available_models);
+        merge_settings_into_models(
+            &mut models,
+            &settings.available_models,
+            settings.context_window,
+        );
 
         let mut models = models
             .into_values()
@@ -432,6 +443,10 @@ impl LanguageModel for OllamaLanguageModel {
         self.model.supports_vision.unwrap_or(false)
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking.unwrap_or(false)
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => false,
@@ -479,12 +494,10 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OllamaLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let stream =
@@ -602,6 +615,7 @@ fn map_to_language_model_completion_events(
 struct ConfigurationView {
     api_key_editor: Entity<InputField>,
     api_url_editor: Entity<InputField>,
+    context_window_editor: Entity<InputField>,
     state: Entity<State>,
 }
 
@@ -611,7 +625,15 @@ impl ConfigurationView {
 
         let api_url_editor = cx.new(|cx| {
             let input = InputField::new(window, cx, OLLAMA_API_URL).label("API URL");
-            input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
+            input.set_text(&OllamaLanguageModelProvider::api_url(cx), window, cx);
+            input
+        });
+
+        let context_window_editor = cx.new(|cx| {
+            let input = InputField::new(window, cx, "8192").label("Context Window");
+            if let Some(context_window) = OllamaLanguageModelProvider::settings(cx).context_window {
+                input.set_text(&context_window.to_string(), window, cx);
+            }
             input
         });
 
@@ -623,13 +645,26 @@ impl ConfigurationView {
         Self {
             api_key_editor,
             api_url_editor,
+            context_window_editor,
             state,
         }
     }
 
-    fn retry_connection(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    fn retry_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_api_url = OllamaLanguageModelProvider::has_custom_url(cx);
+        let has_api_key = self
+            .state
+            .read_with(cx, |state, _| state.api_key_state.has_key());
+        if !has_api_url {
+            self.save_api_url(cx);
+        }
+        if !has_api_key {
+            self.save_api_key(&Default::default(), window, cx);
+        }
+
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -645,7 +680,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -658,7 +693,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -666,7 +701,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+    fn save_api_url(&self, cx: &mut Context<Self>) {
         let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
@@ -698,7 +733,57 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_instructions(cx: &mut Context<Self>) -> Div {
+    fn save_context_window(&mut self, cx: &mut Context<Self>) {
+        let context_window_str = self
+            .context_window_editor
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+        let current_context_window = OllamaLanguageModelProvider::settings(cx).context_window;
+
+        if let Ok(context_window) = context_window_str.parse::<u64>() {
+            if Some(context_window) != current_context_window {
+                let fs = <dyn Fs>::global(cx);
+                update_settings_file(fs, cx, move |settings, _| {
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .context_window = Some(context_window);
+                });
+            }
+        } else if context_window_str.is_empty() && current_context_window.is_some() {
+            let fs = <dyn Fs>::global(cx);
+            update_settings_file(fs, cx, move |settings, _| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .ollama
+                    .get_or_insert_default()
+                    .context_window = None;
+            });
+        }
+    }
+
+    fn reset_context_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_window_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings
+                .language_models
+                .as_mut()
+                .and_then(|models| models.ollama.as_mut())
+            {
+                settings.context_window = None;
+            }
+        });
+        cx.notify();
+    }
+
+    fn render_instructions(cx: &App) -> Div {
         v_flex()
             .gap_2()
             .child(Label::new(
@@ -760,6 +845,56 @@ impl ConfigurationView {
         }
     }
 
+    fn render_context_window_editor(&self, cx: &Context<Self>) -> Div {
+        let settings = OllamaLanguageModelProvider::settings(cx);
+        let custom_context_window_set = settings.context_window.is_some();
+
+        if custom_context_window_set {
+            h_flex()
+                .p_3()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().elevated_surface_background)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(v_flex().gap_1().child(Label::new(format!(
+                            "Context Window: {}",
+                            settings.context_window.unwrap()
+                        )))),
+                )
+                .child(
+                    Button::new("reset-context-window", "Reset")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.reset_context_window(window, cx)
+                            }),
+                        ),
+                )
+        } else {
+            v_flex()
+                .on_action(
+                    cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                        this.save_context_window(cx)
+                    }),
+                )
+                .child(self.context_window_editor.clone())
+                .child(
+                    Label::new("Default: Model specific")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+        }
+    }
+
     fn render_api_url_editor(&self, cx: &Context<Self>) -> Div {
         let api_url = OllamaLanguageModelProvider::api_url(cx);
         let custom_api_url_set = api_url != OLLAMA_API_URL;
@@ -809,6 +944,7 @@ impl Render for ConfigurationView {
             .gap_2()
             .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
+            .child(self.render_context_window_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(
                 h_flex()
@@ -869,11 +1005,11 @@ impl Render for ConfigurationView {
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
                                             .tooltip(Tooltip::text("Refresh Models"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
                                                     state.fetched_models.clear();
                                                 });
-                                                this.retry_connection(cx);
+                                                this.retry_connection(window, cx);
                                             })),
                                     ),
                             )
@@ -883,11 +1019,9 @@ impl Render for ConfigurationView {
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::XSmall)
                                     .icon(IconName::PlayOutlined)
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.retry_connection(cx)
-                                        }),
-                                    ),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.retry_connection(window, cx)
+                                    })),
                             )
                         }
                     }),
@@ -898,10 +1032,13 @@ impl Render for ConfigurationView {
 fn merge_settings_into_models(
     models: &mut HashMap<String, ollama::Model>,
     available_models: &[AvailableModel],
+    context_window: Option<u64>,
 ) {
     for setting_model in available_models {
         if let Some(model) = models.get_mut(&setting_model.name) {
-            model.max_tokens = setting_model.max_tokens;
+            if context_window.is_none() {
+                model.max_tokens = setting_model.max_tokens;
+            }
             model.display_name = setting_model.display_name.clone();
             model.keep_alive = setting_model.keep_alive.clone();
             model.supports_tools = setting_model.supports_tools;
@@ -913,7 +1050,7 @@ fn merge_settings_into_models(
                 ollama::Model {
                     name: setting_model.name.clone(),
                     display_name: setting_model.display_name.clone(),
-                    max_tokens: setting_model.max_tokens,
+                    max_tokens: context_window.unwrap_or(setting_model.max_tokens),
                     keep_alive: setting_model.keep_alive.clone(),
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
@@ -991,7 +1128,7 @@ mod tests {
             },
         ];
 
-        merge_settings_into_models(&mut models, &available_models);
+        merge_settings_into_models(&mut models, &available_models, None);
 
         let model_1_5b = models
             .get("qwen2.5-coder:1.5b")
