@@ -155,10 +155,8 @@ impl AgentTool for FetchTool {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: Self::NAME.to_string(),
-                    input_values: vec![input.url.clone()],
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
                 Some(event_stream.authorize(
                     format!("Fetch {}", MarkdownInlineCode(&input.url)),
                     context,
