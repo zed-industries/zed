@@ -3600,7 +3600,7 @@ impl Editor {
             refresh_linked_ranges(self, window, cx);
 
             self.refresh_selected_text_highlights(false, window, cx);
-            self.refresh_matching_bracket_highlights(window, cx);
+            self.refresh_matching_bracket_highlights(&display_map, cx);
             self.refresh_outline_symbols(cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
@@ -20265,22 +20265,46 @@ impl Editor {
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
+        self.fold_buffers([buffer_id], cx);
+    }
+
+    pub fn fold_buffers(
+        &mut self,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.buffer().read(cx).is_singleton() {
             return;
         }
 
-        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
+        let ids_to_fold: Vec<BufferId> = buffer_ids
+            .into_iter()
+            .filter(|id| !self.is_buffer_folded(*id, cx))
+            .collect();
+
+        if ids_to_fold.is_empty() {
+            return;
+        }
+
+        let mut all_folded_excerpt_ids = Vec::new();
+        for buffer_id in &ids_to_fold {
+            let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(*buffer_id, cx);
+            all_folded_excerpt_ids.extend(folded_excerpts.into_iter().map(|(id, _)| id));
+        }
+
         self.display_map.update(cx, |display_map, cx| {
-            display_map.fold_buffers([buffer_id], cx)
+            display_map.fold_buffers(ids_to_fold.clone(), cx)
         });
 
         let snapshot = self.display_snapshot(cx);
         self.selections.change_with(&snapshot, |selections| {
-            selections.remove_selections_from_buffer(buffer_id);
+            for buffer_id in ids_to_fold {
+                selections.remove_selections_from_buffer(buffer_id);
+            }
         });
 
         cx.emit(EditorEvent::BufferFoldToggled {
-            ids: folded_excerpts.iter().map(|&(id, _)| id).collect(),
+            ids: all_folded_excerpt_ids,
             folded: true,
         });
         cx.notify();
@@ -23856,9 +23880,10 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 self.refresh_single_line_folds(window, cx);
-                self.refresh_matching_bracket_highlights(window, cx);
+                let snapshot = self.snapshot(window, cx);
+                self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols(cx);
-                self.refresh_sticky_headers(&self.snapshot(window, cx), cx);
+                self.refresh_sticky_headers(&snapshot, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }

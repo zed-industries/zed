@@ -362,9 +362,7 @@ impl CommitView {
                 });
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
-                        for buffer_id in binary_buffer_ids {
-                            editor.fold_buffer(buffer_id, cx);
-                        }
+                        editor.fold_buffers(binary_buffer_ids, cx);
                     });
                 }
             })?;
