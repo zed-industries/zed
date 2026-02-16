@@ -2495,7 +2495,7 @@ impl Snapshot {
     ///
     /// Relative paths that do not exist in the worktree may
     /// still be found using the `PATH` environment variable.
-    pub fn resolve_executable_path(&self, path: PathBuf) -> PathBuf {
+    pub fn resolve_relative_path(&self, path: PathBuf) -> PathBuf {
         if let Some(path_str) = path.to_str() {
             if let Some(remaining_path) = path_str.strip_prefix("~/") {
                 return home_dir().join(remaining_path);

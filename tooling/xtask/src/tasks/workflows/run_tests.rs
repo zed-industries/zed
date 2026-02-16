@@ -421,13 +421,13 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
-            .add_step(steps::setup_sccache(platform))
             .add_step(steps::setup_node())
             .when(
                 platform == Platform::Linux || platform == Platform::Mac,
                 |job| job.add_step(steps::cargo_install_nextest()),
             )
             .add_step(steps::clear_target_dir_if_large(platform))
+            .add_step(steps::setup_sccache(platform))
             .when(filter_packages, |job| {
                 job.add_step(
                     steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),

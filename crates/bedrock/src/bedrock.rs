@@ -16,7 +16,8 @@ pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStrea
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
-    ImageBlock as BedrockImageBlock, Message as BedrockMessage,
+    ImageBlock as BedrockImageBlock, ImageFormat as BedrockImageFormat,
+    ImageSource as BedrockImageSource, Message as BedrockMessage,
     ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
     ResponseStream as BedrockResponseStream, SystemContentBlock as BedrockSystemContentBlock,
     ToolResultBlock as BedrockToolResultBlock,
@@ -31,6 +32,8 @@ use thiserror::Error;
 
 pub use crate::models::*;
 
+pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
+
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
@@ -38,6 +41,8 @@ pub async fn stream_completion(
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into());
+
+    let mut additional_fields: HashMap<String, Document> = HashMap::new();
 
     match request.thinking {
         Some(Thinking::Enabled {
@@ -50,22 +55,25 @@ pub async fn stream_completion(
                     Document::Number(AwsNumber::PosInt(budget_tokens)),
                 ),
             ]);
-            response =
-                response.additional_model_request_fields(Document::Object(HashMap::from([(
-                    "thinking".to_string(),
-                    Document::from(thinking_config),
-                )])));
+            additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         Some(Thinking::Adaptive { effort: _ }) => {
             let thinking_config =
                 HashMap::from([("type".to_string(), Document::String("adaptive".to_string()))]);
-            response =
-                response.additional_model_request_fields(Document::Object(HashMap::from([(
-                    "thinking".to_string(),
-                    Document::from(thinking_config),
-                )])));
+            additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         _ => {}
+    }
+
+    if request.allow_extended_context {
+        additional_fields.insert(
+            "anthropic_beta".to_string(),
+            Document::Array(vec![Document::String(CONTEXT_1M_BETA_HEADER.to_string())]),
+        );
+    }
+
+    if !additional_fields.is_empty() {
+        response = response.additional_model_request_fields(Document::Object(additional_fields));
     }
 
     if request.tools.as_ref().is_some_and(|t| !t.tools.is_empty()) {
@@ -178,6 +186,7 @@ pub struct Request {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
+    pub allow_extended_context: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

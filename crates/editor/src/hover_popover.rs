@@ -719,7 +719,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = window.root::<Workspace>().flatten()
+        && let Some(workspace) = Workspace::for_window(window, cx)
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(

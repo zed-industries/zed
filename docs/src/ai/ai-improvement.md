@@ -1,3 +1,8 @@
+---
+title: AI Improvement and Data Collection - Zed
+description: Zed's opt-in approach to AI data collection for improving the agent panel and edit predictions.
+---
+
 # Zed AI Improvement
 
 ## Agent Panel

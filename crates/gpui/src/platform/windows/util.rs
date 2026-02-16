@@ -7,7 +7,6 @@ use windows::{
         Color,
         ViewManagement::{UIColorType, UISettings},
     },
-    Wdk::System::SystemServices::RtlGetVersion,
     Win32::{
         Foundation::*, Graphics::Dwm::*, System::LibraryLoader::LoadLibraryA,
         UI::WindowsAndMessaging::*,
@@ -16,26 +15,6 @@ use windows::{
 };
 
 use crate::*;
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum WindowsVersion {
-    Win10,
-    Win11,
-}
-
-impl WindowsVersion {
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        let mut version = unsafe { std::mem::zeroed() };
-        let status = unsafe { RtlGetVersion(&mut version) };
-
-        status.ok()?;
-        if version.dwBuildNumber >= 22000 {
-            Ok(WindowsVersion::Win11)
-        } else {
-            Ok(WindowsVersion::Win10)
-        }
-    }
-}
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;

@@ -123,3 +123,43 @@ See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#el
 Zed also supports HEEx templates. HEEx is a mix of [EEx](https://hexdocs.pm/eex/1.12.3/EEx.html) (Embedded Elixir) and HTML, and is used in Phoenix LiveView applications.
 
 - Tree-sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
+
+#### Using the Tailwind CSS Language Server with HEEx
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HEEx files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "phoenix-heex": "html"
+        },
+        "experimental": {
+          "classRegex": ["class=\"([^\"]*)\"", "class='([^']*)'"]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings, you will get completions for Tailwind CSS classes in HEEx template files. Examples:
+
+```heex
+<%!-- Standard class attribute --%>
+<div class="flex items-center <completion here>">
+  <p class="text-lg font-bold <completion here>">Hello World</p>
+</div>
+
+<%!-- With Elixir expression --%>
+<div class={"flex #{@custom_class} <completion here>"}>
+  Content
+</div>
+
+<%!-- With Phoenix function --%>
+<div class={class_list(["flex", "items-center", "<completion here>"])}>
+  Content
+</div>
+```

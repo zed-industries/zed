@@ -54,7 +54,7 @@ use std::{
 };
 use util::{
     ResultExt,
-    command::{new_smol_command, new_std_command},
+    command::{new_command, new_std_command},
 };
 
 #[allow(non_upper_case_globals)]
@@ -848,7 +848,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_smol_command("open")
+                if let Some(mut child) = new_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -1258,16 +1258,33 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
+    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
+    // as NSNotificationCenter delivers this notification synchronously and it may fire while
+    // the App is already borrowed (same pattern as quit() above).
+    use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+
     let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.on_thermal_state_change.take() {
-        drop(lock);
-        callback();
-        platform
-            .0
-            .lock()
-            .on_thermal_state_change
-            .get_or_insert(callback);
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            platform_ptr,
+            Some(on_thermal_state_change),
+        );
+    }
+
+    unsafe extern "C" fn on_thermal_state_change(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_thermal_state_change.take() {
+            drop(lock);
+            callback();
+            platform
+                .0
+                .lock()
+                .on_thermal_state_change
+                .get_or_insert(callback);
+        }
     }
 }
 

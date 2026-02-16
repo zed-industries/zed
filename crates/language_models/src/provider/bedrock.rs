@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -14,11 +13,12 @@ use bedrock::bedrock_client::types::{
     ReasoningContentBlockDelta, StopReason,
 };
 use bedrock::{
-    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
-    BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock,
-    BedrockThinkingTextBlock, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockImageBlock,
+    BedrockImageFormat, BedrockImageSource, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
+    BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
+    BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
+    Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -48,6 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::util::parse_tool_arguments;
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -111,6 +112,7 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
+    pub allow_extended_context: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -382,6 +384,13 @@ impl State {
             .and_then(|s| s.allow_global)
             .unwrap_or(false)
     }
+
+    fn get_allow_extended_context(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_extended_context)
+            .unwrap_or(false)
+    }
 }
 
 pub struct BedrockLanguageModelProvider {
@@ -628,7 +637,14 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(
+            self.model.mode(),
+            BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
+        )
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -672,9 +688,14 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
-            (state.get_region(), state.get_allow_global())
-        });
+        let (region, allow_global, allow_extended_context) =
+            cx.read_entity(&self.state, |state, _cx| {
+                (
+                    state.get_region(),
+                    state.get_allow_global(),
+                    state.get_allow_extended_context(),
+                )
+            });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -685,6 +706,8 @@ impl LanguageModel for BedrockModel {
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
+        let use_extended_context = allow_extended_context && self.model.supports_extended_context();
+
         let request = match into_bedrock(
             request,
             model_id,
@@ -692,6 +715,7 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
             self.model.mode(),
             self.model.supports_caching(),
+            use_extended_context,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -747,9 +771,14 @@ pub fn into_bedrock(
     max_output_tokens: u64,
     mode: BedrockModelMode,
     supports_caching: bool,
+    allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
+
+    // Track whether messages contain tool content - Bedrock requires toolConfig
+    // when tool blocks are present, so we may need to add a dummy tool
+    let mut messages_contain_tool_content = false;
 
     for message in request.messages {
         if message.contents_empty() {
@@ -804,6 +833,7 @@ pub fn into_bedrock(
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => {
+                            messages_contain_tool_content = true;
                             let input = if tool_use.input.is_null() {
                                 // Bedrock API requires valid JsonValue, not null, for tool use input
                                 value_to_aws_document(&serde_json::json!({}))
@@ -818,19 +848,51 @@ pub fn into_bedrock(
                                 .context("failed to build Bedrock tool use block")
                                 .log_err()
                                 .map(BedrockInnerContent::ToolUse)
-                        },
+                        }
                         MessageContent::ToolResult(tool_result) => {
+                            messages_contain_tool_content = true;
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
-                                    LanguageModelToolResultContent::Image(_) => {
-                                        BedrockToolResultContentBlock::Text(
-                                            // TODO: Bedrock image support
-                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
-                                        )
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        use base64::Engine;
+
+                                        match base64::engine::general_purpose::STANDARD
+                                            .decode(image.source.as_bytes())
+                                        {
+                                            Ok(image_bytes) => {
+                                                match BedrockImageBlock::builder()
+                                                    .format(BedrockImageFormat::Png)
+                                                    .source(BedrockImageSource::Bytes(
+                                                        BedrockBlob::new(image_bytes),
+                                                    ))
+                                                    .build()
+                                                {
+                                                    Ok(image_block) => {
+                                                        BedrockToolResultContentBlock::Image(
+                                                            image_block,
+                                                        )
+                                                    }
+                                                    Err(err) => {
+                                                        BedrockToolResultContentBlock::Text(
+                                                            format!(
+                                                                "[Failed to build image block: {}]",
+                                                                err
+                                                            ),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                BedrockToolResultContentBlock::Text(format!(
+                                                    "[Failed to decode tool result image: {}]",
+                                                    err
+                                                ))
+                                            }
+                                        }
                                     }
                                 })
                                 .status({
@@ -845,7 +907,22 @@ pub fn into_bedrock(
                                 .log_err()
                                 .map(BedrockInnerContent::ToolResult)
                         }
-                        _ => None,
+                        MessageContent::Image(image) => {
+                            use base64::Engine;
+
+                            let image_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(image.source.as_bytes())
+                                .context("failed to decode base64 image data")
+                                .log_err()?;
+
+                            BedrockImageBlock::builder()
+                                .format(BedrockImageFormat::Png)
+                                .source(BedrockImageSource::Bytes(BedrockBlob::new(image_bytes)))
+                                .build()
+                                .context("failed to build Bedrock image block")
+                                .log_err()
+                                .map(BedrockInnerContent::Image)
+                        }
                     })
                     .collect();
                 if message.cache && supports_caching {
@@ -905,6 +982,23 @@ pub fn into_bedrock(
         })
         .collect();
 
+    // Bedrock requires toolConfig when messages contain tool use/result blocks.
+    // If no tools are defined but messages contain tool content (e.g., when
+    // summarising a conversation that used tools), add a dummy tool to satisfy
+    // the API requirement.
+    if tool_spec.is_empty() && messages_contain_tool_content {
+        tool_spec.push(BedrockTool::ToolSpec(
+            BedrockToolSpec::builder()
+                .name("_placeholder")
+                .description("Placeholder tool to satisfy Bedrock API requirements when conversation history contains tool usage")
+                .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                    &serde_json::json!({"type": "object", "properties": {}}),
+                )))
+                .build()
+                .context("failed to build placeholder tool spec")?,
+        ));
+    }
+
     if !tool_spec.is_empty() && supports_caching {
         tool_spec.push(BedrockTool::CachePoint(
             CachePointBlock::builder()
@@ -955,6 +1049,7 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        allow_extended_context,
     })
 }
 
@@ -1099,12 +1194,8 @@ pub fn map_to_language_model_completion_events(
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
-                                let input = if tool_use.input_json.is_empty() {
-                                    Value::Null
-                                } else {
-                                    serde_json::Value::from_str(&tool_use.input_json)
-                                        .unwrap_or(Value::Null)
-                                };
+                                let input = parse_tool_arguments(&tool_use.input_json)
+                                    .unwrap_or_else(|_| Value::Object(Default::default()));
 
                                 Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {
