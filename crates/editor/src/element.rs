@@ -5268,8 +5268,7 @@ impl EditorElement {
                 cx,
             )
         });
-        let Some((popover_position, hover_popovers, popover_alignment)) = hover_popovers
-        else {
+        let Some((popover_position, hover_popovers, popover_alignment)) = hover_popovers else {
             return;
         };
 
