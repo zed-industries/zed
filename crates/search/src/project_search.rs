@@ -50,10 +50,7 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
-    searchable::{
-        CollapseDirection, Direction, SearchEvent, SearchToken, SearchableItem,
-        SearchableItemHandle,
-    },
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 actions!(
@@ -270,7 +267,6 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
-    results_collapsed: bool,
     current_search_on_input: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -941,18 +937,7 @@ impl ProjectSearchView {
         );
         subscriptions.push(cx.subscribe(
             &results_editor,
-            |this, _editor, event: &SearchEvent, cx| {
-                match event {
-                    SearchEvent::ResultsCollapsedChanged(collapsed_direction) => {
-                        match collapsed_direction {
-                            CollapseDirection::Collapsed => this.results_collapsed = true,
-                            CollapseDirection::Expanded => this.results_collapsed = false,
-                        }
-                    }
-                    _ => (),
-                };
-                cx.notify();
-            },
+            |_this, _editor, _event: &SearchEvent, cx| cx.notify(),
         ));
 
         let included_files_editor = cx.new(|cx| {
@@ -1028,7 +1013,6 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
-            results_collapsed: false,
             current_search_on_input: Task::ready(()),
             _subscriptions: subscriptions,
         };
@@ -2845,9 +2829,15 @@ pub mod tests {
                 })
             })
             .expect("Should fold fine");
+        cx.run_until_parked();
 
         let results_collapsed = search_view
-            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
             .expect("got results_collapsed");
 
         assert!(results_collapsed);
@@ -2858,9 +2848,15 @@ pub mod tests {
                 })
             })
             .expect("Should unfold fine");
+        cx.run_until_parked();
 
         let results_collapsed = search_view
-            .read_with(cx, |search_view, _| search_view.results_collapsed)
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .has_any_buffer_folded(cx)
+            })
             .expect("got results_collapsed");
 
         assert!(!results_collapsed);
@@ -2887,7 +2883,6 @@ pub mod tests {
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
-        let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
         let search_view = cx.add_window(|window, cx| {
             ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
