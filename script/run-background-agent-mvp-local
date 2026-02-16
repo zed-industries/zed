@@ -100,7 +100,8 @@ def resolve_crashes(args) -> list[dict[str, str]]:
                 str(top),
                 "--output",
                 output_path,
-            ]
+            ],
+            capture_output=True,
         )
         with open(output_path, "r", encoding="utf-8") as file:
             payload = json.load(file)
