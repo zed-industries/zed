@@ -37,7 +37,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Install Droid CLI
         run: |
@@ -171,6 +171,7 @@ Constraints:
 - Do not merge or auto-approve.
 - Keep changes narrowly scoped to this crash.
 - Do not modify files in .github/, .factory/, or script/ directories.
+- When investigating git history, limit your search to the last 2 weeks of commits. Do not traverse older history.
 - If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
 EOF
 
