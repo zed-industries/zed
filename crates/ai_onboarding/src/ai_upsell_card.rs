@@ -250,6 +250,15 @@ impl RenderOnce for AiUpsellCard {
                             .mb_2(),
                     )
                     .child(PlanDefinitions.pro_plan()),
+                Some(Plan::ZedStudent) => card
+                    .child(certified_user_stamp)
+                    .child(Label::new("You're in the Zed Student plan").size(LabelSize::Large))
+                    .child(
+                        Label::new("Here's what you get:")
+                            .color(Color::Muted)
+                            .mb_2(),
+                    )
+                    .child(PlanDefinitions.student_plan()),
             },
             // Signed Out State
             _ => card

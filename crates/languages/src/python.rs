@@ -8,7 +8,7 @@ use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller};
+use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -30,9 +30,9 @@ use terminal::terminal_settings::TerminalSettings;
 use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
-use std::process::Stdio;
+use util::command::Stdio;
 
-use util::command::new_smol_command;
+use util::command::new_command;
 use util::fs::{make_file_executable, remove_matching};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -550,11 +550,11 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -1393,7 +1393,15 @@ impl ToolchainLister for PythonToolchainProvider {
                     }
 
                     if let Some(name) = &toolchain.environment.name {
-                        activation_script.push(format!("{manager} activate {name}"));
+                        if let Some(quoted_name) = shell.try_quote(name) {
+                            activation_script.push(format!("{manager} activate {quoted_name}"));
+                        } else {
+                            log::warn!(
+                                "Could not safely quote environment name {:?}, falling back to base",
+                                name
+                            );
+                            activation_script.push(format!("{manager} activate base"));
+                        }
                     } else {
                         activation_script.push(format!("{manager} activate base"));
                     }
@@ -1620,7 +1628,7 @@ impl PyLspAdapter {
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
-            util::command::new_smol_command(python_path)
+            util::command::new_command(python_path)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -1641,7 +1649,7 @@ impl PyLspAdapter {
             // Try to detect situations where `python3` exists but is not a real Python interpreter.
             // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
             // when run with no arguments, and just fails otherwise.
-            let Some(output) = new_smol_command(&path)
+            let Some(output) = new_command(&path)
                 .args(["-c", "print(1 + 2)"])
                 .output()
                 .await
@@ -1708,11 +1716,11 @@ impl LspAdapter for PyLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -1853,7 +1861,7 @@ impl LspInstaller for PyLspAdapter {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
-            util::command::new_smol_command(pip_path.as_path())
+            util::command::new_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
                 .arg("--upgrade")
@@ -1864,7 +1872,7 @@ impl LspInstaller for PyLspAdapter {
             "python-lsp-server[all] installation failed"
         );
         ensure!(
-            util::command::new_smol_command(pip_path)
+            util::command::new_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
                 .arg("--upgrade")
@@ -2000,11 +2008,11 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("def {}():\n", name);
                 let filter_range = 4..4 + name.len();
@@ -2421,7 +2429,7 @@ impl LspAdapter for RuffLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .args(&["config", "--output-format", "json"])
             .stdout(Stdio::piped())
@@ -2629,6 +2637,76 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::python::python_module_name_from_relative_path;
+
+    #[gpui::test]
+    async fn test_conda_activation_script_injection(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let provider = PythonToolchainProvider;
+        let malicious_name = "foo; rm -rf /";
+
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": malicious_name,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            script
+                .iter()
+                .any(|s| s.contains("conda activate 'foo; rm -rf /'")),
+            "Script should contain quoted malicious name, actual: {:?}",
+            script
+        );
+    }
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {

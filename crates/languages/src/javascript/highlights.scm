@@ -243,18 +243,29 @@
 )
 
 [
+  "abstract"
   "as"
   "async"
   "await"
   "debugger"
+  "declare"
   "default"
   "delete"
   "extends"
   "get"
+  "implements"
   "in"
   "instanceof"
+  "keyof"
+  "module"
+  "namespace"
   "new"
   "of"
+  "override"
+  "private"
+  "protected"
+  "public"
+  "readonly"
   "set"
   "static"
   "target"
@@ -270,6 +281,9 @@
   "var"
   "function"
   "class"
+  "enum"
+  "interface"
+  "type"
 ] @keyword.declaration
 
 [
@@ -307,25 +321,6 @@
   ">" @punctuation.bracket)
 
 (decorator "@" @punctuation.special)
-
-; Keywords
-
-[ "abstract"
-  "declare"
-  "enum"
-  "export"
-  "implements"
-  "interface"
-  "keyof"
-  "module"
-  "namespace"
-  "private"
-  "protected"
-  "public"
-  "type"
-  "readonly"
-  "override"
-] @keyword
 
 ; JSX elements
 (jsx_opening_element

@@ -33,9 +33,7 @@ impl AgentTool for NowTool {
     type Input = NowToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "now"
-    }
+    const NAME: &'static str = "now";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other

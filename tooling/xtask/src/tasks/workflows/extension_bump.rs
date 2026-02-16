@@ -1,12 +1,12 @@
 use gh_workflow::{ctx::Context, *};
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
-    extension_release::extension_workflow_secrets,
     extension_tests::{self},
     runners,
     steps::{
-        self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, named,
+        self, CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob,
+        checkout_repo, dependant_job, named,
     },
     vars::{
         JobOutput, StepOutput, WorkflowInput, WorkflowSecret, one_workflow_per_non_main_branch,
@@ -23,25 +23,31 @@ pub(crate) fn extension_bump() -> Workflow {
     let force_bump = WorkflowInput::bool("force-bump", None);
 
     let (app_id, app_secret) = extension_workflow_secrets();
-    let (check_bump_needed, needs_bump, current_version) = check_bump_needed();
+    let (check_version_changed, version_changed, current_version) = check_version_changed();
 
-    let needs_bump = needs_bump.as_job_output(&check_bump_needed);
-    let current_version = current_version.as_job_output(&check_bump_needed);
+    let version_changed = version_changed.as_job_output(&check_version_changed);
+    let current_version = current_version.as_job_output(&check_version_changed);
 
-    let dependencies = [&check_bump_needed];
+    let dependencies = [&check_version_changed];
     let bump_version = bump_extension_version(
         &dependencies,
         &current_version,
         &bump_type,
-        &needs_bump,
+        &version_changed,
         &force_bump,
         &app_id,
         &app_secret,
     );
     let create_label = create_version_label(
         &dependencies,
-        &needs_bump,
+        &version_changed,
         &current_version,
+        &app_id,
+        &app_secret,
+    );
+    let trigger_release = trigger_release(
+        &[&check_version_changed, &create_label],
+        current_version,
         &app_id,
         &app_secret,
     );
@@ -69,12 +75,13 @@ pub(crate) fn extension_bump() -> Workflow {
             "ZED_EXTENSION_CLI_SHA",
             extension_tests::ZED_EXTENSION_CLI_SHA,
         ))
-        .add_job(check_bump_needed.name, check_bump_needed.job)
+        .add_job(check_version_changed.name, check_version_changed.job)
         .add_job(bump_version.name, bump_version.job)
         .add_job(create_label.name, create_label.job)
+        .add_job(trigger_release.name, trigger_release.job)
 }
 
-fn check_bump_needed() -> (NamedJob, StepOutput, StepOutput) {
+fn check_version_changed() -> (NamedJob, StepOutput, StepOutput) {
     let (compare_versions, version_changed, current_version) = compare_versions();
 
     let job = Job::default()
@@ -96,7 +103,7 @@ fn check_bump_needed() -> (NamedJob, StepOutput, StepOutput) {
 
 fn create_version_label(
     dependencies: &[&NamedJob],
-    needs_bump: &JobOutput,
+    version_changed_output: &JobOutput,
     current_version: &JobOutput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
@@ -105,8 +112,9 @@ fn create_version_label(
         generate_token(&app_id.to_string(), &app_secret.to_string(), None);
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && github.ref == 'refs/heads/main' && {} == 'false'",
-            needs_bump.expr(),
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.event_name == 'push' && \
+            github.ref == 'refs/heads/main' && {version_changed} == 'true'",
+            version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(1u32)
@@ -122,28 +130,24 @@ fn create_version_tag(current_version: &JobOutput, generated_token: StepOutput) 
         Input::default()
             .add(
                 "script",
-                format!(
-                    indoc! {r#"
-                        github.rest.git.createRef({{
-                            owner: context.repo.owner,
-                            repo: context.repo.repo,
-                            ref: 'refs/tags/v{}',
-                            sha: context.sha
-                        }})"#
-                    },
-                    current_version
-                ),
+                formatdoc! {r#"
+                    github.rest.git.createRef({{
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        ref: 'refs/tags/v{current_version}',
+                        sha: context.sha
+                    }})"#
+                },
             )
             .add("github-token", generated_token.to_string()),
     )
 }
 
 /// Compares the current and previous commit and checks whether versions changed inbetween.
-fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
-    let check_needs_bump = named::bash(format!(
-        indoc! {
-        r#"
-        CURRENT_VERSION="$({})"
+pub(crate) fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
+    let check_needs_bump = named::bash(formatdoc! {
+    r#"
+        CURRENT_VERSION="$({VERSION_CHECK})"
         PR_PARENT_SHA="${{{{ github.event.pull_request.head.sha }}}}"
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
@@ -154,31 +158,29 @@ fn compare_versions() -> (Step<Run>, StepOutput, StepOutput) {
             git checkout "$(git log -1 --format=%H)"~1
         fi
 
-        PARENT_COMMIT_VERSION="$({})"
+        PARENT_COMMIT_VERSION="$({VERSION_CHECK})"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
-          echo "needs_bump=true" >> "$GITHUB_OUTPUT" || \
-          echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+            echo "version_changed=false" >> "$GITHUB_OUTPUT" || \
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
 
         echo "current_version=${{CURRENT_VERSION}}" >> "$GITHUB_OUTPUT"
         "#
-        },
-        VERSION_CHECK, VERSION_CHECK
-    ))
+    })
     .id("compare-versions-check");
 
-    let needs_bump = StepOutput::new(&check_needs_bump, "needs_bump");
+    let version_changed = StepOutput::new(&check_needs_bump, "version_changed");
     let current_version = StepOutput::new(&check_needs_bump, "current_version");
 
-    (check_needs_bump, needs_bump, current_version)
+    (check_needs_bump, version_changed, current_version)
 }
 
 fn bump_extension_version(
     dependencies: &[&NamedJob],
     current_version: &JobOutput,
     bump_type: &WorkflowInput,
-    needs_bump: &JobOutput,
-    force_bump: &WorkflowInput,
+    version_changed_output: &JobOutput,
+    force_bump_output: &WorkflowInput,
     app_id: &WorkflowSecret,
     app_secret: &WorkflowSecret,
 ) -> NamedJob {
@@ -188,12 +190,12 @@ fn bump_extension_version(
 
     let job = steps::dependant_job(dependencies)
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({} == 'true' || {} == 'true')",
-            force_bump.expr(),
-            needs_bump.expr(),
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} &&\n({force_bump} == 'true' || {version_changed} == 'false')",
+            force_bump = force_bump_output.expr(),
+            version_changed = version_changed_output.expr(),
         )))
         .runs_on(runners::LINUX_SMALL)
-        .timeout_minutes(1u32)
+        .timeout_minutes(3u32)
         .add_step(generate_token)
         .add_step(steps::checkout_repo())
         .add_step(install_bump_2_version())
@@ -254,32 +256,29 @@ fn install_bump_2_version() -> Step<Run> {
 }
 
 fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step<Run>, StepOutput) {
-    let step = named::bash(format!(
-        indoc! {r#"
-            OLD_VERSION="{}"
+    let step = named::bash(formatdoc! {r#"
+        OLD_VERSION="{current_version}"
 
-            BUMP_FILES=("extension.toml")
-            if [[ -f "Cargo.toml" ]]; then
-                BUMP_FILES+=("Cargo.toml")
-            fi
+        BUMP_FILES=("extension.toml")
+        if [[ -f "Cargo.toml" ]]; then
+            BUMP_FILES+=("Cargo.toml")
+        fi
 
-            bump2version \
-                --search "version = \"{{current_version}}"\" \
-                --replace "version = \"{{new_version}}"\" \
-                --current-version "$OLD_VERSION" \
-                --no-configured-files {} "${{BUMP_FILES[@]}}"
+        bump2version \
+            --search "version = \"{{current_version}}"\" \
+            --replace "version = \"{{new_version}}"\" \
+            --current-version "$OLD_VERSION" \
+            --no-configured-files {bump_type} "${{BUMP_FILES[@]}}"
 
-            if [[ -f "Cargo.toml" ]]; then
-                cargo update --workspace
-            fi
+        if [[ -f "Cargo.toml" ]]; then
+            cargo update --workspace
+        fi
 
-            NEW_VERSION="$({})"
+        NEW_VERSION="$({VERSION_CHECK})"
 
-            echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
-            "#
-        },
-        current_version, bump_type, VERSION_CHECK
-    ))
+        echo "new_version=${{NEW_VERSION}}" >> "$GITHUB_OUTPUT"
+        "#
+    })
     .id("bump-version");
 
     let new_version = StepOutput::new(&step, "new_version");
@@ -287,21 +286,18 @@ fn bump_version(current_version: &JobOutput, bump_type: &WorkflowInput) -> (Step
 }
 
 fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> Step<Use> {
-    let formatted_version = format!("v{}", new_version);
+    let formatted_version = format!("v{new_version}");
 
     named::uses("peter-evans", "create-pull-request", "v7").with(
         Input::default()
-            .add("title", format!("Bump version to {}", new_version))
+            .add("title", format!("Bump version to {new_version}"))
             .add(
                 "body",
-                format!(
-                    "This PR bumps the version of this extension to {}",
-                    formatted_version
-                ),
+                format!("This PR bumps the version of this extension to {formatted_version}",),
             )
             .add(
                 "commit-message",
-                format!("Bump version to {}", formatted_version),
+                format!("Bump version to {formatted_version}"),
             )
             .add("branch", "zed-zippy-autobump")
             .add(
@@ -314,6 +310,65 @@ fn create_pull_request(new_version: StepOutput, generated_token: StepOutput) -> 
             .add("sign-commits", true)
             .add("assignees", Context::github().actor().to_string()),
     )
+}
+
+fn trigger_release(
+    dependencies: &[&NamedJob],
+    version: JobOutput,
+    app_id: &WorkflowSecret,
+    app_secret: &WorkflowSecret,
+) -> NamedJob {
+    let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
+    let (generate_token, generated_token) = generate_token(
+        &app_id.to_string(),
+        &app_secret.to_string(),
+        Some(extension_registry),
+    );
+    let (get_extension_id, extension_id) = get_extension_id();
+
+    let job = dependant_job(dependencies)
+        .with_repository_owner_guard()
+        .runs_on(runners::LINUX_SMALL)
+        .add_step(generate_token)
+        .add_step(checkout_repo())
+        .add_step(get_extension_id)
+        .add_step(release_action(extension_id, version, generated_token));
+
+    named::job(job)
+}
+
+fn get_extension_id() -> (Step<Run>, StepOutput) {
+    let step = named::bash(indoc! {
+    r#"
+        EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
+
+        echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
+    "#})
+    .id("get-extension-id");
+
+    let extension_id = StepOutput::new(&step, "extension_id");
+
+    (step, extension_id)
+}
+
+fn release_action(
+    extension_id: StepOutput,
+    version: JobOutput,
+    generated_token: StepOutput,
+) -> Step<Use> {
+    named::uses("huacnlee", "zed-extension-action", "v2")
+        .add_with(("extension-name", extension_id.to_string()))
+        .add_with(("push-to", "zed-industries/extensions"))
+        .add_with(("tag", format!("v{version}")))
+        .add_env(("COMMITTER_TOKEN", generated_token.to_string()))
+}
+
+fn extension_workflow_secrets() -> (WorkflowSecret, WorkflowSecret) {
+    let app_id = WorkflowSecret::new("app-id", "The app ID used to create the PR");
+    let app_secret =
+        WorkflowSecret::new("app-secret", "The app secret for the corresponding app ID");
+
+    (app_id, app_secret)
 }
 
 pub(crate) struct RepositoryTarget {

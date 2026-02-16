@@ -1,3 +1,8 @@
+---
+title: Install Zed - macOS, Linux, Windows
+description: Download and install Zed on macOS, Linux, or Windows. Includes Homebrew, direct download, and package manager options.
+---
+
 # Installing Zed
 
 ## Download Zed
@@ -46,7 +51,7 @@ curl -f https://zed.dev/install.sh | sh
 curl -f https://zed.dev/install.sh | ZED_VERSION=0.216.0 sh
 ```
 
-If you'd like to help us test our new features, you can also install our preview build:
+To install the preview build, which receives updates about a week ahead of stable:
 
 ```sh
 curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh

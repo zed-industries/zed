@@ -39,7 +39,6 @@ pub(crate) struct WindowsPlatform {
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
     direct_write_text_system: Option<Arc<DirectWriteTextSystem>>,
-    windows_version: WindowsVersion,
     drop_target_helper: Option<IDropTargetHelper>,
     /// Flag to instruct the `VSyncProvider` thread to invalidate the directx devices
     /// as resizing them has failed, causing us to have lost at least the render target.
@@ -179,7 +178,6 @@ impl WindowsPlatform {
         } else {
             HICON::default()
         };
-        let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             inner,
@@ -192,7 +190,6 @@ impl WindowsPlatform {
             text_system,
             direct_write_text_system,
             disable_direct_composition,
-            windows_version,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
         })
@@ -221,7 +218,6 @@ impl WindowsPlatform {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
             current_cursor: self.inner.state.current_cursor.get(),
-            windows_version: self.windows_version,
             drop_target_helper: self.drop_target_helper.clone().unwrap(),
             validation_number: self.inner.validation_number,
             main_receiver: self.inner.main_receiver.clone(),
@@ -240,14 +236,25 @@ impl WindowsPlatform {
             }
         });
         self.inner.state.jump_list.borrow_mut().dock_menus = actions;
-        update_jump_list(&self.inner.state.jump_list.borrow()).log_err();
+        let borrow = self.inner.state.jump_list.borrow();
+        let dock_menus = borrow
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = borrow.recent_workspaces.clone();
+        self.background_executor
+            .spawn(async move {
+                update_jump_list(&recent_workspaces, &dock_menus).log_err();
+            })
+            .detach();
     }
 
     fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
             if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
@@ -256,8 +263,18 @@ impl WindowsPlatform {
         });
         let mut jump_list = self.inner.state.jump_list.borrow_mut();
         jump_list.dock_menus = actions;
-        jump_list.recent_workspaces = entries;
-        update_jump_list(&jump_list).log_err().unwrap_or_default()
+        jump_list.recent_workspaces = entries.into();
+        let dock_menus = jump_list
+            .dock_menus
+            .iter()
+            .map(|menu| (menu.name.clone(), menu.description.clone()))
+            .collect::<Vec<_>>();
+        let recent_workspaces = jump_list.recent_workspaces.clone();
+        self.background_executor.spawn(async move {
+            update_jump_list(&recent_workspaces, &dock_menus)
+                .log_err()
+                .unwrap_or_default()
+        })
     }
 
     fn find_current_active_window(&self) -> Option<HWND> {
@@ -368,6 +385,12 @@ impl Platform for WindowsPlatform {
             .set(Some(callback));
     }
 
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn thermal_state(&self) -> ThermalState {
+        ThermalState::Nominal
+    }
+
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
         if !self.headless {
@@ -417,20 +440,29 @@ impl Platform for WindowsPlatform {
             app_path.display(),
         );
 
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "We are restarting ourselves, using std command thus is fine"
-        )] // todo(shell): There might be no powershell on the system
-        let restart_process =
-            util::command::new_std_command(util::shell::get_windows_system_shell())
-                .arg("-command")
-                .arg(script)
-                .spawn();
+        // Defer spawning to the foreground executor so it runs after the
+        // current `AppCell` borrow is released. On Windows, `Command::spawn()`
+        // can pump the Win32 message loop (via `CreateProcessW`), which
+        // re-enters message handling possibly resulting in another mutable
+        // borrow of the `AppCell` ending up with a double borrow panic
+        self.foreground_executor
+            .spawn(async move {
+                #[allow(
+                    clippy::disallowed_methods,
+                    reason = "We are restarting ourselves, using std command thus is fine"
+                )]
+                let restart_process =
+                    util::command::new_std_command(util::shell::get_windows_system_shell())
+                        .arg("-command")
+                        .arg(script)
+                        .spawn();
 
-        match restart_process {
-            Ok(_) => self.quit(),
-            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
-        }
+                match restart_process {
+                    Ok(_) => unsafe { PostQuitMessage(0) },
+                    Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+                }
+            })
+            .detach();
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {}
@@ -760,7 +792,7 @@ impl Platform for WindowsPlatform {
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         self.update_jump_list(menus, entries)
     }
 }
@@ -971,7 +1003,6 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
-    pub(crate) windows_version: WindowsVersion,
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,

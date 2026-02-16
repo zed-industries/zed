@@ -339,6 +339,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
+            .add_request_handler(forward_read_only_project_request::<proto::DownloadFileByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDefaultBranch>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -391,6 +392,9 @@ impl Server {
             .add_message_handler(create_image_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::RefreshSemanticTokens>,
+            )
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)

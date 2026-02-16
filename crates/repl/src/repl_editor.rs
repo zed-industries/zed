@@ -8,7 +8,9 @@ use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
+use workspace::{Workspace, notifications::NotificationId};
 
+use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
@@ -68,6 +70,112 @@ pub fn assign_kernelspec(
     store.update(cx, |store, _cx| {
         store.insert_session(weak_editor.entity_id(), session.clone());
     });
+
+    Ok(())
+}
+
+pub fn install_ipykernel_and_assign(
+    kernel_specification: KernelSpecification,
+    weak_editor: WeakEntity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let KernelSpecification::PythonEnv(ref env_spec) = kernel_specification else {
+        return assign_kernelspec(kernel_specification, weak_editor, window, cx);
+    };
+
+    let python_path = env_spec.path.clone();
+    let env_name = env_spec.name.clone();
+    let env_spec = env_spec.clone();
+
+    struct IpykernelInstall;
+    let notification_id = NotificationId::unique::<IpykernelInstall>();
+
+    let workspace = Workspace::for_window(window, cx);
+    if let Some(workspace) = &workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(
+                    notification_id.clone(),
+                    format!("Installing ipykernel in {}...", env_name),
+                ),
+                cx,
+            );
+        });
+    }
+
+    let weak_workspace = workspace.map(|w| w.downgrade());
+    let window_handle = window.window_handle();
+
+    let install_task = cx.background_spawn(async move {
+        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
+            .args(&["-m", "pip", "install", "ipykernel"])
+            .output()
+            .await
+            .context("failed to run pip install ipykernel")?;
+
+        if output.status.success() {
+            anyhow::Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
+        }
+    });
+
+    cx.spawn(async move |cx| {
+        let result = install_task.await;
+
+        match result {
+            Ok(()) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!("ipykernel installed in {}", env_name),
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        let updated_spec =
+                            KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
+                                has_ipykernel: true,
+                                ..env_spec
+                            });
+                        assign_kernelspec(updated_spec, weak_editor, window, cx).ok();
+                    })
+                    .ok();
+            }
+            Err(error) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!(
+                                        "Failed to install ipykernel in {}: {}",
+                                        env_name, error
+                                    ),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+        }
+    })
+    .detach();
 
     Ok(())
 }

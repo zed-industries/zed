@@ -11,16 +11,14 @@ pub struct RawCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     pub stop: Vec<Cow<'static, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredictEditsV3Request {
     #[serde(flatten)]
     pub input: zeta_prompt::ZetaPromptInput,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub prompt_version: zeta_prompt::ZetaVersion,
     #[serde(default)]
     pub trigger: PredictEditsRequestTrigger,
 }

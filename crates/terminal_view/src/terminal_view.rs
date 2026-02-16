@@ -19,6 +19,14 @@ use project::{Project, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
+use std::{
+    cmp,
+    ops::{Range, RangeInclusive},
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 use task::TaskId;
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
@@ -48,18 +56,11 @@ use workspace::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{Direction, SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
+    },
 };
-use zed_actions::assistant::InlineAssist;
-
-use std::{
-    cmp,
-    ops::{Range, RangeInclusive},
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
-};
+use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
 struct ImeState {
     marked_text: String,
@@ -496,6 +497,13 @@ impl TerminalView {
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
+        let has_selection = self
+            .terminal
+            .read(cx)
+            .last_content
+            .selection_text
+            .as_ref()
+            .is_some_and(|text| !text.is_empty());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
@@ -507,6 +515,9 @@ impl TerminalView {
                 .when(assistant_enabled, |menu| {
                     menu.separator()
                         .action("Inline Assist", Box::new(InlineAssist::default()))
+                        .when(has_selection, |menu| {
+                            menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                        })
                 })
                 .separator()
                 .action(
@@ -1485,7 +1496,7 @@ impl Item for TerminalView {
         }
     }
 
-    fn breadcrumbs(&self, _: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
@@ -1655,6 +1666,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         matches: &[Self::Match],
         _active_match_index: Option<usize>,
+        _token: SearchToken,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1677,6 +1689,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         index: usize,
         _: &[Self::Match],
+        _token: SearchToken,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1686,7 +1699,13 @@ impl SearchableItem for TerminalView {
     }
 
     /// Add selections for all matches given.
-    fn select_matches(&mut self, matches: &[Self::Match], _: &mut Window, cx: &mut Context<Self>) {
+    fn select_matches(
+        &mut self,
+        matches: &[Self::Match],
+        _token: SearchToken,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal()
             .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
@@ -1712,6 +1731,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
@@ -1765,6 +1785,7 @@ impl SearchableItem for TerminalView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -1776,13 +1797,12 @@ impl SearchableItem for TerminalView {
 /// Falls back to home directory when no project directory is available.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let directory = match &TerminalSettings::get_global(cx).working_directory {
-        WorkingDirectory::CurrentProjectDirectory => workspace
+        WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)
-            .active_project_directory(cx)
-            .as_deref()
-            .map(Path::to_path_buf)
-            .or_else(|| first_project_directory(workspace, cx)),
+            .active_entry_directory(cx)
+            .or_else(|| current_project_directory(workspace, cx)),
+        WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
         WorkingDirectory::Always { directory } => shellexpand::full(directory)
@@ -1792,6 +1812,17 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
     };
     directory.or_else(dirs::home_dir)
 }
+
+fn current_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    workspace
+        .project()
+        .read(cx)
+        .active_project_directory(cx)
+        .as_deref()
+        .map(Path::to_path_buf)
+        .or_else(|| first_project_directory(workspace, cx))
+}
+
 ///Gets the first project's home directory, or the home directory
 fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
@@ -1810,8 +1841,9 @@ mod tests {
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
+    use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::AppState;
+    use workspace::{AppState, MultiWorkspace};
 
     // Working directory calculation tests
 
@@ -1919,6 +1951,67 @@ mod tests {
         });
     }
 
+    // active_entry_directory: No active entry -> returns None (used by CurrentFileDirectory)
+    #[gpui::test]
+    async fn active_entry_directory_no_active_entry(cx: &mut TestAppContext) {
+        let (project, _workspace) = init_test(cx).await;
+
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+
+        cx.update(|cx| {
+            assert!(project.read(cx).active_entry().is_none());
+
+            let res = project.read(cx).active_entry_directory(cx);
+            assert_eq!(res, None);
+        });
+    }
+
+    // active_entry_directory: Active entry is file -> returns parent directory (used by CurrentFileDirectory)
+    #[gpui::test]
+    async fn active_entry_directory_active_file(cx: &mut TestAppContext) {
+        let (project, _workspace) = init_test(cx).await;
+
+        let (wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let entry = cx
+            .update(|cx| {
+                wt.update(cx, |wt, cx| {
+                    wt.create_entry(
+                        RelPath::new(Path::new("src/main.rs"), PathStyle::local())
+                            .unwrap()
+                            .as_ref()
+                            .into(),
+                        false,
+                        None,
+                        cx,
+                    )
+                })
+            })
+            .await
+            .unwrap()
+            .into_included()
+            .unwrap();
+        insert_active_entry_for(wt, entry, project.clone(), cx);
+
+        cx.update(|cx| {
+            let res = project.read(cx).active_entry_directory(cx);
+            assert_eq!(res, Some(Path::new("/root/src").to_path_buf()));
+        });
+    }
+
+    // active_entry_directory: Active entry is directory -> returns that directory (used by CurrentFileDirectory)
+    #[gpui::test]
+    async fn active_entry_directory_active_dir(cx: &mut TestAppContext) {
+        let (project, _workspace) = init_test(cx).await;
+
+        let (wt, entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        insert_active_entry_for(wt, entry, project.clone(), cx);
+
+        cx.update(|cx| {
+            let res = project.read(cx).active_entry_directory(cx);
+            assert_eq!(res, Some(Path::new("/root/").to_path_buf()));
+        });
+    }
+
     /// Creates a worktree with 1 file: /root.txt
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
@@ -1927,9 +2020,10 @@ mod tests {
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let workspace = cx
-            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root(cx)
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
         (project, workspace)

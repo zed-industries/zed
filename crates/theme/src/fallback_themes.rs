@@ -334,7 +334,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                             ..HighlightStyle::default()
                         },
                     ),
-                    ("enum".into(), HighlightStyle::default()),
+                    ("enum".into(), teal.into()),
                     ("function".into(), blue.into()),
                     ("function.method".into(), blue.into()),
                     ("function.definition".into(), blue.into()),

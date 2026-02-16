@@ -46,7 +46,6 @@ jobs:
         git commit -am "Bump to $output for @$GITHUB_ACTOR"
         git tag "v${output}${tag_suffix}"
         git push origin HEAD "v${output}${tag_suffix}"
-      shell: bash -euxo pipefail {0}
       env:
         GIT_COMMITTER_NAME: Zed Zippy
         GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
@@ -56,3 +55,6 @@ jobs:
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.branch }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

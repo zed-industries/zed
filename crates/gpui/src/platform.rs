@@ -8,14 +8,11 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
 
-#[cfg(any(
-    all(
-        any(target_os = "linux", target_os = "freebsd"),
-        any(feature = "x11", feature = "wayland")
-    ),
-    all(target_os = "macos", feature = "macos-blade")
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "wayland", feature = "x11")
 ))]
-mod blade;
+mod wgpu;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -28,13 +25,7 @@ mod windows;
 
 #[cfg(all(
     feature = "screen-capture",
-    any(
-        target_os = "windows",
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            any(feature = "wayland", feature = "x11"),
-        )
-    )
+    any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
 ))]
 pub(crate) mod scap_screen_capture;
 
@@ -254,12 +245,15 @@ pub(crate) trait Platform: 'static {
         &self,
         _menus: Vec<MenuItem>,
         _entries: Vec<SmallVec<[PathBuf; 2]>>,
-    ) -> Vec<SmallVec<[PathBuf; 2]>> {
-        Vec::new()
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
+        Task::ready(Vec::new())
     }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+
+    fn thermal_state(&self) -> ThermalState;
+    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -321,6 +315,19 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+}
+
+/// Thermal state of the system
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThermalState {
+    /// System has no thermal constraints
+    Nominal,
+    /// System is slightly constrained, reduce discretionary work
+    Fair,
+    /// System is moderately constrained, reduce CPU/GPU intensive work
+    Serious,
+    /// System is critically constrained, minimize all resource usage
+    Critical,
 }
 
 /// Metadata for a given [ScreenCaptureSource]
@@ -595,6 +602,19 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 #[doc(hidden)]
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
+#[doc(hidden)]
+pub struct TimerResolutionGuard {
+    cleanup: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Drop for TimerResolutionGuard {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup();
+        }
+    }
+}
+
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
@@ -609,6 +629,10 @@ pub trait PlatformDispatcher: Send + Sync {
 
     fn now(&self) -> Instant {
         Instant::now()
+    }
+
+    fn increase_timer_resolution(&self) -> TimerResolutionGuard {
+        TimerResolutionGuard { cleanup: None }
     }
 
     #[cfg(any(test, feature = "test-support"))]
