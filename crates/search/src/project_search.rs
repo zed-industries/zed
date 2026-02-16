@@ -266,7 +266,6 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
-    current_search_on_input: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -984,7 +983,6 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
-            current_search_on_input: Task::ready(()),
             _subscriptions: subscriptions,
         };
 
