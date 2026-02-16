@@ -910,7 +910,7 @@ impl LanguageModelCostInfo {
     pub fn to_shared_string(&self) -> SharedString {
         match self {
             LanguageModelCostInfo::RequestCost { cost_per_request } => {
-                let cost_str = format!("{}x", Self::cost_value_to_string(cost_per_request));
+                let cost_str = format!("{}×", Self::cost_value_to_string(cost_per_request));
                 SharedString::from(cost_str)
             }
             LanguageModelCostInfo::TokenCost {
