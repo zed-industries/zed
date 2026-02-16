@@ -2243,107 +2243,41 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut TestAppContext) 
     });
     cx.simulate_window_resize(cx.window, size(px(100.), 4. * line_height));
 
-    cx.set_state(
-        &r#"ˇone
-        two
-
-        three
-        fourˇ
-        five
-
-        six"#
-            .unindent(),
-    );
+    // The third line only contains a single space so we can later assert that the
+    // editor's paragraph movement considers a non-blank line as a paragraph
+    // boundary.
+    cx.set_state(&"ˇone\ntwo\n \nthree\nfourˇ\nfive\n\nsix");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"one
-        two
-        ˇ
-        three
-        four
-        five
-        ˇ
-        six"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"one\ntwo\nˇ \nthree\nfour\nfive\nˇ\nsix");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"one
-        two
-
-        three
-        four
-        five
-        ˇ
-        sixˇ"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"one\ntwo\n \nthree\nfour\nfive\nˇ\nsixˇ");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"one
-        two
-
-        three
-        four
-        five
-
-        sixˇ"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"one\ntwo\n \nthree\nfour\nfive\n\nsixˇ");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"one
-        two
-
-        three
-        four
-        five
-        ˇ
-        six"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"one\ntwo\n \nthree\nfour\nfive\nˇ\nsix");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"one
-        two
-        ˇ
-        three
-        four
-        five
 
-        six"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"one\ntwo\nˇ \nthree\nfour\nfive\n\nsix");
 
     cx.update_editor(|editor, window, cx| {
         editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, window, cx)
     });
-    cx.assert_editor_state(
-        &r#"ˇone
-        two
-
-        three
-        four
-        five
-
-        six"#
-            .unindent(),
-    );
+    cx.assert_editor_state(&"ˇone\ntwo\n \nthree\nfour\nfive\n\nsix");
 }
 
 #[gpui::test]

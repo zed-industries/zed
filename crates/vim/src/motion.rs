@@ -1038,9 +1038,9 @@ impl Motion {
             ),
             SentenceBackward => (sentence_backwards(map, point, times), SelectionGoal::None),
             SentenceForward => (sentence_forwards(map, point, times), SelectionGoal::None),
-            StartOfParagraph => (paragraph_backwards(map, point, times), SelectionGoal::None),
+            StartOfParagraph => (start_of_paragraph(map, point, times), SelectionGoal::None),
             EndOfParagraph => (
-                map.clip_at_line_end(paragraph_forwards(map, point, times)),
+                map.clip_at_line_end(end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
@@ -2236,9 +2236,10 @@ pub(crate) fn sentence_forwards(
 }
 
 /// Returns a position of the start of the current paragraph for vim motions,
-/// where a paragraph is defined as a run of non-empty lines (per vim's :help paragraph).
-/// This differs from the editor's paragraph function which uses blank (whitespace-only) lines.
-pub(crate) fn paragraph_backwards(
+/// where a paragraph is defined as a run of non-empty lines. Lines containing
+/// only whitespace are not considered empty and do not act as paragraph
+/// boundaries.
+pub(crate) fn start_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     mut count: usize,
@@ -2266,9 +2267,10 @@ pub(crate) fn paragraph_backwards(
 }
 
 /// Returns a position of the end of the current paragraph for vim motions,
-/// where a paragraph is defined as a run of non-empty lines (per vim's :help paragraph).
-/// This differs from the editor's paragraph function which uses blank (whitespace-only) lines.
-pub(crate) fn paragraph_forwards(
+/// where a paragraph is defined as a run of non-empty lines. Lines containing
+/// only whitespace are not considered empty and do not act as paragraph
+/// boundaries.
+pub(crate) fn end_of_paragraph(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     mut count: usize,
