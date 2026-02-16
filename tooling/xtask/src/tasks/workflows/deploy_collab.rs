@@ -23,17 +23,13 @@ pub(crate) fn deploy_collab() -> Workflow {
 }
 
 fn style() -> NamedJob {
-    fn check_style() -> Step<Use> {
-        named::uses("", "./.github/actions/check_style", "")
-    }
-
     named::job(
         dependant_job(&[])
             .name("Check formatting and Clippy lints")
             .with_repository_owner_guard()
             .runs_on(runners::LINUX_XL)
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
-            .add_step(check_style())
+            .add_step(steps::cargo_fmt())
             .add_step(steps::clippy(Platform::Linux)),
     )
 }

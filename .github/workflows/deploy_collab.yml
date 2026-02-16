@@ -18,8 +18,8 @@ jobs:
       with:
         clean: false
         fetch-depth: 0
-    - name: deploy_collab::style::check_style
-      uses: /./.github/actions/check_style@
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
     - name: steps::clippy
       run: ./script/clippy
   tests:
