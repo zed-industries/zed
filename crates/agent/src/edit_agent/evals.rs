@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    EditFileMode, EditFileToolInput, GrepToolInput, ListDirectoryToolInput, ReadFileToolInput,
+    AgentTool, EditFileMode, EditFileTool, EditFileToolInput, GrepTool, GrepToolInput,
+    ListDirectoryTool, ListDirectoryToolInput, ReadFileTool, ReadFileToolInput,
 };
 use Role::*;
 use client::{Client, UserStore};
@@ -87,7 +88,6 @@ fn eval_extract_handle_command_output() {
     // claude-sonnet-4             |  0.97 (2025-06-14)
     // gemini-2.5-pro-06-05        |  0.98 (2025-06-16)
     // gemini-2.5-flash            |  0.11 (2025-05-22)
-    // gpt-4.1                     |  1.00 (2025-05-22)
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -119,7 +119,7 @@ fn eval_extract_handle_command_output() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -129,13 +129,17 @@ fn eval_extract_handle_command_output() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -159,7 +163,6 @@ fn eval_delete_run_git_blame() {
     // claude-sonnet-4             | 0.96 (2025-06-14)
     // gemini-2.5-pro-06-05        | 1.0  (2025-06-16)
     // gemini-2.5-flash            |
-    // gpt-4.1                     |
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
@@ -180,7 +183,7 @@ fn eval_delete_run_git_blame() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -190,13 +193,17 @@ fn eval_delete_run_git_blame() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -221,7 +228,6 @@ fn eval_translate_doc_comments() {
     //  claude-sonnet-4                |  1.0  (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
@@ -241,7 +247,7 @@ fn eval_translate_doc_comments() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -251,13 +257,17 @@ fn eval_translate_doc_comments() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -282,7 +292,6 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //  claude-sonnet-4                |  0.11 (2025-06-14)
     //  gemini-2.5-pro-preview-latest  |  0.99 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/lib.rs";
     let input_file_content =
@@ -318,7 +327,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(971),
@@ -330,7 +339,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 971..1050),
                     )],
                 ),
@@ -338,7 +347,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(1050),
@@ -350,7 +359,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1050..1100),
                     )],
                 ),
@@ -358,7 +367,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: Some(1100),
@@ -370,7 +379,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     User,
                     [tool_result(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1100..1150),
                     )],
                 ),
@@ -378,7 +387,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -406,7 +415,6 @@ fn eval_disable_cursor_blinking() {
     //  claude-sonnet-4                |  0.81 (2025-07-14)
     //  gemini-2.5-pro                 |  0.95 (2025-07-14)
     //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
-    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
 
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
@@ -425,7 +433,7 @@ fn eval_disable_cursor_blinking() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "blink".into(),
                             include_pattern: None,
@@ -438,7 +446,7 @@ fn eval_disable_cursor_blinking() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "grep",
+                        GrepTool::NAME,
                         [
                             lines(input_file_content, 100..400),
                             lines(input_file_content, 800..1300),
@@ -464,7 +472,7 @@ fn eval_disable_cursor_blinking() {
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -496,7 +504,6 @@ fn eval_from_pixels_constructor() {
     //  claude-4.0-sonnet              | 2025-06-14  | 0.99
     //  claude-3.7-sonnet              | 2025-06-14  | 0.88
     //  gemini-2.5-pro-preview-06-05   | 2025-06-16  | 0.98
-    //  gpt-4.1                        |
 
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
@@ -516,7 +523,7 @@ fn eval_from_pixels_constructor() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -526,13 +533,17 @@ fn eval_from_pixels_constructor() {
                 ),
                 message(
                     User,
-                    [tool_result("tool_1", "read_file", input_file_content)],
+                    [tool_result(
+                        "tool_1",
+                        ReadFileTool::NAME,
+                        input_file_content,
+                    )],
                 ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_2",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/canvas.rs".into()),
@@ -541,12 +552,15 @@ fn eval_from_pixels_constructor() {
                         },
                     )],
                 ),
-                message(User, [tool_result("tool_2", "grep", "No matches found")]),
+                message(
+                    User,
+                    [tool_result("tool_2", GrepTool::NAME, "No matches found")],
+                ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_3",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "mod\\s+tests".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
@@ -555,12 +569,15 @@ fn eval_from_pixels_constructor() {
                         },
                     )],
                 ),
-                message(User, [tool_result("tool_3", "grep", "No matches found")]),
+                message(
+                    User,
+                    [tool_result("tool_3", GrepTool::NAME, "No matches found")],
+                ),
                 message(
                     Assistant,
                     [tool_use(
                         "tool_4",
-                        "grep",
+                        GrepTool::NAME,
                         GrepToolInput {
                             regex: "#\\[test\\]".into(),
                             include_pattern: Some("font-kit/src/**/*.rs".into()),
@@ -573,7 +590,7 @@ fn eval_from_pixels_constructor() {
                     User,
                     [tool_result(
                         "tool_4",
-                        "grep",
+                        GrepTool::NAME,
                         indoc! {"
                                 Found 6 matches:
 
@@ -667,7 +684,7 @@ fn eval_from_pixels_constructor() {
                     Assistant,
                     [tool_use(
                         "tool_5",
-                        "edit_file",
+                        EditFileTool::NAME,
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
@@ -695,7 +712,6 @@ fn eval_zode() {
     //  claude-sonnet-4                |  1.0 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.0 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |  1.0 (2025-05-22)
-    //  gpt-4.1                        |  1.0 (2025-05-22)
 
     let input_file_path = "root/zode.py";
     let input_content = None;
@@ -710,7 +726,7 @@ fn eval_zode() {
                     [
                         tool_use(
                             "tool_1",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: "root/eval/react.py".into(),
                                 start_line: None,
@@ -719,7 +735,7 @@ fn eval_zode() {
                         ),
                         tool_use(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: "root/eval/react_test.py".into(),
                                 start_line: None,
@@ -733,12 +749,12 @@ fn eval_zode() {
                     [
                         tool_result(
                             "tool_1",
-                            "read_file",
+                            ReadFileTool::NAME,
                             include_str!("evals/fixtures/zode/react.py"),
                         ),
                         tool_result(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             include_str!("evals/fixtures/zode/react_test.py"),
                         ),
                     ],
@@ -751,7 +767,7 @@ fn eval_zode() {
                         ),
                         tool_use(
                             "tool_3",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
@@ -800,7 +816,6 @@ fn eval_add_overwrite_test() {
     //  claude-sonnet-4                |  0.07 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  0.35 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
@@ -821,7 +836,7 @@ fn eval_add_overwrite_test() {
                     Assistant,
                     [tool_use(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         ReadFileToolInput {
                             path: input_file_path.into(),
                             start_line: None,
@@ -833,7 +848,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_1",
-                        "read_file",
+                        ReadFileTool::NAME,
                         indoc! {"
                                 pub struct ActionLog [L13-20]
                                  tracked_buffers [L15]
@@ -920,7 +935,7 @@ fn eval_add_overwrite_test() {
                         ),
                         tool_use(
                             "tool_2",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(953),
@@ -933,7 +948,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_2",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 953..1010),
                     )],
                 ),
@@ -945,7 +960,7 @@ fn eval_add_overwrite_test() {
                         ),
                         tool_use(
                             "tool_3",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(1012),
@@ -958,7 +973,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_3",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 1012..1120),
                     )],
                 ),
@@ -968,7 +983,7 @@ fn eval_add_overwrite_test() {
                         text("Now let's look at how `buffer_created` is implemented:"),
                         tool_use(
                             "tool_4",
-                            "read_file",
+                            ReadFileTool::NAME,
                             ReadFileToolInput {
                                 path: input_file_path.into(),
                                 start_line: Some(271),
@@ -981,7 +996,7 @@ fn eval_add_overwrite_test() {
                     User,
                     [tool_result(
                         "tool_4",
-                        "read_file",
+                        ReadFileTool::NAME,
                         lines(input_file_content, 271..276),
                     )],
                 ),
@@ -1002,7 +1017,7 @@ fn eval_add_overwrite_test() {
                             "}),
                         tool_use(
                             "tool_5",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
@@ -1034,11 +1049,6 @@ fn eval_create_empty_file() {
     //  claude-sonnet-4                |  1.00 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.00 (2025-05-21)
     //  gemini-2.5-flash-preview-04-17 |  1.00 (2025-05-21)
-    //  gpt-4.1                        |  1.00 (2025-05-21)
-    //
-    //
-    // TODO: gpt-4.1-mini errored 38 times:
-    // "data did not match any variant of untagged enum ResponseStreamResult"
 
     let input_file_content = None;
     let expected_output_content = String::new();
@@ -1056,7 +1066,7 @@ fn eval_create_empty_file() {
                             "}),
                         tool_use(
                             "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            "list_directory",
+                            ListDirectoryTool::NAME,
                             ListDirectoryToolInput {
                                 path: "root".to_string(),
                             },
@@ -1067,7 +1077,7 @@ fn eval_create_empty_file() {
                     User,
                     [tool_result(
                         "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                        "list_directory",
+                        ListDirectoryTool::NAME,
                         "root/TODO\nroot/TODO2\nroot/new.txt\n",
                     )],
                 ),
@@ -1079,7 +1089,7 @@ fn eval_create_empty_file() {
                         "}),
                         tool_use(
                             "toolu_01Tb3iQ9griqSYMmVuykQPWU",
-                            "edit_file",
+                            EditFileTool::NAME,
                             EditFileToolInput {
                                 display_description: "Create empty TODO3 file".to_string(),
                                 mode: EditFileMode::Create,
@@ -1173,7 +1183,7 @@ impl EvalInput {
             .content
             .iter()
             .flat_map(|content| match content {
-                MessageContent::ToolUse(tool_use) if tool_use.name == "edit_file".into() => {
+                MessageContent::ToolUse(tool_use) if tool_use.name == EditFileTool::NAME.into() => {
                     Some(tool_use)
                 }
                 _ => None,

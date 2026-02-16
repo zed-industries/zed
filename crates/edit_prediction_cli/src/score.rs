@@ -1,6 +1,6 @@
 use crate::{
     PredictArgs, PredictionProvider,
-    example::{Example, ExampleScore},
+    example::{ActualCursor, Example, ExampleScore},
     format_prompt::TeacherPrompt,
     headless::EpAppState,
     metrics,
@@ -159,14 +159,16 @@ pub async fn run_scoring(
 
         // Compute cursor position metrics
         let (cursor_distance, cursor_exact_match) =
-            compute_cursor_metrics(best_expected_cursor, prediction.actual_cursor_offset);
+            compute_cursor_metrics(best_expected_cursor, prediction.actual_cursor.as_ref());
 
         // Compute approximation of editable region correctness
         let wrong_editable_region = Some(!metrics::is_editable_region_correct(&actual_patch));
 
-        // Check for isolated whitespace changes
-        let has_isolated_whitespace_changes =
-            metrics::has_isolated_whitespace_changes(&actual_patch);
+        // Check for isolated whitespace changes.
+        let has_isolated_whitespace_changes = metrics::has_isolated_whitespace_changes(
+            &actual_patch,
+            prediction.actual_cursor.as_ref(),
+        );
 
         scores.push(ExampleScore {
             delta_chr_f: best_delta_chr_f,
@@ -187,13 +189,13 @@ pub async fn run_scoring(
 }
 
 fn compute_cursor_metrics(
-    expected_cursor: Option<usize>,
-    actual_cursor: Option<usize>,
+    expected_cursor_editable_region_offset: Option<usize>,
+    actual_cursor: Option<&ActualCursor>,
 ) -> (Option<usize>, Option<bool>) {
-    match (expected_cursor, actual_cursor) {
+    match (expected_cursor_editable_region_offset, actual_cursor) {
         (Some(expected), Some(actual)) => {
-            let distance = expected.abs_diff(actual);
-            let exact_match = expected == actual;
+            let distance = expected.abs_diff(actual.editable_region_offset.unwrap_or_default());
+            let exact_match = distance == 0;
             (Some(distance), Some(exact_match))
         }
         (None, None) => {

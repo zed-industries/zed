@@ -146,9 +146,5 @@
   {
     "token_type": "union",
     "style": ["type"]
-  },
-  {
-    "token_type": "unresolvedReference",
-    "style": ["variable"]
   }
 ]

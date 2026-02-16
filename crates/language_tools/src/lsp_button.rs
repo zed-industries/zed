@@ -8,6 +8,8 @@ use std::{
 
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
+use language::language_settings::{EditPredictionProvider, all_language_settings};
+
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
@@ -123,7 +125,11 @@ impl ProcessMemoryCache {
 
     fn is_descendant_of(&self, pid: Pid, root_pid: Pid, parent_map: &HashMap<Pid, Pid>) -> bool {
         let mut current = pid;
+        let mut visited = HashSet::default();
         while current != root_pid {
+            if !visited.insert(current) {
+                return false;
+            }
             match parent_map.get(&current) {
                 Some(&parent) => current = parent,
                 None => return false,
@@ -1251,10 +1257,16 @@ impl Render for LspButton {
             return div().hidden();
         }
 
+        let state = self.server_state.read(cx);
+        let is_via_ssh = state
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .unwrap_or(false);
+
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
-        let state = self.server_state.read(cx);
         for binary_status in state.language_servers.binary_statuses.values() {
             has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
             has_other_notifications |= binary_status.message.is_some();
@@ -1294,6 +1306,16 @@ impl Render for LspButton {
 
         div().child(
             PopoverMenu::new("lsp-tool")
+                .on_open(Rc::new(move |_window, cx| {
+                    let copilot_enabled = all_language_settings(None, cx).edit_predictions.provider
+                        == EditPredictionProvider::Copilot;
+                    telemetry::event!(
+                        "Toolbar Menu Opened",
+                        name = "Language Servers",
+                        copilot_enabled,
+                        is_via_ssh,
+                    );
+                }))
                 .menu(move |_, cx| {
                     lsp_button
                         .read_with(cx, |lsp_button, _| lsp_button.lsp_menu.clone())

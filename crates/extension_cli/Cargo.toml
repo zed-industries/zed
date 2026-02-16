@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+cloud_api_types.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true
@@ -22,7 +23,6 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 reqwest_client.workspace = true
-rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true

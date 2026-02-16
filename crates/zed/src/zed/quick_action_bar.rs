@@ -110,6 +110,8 @@ impl Render for QuickActionBar {
         };
 
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
+        let supports_semantic_tokens =
+            editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
@@ -379,7 +381,7 @@ impl Render for QuickActionBar {
                                 );
                             }
 
-                            if is_full {
+                            if supports_semantic_tokens {
                                 menu = menu.toggleable_entry(
                                     "Semantic Highlights",
                                     semantic_highlights_enabled,
@@ -723,26 +725,36 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                let (mut inlay_hints_enabled, mut supports_inlay_hints) =
-                    editor.update(cx, |editor, cx| {
-                        (
-                            editor.inlay_hints_enabled(),
-                            editor.supports_inlay_hints(cx),
-                        )
-                    });
+                let (
+                    mut inlay_hints_enabled,
+                    mut supports_inlay_hints,
+                    mut supports_semantic_tokens,
+                ) = editor.update(cx, |editor, cx| {
+                    (
+                        editor.inlay_hints_enabled(),
+                        editor.supports_inlay_hints(cx),
+                        editor.supports_semantic_tokens(cx),
+                    )
+                });
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let (new_inlay_hints_enabled, new_supports_inlay_hints) =
-                            editor.update(cx, |editor, cx| {
-                                (
-                                    editor.inlay_hints_enabled(),
-                                    editor.supports_inlay_hints(cx),
-                                )
-                            });
+                        let (
+                            new_inlay_hints_enabled,
+                            new_supports_inlay_hints,
+                            new_supports_semantic_tokens,
+                        ) = editor.update(cx, |editor, cx| {
+                            (
+                                editor.inlay_hints_enabled(),
+                                editor.supports_inlay_hints(cx),
+                                editor.supports_semantic_tokens(cx),
+                            )
+                        });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints;
+                            || supports_inlay_hints != new_supports_inlay_hints
+                            || supports_semantic_tokens != new_supports_semantic_tokens;
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
+                        supports_semantic_tokens = new_supports_semantic_tokens;
                         if should_notify {
                             cx.notify()
                         }

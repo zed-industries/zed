@@ -11,7 +11,7 @@ For operations that Zed doesn't support natively, you can use the integrated ter
 
 ## Git Panel
 
-The Git Panel gives you a birds-eye view of the state of your working tree and of Git's staging area.
+The Git Panel shows the state of your working tree and Git's staging area.
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
