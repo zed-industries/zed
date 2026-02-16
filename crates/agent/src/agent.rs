@@ -1452,16 +1452,58 @@ impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
         let (tx, rx) = smol::channel::unbounded();
         let this_tx = tx.clone();
-        let subscription = cx.observe(&thread_store, move |_, _| {
-            this_tx
-                .try_send(acp_thread::SessionListUpdate::Refresh)
-                .ok();
+        let mut previous_entries: Vec<DbThreadMetadata> = thread_store.read(cx).entries().collect();
+        let subscription = cx.observe(&thread_store, move |store, cx| {
+            let current_entries: Vec<DbThreadMetadata> = store.read(cx).entries().collect();
+            Self::diff_and_send(&this_tx, &previous_entries, &current_entries);
+            previous_entries = current_entries;
         });
         Self {
             thread_store,
             updates_tx: tx,
             updates_rx: rx,
             _subscription: subscription,
+        }
+    }
+
+    fn diff_and_send(
+        tx: &smol::channel::Sender<acp_thread::SessionListUpdate>,
+        previous: &[DbThreadMetadata],
+        current: &[DbThreadMetadata],
+    ) {
+        let previous_ids: HashSet<&acp::SessionId> = previous.iter().map(|e| &e.id).collect();
+        let current_ids: HashSet<&acp::SessionId> = current.iter().map(|e| &e.id).collect();
+
+        if previous_ids != current_ids {
+            tx.try_send(acp_thread::SessionListUpdate::Refresh)
+                .log_err();
+            return;
+        }
+
+        let previous_by_id: HashMap<&acp::SessionId, &DbThreadMetadata> =
+            previous.iter().map(|e| (&e.id, e)).collect();
+        for entry in current {
+            let Some(previous_entry) = previous_by_id.get(&entry.id) else {
+                continue;
+            };
+            let title_changed = entry.title != previous_entry.title;
+            let updated_at_changed = entry.updated_at != previous_entry.updated_at;
+            if !title_changed && !updated_at_changed {
+                continue;
+            }
+
+            let mut info_update = acp::SessionInfoUpdate::new();
+            if title_changed {
+                info_update = info_update.title(entry.title.to_string());
+            }
+            if updated_at_changed {
+                info_update = info_update.updated_at(entry.updated_at.to_rfc3339());
+            }
+            tx.try_send(acp_thread::SessionListUpdate::SessionInfo {
+                session_id: entry.id.clone(),
+                update: info_update,
+            })
+            .log_err();
         }
     }
 

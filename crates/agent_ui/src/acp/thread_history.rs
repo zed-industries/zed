@@ -29,7 +29,6 @@ fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
 
 pub struct AcpThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
-    prefer_full_refreshes: bool,
     sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -100,7 +99,6 @@ impl AcpThreadHistory {
 
         let mut this = Self {
             session_list: None,
-            prefer_full_refreshes: false,
             sessions: Vec::new(),
             scroll_handle,
             selected_index: 0,
@@ -185,7 +183,7 @@ impl AcpThreadHistory {
         let Some(rx) = session_list.watch(cx) else {
             // No watch support - do a one-time refresh
             self._watch_task = None;
-            self.refresh_sessions(false, self.prefer_full_refreshes, cx);
+            self.refresh_sessions(false, false, cx);
             return;
         };
         session_list.notify_refresh();
@@ -204,7 +202,7 @@ impl AcpThreadHistory {
                         .any(|u| matches!(u, SessionListUpdate::Refresh));
 
                     if needs_refresh {
-                        this.refresh_sessions(true, this.prefer_full_refreshes, cx);
+                        this.refresh_sessions(true, false, cx);
                     } else {
                         for update in updates {
                             if let SessionListUpdate::SessionInfo { session_id, update } = update {
@@ -220,10 +218,6 @@ impl AcpThreadHistory {
 
     pub(crate) fn refresh_full_history(&mut self, cx: &mut Context<Self>) {
         self.refresh_sessions(true, true, cx);
-    }
-
-    pub(crate) fn set_prefer_full_refreshes(&mut self, prefer_full_refreshes: bool) {
-        self.prefer_full_refreshes = prefer_full_refreshes;
     }
 
     fn apply_info_update(
@@ -1316,7 +1310,6 @@ mod tests {
         session_list.clear_requested_cursors();
 
         history.update(cx, |history, cx| {
-            history.set_prefer_full_refreshes(false);
             history.refresh(cx);
         });
         cx.run_until_parked();
@@ -1362,36 +1355,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_refresh_messages_use_full_pagination_when_preferred(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let session_list = Rc::new(PaginatedTestSessionList::new(
-            vec![test_session("session-1", "First")],
-            vec![test_session("session-2", "Second")],
-        ));
-
-        let (history, cx) = cx.add_window_view(|window, cx| {
-            AcpThreadHistory::new(Some(session_list.clone()), window, cx)
-        });
-        cx.run_until_parked();
-        session_list.clear_requested_cursors();
-
-        history.update(cx, |history, _cx| {
-            history.set_prefer_full_refreshes(true);
-        });
-        session_list.notify_refresh();
-        cx.run_until_parked();
-
-        history.update(cx, |history, _cx| {
-            assert_eq!(history.sessions.len(), 2);
-        });
-        assert_eq!(
-            session_list.requested_cursors(),
-            vec![None, Some("page-2".to_string())]
-        );
-    }
-
-    #[gpui::test]
     async fn test_partial_refresh_batch_drops_non_first_page_sessions(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1409,9 +1372,6 @@ mod tests {
         history.update(cx, |history, cx| history.refresh_full_history(cx));
         cx.run_until_parked();
 
-        history.update(cx, |history, _cx| {
-            history.set_prefer_full_refreshes(false);
-        });
         session_list.clear_requested_cursors();
 
         session_list.send_update(SessionListUpdate::SessionInfo {

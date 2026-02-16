@@ -1106,8 +1106,6 @@ impl AcpServerView {
                 if should_send_queued {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
-
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
@@ -1162,7 +1160,6 @@ impl AcpServerView {
                         }
                     });
                 }
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
