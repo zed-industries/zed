@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Push, Run, Step, Use, Workflow};
+use gh_workflow::{Container, Event, Port, Push, Run, Step, Use, Workflow};
 use indoc::{formatdoc, indoc};
 
 use crate::tasks::workflows::{
@@ -29,6 +29,8 @@ fn style() -> NamedJob {
             .with_repository_owner_guard()
             .runs_on(runners::LINUX_XL)
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::cargo_fmt())
             .add_step(steps::clippy(Platform::Linux)),
     )
@@ -43,7 +45,21 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
         dependant_job(deps)
             .name("Run tests")
             .runs_on(runners::LINUX_XL)
+            .add_service(
+                "postgres",
+                Container::new("postgres:15")
+                    .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                    .ports(vec![Port::Name("5432:5432".into())])
+                    .options(
+                        "--health-cmd pg_isready \
+                         --health-interval 500ms \
+                         --health-timeout 5s \
+                         --health-retries 10",
+                    ),
+            )
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
             .add_step(run_collab_tests()),
