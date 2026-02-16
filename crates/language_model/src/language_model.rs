@@ -213,7 +213,7 @@ pub enum LanguageModelCompletionError {
         error: serde_json::Error,
     },
 
-    #[error("stream from {provider} over cloud ended unexpectedly")]
+    #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
 
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
