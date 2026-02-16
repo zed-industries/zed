@@ -1,6 +1,6 @@
 use crate::{
     AppState, Error, Result,
-    db::{self, AccessTokenId, Database, UserId},
+    db::{AccessTokenId, Database, UserId},
     rpc::Principal,
 };
 use anyhow::Context as _;
@@ -108,38 +108,11 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     ))
 }
 
-pub const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
-
 #[derive(Serialize, Deserialize)]
 pub struct AccessTokenJson {
     pub version: usize,
     pub id: AccessTokenId,
     pub token: String,
-}
-
-/// Creates a new access token to identify the given user. before returning it, you should
-/// encrypt it with the user's public key.
-pub async fn create_access_token(
-    db: &db::Database,
-    user_id: UserId,
-    impersonated_user_id: Option<UserId>,
-) -> Result<String> {
-    const VERSION: usize = 1;
-    let access_token = rpc::auth::random_token();
-    let access_token_hash = hash_access_token(&access_token);
-    let id = db
-        .create_access_token(
-            user_id,
-            impersonated_user_id,
-            &access_token_hash,
-            MAX_ACCESS_TOKENS_TO_STORE,
-        )
-        .await?;
-    Ok(serde_json::to_string(&AccessTokenJson {
-        version: VERSION,
-        id,
-        token: access_token,
-    })?)
 }
 
 /// Hashing prevents anyone with access to the database being able to login.
