@@ -1752,9 +1752,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.acp_history
-            .update(cx, |history, cx| history.refresh(cx));
-
         match agent {
             AgentType::TextThread => {
                 window.dispatch_action(NewTextThread.boxed_clone(), cx);
@@ -2276,11 +2273,8 @@ impl AgentPanel {
             .with_handle(self.agent_navigation_menu_handle.clone())
             .menu({
                 let menu = self.agent_navigation_menu.clone();
-                let history = self.acp_history.clone();
                 move |window, cx| {
                     telemetry::event!("View Thread History Clicked");
-
-                    history.update(cx, |history, cx| history.refresh(cx));
 
                     if let Some(menu) = menu.as_ref() {
                         menu.update(cx, |_, cx| {
