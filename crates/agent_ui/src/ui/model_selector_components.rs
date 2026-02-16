@@ -146,7 +146,15 @@ impl RenderOnce for ModelSelectorListItem {
                     .child(Label::new(self.title).truncate())
                     .when(self.is_latest, |parent| parent.child(Chip::new("Latest")))
                     .when_some(self.cost_info, |this, cost_info| {
-                        this.child(Chip::new(cost_info))
+                        let tooltip_text = if cost_info.ends_with('×') {
+                            format!("Cost Multiplier: {}", cost_info)
+                        } else if cost_info.contains('$') {
+                            format!("Cost per Million Tokens: {}", cost_info)
+                        } else {
+                            format!("Cost: {}", cost_info)
+                        };
+
+                        this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
                     }),
             )
             .end_slot(div().pr_2().when(self.is_selected, |this| {
