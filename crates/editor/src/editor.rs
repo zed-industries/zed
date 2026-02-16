@@ -114,11 +114,11 @@ use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement, Pixels, PressureStage,
-    Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled, Subscription, Task,
-    TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
+    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
+    KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
+    Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
+    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
     pulsating_between, px, relative, size,
 };
@@ -5356,10 +5356,7 @@ impl Editor {
     pub fn newline_below(&mut self, _: &NewlineBelow, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        let buffer = self.buffer.read(cx);
-        let snapshot = buffer.snapshot(cx);
-
-        let mut edits = Vec::new();
+        let mut buffer_edits: HashMap<EntityId, (Entity<Buffer>, Vec<Point>)> = HashMap::default();
         let mut rows = Vec::new();
         let mut rows_inserted = 0;
 
@@ -5367,19 +5364,37 @@ impl Editor {
             let cursor = selection.head();
             let row = cursor.row;
 
-            let line_length = snapshot.line_len(MultiBufferRow(row));
-            let point = Point::new(row, line_length);
-            let end_of_line = snapshot.clip_point(point, Bias::Left);
+            let point = Point::new(row, 0);
+            let Some((buffer_handle, buffer_point, _)) =
+                self.buffer.read(cx).point_to_buffer_point(point, cx)
+            else {
+                continue;
+            };
 
-            let newline = "\n".to_string();
-            edits.push((end_of_line..end_of_line, newline));
+            buffer_edits
+                .entry(buffer_handle.entity_id())
+                .or_insert_with(|| (buffer_handle, Vec::new()))
+                .1
+                .push(buffer_point);
 
             rows_inserted += 1;
             rows.push(row + rows_inserted);
         }
 
         self.transact(window, cx, |editor, window, cx| {
-            editor.edit(edits, cx);
+            for (_, (buffer_handle, points)) in &buffer_edits {
+                buffer_handle.update(cx, |buffer, cx| {
+                    let edits: Vec<_> = points
+                        .iter()
+                        .map(|point| {
+                            let target = Point::new(point.row + 1, 0);
+                            let start_of_line = buffer.point_to_offset(target).min(buffer.len());
+                            (start_of_line..start_of_line, "\n")
+                        })
+                        .collect();
+                    buffer.edit(edits, None, cx);
+                });
+            }
 
             editor.change_selections(Default::default(), window, cx, |s| {
                 let mut index = 0;
