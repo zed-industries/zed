@@ -944,9 +944,6 @@ pub struct AcpThread {
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
-    // subagent cancellation fields
-    user_stopped: Arc<std::sync::atomic::AtomicBool>,
-    user_stop_tx: watch::Sender<bool>,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1164,8 +1161,6 @@ impl AcpThread {
             }
         });
 
-        let (user_stop_tx, _user_stop_rx) = watch::channel(false);
-
         Self {
             parent_session_id,
             action_log,
@@ -1183,8 +1178,6 @@ impl AcpThread {
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
-            user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            user_stop_tx,
         }
     }
 
@@ -1194,22 +1187,6 @@ impl AcpThread {
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
-    }
-
-    /// Marks this thread as stopped by user action and signals any listeners.
-    pub fn stop_by_user(&mut self) {
-        self.user_stopped
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.user_stop_tx.send(true).ok();
-        self.send_task.take();
-    }
-
-    pub fn was_stopped_by_user(&self) -> bool {
-        self.user_stopped.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub fn user_stop_receiver(&self) -> watch::Receiver<bool> {
-        self.user_stop_tx.receiver()
     }
 
     pub fn connection(&self) -> &Rc<dyn AgentConnection> {
@@ -1852,7 +1829,7 @@ impl AcpThread {
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         self.send(vec![message.into()], cx)
     }
 
@@ -1860,7 +1837,7 @@ impl AcpThread {
         &mut self,
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
@@ -1913,7 +1890,10 @@ impl AcpThread {
         self.connection.retry(&self.session_id, cx).is_some()
     }
 
-    pub fn retry(&mut self, cx: &mut Context<Self>) -> BoxFuture<'static, Result<()>> {
+    pub fn retry(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.connection
@@ -1929,7 +1909,7 @@ impl AcpThread {
         &mut self,
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         self.clear_completed_plan_entries(cx);
 
         let (tx, rx) = oneshot::channel();
@@ -1949,25 +1929,21 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 this.project
                     .update(cx, |project, cx| project.set_agent_location(None, cx));
+
+                let Ok(response) = response else {
+                    // tx dropped, just return
+                    return Ok(None);
+                };
+
                 match response {
-                    Ok(Err(e)) => {
-                        this.send_task.take();
-                        cx.emit(AcpThreadEvent::Error);
-                        Err(e)
-                    }
-                    Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
-                        this.send_task.take();
-                        cx.emit(AcpThreadEvent::Error);
-                        Err(anyhow!("Max tokens reached"))
-                    }
-                    result => {
-                        let canceled = matches!(
-                            result,
-                            Ok(Ok(acp::PromptResponse {
-                                stop_reason: acp::StopReason::Cancelled,
-                                ..
-                            }))
-                        );
+                    Ok(r) => {
+                        if r.stop_reason == acp::StopReason::MaxTokens {
+                            this.send_task.take();
+                            cx.emit(AcpThreadEvent::Error);
+                            return Err(anyhow!("Max tokens reached"));
+                        }
+
+                        let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
 
                         // We only take the task if the current prompt wasn't canceled.
                         //
@@ -1979,11 +1955,7 @@ impl AcpThread {
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
-                        if let Ok(Ok(acp::PromptResponse {
-                            stop_reason: acp::StopReason::Refusal,
-                            ..
-                        })) = result
-                        {
+                        if let acp::StopReason::Refusal = r.stop_reason {
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
@@ -2018,7 +1990,12 @@ impl AcpThread {
                         }
 
                         cx.emit(AcpThreadEvent::Stopped);
-                        Ok(())
+                        Ok(Some(r))
+                    }
+                    Err(e) => {
+                        this.send_task.take();
+                        cx.emit(AcpThreadEvent::Error);
+                        Err(e)
                     }
                 }
             })?
