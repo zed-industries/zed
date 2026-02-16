@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -25,7 +25,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
-use language::{Buffer, Language};
+use language::{Buffer, Language, OffsetRangeExt as _};
 use menu::Confirm;
 use project::{
     Project, ProjectPath, SearchResults,
@@ -335,7 +335,7 @@ impl ProjectSearch {
         }
     }
 
-    fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+    fn search(&mut self, query: SearchQuery, incremental: bool, cx: &mut Context<Self>) {
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
@@ -357,23 +357,29 @@ impl ProjectSearch {
         self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
         self.active_query = Some(query);
-        self.match_ranges.clear();
+        if !incremental {
+            self.match_ranges.clear();
+        }
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
 
             let mut matches = pin!(rx.ready_chunks(1024));
-            project_search
-                .update(cx, |project_search, cx| {
-                    project_search.match_ranges.clear();
-                    project_search
-                        .excerpts
-                        .update(cx, |excerpts, cx| excerpts.clear(cx));
-                    project_search.no_results = Some(true);
-                    project_search.limit_reached = false;
-                })
-                .ok()?;
+
+            if !incremental {
+                project_search
+                    .update(cx, |project_search, cx| {
+                        project_search.match_ranges.clear();
+                        project_search
+                            .excerpts
+                            .update(cx, |excerpts, cx| excerpts.clear(cx));
+                        project_search.no_results = Some(true);
+                        project_search.limit_reached = false;
+                    })
+                    .ok()?;
+            }
 
             let mut limit_reached = false;
+            let mut all_buffers_with_ranges = Vec::new();
             while let Some(results) = matches.next().await {
                 let (buffers_with_ranges, has_reached_limit) = cx
                     .background_executor()
@@ -394,6 +400,12 @@ impl ProjectSearch {
                     })
                     .await;
                 limit_reached |= has_reached_limit;
+
+                if incremental {
+                    all_buffers_with_ranges.extend(buffers_with_ranges);
+                    continue;
+                }
+
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
                         project_search.excerpts.update(cx, |excerpts, cx| {
@@ -425,16 +437,86 @@ impl ProjectSearch {
                 }
             }
 
-            project_search
-                .update(cx, |project_search, cx| {
-                    if !project_search.match_ranges.is_empty() {
-                        project_search.no_results = Some(false);
-                    }
-                    project_search.limit_reached = limit_reached;
-                    project_search.pending_search.take();
-                    cx.notify();
-                })
-                .ok()?;
+            if incremental {
+                let (path_buffers, snapshots_with_ranges, context_line_count) = project_search
+                    .update(cx, |_, cx| {
+                        let context_line_count = multibuffer_context_lines(cx);
+                        let mut path_buffers = Vec::with_capacity(all_buffers_with_ranges.len());
+                        let mut snapshots_with_ranges =
+                            Vec::with_capacity(all_buffers_with_ranges.len());
+                        for (buffer, ranges) in all_buffers_with_ranges {
+                            let path_key = PathKey::for_buffer(&buffer, cx);
+                            let snapshot = buffer.read(cx).snapshot();
+                            path_buffers.push((path_key, buffer));
+                            snapshots_with_ranges.push((snapshot, ranges));
+                        }
+                        (path_buffers, snapshots_with_ranges, context_line_count)
+                    })
+                    .ok()?;
+
+                let point_ranges_per_buffer = cx
+                    .background_executor()
+                    .spawn(async move {
+                        snapshots_with_ranges
+                            .into_iter()
+                            .map(|(snapshot, ranges)| {
+                                ranges
+                                    .into_iter()
+                                    .map(|range| range.to_point(&snapshot))
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
+
+                project_search
+                    .update(cx, |project_search, cx| {
+                        let seen_paths = path_buffers
+                            .iter()
+                            .map(|(pk, _)| pk.clone())
+                            .collect::<HashSet<_>>();
+                        let mut new_match_ranges = Vec::new();
+                        project_search.excerpts.update(cx, |excerpts, cx| {
+                            for ((path_key, buffer), point_ranges) in
+                                path_buffers.into_iter().zip(point_ranges_per_buffer)
+                            {
+                                let (ranges, _) = excerpts.set_excerpts_for_path(
+                                    path_key,
+                                    buffer,
+                                    point_ranges,
+                                    context_line_count,
+                                    cx,
+                                );
+                                new_match_ranges.extend(ranges);
+                            }
+                            let stale = excerpts
+                                .paths()
+                                .filter(|path| !seen_paths.contains(*path))
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            for path in stale {
+                                excerpts.remove_excerpts_for_path(path, cx);
+                            }
+                        });
+                        project_search.match_ranges = new_match_ranges;
+                        project_search.no_results = Some(project_search.match_ranges.is_empty());
+                        project_search.limit_reached = limit_reached;
+                        project_search.pending_search.take();
+                        cx.notify();
+                    })
+                    .ok()?;
+            } else {
+                project_search
+                    .update(cx, |project_search, cx| {
+                        if !project_search.match_ranges.is_empty() {
+                            project_search.no_results = Some(false);
+                        }
+                        project_search.limit_reached = limit_reached;
+                        project_search.pending_search.take();
+                        cx.notify();
+                    })
+                    .ok()?;
+            }
 
             None
         }));
@@ -741,7 +823,7 @@ impl ProjectSearchView {
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
             // search query has changed, restart search and bail
-            self.search(cx);
+            self.search(false, cx);
             return;
         }
         if self.entity.read(cx).match_ranges.is_empty() {
@@ -769,7 +851,7 @@ impl ProjectSearchView {
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
             // search query has changed, restart search and bail
-            self.search(cx);
+            self.search(false, cx);
             return;
         }
         if self.active_match_index.is_none() {
@@ -889,6 +971,7 @@ impl ProjectSearchView {
                                 model.excerpts.update(cx, |excerpts, cx| excerpts.clear(cx));
                                 model.no_results = None;
                                 model.limit_reached = false;
+                                model.last_search_query_text = None;
                                 cx.notify();
                             });
                         } else {
@@ -900,7 +983,7 @@ impl ProjectSearchView {
                                         .await;
                                 }
                                 this.update(cx, |this, cx| {
-                                    this.search(cx);
+                                    this.search(true, cx);
                                 })
                                 .ok();
                             });
@@ -1091,7 +1174,7 @@ impl ProjectSearchView {
             if let Some(new_query) = new_query {
                 let entity = cx.new(|cx| {
                     let mut entity = ProjectSearch::new(workspace.project().clone(), cx);
-                    entity.search(new_query, cx);
+                    entity.search(new_query, false, cx);
                     entity
                 });
                 let weak_workspace = cx.entity().downgrade();
@@ -1244,14 +1327,14 @@ impl ProjectSearchView {
             };
             if should_search {
                 this.update(cx, |this, cx| {
-                    this.search(cx);
+                    this.search(false, cx);
                 })?;
             }
             anyhow::Ok(())
         })
     }
 
-    fn search(&mut self, cx: &mut Context<Self>) {
+    fn search(&mut self, incremental: bool, cx: &mut Context<Self>) {
         let open_buffers = if self.included_opened_only {
             self.workspace
                 .update(cx, |workspace, cx| self.open_buffers(cx, workspace))
@@ -1260,7 +1343,8 @@ impl ProjectSearchView {
             None
         };
         if let Some(query) = self.build_search_query(cx, open_buffers) {
-            self.entity.update(cx, |model, cx| model.search(query, cx));
+            self.entity
+                .update(cx, |model, cx| model.search(query, incremental, cx));
         }
     }
 
@@ -1522,10 +1606,15 @@ impl ProjectSearchView {
     }
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let match_ranges = self.entity.read(cx).match_ranges.clone();
+        let model = self.entity.read(cx);
+        let match_ranges = model.match_ranges.clone();
+        let is_incremental_pending =
+            model.pending_search.is_some() && EditorSettings::get_global(cx).search.search_on_input;
 
         if match_ranges.is_empty() {
-            self.active_match_index = None;
+            if !is_incremental_pending {
+                self.active_match_index = None;
+            }
             self.results_editor.update(cx, |editor, cx| {
                 editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
             });
@@ -2537,7 +2626,7 @@ pub fn perform_project_search(
         search_view.query_editor.update(cx, |query_editor, cx| {
             query_editor.set_text(text, window, cx)
         });
-        search_view.search(cx);
+        search_view.search(false, cx);
     });
     cx.run_until_parked();
 }
@@ -3112,7 +3201,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3156,7 +3245,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3309,7 +3398,7 @@ pub mod tests {
                         .update(cx, |exclude_editor, cx| {
                             exclude_editor.set_text("four.rs", window, cx)
                         });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3339,7 +3428,7 @@ pub mod tests {
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     search_view.toggle_filters(cx);
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3466,7 +3555,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3511,7 +3600,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 })
             })
             .unwrap();
@@ -3611,7 +3700,7 @@ pub mod tests {
                     search_view_2.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("FOUR", window, cx)
                     });
-                    search_view_2.search(cx);
+                    search_view_2.search(false, cx);
                 });
             })
             .unwrap();
@@ -3757,7 +3846,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("const", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3832,7 +3921,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("ONE", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3844,7 +3933,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -3855,7 +3944,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("THREE", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 })
             })
             .unwrap();
@@ -4012,7 +4101,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO_NEW", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(false, cx);
                 });
             })
             .unwrap();
@@ -4226,7 +4315,7 @@ pub mod tests {
                             search_view.query_editor.update(cx, |query_editor, cx| {
                                 query_editor.set_text(query, window, cx)
                             });
-                            search_view.search(cx);
+                            search_view.search(false, cx);
                         });
                     })
                     .unwrap();
@@ -4948,7 +5037,7 @@ pub mod tests {
                 search_view.query_editor.update(cx, |query_editor, cx| {
                     query_editor.set_text(text, window, cx)
                 });
-                search_view.search(cx);
+                search_view.search(false, cx);
             })
             .unwrap();
         // Ensure editor highlights appear after the search is done
@@ -4956,5 +5045,160 @@ pub mod tests {
             editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
         );
         cx.background_executor.run_until_parked();
+    }
+
+    fn perform_incremental_search(
+        search_view: WindowHandle<ProjectSearchView>,
+        text: impl Into<Arc<str>>,
+        cx: &mut TestAppContext,
+    ) {
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.query_editor.update(cx, |query_editor, cx| {
+                    query_editor.set_text(text, window, cx)
+                });
+                search_view.search(true, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(
+            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
+        );
+        cx.background_executor.run_until_parked();
+    }
+
+    fn read_match_count(
+        search_view: WindowHandle<ProjectSearchView>,
+        cx: &mut TestAppContext,
+    ) -> usize {
+        search_view
+            .read_with(cx, |search_view, cx| {
+                search_view.entity.read(cx).match_ranges.len()
+            })
+            .unwrap()
+    }
+
+    fn read_search_text(
+        search_view: WindowHandle<ProjectSearchView>,
+        cx: &mut TestAppContext,
+    ) -> String {
+        search_view
+            .read_with(cx, |search_view, cx| {
+                search_view
+                    .results_editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .text()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_incremental_search_narrows_and_widens(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;\nconst ONEROUS: usize = 2;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+                "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
+                "only_one.rs": "const ONLY_ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Initial non-incremental search for "ONE"
+        perform_search(search_view, "ONE", cx);
+
+        let initial_text = read_search_text(search_view, cx);
+        let initial_match_count = read_match_count(search_view, cx);
+
+        assert!(
+            initial_text.contains("ONE"),
+            "Initial search should find ONE"
+        );
+        assert!(
+            initial_match_count > 3,
+            "Should have multiple matches for ONE, got {initial_match_count}"
+        );
+
+        // Narrow to "ONEROUS" — only one match in one.rs
+        perform_incremental_search(search_view, "ONEROUS", cx);
+
+        let narrowed_text = read_search_text(search_view, cx);
+        let narrowed_match_count = read_match_count(search_view, cx);
+
+        assert!(
+            narrowed_text.contains("ONEROUS"),
+            "Narrowed search should find ONEROUS"
+        );
+        assert_eq!(
+            narrowed_match_count, 1,
+            "Should have exactly 1 match for ONEROUS"
+        );
+        assert!(
+            !narrowed_text.contains("ONLY_ONE"),
+            "Narrowed search should not include ONLY_ONE file"
+        );
+
+        // Widen back to "ONE" — should restore all results
+        perform_incremental_search(search_view, "ONE", cx);
+
+        let widened_match_count = read_match_count(search_view, cx);
+        let widened_text = read_search_text(search_view, cx);
+
+        assert!(
+            widened_text.contains("ONE"),
+            "Widened search should find ONE again"
+        );
+        assert_eq!(
+            widened_match_count, initial_match_count,
+            "Widened search should have same match count as initial search"
+        );
+
+        // Narrow to "ONLY_ONE" — single match in only_one.rs
+        perform_incremental_search(search_view, "ONLY_ONE", cx);
+
+        let only_one_text = read_search_text(search_view, cx);
+        let only_one_match_count = read_match_count(search_view, cx);
+
+        assert!(only_one_text.contains("ONLY_ONE"), "Should find ONLY_ONE");
+        assert_eq!(
+            only_one_match_count, 1,
+            "Should have exactly 1 match for ONLY_ONE"
+        );
+
+        // Widen back to "ONE" one more time — full cycle
+        perform_incremental_search(search_view, "ONE", cx);
+
+        let final_match_count = read_match_count(search_view, cx);
+        let final_text = read_search_text(search_view, cx);
+
+        assert_eq!(
+            final_match_count, initial_match_count,
+            "Final widened search should match initial count"
+        );
+        assert!(
+            final_text.contains("ONLY_ONE"),
+            "Final results should include ONLY_ONE file"
+        );
+        assert!(
+            final_text.contains("ONEROUS"),
+            "Final results should include ONEROUS"
+        );
     }
 }
