@@ -16,6 +16,7 @@ use axum::{
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
+use subtle::ConstantTimeEq;
 use tower::ServiceBuilder;
 
 pub use extensions::fetch_extensions_from_blob_store_periodically;
@@ -118,7 +119,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
     let state = req.extensions().get::<Arc<AppState>>().unwrap();
 
-    if token != state.config.api_token {
+    if !bool::from(token.as_bytes().ct_eq(state.config.api_token.as_bytes())) {
         Err(Error::http(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token".to_string(),
