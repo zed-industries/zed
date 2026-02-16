@@ -4570,6 +4570,9 @@ impl GitPanel {
         let has_no_repo = self.active_repository.is_none();
         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
 
+        let should_show_branch_diff =
+            has_repo && self.changes_count == 0 && !self.is_on_main_branch(cx);
+
         let label = if has_repo {
             "No changes to commit"
         } else {
@@ -4597,7 +4600,7 @@ impl GitPanel {
                         }),
                 )
             })
-            .when(has_repo && self.changes_count == 0, |this| {
+            .when(should_show_branch_diff, |this| {
                 this.child(
                     panel_filled_button("View Branch Diff")
                         .tooltip(move |_, cx| {
@@ -4615,6 +4618,19 @@ impl GitPanel {
                         }),
                 )
             })
+    }
+
+    fn is_on_main_branch(&self, cx: &Context<Self>) -> bool {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return false;
+        };
+
+        let Some(branch) = repo.read(cx).branch.as_ref() else {
+            return false;
+        };
+
+        let branch_name = branch.name();
+        matches!(branch_name, "main" | "master")
     }
 
     fn render_buffer_header_controls(
