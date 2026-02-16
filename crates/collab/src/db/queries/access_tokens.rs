@@ -4,6 +4,7 @@ use sea_orm::sea_query::Query;
 
 impl Database {
     /// Creates a new access token for the given user.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn create_access_token(
         &self,
         user_id: UserId,
