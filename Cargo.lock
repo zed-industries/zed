@@ -1941,27 +1941,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-extra"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a320103719de37b7b4da4c8eb629d4573f6bcfd3dfe80d3208806895ccf81d"
-dependencies = [
- "axum",
- "bytes 1.11.1",
- "futures-util",
- "http 0.2.12",
- "mime",
- "pin-project-lite",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.4.13",
- "tower-http 0.3.5",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3223,7 +3202,6 @@ dependencies = [
  "aws-sdk-kinesis",
  "aws-sdk-s3",
  "axum",
- "axum-extra",
  "base64 0.22.1",
  "buffer_diff",
  "call",
@@ -17518,24 +17496,6 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper 1.0.2",
  "tokio",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "tower-http"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f873044bf02dd1e8239e9c1293ea39dad76dc594ec16185d0a1bf31d8dc8d858"
-dependencies = [
- "bitflags 1.3.2",
- "bytes 1.11.1",
- "futures-core",
- "futures-util",
- "http 0.2.12",
- "http-body 0.4.6",
- "http-range-header",
- "pin-project-lite",
  "tower-layer",
  "tower-service",
 ]
