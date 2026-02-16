@@ -899,9 +899,7 @@ pub enum LanguageModelCostInfo {
         output_token_cost_per_1m: f64,
     },
     /// Cost per request
-    RequestCost {
-        cost_per_request: f64,
-    },
+    RequestCost { cost_per_request: f64 },
 }
 
 impl LanguageModelCostInfo {
