@@ -179,7 +179,10 @@ impl AgentTool for SubagentTool {
                     subagent_session_id,
                 }),
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    Err(anyhow!("Subagent was cancelled by user"))
+                    Ok(SubagentToolOutput {
+                        summary: "Subagent was cancelled by user".to_string(),
+                        subagent_session_id,
+                    })
                 }
             }
         })
