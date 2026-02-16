@@ -45,7 +45,7 @@ impl WorkflowFile {
     fn extension(f: fn() -> Workflow) -> WorkflowFile {
         WorkflowFile {
             source: f,
-            r#type: WorkflowType::ExtensionCI,
+            r#type: WorkflowType::ExtensionCi,
         }
     }
 
@@ -92,7 +92,7 @@ enum WorkflowType {
     Zed,
     /// Workflows living in the `zed-extensions/workflows` repository that are
     /// required workflows for PRs to the extension organization
-    ExtensionCI,
+    ExtensionCi,
     /// Workflows living in each of the extensions to perform checks and version
     /// bumps until a better, more centralized system for that is in place.
     ExtensionsShared,
@@ -115,7 +115,7 @@ impl WorkflowType {
     fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
-            WorkflowType::ExtensionCI => PathBuf::from("extensions/workflows"),
+            WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
