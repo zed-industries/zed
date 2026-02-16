@@ -1,11 +1,11 @@
 use gh_workflow::{Container, Event, Port, Push, Run, Step, Use, Workflow};
 use indoc::{formatdoc, indoc};
 
-use crate::tasks::workflows::{
-    runners::{self, Platform},
-    steps::{self, CommonJobConditions, NamedJob, dependant_job, named},
-    vars,
+use crate::tasks::workflows::runners::{self, Platform};
+use crate::tasks::workflows::steps::{
+    self, CommonJobConditions, FluentBuilder as _, NamedJob, dependant_job, named,
 };
+use crate::tasks::workflows::vars;
 
 pub(crate) fn deploy_collab() -> Workflow {
     let style = style();
@@ -31,6 +31,7 @@ fn style() -> NamedJob {
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_fmt())
             .add_step(steps::clippy(Platform::Linux)),
     )
@@ -60,6 +61,7 @@ fn tests(deps: &[&NamedJob]) -> NamedJob {
             .add_step(steps::checkout_repo().add_with(("fetch-depth", 0)))
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
             .add_step(steps::cargo_install_nextest())
             .add_step(steps::clear_target_dir_if_large(Platform::Linux))
             .add_step(run_collab_tests()),

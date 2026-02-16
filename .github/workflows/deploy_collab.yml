@@ -27,6 +27,12 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: steps::clippy
@@ -51,6 +57,12 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
