@@ -10,6 +10,7 @@ mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
+mod deploy_collab;
 mod extension_bump;
 mod extension_tests;
 mod extension_workflow_rollout;
