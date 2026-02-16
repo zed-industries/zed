@@ -1090,7 +1090,7 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
-    use gpui::App;
+    use gpui::{App, Bounds, Point};
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
@@ -2039,5 +2039,85 @@ mod tests {
             range,
             InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
         );
+    }
+
+    #[test]
+    fn test_hover_popover_horizontal_offset_left_aligned_does_not_exceed_border() {
+        let hitbox_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: px(300.),
+                height: px(0.),
+            },
+        };
+        let cursor_x = px(200.);
+        let popover_width = px(80.);
+        let horizontal_offset = hover_popover_horizontal_offset(
+            PopoverAlignment::Left,
+            cursor_x,
+            popover_width,
+            hitbox_bounds,
+        );
+        assert_eq!(horizontal_offset, px(-80.));
+    }
+
+    #[test]
+    fn test_hover_popover_horizontal_offset_left_aligned_exceeds_border() {
+        let hitbox_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: px(300.),
+                height: px(0.),
+            },
+        };
+        let cursor_x = px(50.);
+        let popover_width = px(80.);
+        let horizontal_offset = hover_popover_horizontal_offset(
+            PopoverAlignment::Left,
+            cursor_x,
+            popover_width,
+            hitbox_bounds,
+        );
+        assert_eq!(horizontal_offset, px(-50.) + POPOVER_LEFT_OFFSET);
+    }
+
+    #[test]
+    fn test_hover_popover_horizontal_offset_right_aligned_does_not_exceed_border() {
+        let hitbox_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: px(300.),
+                height: px(0.),
+            },
+        };
+        let cursor_x = px(50.);
+        let popover_width = px(80.);
+        let horizontal_offset = hover_popover_horizontal_offset(
+            PopoverAlignment::Right,
+            cursor_x,
+            popover_width,
+            hitbox_bounds,
+        );
+        assert_eq!(horizontal_offset, px(0.));
+    }
+
+    #[test]
+    fn test_hover_popover_horizontal_offset_right_aligned_exceeds_border() {
+        let hitbox_bounds = Bounds {
+            origin: Point::default(),
+            size: Size {
+                width: px(300.),
+                height: px(0.),
+            },
+        };
+        let cursor_x = px(250.);
+        let popover_width = px(80.);
+        let horizontal_offset = hover_popover_horizontal_offset(
+            PopoverAlignment::Right,
+            cursor_x,
+            popover_width,
+            hitbox_bounds,
+        );
+        assert_eq!(horizontal_offset, px(-30.) - POPOVER_RIGHT_OFFSET);
     }
 }
