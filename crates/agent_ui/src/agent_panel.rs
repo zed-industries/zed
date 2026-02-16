@@ -1592,7 +1592,7 @@ impl AgentPanel {
         );
 
         self.acp_history.update(cx, |history, cx| {
-            history.set_prefer_full_refreshes(is_in_agent_history, cx);
+            history.set_prefer_full_refreshes(is_in_agent_history);
             if !was_in_agent_history && is_in_agent_history {
                 history.refresh_full_history(cx);
             }

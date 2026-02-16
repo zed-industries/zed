@@ -199,18 +199,18 @@ impl AcpThreadHistory {
                 }
 
                 this.update(cx, |this, cx| {
-                    let mut needs_refresh = false;
-                    for update in updates {
-                        match update {
-                            SessionListUpdate::Refresh => needs_refresh = true,
-                            SessionListUpdate::SessionInfo { session_id, update } => {
-                                this.apply_info_update(session_id, update, cx);
-                            }
-                        }
-                    }
+                    let needs_refresh = updates
+                        .iter()
+                        .any(|u| matches!(u, SessionListUpdate::Refresh));
 
                     if needs_refresh {
                         this.refresh_sessions(true, this.prefer_full_refreshes, cx);
+                    } else {
+                        for update in updates {
+                            if let SessionListUpdate::SessionInfo { session_id, update } = update {
+                                this.apply_info_update(session_id, update, cx);
+                            }
+                        }
                     }
                 })
                 .ok();
@@ -222,11 +222,7 @@ impl AcpThreadHistory {
         self.refresh_sessions(true, true, cx);
     }
 
-    pub(crate) fn set_prefer_full_refreshes(
-        &mut self,
-        prefer_full_refreshes: bool,
-        _cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn set_prefer_full_refreshes(&mut self, prefer_full_refreshes: bool) {
         self.prefer_full_refreshes = prefer_full_refreshes;
     }
 
@@ -282,6 +278,9 @@ impl AcpThreadHistory {
             return;
         };
 
+        // If a new refresh arrives while pagination is in progress, the previous
+        // `_refresh_task` is cancelled. This is intentional (latest refresh wins),
+        // but means sessions may be in a partial state until the new refresh completes.
         self._refresh_task = cx.spawn(async move |this, cx| {
             let mut cursor: Option<String> = None;
             let mut is_first_page = true;
@@ -1078,7 +1077,6 @@ mod tests {
     use gpui::TestAppContext;
     use std::{
         any::Any,
-        cell::RefCell,
         sync::{Arc, Mutex},
     };
 
@@ -1138,7 +1136,8 @@ mod tests {
     struct PaginatedTestSessionList {
         first_page_sessions: Vec<AgentSessionInfo>,
         second_page_sessions: Vec<AgentSessionInfo>,
-        requested_cursors: Rc<RefCell<Vec<Option<String>>>>,
+        requested_cursors: Arc<Mutex<Vec<Option<String>>>>,
+        async_responses: bool,
         updates_tx: smol::channel::Sender<SessionListUpdate>,
         updates_rx: smol::channel::Receiver<SessionListUpdate>,
     }
@@ -1152,18 +1151,24 @@ mod tests {
             Self {
                 first_page_sessions,
                 second_page_sessions,
-                requested_cursors: Rc::new(RefCell::new(Vec::new())),
+                requested_cursors: Arc::new(Mutex::new(Vec::new())),
+                async_responses: false,
                 updates_tx: tx,
                 updates_rx: rx,
             }
         }
 
+        fn with_async_responses(mut self) -> Self {
+            self.async_responses = true;
+            self
+        }
+
         fn requested_cursors(&self) -> Vec<Option<String>> {
-            self.requested_cursors.borrow().clone()
+            self.requested_cursors.lock().unwrap().clone()
         }
 
         fn clear_requested_cursors(&self) {
-            self.requested_cursors.borrow_mut().clear();
+            self.requested_cursors.lock().unwrap().clear()
         }
 
         fn send_update(&self, update: SessionListUpdate) {
@@ -1175,100 +1180,37 @@ mod tests {
         fn list_sessions(
             &self,
             request: AgentSessionListRequest,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-            self.requested_cursors
-                .borrow_mut()
-                .push(request.cursor.clone());
-
-            let response = match request.cursor.as_deref() {
-                None => AgentSessionListResponse {
-                    sessions: self.first_page_sessions.clone(),
-                    next_cursor: Some("page-2".to_string()),
-                    meta: None,
-                },
-                Some("page-2") => AgentSessionListResponse::new(self.second_page_sessions.clone()),
-                Some(_) => AgentSessionListResponse::new(Vec::new()),
-            };
-
-            Task::ready(Ok(response))
-        }
-
-        fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
-            Some(self.updates_rx.clone())
-        }
-
-        fn notify_refresh(&self) {
-            self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
-        }
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
-    }
-
-    #[derive(Clone)]
-    struct AsyncPaginatedTestSessionList {
-        first_page_sessions: Vec<AgentSessionInfo>,
-        second_page_sessions: Vec<AgentSessionInfo>,
-        requested_cursors: Arc<Mutex<Vec<Option<String>>>>,
-        updates_tx: smol::channel::Sender<SessionListUpdate>,
-        updates_rx: smol::channel::Receiver<SessionListUpdate>,
-    }
-
-    impl AsyncPaginatedTestSessionList {
-        fn new(
-            first_page_sessions: Vec<AgentSessionInfo>,
-            second_page_sessions: Vec<AgentSessionInfo>,
-        ) -> Self {
-            let (tx, rx) = smol::channel::unbounded();
-            Self {
-                first_page_sessions,
-                second_page_sessions,
-                requested_cursors: Arc::new(Mutex::new(Vec::new())),
-                updates_tx: tx,
-                updates_rx: rx,
-            }
-        }
-
-        fn requested_cursors(&self) -> Vec<Option<String>> {
-            self.requested_cursors.lock().unwrap().clone()
-        }
-
-        fn clear_requested_cursors(&self) {
-            self.requested_cursors.lock().unwrap().clear();
-        }
-    }
-
-    impl AgentSessionList for AsyncPaginatedTestSessionList {
-        fn list_sessions(
-            &self,
-            request: AgentSessionListRequest,
             cx: &mut App,
         ) -> Task<anyhow::Result<AgentSessionListResponse>> {
             let requested_cursors = self.requested_cursors.clone();
             let first_page_sessions = self.first_page_sessions.clone();
             let second_page_sessions = self.second_page_sessions.clone();
-            cx.foreground_executor().spawn(async move {
-                smol::future::yield_now().await;
 
+            let respond = move || {
                 requested_cursors
                     .lock()
                     .unwrap()
                     .push(request.cursor.clone());
 
-                let response = match request.cursor.as_deref() {
+                match request.cursor.as_deref() {
                     None => AgentSessionListResponse {
                         sessions: first_page_sessions,
                         next_cursor: Some("page-2".to_string()),
                         meta: None,
                     },
                     Some("page-2") => AgentSessionListResponse::new(second_page_sessions),
-                    Some(_) => AgentSessionListResponse::new(Vec::new()),
-                };
+                    _ => AgentSessionListResponse::new(Vec::new()),
+                }
+            };
 
-                Ok(response)
-            })
+            if self.async_responses {
+                cx.foreground_executor().spawn(async move {
+                    smol::future::yield_now().await;
+                    Ok(respond())
+                })
+            } else {
+                Task::ready(Ok(respond()))
+            }
         }
 
         fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
@@ -1276,7 +1218,7 @@ mod tests {
         }
 
         fn notify_refresh(&self) {
-            self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
+            self.send_update(SessionListUpdate::Refresh);
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1374,7 +1316,7 @@ mod tests {
         session_list.clear_requested_cursors();
 
         history.update(cx, |history, cx| {
-            history.set_prefer_full_refreshes(false, cx);
+            history.set_prefer_full_refreshes(false);
             history.refresh(cx);
         });
         cx.run_until_parked();
@@ -1434,8 +1376,8 @@ mod tests {
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
-        history.update(cx, |history, cx| {
-            history.set_prefer_full_refreshes(true, cx);
+        history.update(cx, |history, _cx| {
+            history.set_prefer_full_refreshes(true);
         });
         session_list.notify_refresh();
         cx.run_until_parked();
@@ -1467,8 +1409,8 @@ mod tests {
         history.update(cx, |history, cx| history.refresh_full_history(cx));
         cx.run_until_parked();
 
-        history.update(cx, |history, cx| {
-            history.set_prefer_full_refreshes(false, cx);
+        history.update(cx, |history, _cx| {
+            history.set_prefer_full_refreshes(false);
         });
         session_list.clear_requested_cursors();
 
@@ -1481,11 +1423,16 @@ mod tests {
 
         history.update(cx, |history, _cx| {
             assert_eq!(history.sessions.len(), 1);
-            assert_eq!(history.sessions[0].session_id, acp::SessionId::new("session-1"));
-            assert!(history
-                .sessions
-                .iter()
-                .all(|session| session.session_id != second_page_session_id));
+            assert_eq!(
+                history.sessions[0].session_id,
+                acp::SessionId::new("session-1")
+            );
+            assert!(
+                history
+                    .sessions
+                    .iter()
+                    .all(|session| session.session_id != second_page_session_id)
+            );
         });
         assert_eq!(session_list.requested_cursors(), vec![None]);
     }
@@ -1494,10 +1441,13 @@ mod tests {
     async fn test_full_pagination_works_with_async_page_fetches(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let session_list = Rc::new(AsyncPaginatedTestSessionList::new(
-            vec![test_session("session-1", "First")],
-            vec![test_session("session-2", "Second")],
-        ));
+        let session_list = Rc::new(
+            PaginatedTestSessionList::new(
+                vec![test_session("session-1", "First")],
+                vec![test_session("session-2", "Second")],
+            )
+            .with_async_responses(),
+        );
 
         let (history, cx) = cx.add_window_view(|window, cx| {
             AcpThreadHistory::new(Some(session_list.clone()), window, cx)
