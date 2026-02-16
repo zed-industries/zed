@@ -11317,14 +11317,66 @@ impl Editor {
                     let end_of_line = Point::new(row.0, snapshot.line_len(row));
                     let next_line_row = row.next_row();
                     let indent = snapshot.indent_size_for_line(next_line_row);
-                    let start_of_next_line = Point::new(next_line_row.0, indent.len);
+                    let mut join_start_column = indent.len;
 
-                    let replace =
-                        if snapshot.line_len(next_line_row) > indent.len && insert_whitespace {
-                            " "
-                        } else {
-                            ""
-                        };
+                    if let Some(language_scope) =
+                        snapshot.language_scope_at(Point::new(next_line_row.0, indent.len))
+                    {
+                        let line_end =
+                            Point::new(next_line_row.0, snapshot.line_len(next_line_row));
+                        let line_text_after_indent = snapshot
+                            .text_for_range(Point::new(next_line_row.0, indent.len)..line_end)
+                            .collect::<String>();
+
+                        if !line_text_after_indent.is_empty() {
+                            let block_prefix = language_scope
+                                .block_comment()
+                                .map(|c| c.prefix.as_ref())
+                                .filter(|p| !p.is_empty());
+                            let doc_prefix = language_scope
+                                .documentation_comment()
+                                .map(|c| c.prefix.as_ref())
+                                .filter(|p| !p.is_empty());
+                            let all_prefixes = language_scope
+                                .line_comment_prefixes()
+                                .iter()
+                                .map(|p| p.as_ref())
+                                .chain(block_prefix)
+                                .chain(doc_prefix)
+                                .chain(language_scope.unordered_list().iter().map(|p| p.as_ref()));
+
+                            let mut longest_prefix_len = None;
+                            for prefix in all_prefixes {
+                                let trimmed = prefix.trim_end();
+                                if line_text_after_indent.starts_with(trimmed) {
+                                    let candidate_len =
+                                        if line_text_after_indent.starts_with(prefix) {
+                                            prefix.len()
+                                        } else {
+                                            trimmed.len()
+                                        };
+                                    if longest_prefix_len.map_or(true, |len| candidate_len > len) {
+                                        longest_prefix_len = Some(candidate_len);
+                                    }
+                                }
+                            }
+
+                            if let Some(prefix_len) = longest_prefix_len {
+                                join_start_column =
+                                    join_start_column.saturating_add(prefix_len as u32);
+                            }
+                        }
+                    }
+
+                    let start_of_next_line = Point::new(next_line_row.0, join_start_column);
+
+                    let replace = if snapshot.line_len(next_line_row) > join_start_column
+                        && insert_whitespace
+                    {
+                        " "
+                    } else {
+                        ""
+                    };
 
                     this.buffer.update(cx, |buffer, cx| {
                         buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
