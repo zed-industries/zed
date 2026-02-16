@@ -14,8 +14,7 @@ jobs:
     name: Check formatting and Clippy lints
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - macOS
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -32,8 +31,7 @@ jobs:
   tests:
     name: Run tests
     runs-on:
-      - self-hosted
-      - macOS
+      - namespace-profile-16x32-ubuntu-2204
     needs: style
     steps:
       - name: Checkout repo
