@@ -50,7 +50,6 @@ use rpc::{
     },
 };
 use semver::Version;
-use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
     future::Future,
@@ -276,22 +275,6 @@ pub struct Server {
 struct ConnectionPoolGuard<'a> {
     guard: parking_lot::MutexGuard<'a, ConnectionPool>,
     _not_send: PhantomData<Rc<()>>,
-}
-
-#[derive(Serialize)]
-pub struct ServerSnapshot<'a> {
-    peer: &'a Peer,
-    #[serde(serialize_with = "serialize_deref")]
-    connection_pool: ConnectionPoolGuard<'a>,
-}
-
-pub fn serialize_deref<S, T, U>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-    T: Deref<Target = U>,
-    U: Serialize,
-{
-    Serialize::serialize(value.deref(), serializer)
 }
 
 impl Server {
@@ -988,16 +971,6 @@ impl Server {
         }
 
         Ok(())
-    }
-
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
-        ServerSnapshot {
-            connection_pool: ConnectionPoolGuard {
-                guard: self.connection_pool.lock(),
-                _not_send: PhantomData,
-            },
-            peer: &self.peer,
-        }
     }
 }
 
