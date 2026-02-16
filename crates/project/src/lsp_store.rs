@@ -4732,7 +4732,7 @@ impl LspStore {
 
             const MAX_MODELINE_BYTES: usize = 1024;
 
-            let first_bytes = content.len().min(MAX_MODELINE_BYTES);
+            let first_bytes = content.clip_offset(content.len().min(MAX_MODELINE_BYTES), Bias::Left);
             let mut first_lines = Vec::new();
             let mut lines = content.chunks_in_range(0..first_bytes).lines();
             for _ in 0..modeline_lines {
@@ -4744,7 +4744,7 @@ impl LspStore {
             }
             let first_lines_ref: Vec<_> = first_lines.iter().map(|line| line.as_str()).collect();
 
-            let last_start = content.len().saturating_sub(MAX_MODELINE_BYTES);
+            let last_start = content.clip_offset(content.len().saturating_sub(MAX_MODELINE_BYTES), Bias::Left);
             let mut last_lines = Vec::new();
             let mut lines = content
                 .reversed_chunks_in_range(last_start..content.len())
