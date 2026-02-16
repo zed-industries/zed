@@ -5,7 +5,7 @@ use git::{GitHostingProviderRegistry, GitRemote, parse_git_remote_url};
 use gpui::{
     AnyElement, AnyEntity, App, Asset, Context, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, Render, ScrollStrategy, Task, UniformListScrollHandle, WeakEntity, Window,
-    actions, uniform_list,
+    uniform_list,
 };
 use project::{
     Project, ProjectPath,
@@ -23,16 +23,6 @@ use workspace::{
 };
 
 use crate::commit_view::CommitView;
-
-actions!(git, [ViewCommitFromHistory, LoadMoreHistory]);
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_workspace, _: &ViewCommitFromHistory, _window, _cx| {});
-        workspace.register_action(|_workspace, _: &LoadMoreHistory, _window, _cx| {});
-    })
-    .detach();
-}
 
 const PAGE_SIZE: usize = 50;
 
