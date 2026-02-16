@@ -1439,9 +1439,6 @@ impl BufferSearchBar {
                 drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
-            SearchEvent::ResultsCollapsedChanged(_) => {
-                cx.notify();
-            }
         }
     }
 
@@ -3394,6 +3391,7 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.fold_all(&FoldAll, window, cx);
         });
+        cx.run_until_parked();
 
         let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(is_collapsed);
@@ -3401,6 +3399,7 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
+        cx.run_until_parked();
 
         let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(!is_collapsed);

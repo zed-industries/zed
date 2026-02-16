@@ -217,7 +217,7 @@ use workspace::{
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    searchable::{CollapseDirection, SearchEvent},
+    searchable::SearchEvent,
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -20046,9 +20046,6 @@ impl Editor {
                     .ok();
             });
         }
-        cx.emit(SearchEvent::ResultsCollapsedChanged(
-            CollapseDirection::Collapsed,
-        ));
     }
 
     pub fn fold_function_bodies(
@@ -20237,9 +20234,6 @@ impl Editor {
                     .ok();
             });
         }
-        cx.emit(SearchEvent::ResultsCollapsedChanged(
-            CollapseDirection::Expanded,
-        ));
     }
 
     pub fn fold_selected_ranges(
