@@ -1,0 +1,212 @@
+name: background_agent_mvp
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+    inputs:
+      crash_ids:
+        description: "Optional comma-separated Sentry issue IDs (e.g. ZED-4VS,ZED-123)"
+        required: false
+        type: string
+      reviewers:
+        description: "Optional comma-separated GitHub reviewer handles"
+        required: false
+        type: string
+      top:
+        description: "Top N candidates when crash_ids is empty"
+        required: false
+        type: string
+        default: "3"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+  DROID_MODEL: claude-opus-4-5-20251101
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  SENTRY_ORG: zed-dev
+
+jobs:
+  run-mvp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Droid CLI
+        run: |
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          echo "DROID_BIN=${HOME}/.local/bin/droid" >> "$GITHUB_ENV"
+          "${HOME}/.local/bin/droid" --version
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve reviewers
+        id: reviewers
+        run: |
+          set -euo pipefail
+          INPUT_REVIEWERS="${{ inputs.reviewers }}"
+          DEFAULT_REVIEWERS="${{ vars.BACKGROUND_AGENT_REVIEWERS }}"
+          if [ -z "$DEFAULT_REVIEWERS" ]; then
+            DEFAULT_REVIEWERS="eholk,morgankrey,osiewicz,bennetbo"
+          fi
+          REVIEWERS="${INPUT_REVIEWERS:-$DEFAULT_REVIEWERS}"
+          REVIEWERS="$(echo "$REVIEWERS" | tr -d '[:space:]')"
+          echo "reviewers=$REVIEWERS" >> "$GITHUB_OUTPUT"
+
+      - name: Select crash candidates
+        id: candidates
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ inputs.crash_ids }}" ]; then
+            IDS="$(echo "${{ inputs.crash_ids }}" | tr -d '[:space:]')"
+            echo "Using manually supplied crash IDs: $IDS"
+            echo "ids=$IDS" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          TOP="${{ inputs.top }}"
+          if [ -z "$TOP" ]; then
+            TOP="3"
+          fi
+
+          python3 script/select-sentry-crash-candidates \
+            --org "$SENTRY_ORG" \
+            --top "$TOP" \
+            --output /tmp/sentry-candidates.json
+
+          IDS="$(python3 - <<'PY'
+import json
+with open('/tmp/sentry-candidates.json', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+print(','.join(item['short_id'] for item in data.get('selected', [])))
+PY
+          )"
+
+          if [ -z "$IDS" ]; then
+            echo "No candidates selected"
+            exit 1
+          fi
+
+          echo "ids=$IDS" >> "$GITHUB_OUTPUT"
+
+      - name: Run background agent pipeline per crash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWERS: ${{ steps.reviewers.outputs.reviewers }}
+          CRASH_IDS: ${{ steps.candidates.outputs.ids }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "factory-droid[bot]"
+          git config user.email "138933559+factory-droid[bot]@users.noreply.github.com"
+
+          IFS=',' read -r -a CRASH_ID_ARRAY <<< "$CRASH_IDS"
+
+          for CRASH_ID in "${CRASH_ID_ARRAY[@]}"; do
+            CRASH_ID="$(echo "$CRASH_ID" | xargs)"
+            [ -z "$CRASH_ID" ] && continue
+
+            BRANCH="background-agent/mvp-${CRASH_ID,,}-$(date +%Y%m%d)"
+            echo "Running crash pipeline for $CRASH_ID on $BRANCH"
+
+            git fetch origin main
+            git checkout -B "$BRANCH" origin/main
+
+            cat > /tmp/background-agent-prompt.md <<EOF
+You are running the weekly background crash-fix MVP pipeline for crash ${CRASH_ID}.
+
+Required workflow:
+1. Fetch crash data with: script/sentry-fetch ${CRASH_ID}
+2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
+3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
+4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
+5. Run validators required by the fix prompt for the affected crate(s)
+6. Write PR_BODY.md with sections:
+   - Crash Summary
+   - Root Cause
+   - Fix
+   - Validation
+   - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
+   - Reviewer Checklist
+
+Constraints:
+- Do not merge or auto-approve.
+- Keep changes narrowly scoped to this crash.
+- If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
+EOF
+
+            if ! "$DROID_BIN" exec --auto medium -m "$DROID_MODEL" -f /tmp/background-agent-prompt.md; then
+              echo "Droid execution failed for $CRASH_ID, continuing to next candidate"
+              continue
+            fi
+
+            if git diff --quiet; then
+              echo "No code changes produced for $CRASH_ID"
+              continue
+            fi
+
+            git add -A
+            if ! git diff --cached --quiet; then
+              git commit -m "fix: draft crash fix for ${CRASH_ID}
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+            fi
+
+            git push -u origin "$BRANCH"
+
+            TITLE="fix: draft crash fix for ${CRASH_ID}"
+            BODY_FILE="PR_BODY.md"
+            if [ ! -f "$BODY_FILE" ]; then
+              BODY_FILE="/tmp/pr-body-${CRASH_ID}.md"
+              cat > "$BODY_FILE" <<EOF
+Automated draft crash-fix pipeline output for ${CRASH_ID}.
+
+No PR_BODY.md was generated by the agent; please review commit and linked artifacts manually.
+EOF
+            fi
+
+            EXISTING_PR="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number')"
+            if [ -n "$EXISTING_PR" ]; then
+              gh pr edit "$EXISTING_PR" --title "$TITLE" --body-file "$BODY_FILE"
+              PR_NUMBER="$EXISTING_PR"
+            else
+              PR_URL="$(gh pr create --draft --base main --head "$BRANCH" --title "$TITLE" --body-file "$BODY_FILE")"
+              PR_NUMBER="$(basename "$PR_URL")"
+            fi
+
+            if [ -n "$REVIEWERS" ]; then
+              IFS=',' read -r -a REVIEWER_ARRAY <<< "$REVIEWERS"
+              for REVIEWER in "${REVIEWER_ARRAY[@]}"; do
+                [ -z "$REVIEWER" ] && continue
+                gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWER" || true
+              done
+            fi
+          done
+
+      - name: Workflow summary
+        if: always()
+        run: |
+          {
+            echo "## Background Agent MVP"
+            echo ""
+            echo "- Crash IDs: ${{ steps.candidates.outputs.ids }}"
+            echo "- Reviewer routing: ${{ steps.reviewers.outputs.reviewers || 'NOT CONFIGURED' }}"
+            echo "- Pipeline: investigate -> link-issues -> fix -> draft PR"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+concurrency:
+  group: background-agent-mvp-${{ github.ref_name }}
+  cancel-in-progress: false
