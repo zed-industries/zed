@@ -200,7 +200,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _};
+use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
     ThemeSettings, observe_buffer_font_size_adjustment,
@@ -1992,20 +1992,21 @@ impl Editor {
             return;
         }
         let multi_buffer = display_snapshot.buffer_snapshot();
-        let multi_buffer_visible_start = self
+        let scroll_anchor = self
             .scroll_manager
             .native_anchor(display_snapshot, cx)
-            .anchor
-            .to_point(&multi_buffer);
-        let max_row = multi_buffer.max_point().row;
-
-        let start_row = (multi_buffer_visible_start.row).min(max_row);
-        let end_row = (multi_buffer_visible_start.row + 10).min(max_row);
+            .anchor;
         let Some((excerpt_id, _, buffer)) = multi_buffer.as_singleton() else {
             return;
         };
         let buffer = buffer.clone();
         let &excerpt_id = excerpt_id;
+
+        let buffer_visible_start = scroll_anchor.text_anchor.to_point(&buffer);
+        let max_row = buffer.max_point().row;
+        let start_row = buffer_visible_start.row.min(max_row);
+        let end_row = (buffer_visible_start.row + 10).min(max_row);
+
         let syntax = self.style(cx).syntax.clone();
         let background_task = cx.background_spawn(async move {
             buffer
