@@ -548,21 +548,22 @@ impl MetalRenderer {
 
         for batch in scene.batches() {
             let ok = match batch {
-                PrimitiveBatch::Shadows(shadows) => self.draw_shadows(
-                    shadows,
+                PrimitiveBatch::Shadows(range) => self.draw_shadows(
+                    &scene.shadows[range],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::Quads(quads) => self.draw_quads(
-                    quads,
+                PrimitiveBatch::Quads(range) => self.draw_quads(
+                    &scene.quads[range],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::Paths(paths) => {
+                PrimitiveBatch::Paths(range) => {
+                    let paths = &scene.paths[range];
                     command_encoder.end_encoding();
 
                     let did_draw = self.draw_paths_to_intermediate(
@@ -594,37 +595,33 @@ impl MetalRenderer {
                         false
                     }
                 }
-                PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
-                    underlines,
+                PrimitiveBatch::Underlines(range) => self.draw_underlines(
+                    &scene.underlines[range],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::MonochromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_monochrome_sprites(
-                    texture_id,
-                    sprites,
-                    instance_buffer,
-                    &mut instance_offset,
-                    viewport_size,
-                    command_encoder,
-                ),
-                PrimitiveBatch::PolychromeSprites {
-                    texture_id,
-                    sprites,
-                } => self.draw_polychrome_sprites(
-                    texture_id,
-                    sprites,
-                    instance_buffer,
-                    &mut instance_offset,
-                    viewport_size,
-                    command_encoder,
-                ),
-                PrimitiveBatch::Surfaces(surfaces) => self.draw_surfaces(
-                    surfaces,
+                PrimitiveBatch::MonochromeSprites { texture_id, range } => self
+                    .draw_monochrome_sprites(
+                        texture_id,
+                        &scene.monochrome_sprites[range],
+                        instance_buffer,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    ),
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => self
+                    .draw_polychrome_sprites(
+                        texture_id,
+                        &scene.polychrome_sprites[range],
+                        instance_buffer,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    ),
+                PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
+                    &scene.surfaces[range],
                     instance_buffer,
                     &mut instance_offset,
                     viewport_size,

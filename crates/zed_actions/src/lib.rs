@@ -104,11 +104,11 @@ pub struct Extensions {
     pub id: Option<String>,
 }
 
-/// Opens the external agent registry.
+/// Opens the ACP registry.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
-pub struct AgentRegistry;
+pub struct AcpRegistry;
 
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
@@ -128,7 +128,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
-/// Increases the font size in the editor buffer.
+/// Opens the settings editor at a specific path.
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -180,6 +180,19 @@ pub struct ResetUiFontSize {
 pub struct ResetAllZoom {
     #[serde(default)]
     pub persist: bool,
+}
+
+pub mod editor {
+    use gpui::actions;
+    actions!(
+        editor,
+        [
+            /// Moves cursor up.
+            MoveUp,
+            /// Moves cursor down.
+            MoveDown,
+        ]
+    );
 }
 
 pub mod dev {
@@ -340,6 +353,64 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod search {
+    use gpui::actions;
+    actions!(
+        search,
+        [
+            /// Toggles searching in ignored files.
+            ToggleIncludeIgnored
+        ]
+    );
+}
+pub mod buffer_search {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Opens the buffer search interface with the specified configuration.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+    #[action(namespace = buffer_search)]
+    #[serde(deny_unknown_fields)]
+    pub struct Deploy {
+        #[serde(default = "util::serde::default_true")]
+        pub focus: bool,
+        #[serde(default)]
+        pub replace_enabled: bool,
+        #[serde(default)]
+        pub selection_search_enabled: bool,
+    }
+
+    impl Deploy {
+        pub fn find() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: false,
+            }
+        }
+
+        pub fn replace() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: true,
+                selection_search_enabled: false,
+            }
+        }
+    }
+
+    actions!(
+        buffer_search,
+        [
+            /// Deploys the search and replace interface.
+            DeployReplace,
+            /// Dismisses the search bar.
+            Dismiss,
+            /// Focuses back on the editor.
+            FocusEditor
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -379,8 +450,6 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
-            /// Toggles the utility/agent pane open/closed state.
-            ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
         ]
@@ -489,7 +558,7 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the name given.
+    /// Spawns a task by the tag given.
     ByTag {
         task_tag: String,
         #[serde(default)]
@@ -626,5 +695,35 @@ pub mod wsl_actions {
     pub struct OpenWsl {
         #[serde(default)]
         pub create_new_window: bool,
+    }
+}
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
     }
 }

@@ -208,6 +208,7 @@ pub enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(BufferId),
+    ServerRemoved,
     RefreshRequested {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -265,7 +266,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if self.ignore_lsp_data() || self.inlay_hints.is_none() {
+        if !self.mode().is_full() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -295,7 +296,8 @@ impl Editor {
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::SettingsChange(_) => true,
+            | InlayHintRefreshReason::SettingsChange(_)
+            | InlayHintRefreshReason::ServerRemoved => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
@@ -503,6 +505,7 @@ impl Editor {
                 self.splice_inlays(&to_remove, Vec::new(), cx);
                 return None;
             }
+            InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {
@@ -954,7 +957,7 @@ pub mod tests {
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
-    use lsp::FakeLanguageServer;
+    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
     use multi_buffer::{MultiBuffer, MultiBufferOffset};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
@@ -1060,7 +1063,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1226,9 +1229,12 @@ pub mod tests {
 
         let progress_token = 42;
         fake_server
-            .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-                token: lsp::ProgressToken::Number(progress_token),
-            })
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
             .await
             .into_response()
             .expect("work done progress create request failed");
@@ -1623,7 +1629,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1781,7 +1787,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1854,7 +1860,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");

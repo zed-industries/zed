@@ -16,7 +16,9 @@ use std::any::{Any as _, TypeId};
 use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
-pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
+pub use edit_prediction_button::{
+    EditPredictionButton, ToggleMenu, get_available_providers, set_completion_provider,
+};
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 
@@ -151,10 +153,16 @@ fn capture_example_as_markdown(
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
     let ep_store = EditPredictionStore::try_global(cx)?;
-    let events = ep_store.update(cx, |store, cx| {
-        store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-    });
-    let example = capture_example(project.clone(), buffer, cursor_anchor, events, true, cx)?;
+    let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
+    let example = capture_example(
+        project.clone(),
+        buffer,
+        cursor_anchor,
+        events,
+        Vec::new(),
+        true,
+        cx,
+    )?;
 
     let examples_dir = AllLanguageSettings::get_global(cx)
         .edit_predictions

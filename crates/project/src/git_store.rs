@@ -111,6 +111,7 @@ struct SharedDiffs {
 struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    oid_diffs: HashMap<Option<git::Oid>, WeakEntity<BufferDiff>>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     reparse_conflict_markers_task: Option<Task<Result<()>>>,
@@ -132,6 +133,7 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
+    oid_texts: HashMap<git::Oid, Arc<str>>,
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
@@ -152,6 +154,7 @@ enum DiffBasesChange {
 enum DiffKind {
     Unstaged,
     Uncommitted,
+    SinceOid(Option<git::Oid>),
 }
 
 enum GitStoreState {
@@ -724,47 +727,98 @@ impl GitStore {
         repo: Entity<Repository>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
-        cx.spawn(async move |this, cx| {
-            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-            let language_registry = buffer.update(cx, |buffer, _| buffer.language_registry());
-            let content = match oid {
-                None => None,
-                Some(oid) => Some(
-                    repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))
-                        .await?,
-                ),
-            };
-            let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+        let buffer_id = buffer.read(cx).remote_id();
 
-            buffer_diff
-                .update(cx, |buffer_diff, cx| {
-                    buffer_diff.language_changed(
-                        buffer_snapshot.language().cloned(),
-                        language_registry,
-                        cx,
-                    );
-                    buffer_diff.set_base_text(
-                        content.map(|s| s.as_str().into()),
-                        buffer_snapshot.language().cloned(),
-                        buffer_snapshot.text,
-                        cx,
-                    )
-                })
-                .await?;
-            let unstaged_diff = this
-                .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
-                .await?;
-            buffer_diff.update(cx, |buffer_diff, _| {
-                buffer_diff.set_secondary_diff(unstaged_diff);
-            });
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(oid_diff) = diff_state.read(cx).oid_diff(oid)
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+            {
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(oid_diff)
+                });
+            }
+            return Task::ready(Ok(oid_diff));
+        }
 
-            this.update(cx, |_, cx| {
-                cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
-                    .detach();
-            })?;
+        let diff_kind = DiffKind::SinceOid(oid);
+        if let Some(task) = self.loading_diffs.get(&(buffer_id, diff_kind)) {
+            let task = task.clone();
+            return cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) });
+        }
 
-            Ok(buffer_diff)
-        })
+        let task = cx
+            .spawn(async move |this, cx| {
+                let result: Result<Entity<BufferDiff>> = async {
+                    let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+                    let language_registry =
+                        buffer.update(cx, |buffer, _| buffer.language_registry());
+                    let content: Option<Arc<str>> = match oid {
+                        None => None,
+                        Some(oid) => Some(
+                            repo.update(cx, |repo, cx| repo.load_blob_content(oid, cx))
+                                .await?
+                                .into(),
+                        ),
+                    };
+                    let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+
+                    buffer_diff
+                        .update(cx, |buffer_diff, cx| {
+                            buffer_diff.language_changed(
+                                buffer_snapshot.language().cloned(),
+                                language_registry,
+                                cx,
+                            );
+                            buffer_diff.set_base_text(
+                                content.clone(),
+                                buffer_snapshot.language().cloned(),
+                                buffer_snapshot.text,
+                                cx,
+                            )
+                        })
+                        .await?;
+                    let unstaged_diff = this
+                        .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
+                        .await?;
+                    buffer_diff.update(cx, |buffer_diff, _| {
+                        buffer_diff.set_secondary_diff(unstaged_diff);
+                    });
+
+                    this.update(cx, |this, cx| {
+                        cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
+                            .detach();
+
+                        this.loading_diffs.remove(&(buffer_id, diff_kind));
+
+                        let git_store = cx.weak_entity();
+                        let diff_state = this
+                            .diffs
+                            .entry(buffer_id)
+                            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+
+                        diff_state.update(cx, |state, _| {
+                            if let Some(oid) = oid {
+                                if let Some(content) = content {
+                                    state.oid_texts.insert(oid, content);
+                                }
+                            }
+                            state.oid_diffs.insert(oid, buffer_diff.downgrade());
+                        });
+                    })?;
+
+                    Ok(buffer_diff)
+                }
+                .await;
+                result.map_err(Arc::new)
+            })
+            .shared();
+
+        self.loading_diffs
+            .insert((buffer_id, diff_kind), task.clone());
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     #[ztracing::instrument(skip_all)]
@@ -876,6 +930,9 @@ impl GitStore {
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                         diff_state.uncommitted_diff = Some(diff.downgrade())
                     }
+                    DiffKind::SinceOid(_) => {
+                        unreachable!("open_diff_internal is not used for OID diffs")
+                    }
                 }
 
                 diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
@@ -904,6 +961,16 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    pub fn get_diff_since_oid(
+        &self,
+        buffer_id: BufferId,
+        oid: Option<git::Oid>,
+        cx: &App,
+    ) -> Option<Entity<BufferDiff>> {
+        let diff_state = self.diffs.get(&buffer_id)?;
+        diff_state.read(cx).oid_diff(oid)
     }
 
     pub fn open_conflict_set(
@@ -2938,6 +3005,7 @@ impl BufferGitState {
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
+            oid_diffs: Default::default(),
             recalculate_diff_task: Default::default(),
             language: Default::default(),
             language_registry: Default::default(),
@@ -2946,6 +3014,7 @@ impl BufferGitState {
             hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
+            oid_texts: Default::default(),
             head_changed: Default::default(),
             index_changed: Default::default(),
             language_changed: Default::default(),
@@ -3020,6 +3089,10 @@ impl BufferGitState {
 
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
         self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn oid_diff(&self, oid: Option<git::Oid>) -> Option<Entity<BufferDiff>> {
+        self.oid_diffs.get(&oid).and_then(|weak| weak.upgrade())
     }
 
     fn handle_base_texts_updated(
@@ -3131,6 +3204,25 @@ impl BufferGitState {
             (None, None) => true,
             _ => false,
         };
+
+        let oid_diffs: Vec<(Option<git::Oid>, Entity<BufferDiff>, Option<Arc<str>>)> = self
+            .oid_diffs
+            .iter()
+            .filter_map(|(oid, weak)| {
+                let base_text = oid.and_then(|oid| self.oid_texts.get(&oid).cloned());
+                weak.upgrade().map(|diff| (*oid, diff, base_text))
+            })
+            .collect();
+
+        self.oid_diffs.retain(|oid, weak| {
+            let alive = weak.upgrade().is_some();
+            if !alive {
+                if let Some(oid) = oid {
+                    self.oid_texts.remove(oid);
+                }
+            }
+            alive
+        });
         self.recalculate_diff_task = Some(cx.spawn(async move |this, cx| {
             log::debug!(
                 "start recalculating diffs for buffer {}",
@@ -3210,9 +3302,9 @@ impl BufferGitState {
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
                 let task = unstaged_diff.update(cx, |diff, cx| {
-                    if language_changed {
-                        diff.language_changed(language.clone(), language_registry.clone(), cx);
-                    }
+                    // For git index buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
+                    // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
+                    // view multibuffers.
                     diff.set_snapshot(new_unstaged_diff, &buffer, cx)
                 });
                 Some(task.await)
@@ -3228,7 +3320,7 @@ impl BufferGitState {
                 uncommitted_diff
                     .update(cx, |diff, cx| {
                         if language_changed {
-                            diff.language_changed(language, language_registry, cx);
+                            diff.language_changed(language.clone(), language_registry, cx);
                         }
                         diff.set_snapshot_with_secondary(
                             new_uncommitted_diff,
@@ -3239,6 +3331,34 @@ impl BufferGitState {
                         )
                     })
                     .await;
+            }
+
+            yield_now().await;
+
+            for (oid, oid_diff, base_text) in oid_diffs {
+                let new_oid_diff = cx
+                    .update(|cx| {
+                        oid_diff.read(cx).update_diff(
+                            buffer.clone(),
+                            base_text,
+                            None,
+                            language.clone(),
+                            cx,
+                        )
+                    })
+                    .await;
+
+                oid_diff
+                    .update(cx, |diff, cx| diff.set_snapshot(new_oid_diff, &buffer, cx))
+                    .await;
+
+                log::debug!(
+                    "finished recalculating oid diff for buffer {} oid {:?}",
+                    buffer.remote_id(),
+                    oid
+                );
+
+                yield_now().await;
             }
 
             log::debug!(
@@ -4240,8 +4360,8 @@ impl Repository {
         log_order: LogOrder,
         range: Range<usize>,
         cx: &mut Context<Self>,
-    ) -> &[Arc<InitialGraphCommitData>] {
-        let initial_commit_data = &self
+    ) -> (&[Arc<InitialGraphCommitData>], bool) {
+        let (loading_task, initial_commit_data) = self
             .initial_graph_data
             .entry((log_order, log_source.clone()))
             .or_insert_with(|| {
@@ -4267,12 +4387,14 @@ impl Repository {
                     }),
                     vec![],
                 )
-            })
-            .1;
+            });
 
         let max_start = initial_commit_data.len().saturating_sub(1);
         let max_end = initial_commit_data.len();
-        &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)]
+        (
+            &initial_commit_data[range.start.min(max_start)..range.end.min(max_end)],
+            !loading_task.is_ready(),
+        )
     }
 
     async fn local_git_graph_data(

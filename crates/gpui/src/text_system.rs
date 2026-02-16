@@ -205,6 +205,23 @@ impl TextSystem {
         Ok(result * font_size)
     }
 
+    // Consider removing this?
+    /// Returns the shaped layout width of for the given character, in the given font and size.
+    pub fn layout_width(&self, font_id: FontId, font_size: Pixels, ch: char) -> Pixels {
+        let mut buffer = [0; 4];
+        let buffer = ch.encode_utf8(&mut buffer);
+        self.platform_text_system
+            .layout_line(
+                buffer,
+                font_size,
+                &[FontRun {
+                    len: buffer.len(),
+                    font_id,
+                }],
+            )
+            .width
+    }
+
     /// Returns the width of an `em`.
     ///
     /// Uses the width of the `m` character in the given font and size.
@@ -217,6 +234,12 @@ impl TextSystem {
     /// Uses the advance width of the `m` character in the given font and size.
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
         Ok(self.advance(font_id, font_size, 'm')?.width)
+    }
+
+    // Consider removing this?
+    /// Returns the shaped layout width of an `em`.
+    pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        self.layout_width(font_id, font_size, 'm')
     }
 
     /// Returns the width of an `ch`.
@@ -295,9 +318,9 @@ impl TextSystem {
         let wrappers = lock
             .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
-        });
+        let wrapper = wrappers
+            .pop()
+            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, self.clone()));
 
         LineWrapperHandle {
             wrapper: Some(wrapper),
@@ -435,7 +458,7 @@ impl WindowTextSystem {
         let mut process_line = |line_text: SharedString, line_start, line_end| {
             font_runs.clear();
 
-            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+            let mut decoration_runs = <Vec<DecorationRun>>::with_capacity(32);
             let mut run_start = line_start;
             while run_start < line_end {
                 let Some(run) = runs.peek_mut() else {
@@ -940,6 +963,22 @@ pub(crate) fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'
         ".SystemUIFont" => system,
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
+        _ => name,
+    }
+}
+
+#[allow(unused)]
+pub(crate) fn font_name_with_fallbacks_shared<'a>(
+    name: &'a SharedString,
+    system: &'a SharedString,
+) -> &'a SharedString {
+    // Note: the "Zed Plex" fonts were deprecated as we are not allowed to use "Plex"
+    // in a derived font name. They are essentially indistinguishable from IBM Plex/Lilex,
+    // and so retained here for backward compatibility.
+    match name.as_str() {
+        ".SystemUIFont" => system,
+        ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
+        ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
     }
 }

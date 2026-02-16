@@ -447,9 +447,9 @@ impl RemoteClient {
                             error.push_str("Client exited with ");
                             match status {
                                 Ok(exit_code) => {
-                                    error.push_str(&format!(" exit_code {exit_code:?}"))
+                                    error.push_str(&format!("exit_code {exit_code:?}"))
                                 }
-                                Err(e) => error.push_str(&format!(" error {e:?}")),
+                                Err(e) => error.push_str(&format!("error {e:?}")),
                             }
                         } else {
                             error.push_str("client did not become ready within the timeout");
@@ -841,8 +841,8 @@ impl RemoteClient {
                                 })?;
                             }
                         }
-                    } else if exit_code > 0 {
-                        log::error!("proxy process terminated unexpectedly");
+                    } else {
+                        log::error!("proxy process terminated unexpectedly: {exit_code}");
                         this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
                         })?;

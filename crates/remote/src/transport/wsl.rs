@@ -11,16 +11,17 @@ use gpui::{App, AppContext as _, AsyncApp, Task};
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Instant,
 };
+
 use util::{
+    command::Stdio,
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
     shell::{Shell, ShellKind},
@@ -176,7 +177,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
             let parent = parent.display(PathStyle::Posix);
@@ -200,7 +201,7 @@ impl WslRemoteConnection {
         )
         .await?
         {
-            let tmp_path = paths::remote_wsl_server_dir_relative().join(
+            let tmp_path = paths::remote_server_dir_relative().join(
                 &RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),
@@ -362,7 +363,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let proxy_process =
-            match wsl_command_impl(&self.connection_options, "env", &proxy_args, false)
+            match wsl_command_impl(&self.connection_options, "env", &proxy_args, true)
                 .kill_on_drop(true)
                 .spawn()
             {
@@ -595,7 +596,9 @@ pub fn wsl_path_to_windows_path(
     }
 }
 
-fn run_wsl_command_impl(mut command: process::Command) -> impl Future<Output = Result<String>> {
+fn run_wsl_command_impl(
+    mut command: util::command::Command,
+) -> impl Future<Output = Result<String>> {
     async move {
         let output = command
             .output()
@@ -622,8 +625,8 @@ fn wsl_command_impl(
     program: &str,
     args: &[impl AsRef<OsStr>],
     exec: bool,
-) -> process::Command {
-    let mut command = util::command::new_smol_command("wsl.exe");
+) -> util::command::Command {
+    let mut command = util::command::new_command("wsl.exe");
 
     if let Some(user) = &options.user {
         command.arg("--user").arg(user);

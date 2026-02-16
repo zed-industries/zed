@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
-use copilot::{Copilot, Status};
+use copilot::{GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
 use copilot_chat::{
     ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, CopilotChatConfiguration,
@@ -29,6 +29,8 @@ use language_model::{
 use settings::SettingsStore;
 use ui::prelude::*;
 use util::debug_panic;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -141,7 +143,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             return Task::ready(Ok(()));
         };
 
-        let Some(copilot) = Copilot::global(cx) else {
+        let Some(copilot) = GlobalCopilotAuth::try_global(cx).cloned() else {
             return Task::ready(Err(anyhow!(concat!(
                 "Copilot must be enabled for Copilot Chat to work. ",
                 "Please enable Copilot and try again."
@@ -149,7 +151,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             .into()));
         };
 
-        let err = match copilot.read(cx).status() {
+        let err = match copilot.0.read(cx).status() {
             Status::Authorized => return Task::ready(Ok(())),
             Status::Disabled => anyhow!(
                 "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
@@ -307,7 +309,6 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let bypass_rate_limit = request.bypass_rate_limit;
         let is_user_initiated = request.intent.is_none_or(|intent| match intent {
             CompletionIntent::UserPrompt
             | CompletionIntent::ThreadContextSummarization
@@ -328,14 +329,11 @@ impl LanguageModel for CopilotChatLanguageModel {
                 let request =
                     CopilotChat::stream_response(responses_request, is_user_initiated, cx.clone());
                 request_limiter
-                    .stream_with_bypass(
-                        async move {
-                            let stream = request.await?;
-                            let mapper = CopilotResponsesEventMapper::new();
-                            Ok(mapper.map_stream(stream).boxed())
-                        },
-                        bypass_rate_limit,
-                    )
+                    .stream(async move {
+                        let stream = request.await?;
+                        let mapper = CopilotResponsesEventMapper::new();
+                        Ok(mapper.map_stream(stream).boxed())
+                    })
                     .await
             });
             return async move { Ok(future.await?.boxed()) }.boxed();
@@ -352,16 +350,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             let request =
                 CopilotChat::stream_completion(copilot_request, is_user_initiated, cx.clone());
             request_limiter
-                .stream_with_bypass(
-                    async move {
-                        let response = request.await?;
-                        Ok(map_to_language_model_completion_events(
-                            response,
-                            is_streaming,
-                        ))
-                    },
-                    bypass_rate_limit,
-                )
+                .stream(async move {
+                    let response = request.await?;
+                    Ok(map_to_language_model_completion_events(
+                        response,
+                        is_streaming,
+                    ))
+                })
                 .await
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -500,17 +495,9 @@ pub fn map_to_language_model_completion_events(
                                 }
 
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        // The model can output an empty string
-                                        // to indicate the absence of arguments.
-                                        // When that happens, create an empty
-                                        // object instead.
-                                        let arguments = if tool_call.arguments.is_empty() {
-                                            Ok(serde_json::Value::Object(Default::default()))
-                                        } else {
-                                            serde_json::Value::from_str(&tool_call.arguments)
-                                        };
-                                        match arguments {
+                                    |(_, tool_call)| match parse_tool_arguments(
+                                        &tool_call.arguments,
+                                    ) {
                                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_call.id.into(),
@@ -529,7 +516,6 @@ pub fn map_to_language_model_completion_events(
                                                 json_parse_error: error.to_string(),
                                             },
                                         ),
-                                    }
                                     },
                                 ));
 
@@ -614,7 +600,7 @@ impl CopilotResponsesEventMapper {
                     ..
                 } => {
                     let mut events = Vec::new();
-                    match serde_json::from_str::<serde_json::Value>(&arguments) {
+                    match parse_tool_arguments(&arguments) {
                         Ok(input) => events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: call_id.into(),
@@ -936,7 +922,7 @@ fn into_copilot_responses(
         stop: _,
         temperature,
         thinking_allowed: _,
-        bypass_rate_limit: _,
+        thinking_effort: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

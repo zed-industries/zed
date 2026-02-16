@@ -18,12 +18,12 @@ use lmstudio::{ModelType, get_models};
 pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, ListBulletItem, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::util::parse_tool_arguments;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -370,7 +370,6 @@ impl LmStudioLanguageModel {
     fn stream_completion(
         &self,
         request: lmstudio::ChatCompletionRequest,
-        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -382,15 +381,11 @@ impl LmStudioLanguageModel {
             settings.api_url.clone()
         });
 
-        let future = self.request_limiter.stream_with_bypass(
-            async move {
-                let request =
-                    lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
-                let response = request.await?;
-                Ok(response)
-            },
-            bypass_rate_limit,
-        );
+        let future = self.request_limiter.stream(async move {
+            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let response = request.await?;
+            Ok(response)
+        });
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -465,9 +460,8 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let bypass_rate_limit = request.bypass_rate_limit;
         let request = self.to_lmstudio_request(request);
-        let completions = self.stream_completion(request, bypass_rate_limit, cx);
+        let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
@@ -564,7 +558,7 @@ impl LmStudioEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.into(),
