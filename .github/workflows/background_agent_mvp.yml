@@ -70,7 +70,7 @@ jobs:
         env:
           INPUT_CRASH_IDS: ${{ inputs.crash_ids }}
           INPUT_TOP: ${{ inputs.top }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_BACKGROUND_AGENT_MVP_TOKEN }}
         run: |
           set -euo pipefail
 
