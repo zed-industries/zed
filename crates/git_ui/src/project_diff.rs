@@ -1671,9 +1671,12 @@ impl RenderOnce for ProjectDiffEmptyState {
             v_flex()
                 .gap_1()
                 .when(self.no_repo, |this| {
-                    // TODO: add git init
                     this.text_center()
                         .child(Label::new("No Repository").color(Color::Muted))
+                        .child(
+                            Button::new("initialize-repo", "Initialize Repository")
+                                .on_click(move |_, _, cx| cx.dispatch_action(&git::Init)),
+                        )
                 })
                 .map(|this| {
                     if not_ahead_or_behind && self.current_branch.is_some() {

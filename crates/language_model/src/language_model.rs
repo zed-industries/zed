@@ -104,12 +104,13 @@ impl LanguageModelCompletionEvent {
     pub fn from_completion_request_status(
         status: CompletionRequestStatus,
         upstream_provider: LanguageModelProviderName,
-    ) -> Result<Self, LanguageModelCompletionError> {
+    ) -> Result<Option<Self>, LanguageModelCompletionError> {
         match status {
             CompletionRequestStatus::Queued { position } => {
-                Ok(LanguageModelCompletionEvent::Queued { position })
+                Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
-            CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
+            CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
+            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::UsageUpdated { .. }
             | CompletionRequestStatus::ToolUseLimitReached => Err(
                 LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
@@ -211,6 +212,9 @@ pub enum LanguageModelCompletionError {
         #[source]
         error: serde_json::Error,
     },
+
+    #[error("stream from {provider} ended unexpectedly")]
+    StreamEndedUnexpectedly { provider: LanguageModelProviderName },
 
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]

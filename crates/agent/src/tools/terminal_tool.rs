@@ -107,10 +107,8 @@ impl AgentTool for TerminalTool {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: Self::NAME.to_string(),
-                    input_values: vec![input.command.clone()],
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
                 Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
             }
         };

@@ -7,7 +7,8 @@ use std::{
 use node_runtime::NodeRuntime;
 use serde::Deserialize;
 use settings::DevContainerConnection;
-use smol::{fs, process::Command};
+use smol::fs;
+use util::command::Command;
 use util::rel_path::RelPath;
 use workspace::Workspace;
 use worktree::Snapshot;
@@ -73,13 +74,12 @@ pub(crate) struct DevContainerCli {
 impl DevContainerCli {
     fn command(&self, use_podman: bool) -> Command {
         let mut command = if let Some(node_runtime_path) = &self.node_runtime_path {
-            let mut command = util::command::new_smol_command(
-                node_runtime_path.as_os_str().display().to_string(),
-            );
+            let mut command =
+                util::command::new_command(node_runtime_path.as_os_str().display().to_string());
             command.arg(self.path.display().to_string());
             command
         } else {
-            util::command::new_smol_command(self.path.display().to_string())
+            util::command::new_command(self.path.display().to_string())
         };
 
         if use_podman {
@@ -297,9 +297,9 @@ fn dev_container_script() -> String {
 
 async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     let mut command = if use_podman {
-        util::command::new_smol_command("podman")
+        util::command::new_command("podman")
     } else {
-        util::command::new_smol_command("docker")
+        util::command::new_command("docker")
     };
     command.arg("--version");
 
@@ -315,7 +315,7 @@ async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
 pub(crate) async fn ensure_devcontainer_cli(
     node_runtime: &NodeRuntime,
 ) -> Result<DevContainerCli, DevContainerError> {
-    let mut command = util::command::new_smol_command(&dev_container_cli());
+    let mut command = util::command::new_command(&dev_container_cli());
     command.arg("--version");
 
     if let Err(e) = command.output().await {
@@ -340,7 +340,7 @@ pub(crate) async fn ensure_devcontainer_cli(
         );
 
         let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
+            util::command::new_command(node_runtime_path.as_os_str().display().to_string());
         command.arg(datadir_cli_path.display().to_string());
         command.arg("--version");
 
@@ -385,7 +385,7 @@ pub(crate) async fn ensure_devcontainer_cli(
         };
 
         let mut command =
-            util::command::new_smol_command(node_runtime_path.as_os_str().display().to_string());
+            util::command::new_command(node_runtime_path.as_os_str().display().to_string());
         command.arg(datadir_cli_path.display().to_string());
         command.arg("--version");
         if let Err(e) = command.output().await {

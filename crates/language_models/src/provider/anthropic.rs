@@ -515,6 +515,10 @@ impl LanguageModel for AnthropicModel {
         }
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }

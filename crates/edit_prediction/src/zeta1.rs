@@ -118,6 +118,7 @@ pub fn compute_edits_and_cursor_position(
     // new_offset = old_offset + delta, so old_offset = new_offset - delta
     let mut delta: isize = 0;
     let mut cursor_position: Option<PredictedCursorPosition> = None;
+    let buffer_len = snapshot.len();
 
     let edits = diffs
         .iter()
@@ -129,13 +130,15 @@ pub fn compute_edits_and_cursor_position(
 
                 if cursor_offset < edit_start_in_new {
                     let cursor_in_old = (cursor_offset as isize - delta) as usize;
+                    let buffer_offset = (offset + cursor_in_old).min(buffer_len);
                     cursor_position = Some(PredictedCursorPosition::at_anchor(
-                        snapshot.anchor_after(offset + cursor_in_old),
+                        snapshot.anchor_after(buffer_offset),
                     ));
                 } else if cursor_offset < edit_end_in_new {
+                    let buffer_offset = (offset + raw_old_range.start).min(buffer_len);
                     let offset_within_insertion = cursor_offset - edit_start_in_new;
                     cursor_position = Some(PredictedCursorPosition::new(
-                        snapshot.anchor_before(offset + raw_old_range.start),
+                        snapshot.anchor_before(buffer_offset),
                         offset_within_insertion,
                     ));
                 }
@@ -157,6 +160,9 @@ pub fn compute_edits_and_cursor_position(
             old_range.end += offset;
             old_range.start += prefix_len;
             old_range.end -= suffix_len;
+
+            old_range.start = old_range.start.min(buffer_len);
+            old_range.end = old_range.end.min(buffer_len);
 
             let new_text = new_text[prefix_len..new_text.len() - suffix_len].into();
             let range = if old_range.is_empty() {

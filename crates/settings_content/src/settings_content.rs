@@ -197,11 +197,6 @@ pub struct SettingsContent {
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    pub disable_ai: Option<SaturatingBool>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 

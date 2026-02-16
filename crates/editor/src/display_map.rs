@@ -504,14 +504,37 @@ impl DisplayMap {
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
-        let snapshot = self.unfold_intersecting([Anchor::min()..Anchor::max()], true, cx);
+        // Note, throwing away the wrap edits because we're going to recompute the maximal range for the block map regardless
+        let old_max_row = self.block_map.wrap_snapshot.borrow().max_point().row();
+        let snapshot = {
+            let edits = self.buffer_subscription.consume();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let tab_size = Self::tab_size(&self.buffer, cx);
+            let (snapshot, edits) = self.inlay_map.sync(snapshot, edits.into_inner());
+            let (mut writer, snapshot, edits) = self.fold_map.write(snapshot, edits);
+            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (_snapshot, _edits) = self
+                .wrap_map
+                .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
+
+            let (snapshot, edits) =
+                writer.unfold_intersecting([Anchor::min()..Anchor::max()], true);
+            let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+            let (snapshot, _edits) = self
+                .wrap_map
+                .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
+
+            self.block_map
+                .retain_blocks_raw(|block| !matches!(block.placement, BlockPlacement::Replace(_)));
+            snapshot
+        };
 
         let (companion_wrap_snapshot, companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
         let edits = Patch::new(
             [text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
+                old: WrapRow(0)..old_max_row,
                 new: WrapRow(0)..snapshot.max_point().row(),
             }]
             .into_iter()

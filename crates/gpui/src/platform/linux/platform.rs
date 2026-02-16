@@ -17,7 +17,7 @@ use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
 use util::ResultExt as _;
-use util::command::{new_smol_command, new_std_command};
+use util::command::{new_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
@@ -475,7 +475,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = new_smol_command("xdg-open")
+                let _ = new_command("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
