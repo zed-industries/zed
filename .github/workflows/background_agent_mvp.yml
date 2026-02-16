@@ -74,41 +74,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          PREFETCH_DIR="/tmp/crash-data"
+          ARGS=(--select-only --prefetch-dir "$PREFETCH_DIR" --org "$SENTRY_ORG")
           if [ -n "$INPUT_CRASH_IDS" ]; then
-            IDS="$(echo "$INPUT_CRASH_IDS" | tr -d '[:space:]')"
-            echo "Using manually supplied crash IDs: $IDS"
-            echo "ids=$IDS" >> "$GITHUB_OUTPUT"
-            exit 0
+            ARGS+=(--crash-ids "$INPUT_CRASH_IDS")
+          elif [ -n "$INPUT_TOP" ]; then
+            ARGS+=(--top "$INPUT_TOP")
           fi
 
-          TOP="$INPUT_TOP"
-          if [ -z "$TOP" ]; then
-            TOP="3"
-          fi
-          # Cap top to prevent runaway runs
-          if [ "$TOP" -gt 10 ] 2>/dev/null; then
-            echo "Capping --top from $TOP to 10"
-            TOP="10"
-          fi
-
-          python3 script/select-sentry-crash-candidates \
-            --org "$SENTRY_ORG" \
-            --top "$TOP" \
-            --output /tmp/sentry-candidates.json
-
-          IDS="$(python3 - <<'PY'
-import json
-with open('/tmp/sentry-candidates.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-print(','.join(item['short_id'] for item in data.get('selected', [])))
-PY
-          )"
+          IDS="$(python3 script/run-background-agent-mvp-local "${ARGS[@]}")"
 
           if [ -z "$IDS" ]; then
             echo "No candidates selected"
             exit 1
           fi
 
+          echo "Using crash IDs: $IDS"
           echo "ids=$IDS" >> "$GITHUB_OUTPUT"
 
       - name: Run background agent pipeline per crash
@@ -150,30 +131,45 @@ PY
             git fetch origin main
             git checkout -B "$BRANCH" origin/main
 
-            cat > /tmp/background-agent-prompt.md <<EOF
-You are running the weekly background crash-fix MVP pipeline for crash ${CRASH_ID}.
+            CRASH_DATA_FILE="/tmp/crash-data/crash-${CRASH_ID}.md"
+            if [ ! -f "$CRASH_DATA_FILE" ]; then
+              echo "WARNING: No pre-fetched crash data for $CRASH_ID at $CRASH_DATA_FILE — skipping"
+              continue
+            fi
 
-Required workflow:
-1. Fetch crash data with: script/sentry-fetch ${CRASH_ID}
-2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
-3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
-4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
-5. Run validators required by the fix prompt for the affected crate(s)
-6. Write PR_BODY.md with sections:
-   - Crash Summary
-   - Root Cause
-   - Fix
-   - Validation
-   - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
-   - Reviewer Checklist
+            python3 -c "
+          import sys
+          crash_id, data_file = sys.argv[1], sys.argv[2]
+          prompt = f'''You are running the weekly background crash-fix MVP pipeline for crash {crash_id}.
 
-Constraints:
-- Do not merge or auto-approve.
-- Keep changes narrowly scoped to this crash.
-- Do not modify files in .github/, .factory/, or script/ directories.
-- When investigating git history, limit your search to the last 2 weeks of commits. Do not traverse older history.
-- If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
-EOF
+          The crash report has been pre-fetched and is available at: {data_file}
+          Read this file to get the crash data. Do not call script/sentry-fetch.
+
+          Required workflow:
+          1. Read the crash report from {data_file}
+          2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
+          3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
+          4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
+          5. Run validators required by the fix prompt for the affected crate(s)
+          6. Write PR_BODY.md with sections:
+             - Crash Summary
+             - Root Cause
+             - Fix
+             - Validation
+             - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
+             - Reviewer Checklist
+
+          Constraints:
+          - Do not merge or auto-approve.
+          - Keep changes narrowly scoped to this crash.
+          - Do not modify files in .github/, .factory/, or script/ directories.
+          - When investigating git history, limit your search to the last 2 weeks of commits. Do not traverse older history.
+          - If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
+          '''
+          import textwrap
+          with open('/tmp/background-agent-prompt.md', 'w') as f:
+              f.write(textwrap.dedent(prompt))
+          " "$CRASH_ID" "$CRASH_DATA_FILE"
 
             if ! "$DROID_BIN" exec --auto medium -m "$DROID_MODEL" -f /tmp/background-agent-prompt.md; then
               echo "Droid execution failed for $CRASH_ID, continuing to next candidate"
@@ -198,9 +194,7 @@ EOF
             fi
 
             if ! git diff --cached --quiet; then
-              git commit -m "fix: draft crash fix for ${CRASH_ID}
-
-Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>"
+              git commit -m "fix: draft crash fix for ${CRASH_ID}"
             fi
 
             git push -u origin "$BRANCH"
@@ -209,11 +203,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
             BODY_FILE="PR_BODY.md"
             if [ ! -f "$BODY_FILE" ]; then
               BODY_FILE="/tmp/pr-body-${CRASH_ID}.md"
-              cat > "$BODY_FILE" <<EOF
-Automated draft crash-fix pipeline output for ${CRASH_ID}.
-
-No PR_BODY.md was generated by the agent; please review commit and linked artifacts manually.
-EOF
+              printf "Automated draft crash-fix pipeline output for %s.\n\nNo PR_BODY.md was generated by the agent; please review commit and linked artifacts manually.\n" "$CRASH_ID" > "$BODY_FILE"
             fi
 
             EXISTING_PR="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number')"
@@ -233,6 +223,10 @@ EOF
               done
             fi
           done
+
+      - name: Cleanup pre-fetched crash data
+        if: always()
+        run: rm -rf /tmp/crash-data
 
       - name: Workflow summary
         if: always()

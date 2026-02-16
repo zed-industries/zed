@@ -41,10 +41,35 @@ def validate_crash_ids(ids: list[str]) -> list[str]:
     return valid
 
 
+MAX_TOP = 10
+
+
+def prefetch_crash_data(crash_ids: list[str], output_dir: str) -> None:
+    """Fetch crash reports via script/sentry-fetch and save to output_dir/crash-{ID}.md."""
+    os.makedirs(output_dir, exist_ok=True)
+    for crash_id in crash_ids:
+        output_path = os.path.join(output_dir, f"crash-{crash_id}.md")
+        result = run(
+            ["python3", "script/sentry-fetch", crash_id],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(f"WARNING: Failed to fetch crash data for {crash_id}: {result.stderr.strip()}", file=sys.stderr)
+            continue
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(result.stdout)
+        print(f"Fetched crash data for {crash_id} -> {output_path}", file=sys.stderr)
+
+
 def resolve_crash_ids(args) -> list[str]:
     if args.crash_ids:
         raw = [item.strip() for item in args.crash_ids.split(",") if item.strip()]
         return validate_crash_ids(raw)
+
+    top = min(args.top, MAX_TOP)
+    if args.top > MAX_TOP:
+        print(f"Capping --top from {args.top} to {MAX_TOP}", file=sys.stderr)
 
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as file:
         output_path = file.name
@@ -57,7 +82,7 @@ def resolve_crash_ids(args) -> list[str]:
                 "--org",
                 args.org,
                 "--top",
-                str(args.top),
+                str(top),
                 "--output",
                 output_path,
             ]
@@ -72,11 +97,21 @@ def resolve_crash_ids(args) -> list[str]:
             pass
 
 
-def write_prompt(crash_id: str) -> Path:
+def write_prompt(crash_id: str, crash_data_file: str | None = None) -> Path:
+    if crash_data_file:
+        fetch_step = (
+            f"The crash report has been pre-fetched and is available at: {crash_data_file}\n"
+            f"Read this file to get the crash data. Do not call script/sentry-fetch.\n"
+            f"\n"
+            f"1. Read the crash report from {crash_data_file}"
+        )
+    else:
+        fetch_step = f"1. Fetch crash data with: script/sentry-fetch {crash_id}"
+
     prompt = f"""You are running the weekly background crash-fix MVP pipeline for crash {crash_id}.
 
 Required workflow:
-1. Fetch crash data with: script/sentry-fetch {crash_id}
+{fetch_step}
 2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
 3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
 4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
@@ -137,8 +172,18 @@ def run_pipeline_for_crash(args, crash_id: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local background-agent MVP dry-run workflow")
     parser.add_argument("--crash-ids", help="Comma-separated crash IDs (e.g. ZED-4VS,ZED-123)")
-    parser.add_argument("--top", type=int, default=3, help="Top N crashes when --crash-ids is omitted")
+    parser.add_argument("--top", type=int, default=3, help="Top N crashes when --crash-ids is omitted (max 10)")
     parser.add_argument("--org", default="zed-dev", help="Sentry org slug")
+    parser.add_argument(
+        "--select-only",
+        action="store_true",
+        help="Resolve crash IDs and print them comma-separated, then exit. No agent execution.",
+    )
+    parser.add_argument(
+        "--prefetch-dir",
+        help="When used with --select-only, also fetch crash data via script/sentry-fetch "
+        "and save reports to DIR/crash-{ID}.md for each resolved ID.",
+    )
     parser.add_argument("--model", default=os.environ.get("DROID_MODEL", "claude-opus-4-5-20251101"))
     parser.add_argument("--droid-bin", default=os.environ.get("DROID_BIN", "droid"))
     parser.add_argument(
@@ -152,6 +197,12 @@ def main() -> int:
     if not crash_ids:
         print("No crash IDs were selected.", file=sys.stderr)
         return 1
+
+    if args.select_only:
+        if args.prefetch_dir:
+            prefetch_crash_data(crash_ids, args.prefetch_dir)
+        print(",".join(crash_ids))
+        return 0
 
     print(f"Running local dry-run for crashes: {', '.join(crash_ids)}")
     results = [run_pipeline_for_crash(args, crash_id) for crash_id in crash_ids]
