@@ -2861,10 +2861,6 @@ impl AcpThreadView {
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
 
@@ -7205,10 +7201,6 @@ impl AcpThreadView {
     }
 
     fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return;
-        }
-
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };

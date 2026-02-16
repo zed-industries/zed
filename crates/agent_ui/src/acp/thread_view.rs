@@ -20,10 +20,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingEffortFeatureFlag,
-    FeatureFlagAppExt as _,
-};
+use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;

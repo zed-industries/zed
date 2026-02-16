@@ -53,15 +53,3 @@ impl FeatureFlag for DiffReviewFeatureFlag {
         false
     }
 }
-
-/// Controls whether we show the new thinking and effort level controls in the Agent Panel when using applicable models
-/// through the Zed provider (Cloud).
-pub struct CloudThinkingEffortFeatureFlag;
-
-impl FeatureFlag for CloudThinkingEffortFeatureFlag {
-    const NAME: &'static str = "cloud-thinking-effort";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}

@@ -9,7 +9,6 @@ use cloud_llm_client::{
     CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
     ListModelsResponse, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use feature_flags::{CloudThinkingEffortFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt,
     future::BoxFuture,
@@ -172,26 +171,10 @@ impl State {
     }
 
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
-        let is_thinking_effort_enabled = cx.has_flag::<CloudThinkingEffortFeatureFlag>();
-
         let mut models = Vec::new();
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
-
-            if !is_thinking_effort_enabled {
-                // Right now we represent thinking variants of models as separate models on the client,
-                // so we need to insert variants for any model that supports thinking.
-                if model.supports_thinking {
-                    models.push(Arc::new(cloud_llm_client::LanguageModel {
-                        id: cloud_llm_client::LanguageModelId(
-                            format!("{}-thinking", model.id).into(),
-                        ),
-                        display_name: format!("{} Thinking", model.display_name),
-                        ..model
-                    }));
-                }
-            }
         }
 
         self.default_model = models
@@ -750,13 +733,7 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
-        let is_thinking_effort_enabled =
-            cx.update(|cx| cx.has_flag::<CloudThinkingEffortFeatureFlag>());
-        let enable_thinking = if is_thinking_effort_enabled {
-            thinking_allowed && self.model.supports_thinking
-        } else {
-            thinking_allowed && self.model.id.0.ends_with("-thinking")
-        };
+        let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
