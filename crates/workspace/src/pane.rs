@@ -3526,12 +3526,11 @@ impl Pane {
         div()
             .id("tab_bar_drop_target")
             .min_w_6()
+            .h(Tab::container_height(cx))
+            .flex_grow()
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
-            // HACK: h_full doesn't occupy the complete height, using fixed height instead
-            .h(Tab::container_height(cx))
-            .flex_grow()
             .drag_over::<DraggedTab>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
             })
@@ -3571,14 +3570,13 @@ impl Pane {
             .id("pinned_tabs_border")
             .debug_selector(|| "pinned_tabs_border".into())
             .min_w_6()
-            // HACK: This empty child is currently necessary to force the drop target to appear
-            // despite us setting a min width above.
-            .child("")
-            // HACK: h_full doesn't occupy the complete height, using fixed height instead
             .h(Tab::container_height(cx))
             .flex_grow()
             .border_l_1()
             .border_color(cx.theme().colors().border)
+            // HACK: This empty child is currently necessary to force the drop target to appear
+            // despite us setting a min width above.
+            .child("")
             .drag_over::<DraggedTab>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
             })
@@ -3785,9 +3783,8 @@ impl Pane {
 
         self.handle_tab_drop(dragged_tab, pinned_count, window, cx);
 
-        // Ensure the tab is pinned after the drop.
-        // handle_tab_drop uses defer_in, so we also defer this check.
         let to_pane = cx.entity();
+
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |_, _, cx| {
