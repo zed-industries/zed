@@ -7,11 +7,15 @@ Default mode is dry-run: generate branch + agent output without commit/push/PR.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
+
+
+CRASH_ID_PATTERN = re.compile(r"^[A-Za-z0-9]+-[A-Za-z0-9]+$")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,9 +31,20 @@ def run(command: list[str], check: bool = True, capture_output: bool = False) ->
     )
 
 
+def validate_crash_ids(ids: list[str]) -> list[str]:
+    valid = []
+    for crash_id in ids:
+        if not CRASH_ID_PATTERN.match(crash_id):
+            print(f"WARNING: Skipping invalid crash ID format: '{crash_id}'", file=sys.stderr)
+            continue
+        valid.append(crash_id)
+    return valid
+
+
 def resolve_crash_ids(args) -> list[str]:
     if args.crash_ids:
-        return [item.strip() for item in args.crash_ids.split(",") if item.strip()]
+        raw = [item.strip() for item in args.crash_ids.split(",") if item.strip()]
+        return validate_crash_ids(raw)
 
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as file:
         output_path = file.name
@@ -49,7 +64,7 @@ def resolve_crash_ids(args) -> list[str]:
         )
         with open(output_path, "r", encoding="utf-8") as file:
             payload = json.load(file)
-        return [item["short_id"] for item in payload.get("selected", [])]
+        return validate_crash_ids([item["short_id"] for item in payload.get("selected", [])])
     finally:
         try:
             os.remove(output_path)
@@ -79,7 +94,7 @@ Constraints:
 - If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
 """
 
-    file_path = REPO_ROOT / f".tmp-background-agent-{crash_id}.md"
+    file_path = Path(tempfile.gettempdir()) / f"background-agent-{crash_id}.md"
     file_path.write_text(prompt, encoding="utf-8")
     return file_path
 
