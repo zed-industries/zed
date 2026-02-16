@@ -1,5 +1,5 @@
-use crate::{Editor, HighlightKey, RangeToAnchorExt};
-use gpui::{AppContext, Context, HighlightStyle, Window};
+use crate::{Editor, HighlightKey, RangeToAnchorExt, display_map::DisplaySnapshot};
+use gpui::{AppContext, Context, HighlightStyle};
 use language::CursorShape;
 use multi_buffer::MultiBufferOffset;
 use theme::ActiveTheme;
@@ -8,12 +8,11 @@ impl Editor {
     #[ztracing::instrument(skip_all)]
     pub fn refresh_matching_bracket_highlights(
         &mut self,
-        window: &Window,
+        snapshot: &DisplaySnapshot,
         cx: &mut Context<Editor>,
     ) {
         self.clear_highlights(HighlightKey::MatchingBracket, cx);
 
-        let snapshot = self.snapshot(window, cx);
         let newest_selection = self.selections.newest::<MultiBufferOffset>(&snapshot);
         // Don't highlight brackets if the selection isn't empty
         if !newest_selection.is_empty() {
@@ -39,29 +38,31 @@ impl Editor {
             let buffer_snapshot = buffer_snapshot.clone();
             async move { buffer_snapshot.innermost_enclosing_bracket_ranges(head..tail, None) }
         });
-        self.refresh_matching_bracket_highlights_task = cx.spawn(async move |editor, cx| {
-            if let Some((opening_range, closing_range)) = task.await {
-                let buffer_snapshot = snapshot.buffer_snapshot();
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.highlight_text(
-                            HighlightKey::MatchingBracket,
-                            vec![
-                                opening_range.to_anchors(&buffer_snapshot),
-                                closing_range.to_anchors(&buffer_snapshot),
-                            ],
-                            HighlightStyle {
-                                background_color: Some(
-                                    cx.theme()
-                                        .colors()
-                                        .editor_document_highlight_bracket_background,
-                                ),
-                                ..Default::default()
-                            },
-                            cx,
-                        )
-                    })
-                    .ok();
+        self.refresh_matching_bracket_highlights_task = cx.spawn({
+            let buffer_snapshot = buffer_snapshot.clone();
+            async move |editor, cx| {
+                if let Some((opening_range, closing_range)) = task.await {
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.highlight_text(
+                                HighlightKey::MatchingBracket,
+                                vec![
+                                    opening_range.to_anchors(&buffer_snapshot),
+                                    closing_range.to_anchors(&buffer_snapshot),
+                                ],
+                                HighlightStyle {
+                                    background_color: Some(
+                                        cx.theme()
+                                            .colors()
+                                            .editor_document_highlight_bracket_background,
+                                    ),
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
             }
         });
     }
