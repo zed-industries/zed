@@ -134,6 +134,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(cherry_pick::cherry_pick),
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(danger::danger),
+        WorkflowFile::zed(deploy_collab::deploy_collab),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
