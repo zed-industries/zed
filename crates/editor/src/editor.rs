@@ -18,6 +18,7 @@ mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
 mod document_colors;
+mod document_symbols;
 mod editor_settings;
 mod element;
 mod folding_ranges;
@@ -78,7 +79,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplitDiffFeatureFlag, SplittableEditor, ToggleDiffView};
+pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -216,7 +217,7 @@ use workspace::{
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{BreadcrumbText, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    searchable::{CollapseDirection, SearchEvent},
+    searchable::SearchEvent,
 };
 use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -248,7 +249,7 @@ pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
-pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
+pub const LSP_REQUEST_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
@@ -1179,6 +1180,8 @@ pub struct Editor {
     delegate_expand_excerpts: bool,
     delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
+    enable_lsp_data: bool,
+    enable_runnables: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1345,8 +1348,10 @@ pub struct Editor {
     fetched_tree_sitter_chunks: HashMap<ExcerptId, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
-    refresh_outline_symbols_task: Task<()>,
-    outline_symbols: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
+    refresh_document_symbols_task: Shared<Task<()>>,
+    lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
+    refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
+    outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
     sticky_headers_task: Task<()>,
     sticky_headers: Option<Vec<OutlineItem<Anchor>>>,
 }
@@ -2148,7 +2153,7 @@ impl Editor {
                         server_id,
                         request_id,
                     } => {
-                        editor.update_semantic_tokens(
+                        editor.refresh_semantic_tokens(
                             None,
                             Some(RefreshForServer {
                                 server_id: *server_id,
@@ -2157,9 +2162,10 @@ impl Editor {
                             cx,
                         );
                     }
-                    project::Event::LanguageServerRemoved(_server_id) => {
+                    project::Event::LanguageServerRemoved(_) => {
                         editor.registered_buffers.clear();
                         editor.register_visible_buffers(cx);
+                        editor.invalidate_semantic_tokens(None);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                         if editor.tasks_update_task.is_none() {
@@ -2409,6 +2415,8 @@ impl Editor {
             delegate_expand_excerpts: false,
             delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
+            enable_lsp_data: true,
+            enable_runnables: true,
             show_git_diff_gutter: None,
             show_code_actions: None,
             show_runnables: None,
@@ -2591,8 +2599,10 @@ impl Editor {
             fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
-            refresh_outline_symbols_task: Task::ready(()),
-            outline_symbols: None,
+            refresh_document_symbols_task: Task::ready(()).shared(),
+            lsp_document_symbols: HashMap::default(),
+            refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
+            outline_symbols_at_cursor: None,
             sticky_headers_task: Task::ready(()),
             sticky_headers: None,
         };
@@ -2640,13 +2650,14 @@ impl Editor {
                             editor
                                 .update_in(cx, |editor, window, cx| {
                                     editor.register_visible_buffers(cx);
-                                    editor.refresh_colors_for_visible_range(None, window, cx);
-                                    editor.refresh_folding_ranges(None, window, cx);
+                                    editor.colorize_brackets(false, cx);
                                     editor.refresh_inlay_hints(
                                         InlayHintRefreshReason::NewLinesShown,
                                         cx,
                                     );
-                                    editor.colorize_brackets(false, cx);
+                                    if !editor.buffer().read(cx).is_singleton() {
+                                        editor.update_lsp_data(None, window, cx);
+                                    }
                                 })
                                 .ok();
                         });
@@ -3101,6 +3112,24 @@ impl Editor {
 
     pub fn workspace(&self) -> Option<Entity<Workspace>> {
         self.workspace.as_ref()?.0.upgrade()
+    }
+
+    /// Detaches a task and shows an error notification in the workspace if available,
+    /// otherwise just logs the error.
+    pub fn detach_and_notify_err<R, E>(
+        &self,
+        task: Task<Result<R, E>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) where
+        E: std::fmt::Debug + std::fmt::Display + 'static,
+        R: 'static,
+    {
+        if let Some(workspace) = self.workspace() {
+            task.detach_and_notify_err(workspace.downgrade(), window, cx);
+        } else {
+            task.detach_and_log_err(cx);
+        }
     }
 
     /// Returns the workspace serialization ID if this editor should be serialized.
@@ -3597,7 +3626,7 @@ impl Editor {
 
             self.refresh_selected_text_highlights(false, window, cx);
             self.refresh_matching_bracket_highlights(window, cx);
-            self.refresh_outline_symbols(cx);
+            self.refresh_outline_symbols_at_cursor(cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             self.inline_blame_popover.take();
@@ -7595,23 +7624,34 @@ impl Editor {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn refresh_outline_symbols(&mut self, cx: &mut Context<Editor>) {
+    fn refresh_outline_symbols_at_cursor(&mut self, cx: &mut Context<Editor>) {
         if !self.mode.is_full() {
             return;
         }
         let cursor = self.selections.newest_anchor().head();
-        let multibuffer = self.buffer().read(cx).snapshot(cx);
-        let syntax = cx.theme().syntax().clone();
-        let background_task = cx
-            .background_spawn(async move { multibuffer.symbols_containing(cursor, Some(&syntax)) });
-        self.refresh_outline_symbols_task = cx.spawn(async move |this, cx| {
-            let symbols = background_task.await;
-            this.update(cx, |this, cx| {
-                this.outline_symbols = symbols;
-                cx.notify();
-            })
-            .ok();
-        });
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+
+        if self.uses_lsp_document_symbols(cursor, &multi_buffer_snapshot, cx) {
+            self.outline_symbols_at_cursor =
+                self.lsp_symbols_at_cursor(cursor, &multi_buffer_snapshot, cx);
+            cx.emit(EditorEvent::OutlineSymbolsChanged);
+            cx.notify();
+        } else {
+            let syntax = cx.theme().syntax().clone();
+            let background_task = cx.background_spawn(async move {
+                multi_buffer_snapshot.symbols_containing(cursor, Some(&syntax))
+            });
+            self.refresh_outline_symbols_at_cursor_at_cursor_task =
+                cx.spawn(async move |this, cx| {
+                    let symbols = background_task.await;
+                    this.update(cx, |this, cx| {
+                        this.outline_symbols_at_cursor = symbols;
+                        cx.emit(EditorEvent::OutlineSymbolsChanged);
+                        cx.notify();
+                    })
+                    .ok();
+                });
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -7697,14 +7737,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
-
         let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+
+        if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
+            return None;
+        }
 
         if !self.edit_predictions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
             self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
@@ -7751,19 +7791,25 @@ impl Editor {
     }
 
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
-        if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
+        if self.edit_prediction_provider.is_none() {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
             self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-        } else {
-            let selection = self.selections.newest_anchor();
-            let cursor = selection.head();
+            return;
+        }
 
-            if let Some((buffer, cursor_buffer_position)) =
-                self.buffer.read(cx).text_anchor_for_position(cursor, cx)
-            {
-                self.edit_prediction_settings =
-                    self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
+        let selection = self.selections.newest_anchor();
+        let cursor = selection.head();
+
+        if let Some((buffer, cursor_buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
+                self.edit_prediction_settings = EditPredictionSettings::Disabled;
+                self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
+                return;
             }
+            self.edit_prediction_settings =
+                self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
         }
     }
 
@@ -7983,10 +8029,6 @@ impl Editor {
 
                 match granularity {
                     EditPredictionGranularity::Full => {
-                        if let Some(provider) = self.edit_prediction_provider() {
-                            provider.accept(cx);
-                        }
-
                         let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
                         // Compute fallback cursor position BEFORE applying the edit,
@@ -7999,6 +8041,10 @@ impl Editor {
                         self.buffer.update(cx, |buffer, cx| {
                             buffer.edit(edits.iter().cloned(), None, cx)
                         });
+
+                        if let Some(provider) = self.edit_prediction_provider() {
+                            provider.accept(cx);
+                        }
 
                         // Resolve cursor position after the edit is applied
                         let cursor_target = if let Some((anchor, offset)) = cursor_position {
@@ -8404,10 +8450,6 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
-
         if self.ime_transaction.is_some() {
             self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
             return None;
@@ -8416,6 +8458,13 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
+
+        // Check project-level disable_ai setting for the current buffer
+        if let Some((buffer, _)) = self.buffer.read(cx).text_anchor_for_position(cursor, cx) {
+            if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
+                return None;
+            }
+        }
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
@@ -11459,8 +11508,8 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        self.reload(project, window, cx)
-            .detach_and_notify_err(window, cx);
+        let task = self.reload(project, window, cx);
+        self.detach_and_notify_err(task, window, cx);
     }
 
     pub fn restore_file(
@@ -16905,7 +16954,7 @@ impl Editor {
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
-        if !EditorSettings::get_global(cx).gutter.runnables {
+        if !EditorSettings::get_global(cx).gutter.runnables || !self.enable_runnables {
             self.clear_tasks();
             return Task::ready(());
         }
@@ -19997,9 +20046,6 @@ impl Editor {
                     .ok();
             });
         }
-        cx.emit(SearchEvent::ResultsCollapsedChanged(
-            CollapseDirection::Collapsed,
-        ));
     }
 
     pub fn fold_function_bodies(
@@ -20188,9 +20234,6 @@ impl Editor {
                     .ok();
             });
         }
-        cx.emit(SearchEvent::ResultsCollapsedChanged(
-            CollapseDirection::Expanded,
-        ));
     }
 
     pub fn fold_selected_ranges(
@@ -20299,6 +20342,13 @@ impl Editor {
 
     pub fn is_buffer_folded(&self, buffer: BufferId, cx: &App) -> bool {
         self.display_map.read(cx).is_buffer_folded(buffer)
+    }
+
+    pub fn has_any_buffer_folded(&self, cx: &App) -> bool {
+        if self.buffer().read(cx).is_singleton() {
+            return false;
+        }
+        !self.folded_buffers(cx).is_empty()
     }
 
     pub fn folded_buffers<'a>(&self, cx: &'a App) -> &'a HashSet<BufferId> {
@@ -23857,7 +23907,7 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_single_line_folds(window, cx);
                 self.refresh_matching_bracket_highlights(window, cx);
-                self.refresh_outline_symbols(cx);
+                self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&self.snapshot(window, cx), cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
@@ -24189,6 +24239,7 @@ impl Editor {
 
             if language_settings_changed {
                 self.clear_disabled_lsp_folding_ranges(window, cx);
+                self.refresh_document_symbols(None, cx);
             }
 
             if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
@@ -24197,7 +24248,7 @@ impl Editor {
                 if !inlay_splice.is_empty() {
                     self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
                 }
-                self.refresh_colors_for_visible_range(None, window, cx);
+                self.refresh_document_colors(None, window, cx);
             }
 
             self.refresh_inlay_hints(
@@ -24213,11 +24264,12 @@ impl Editor {
                 .global_lsp_settings
                 .semantic_token_rules
                 .clone();
-            if self
+            let semantic_token_rules_changed = self
                 .semantic_token_state
-                .update_rules(new_semantic_token_rules)
-            {
-                self.refresh_semantic_token_highlights(cx);
+                .update_rules(new_semantic_token_rules);
+            if language_settings_changed || semantic_token_rules_changed {
+                self.invalidate_semantic_tokens(None);
+                self.refresh_semantic_tokens(None, None, cx);
             }
         }
 
@@ -24235,7 +24287,8 @@ impl Editor {
             self.colorize_brackets(true, cx);
         }
 
-        self.refresh_semantic_token_highlights(cx);
+        self.invalidate_semantic_tokens(None);
+        self.refresh_semantic_tokens(None, None, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
@@ -25216,14 +25269,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if !self.enable_lsp_data {
+            return;
+        }
+
         if let Some(buffer_id) = for_buffer {
             self.pull_diagnostics(buffer_id, window, cx);
-            self.update_semantic_tokens(Some(buffer_id), None, cx);
-        } else {
-            self.refresh_semantic_token_highlights(cx);
         }
-        self.refresh_colors_for_visible_range(for_buffer, window, cx);
+        self.refresh_semantic_tokens(for_buffer, None, cx);
+        self.refresh_document_colors(for_buffer, window, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
+        self.refresh_document_symbols(for_buffer, cx);
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -25306,10 +25362,11 @@ impl Editor {
             show_underlines: self.diagnostics_enabled(),
         }
     }
+
     fn breadcrumbs_inner(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         let multibuffer = self.buffer().read(cx);
         let is_singleton = multibuffer.is_singleton();
-        let (buffer_id, symbols) = self.outline_symbols.as_ref()?;
+        let (buffer_id, symbols) = self.outline_symbols_at_cursor.as_ref()?;
         let buffer = multibuffer.buffer(*buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -25349,6 +25406,14 @@ impl Editor {
             font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
+    }
+
+    fn disable_lsp_data(&mut self) {
+        self.enable_lsp_data = false;
+    }
+
+    fn disable_runnables(&mut self) {
+        self.enable_runnables = false;
     }
 }
 
@@ -27432,7 +27497,7 @@ impl EditorSnapshot {
             }
         }
 
-        is_foldable |= self.starts_indent(buffer_row);
+        is_foldable |= !self.use_lsp_folding_ranges && self.starts_indent(buffer_row);
 
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
@@ -27653,6 +27718,7 @@ pub enum EditorEvent {
     },
     CursorShapeChanged,
     BreadcrumbsChanged,
+    OutlineSymbolsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

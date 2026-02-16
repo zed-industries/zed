@@ -1,3 +1,8 @@
+---
+title: Vim Mode - Zed
+description: Full Vim emulation in Zed with motions, text objects, visual mode, macros, and Zed-specific extensions.
+---
+
 # Vim Mode
 
 Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.

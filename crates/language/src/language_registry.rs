@@ -414,6 +414,17 @@ impl LanguageRegistry {
         state.available_lsp_adapters.contains_key(name)
     }
 
+    /// Returns the names of all available LSP adapters (registered via `register_available_lsp_adapter`).
+    /// These are adapters that are not bound to a specific language but can be enabled via settings.
+    pub fn available_lsp_adapter_names(&self) -> Vec<LanguageServerName> {
+        self.state
+            .read()
+            .available_lsp_adapters
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
 
@@ -741,6 +752,7 @@ impl LanguageRegistry {
         self.language_for_file_internal(path, None, None)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn load_language_for_file_path<'a>(
         self: &Arc<Self>,
         path: &'a Path,

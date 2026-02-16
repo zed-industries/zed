@@ -13,11 +13,9 @@ use crate::{
 use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplitDiffFeatureFlag,
-    SplittableEditor, ToggleDiffView,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
 };
-use feature_flags::FeatureFlagAppExt as _;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
@@ -30,18 +28,22 @@ use project::{
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 
-use settings::Settings;
+use fs::Fs;
+use settings::{DiffViewStyle, Settings, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
-use ui::{BASE_REM_SIZE_IN_PX, IconButtonShape, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{
+    BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,
+    render_modifiers, utils::SearchInputWidth,
+};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        CollapseDirection, Direction, FilteredSearchRange, SearchEvent, SearchToken,
-        SearchableItemHandle, WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
+        WeakSearchableItemHandle,
     },
 };
 
@@ -92,7 +94,6 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
-    is_collapsed: bool,
     splittable_editor: Option<WeakEntity<SplittableEditor>>,
     _splittable_editor_subscription: Option<Subscription>,
 }
@@ -103,8 +104,7 @@ impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let has_splittable_editor =
-            self.splittable_editor.is_some() && cx.has_flag::<SplitDiffFeatureFlag>();
+        let has_splittable_editor = self.splittable_editor.is_some();
         let split_buttons = if has_splittable_editor {
             self.splittable_editor
                 .as_ref()
@@ -115,36 +115,92 @@ impl Render for BufferSearchBar {
                     h_flex()
                         .gap_1()
                         .child(
-                            IconButton::new("diff-stacked", IconName::DiffStacked)
+                            IconButton::new("diff-unified", IconName::DiffUnified)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
-                                .tooltip(|_, cx| {
-                                    Tooltip::for_action("Stacked", &ToggleDiffView, cx)
-                                })
-                                .when(is_split, |button| {
+                                .tooltip(Tooltip::element(move |_, cx| {
+                                    v_flex()
+                                        .gap_1()
+                                        .child(Label::new("Unified"))
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .text_sm()
+                                                .text_color(Color::Muted.color(cx))
+                                                .children(render_modifiers(
+                                                    &gpui::Modifiers::secondary_key(),
+                                                    PlatformStyle::platform(),
+                                                    None,
+                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    false,
+                                                ))
+                                                .child("click to set as default"),
+                                        )
+                                        .into_any()
+                                }))
+                                .on_click({
                                     let focus_handle = focus_handle.clone();
-                                    button.on_click(move |_, window, cx| {
-                                        focus_handle.focus(window, cx);
-                                        window.dispatch_action(ToggleDiffView.boxed_clone(), cx);
-                                    })
+                                    move |_, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(
+                                                <dyn Fs>::global(cx),
+                                                cx,
+                                                |settings, _| {
+                                                    settings.editor.diff_view_style =
+                                                        Some(DiffViewStyle::Unified);
+                                                },
+                                            );
+                                        }
+                                        if is_split {
+                                            focus_handle.focus(window, cx);
+                                            window
+                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                        }
+                                    }
                                 }),
                         )
                         .child(
                             IconButton::new("diff-split", IconName::DiffSplit)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
-                                .tooltip(|_, cx| {
-                                    Tooltip::for_action("Side by Side", &ToggleDiffView, cx)
-                                })
-                                .when(!is_split, |button| {
-                                    button.on_click({
-                                        let focus_handle = focus_handle.clone();
-                                        move |_, window, cx| {
+                                .tooltip(Tooltip::element(move |_, cx| {
+                                    v_flex()
+                                        .gap_1()
+                                        .child(Label::new("Split"))
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .text_sm()
+                                                .text_color(Color::Muted.color(cx))
+                                                .children(render_modifiers(
+                                                    &gpui::Modifiers::secondary_key(),
+                                                    PlatformStyle::platform(),
+                                                    None,
+                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    false,
+                                                ))
+                                                .child("click to set as default"),
+                                        )
+                                        .into_any()
+                                }))
+                                .on_click({
+                                    move |_, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            update_settings_file(
+                                                <dyn Fs>::global(cx),
+                                                cx,
+                                                |settings, _| {
+                                                    settings.editor.diff_view_style =
+                                                        Some(DiffViewStyle::Split);
+                                                },
+                                            );
+                                        }
+                                        if !is_split {
                                             focus_handle.focus(window, cx);
                                             window
-                                                .dispatch_action(ToggleDiffView.boxed_clone(), cx);
+                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
                                         }
-                                    })
+                                    }
                                 }),
                         )
                 })
@@ -155,7 +211,14 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, tooltip_label) = if self.is_collapsed {
+            let is_collapsed = self
+                .active_searchable_item
+                .as_ref()
+                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+                .and_then(|item| item.downcast::<Editor>().ok())
+                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
+                .unwrap_or_default();
+            let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
                 (IconName::ChevronDownUp, "Collapse All Files")
@@ -830,7 +893,6 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
-            is_collapsed: false,
             splittable_editor: None,
             _splittable_editor_subscription: None,
         }
@@ -996,11 +1058,11 @@ impl BufferSearchBar {
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let is_collapsed = self.is_collapsed;
         if let Some(item) = &self.active_searchable_item {
             if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
                 let editor = item.downcast::<Editor>().expect("Is an editor");
                 editor.update(cx, |editor, cx| {
+                    let is_collapsed = editor.has_any_buffer_folded(cx);
                     if is_collapsed {
                         editor.unfold_all(&UnfoldAll, window, cx);
                     } else {
@@ -1377,15 +1439,6 @@ impl BufferSearchBar {
                 drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
-            SearchEvent::ResultsCollapsedChanged(collapse_direction) => {
-                if self.needs_expand_collapse_option(cx) {
-                    match collapse_direction {
-                        CollapseDirection::Collapsed => self.is_collapsed = true,
-                        CollapseDirection::Expanded => self.is_collapsed = false,
-                    }
-                }
-                cx.notify();
-            }
         }
     }
 
@@ -3338,18 +3391,79 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.fold_all(&FoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(!is_collapsed);
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_collapse_state_syncs_after_manual_buffer_fold(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        // Fold all buffers via fold_all
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_all(&FoldAll, window, cx);
+        });
+        cx.run_until_parked();
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "All buffers should be folded after fold_all"
+        );
+
+        // Manually unfold one buffer (simulating a chevron click)
+        let first_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should still report folds when only one buffer is unfolded"
+        );
+
+        // Manually unfold the second buffer too
+        let second_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(second_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            !has_any_folded,
+            "No folds should remain after unfolding all buffers individually"
+        );
+
+        // Manually fold one buffer back
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.fold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should report folds after manually folding one buffer"
+        );
     }
 
     #[perf]

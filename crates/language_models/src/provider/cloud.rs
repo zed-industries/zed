@@ -6,12 +6,14 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
-    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
+    ListModelsResponse, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use feature_flags::{CloudThinkingEffortFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
-    AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt,
+    future::BoxFuture,
+    stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
@@ -33,9 +35,11 @@ use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
@@ -410,6 +414,8 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                // .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
 
             let mut response = http_client.send(request).await?;
@@ -953,24 +959,68 @@ where
         + 'static,
 {
     let provider = provider.clone();
-    stream
-        .flat_map(move |event| {
-            futures::stream::iter(match event {
-                Err(error) => {
-                    vec![Err(LanguageModelCompletionError::from(error))]
+    let mut stream = stream.fuse();
+
+    // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+    // let mut saw_stream_ended = false;
+
+    let mut done = false;
+    let mut pending = VecDeque::new();
+
+    stream::poll_fn(move |cx| {
+        loop {
+            if let Some(item) = pending.pop_front() {
+                return Poll::Ready(Some(item));
+            }
+
+            if done {
+                return Poll::Ready(None);
+            }
+
+            match stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(event)) => {
+                    let items = match event {
+                        Err(error) => {
+                            vec![Err(LanguageModelCompletionError::from(error))]
+                        }
+                        Ok(CompletionEvent::Status(CompletionRequestStatus::StreamEnded)) => {
+                            // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                            // let mut saw_stream_ended = false;
+                            //
+                            // saw_stream_ended = true;
+                            vec![]
+                        }
+                        Ok(CompletionEvent::Status(status)) => {
+                            LanguageModelCompletionEvent::from_completion_request_status(
+                                status,
+                                provider.clone(),
+                            )
+                            .transpose()
+                            .map(|event| vec![event])
+                            .unwrap_or_default()
+                        }
+                        Ok(CompletionEvent::Event(event)) => map_callback(event),
+                    };
+                    pending.extend(items);
                 }
-                Ok(CompletionEvent::Status(event)) => {
-                    vec![
-                        LanguageModelCompletionEvent::from_completion_request_status(
-                            event,
-                            provider.clone(),
-                        ),
-                    ]
+                Poll::Ready(None) => {
+                    done = true;
+
+                    // TODO: Uncomment once the cloud-side StreamEnded support PR is merged.
+                    //
+                    // if !saw_stream_ended {
+                    //     return Poll::Ready(Some(Err(
+                    //         LanguageModelCompletionError::StreamEndedUnexpectedly {
+                    //             provider: provider.clone(),
+                    //         },
+                    //     )));
+                    // }
                 }
-                Ok(CompletionEvent::Event(event)) => map_callback(event),
-            })
-        })
-        .boxed()
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    })
+    .boxed()
 }
 
 fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {

@@ -88,7 +88,6 @@ fn eval_extract_handle_command_output() {
     // claude-sonnet-4             |  0.97 (2025-06-14)
     // gemini-2.5-pro-06-05        |  0.98 (2025-06-16)
     // gemini-2.5-flash            |  0.11 (2025-05-22)
-    // gpt-4.1                     |  1.00 (2025-05-22)
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -164,7 +163,6 @@ fn eval_delete_run_git_blame() {
     // claude-sonnet-4             | 0.96 (2025-06-14)
     // gemini-2.5-pro-06-05        | 1.0  (2025-06-16)
     // gemini-2.5-flash            |
-    // gpt-4.1                     |
 
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
@@ -230,7 +228,6 @@ fn eval_translate_doc_comments() {
     //  claude-sonnet-4                |  1.0  (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.0  (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
@@ -295,7 +292,6 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     //  claude-sonnet-4                |  0.11 (2025-06-14)
     //  gemini-2.5-pro-preview-latest  |  0.99 (2025-06-16)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/lib.rs";
     let input_file_content =
@@ -419,7 +415,6 @@ fn eval_disable_cursor_blinking() {
     //  claude-sonnet-4                |  0.81 (2025-07-14)
     //  gemini-2.5-pro                 |  0.95 (2025-07-14)
     //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
-    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
 
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
@@ -509,7 +504,6 @@ fn eval_from_pixels_constructor() {
     //  claude-4.0-sonnet              | 2025-06-14  | 0.99
     //  claude-3.7-sonnet              | 2025-06-14  | 0.88
     //  gemini-2.5-pro-preview-06-05   | 2025-06-16  | 0.98
-    //  gpt-4.1                        |
 
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
@@ -718,7 +712,6 @@ fn eval_zode() {
     //  claude-sonnet-4                |  1.0 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.0 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |  1.0 (2025-05-22)
-    //  gpt-4.1                        |  1.0 (2025-05-22)
 
     let input_file_path = "root/zode.py";
     let input_content = None;
@@ -823,7 +816,6 @@ fn eval_add_overwrite_test() {
     //  claude-sonnet-4                |  0.07 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  0.35 (2025-05-22)
     //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
 
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
@@ -1057,11 +1049,6 @@ fn eval_create_empty_file() {
     //  claude-sonnet-4                |  1.00 (2025-06-14)
     //  gemini-2.5-pro-preview-03-25   |  1.00 (2025-05-21)
     //  gemini-2.5-flash-preview-04-17 |  1.00 (2025-05-21)
-    //  gpt-4.1                        |  1.00 (2025-05-21)
-    //
-    //
-    // TODO: gpt-4.1-mini errored 38 times:
-    // "data did not match any variant of untagged enum ResponseStreamResult"
 
     let input_file_content = None;
     let expected_output_content = String::new();

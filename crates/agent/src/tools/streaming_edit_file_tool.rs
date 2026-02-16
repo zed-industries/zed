@@ -28,7 +28,7 @@ use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
-/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `terminal` tool with the 'mv' command instead.
+/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `move_path` tool instead.
 ///
 /// Before using this tool:
 ///
@@ -180,7 +180,7 @@ impl StreamingEditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        super::edit_file_tool::authorize_file_edit(
+        super::tool_permissions::authorize_file_edit(
             EditFileTool::NAME,
             &input.path,
             &input.display_description,

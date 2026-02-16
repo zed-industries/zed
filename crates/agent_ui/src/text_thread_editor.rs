@@ -2252,8 +2252,6 @@ impl TextThreadEditor {
             .map(|p| p.icon())
             .unwrap_or(IconOrSvg::Icon(IconName::Ai));
 
-        let focus_handle = self.editor().focus_handle(cx);
-
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
         } else {
@@ -2276,7 +2274,7 @@ impl TextThreadEditor {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
@@ -3170,6 +3168,7 @@ mod tests {
     use text::OffsetRangeExt;
     use unindent::Unindent;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_copy_paste_whole_message(cx: &mut TestAppContext) {
@@ -3339,25 +3338,27 @@ mod tests {
         let text_thread = create_text_thread_with_messages(messages, cx);
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window, cx);
-
-        let text_thread_editor = window
-            .update(&mut cx, |_, window, cx| {
-                cx.new(|cx| {
-                    TextThreadEditor::for_text_thread(
-                        text_thread.clone(),
-                        fs,
-                        workspace.downgrade(),
-                        project,
-                        None,
-                        window,
-                        cx,
-                    )
-                })
-            })
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let weak_workspace = workspace.downgrade();
+        let text_thread_editor = workspace.update_in(&mut cx, |_, window, cx| {
+            cx.new(|cx| {
+                TextThreadEditor::for_text_thread(
+                    text_thread.clone(),
+                    fs,
+                    weak_workspace,
+                    project,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
 
         (text_thread, text_thread_editor, cx)
     }

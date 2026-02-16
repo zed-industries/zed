@@ -408,6 +408,14 @@ impl AgentServerStore {
             .get::<AllAgentServersSettings>(None)
             .clone();
 
+        // If we don't have agents from the registry loaded yet, trigger a
+        // refresh, which will cause this function to be called again
+        if new_settings.has_registry_agents()
+            && let Some(registry) = AgentRegistryStore::try_global(cx)
+        {
+            registry.update(cx, |registry, cx| registry.refresh_if_stale(cx));
+        }
+
         self.external_agents.clear();
         self.external_agents.insert(
             GEMINI_NAME.into(),
@@ -554,7 +562,7 @@ impl AgentServerStore {
                 CustomAgentServerSettings::Registry { env, .. } => {
                     let Some(agent) = registry_agents_by_id.get(name) else {
                         if registry_store.is_some() {
-                            log::warn!("Registry agent '{}' not found in ACP registry", name);
+                            log::debug!("Registry agent '{}' not found in ACP registry", name);
                         }
                         continue;
                     };
@@ -914,10 +922,20 @@ impl AgentServerStore {
                         } else {
                             ExternalAgentSource::Custom
                         };
-                    let (icon, display_name, source) =
-                        metadata
-                            .remove(&agent_name)
-                            .unwrap_or((None, None, fallback_source));
+                    let (icon, display_name, source) = metadata
+                        .remove(&agent_name)
+                        .or_else(|| {
+                            AgentRegistryStore::try_global(cx)
+                                .and_then(|store| store.read(cx).agent(&agent_name.0))
+                                .map(|s| {
+                                    (
+                                        s.icon_path().cloned(),
+                                        Some(s.name().clone()),
+                                        ExternalAgentSource::Registry,
+                                    )
+                                })
+                        })
+                        .unwrap_or((None, None, fallback_source));
                     let source = if fallback_source == ExternalAgentSource::Builtin {
                         ExternalAgentSource::Builtin
                     } else {
@@ -2239,6 +2257,15 @@ pub struct AllAgentServersSettings {
     pub codex: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<String, CustomAgentServerSettings>,
 }
+
+impl AllAgentServersSettings {
+    pub fn has_registry_agents(&self) -> bool {
+        self.custom
+            .values()
+            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }))
+    }
+}
+
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     pub path: Option<PathBuf>,

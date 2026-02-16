@@ -1174,8 +1174,8 @@ pub fn compare_rel_paths_mixed(
                 let ordering = match (a_key, b_key) {
                     (Some(a), Some(b)) => natural_sort_no_tiebreak(a, b)
                         .then_with(|| match (a_leaf_file, b_leaf_file) {
-                            (true, false) if a == b => Ordering::Greater,
-                            (false, true) if a == b => Ordering::Less,
+                            (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
+                            (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
                             _ => Ordering::Equal,
                         })
                         .then_with(|| {
@@ -1817,6 +1817,35 @@ mod tests {
     }
 
     #[perf]
+    fn compare_rel_paths_mixed_same_name_different_case_file_and_dir() {
+        let mut paths = vec![
+            (RelPath::unix("Hello.txt").unwrap(), true),
+            (RelPath::unix("hello").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+
+        let mut paths = vec![
+            (RelPath::unix("hello").unwrap(), false),
+            (RelPath::unix("Hello.txt").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::unix("hello").unwrap(), false),
+                (RelPath::unix("Hello.txt").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
     fn compare_rel_paths_mixed_with_nested_paths() {
         // Test that nested paths still work correctly
         let mut paths = vec![
@@ -1951,8 +1980,8 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a/b/c.txt").unwrap(), true),
+                (RelPath::unix("A/B.txt").unwrap(), true),
                 (RelPath::unix("a.txt").unwrap(), true),
                 (RelPath::unix("A.txt").unwrap(), true),
             ]
