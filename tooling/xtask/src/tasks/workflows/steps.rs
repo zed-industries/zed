@@ -1,4 +1,5 @@
 use gh_workflow::*;
+use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
@@ -54,7 +55,7 @@ enum FetchDepth {
     #[default]
     Shallow,
     Full,
-    Custom(String),
+    Custom(serde_json::Value),
 }
 
 #[derive(Default)]
@@ -78,8 +79,8 @@ impl CheckoutStep {
         self
     }
 
-    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl ToString) -> Self {
-        self.fetch_depth = FetchDepth::Custom(fetch_depth.to_string());
+    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl Into<Value>) -> Self {
+        self.fetch_depth = FetchDepth::Custom(fetch_depth.into());
         self
     }
 

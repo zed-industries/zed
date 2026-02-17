@@ -270,7 +270,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '25'
+        fetch-depth: 25
         ref: ${{ github.ref }}
     - name: script/determine-release-channel
       run: script/determine-release-channel
