@@ -485,20 +485,26 @@ impl DisplayMap {
             let Some((_, companion)) = self.companion.take() else {
                 return;
             };
-            let (snapshot, edits) = self.sync_through_wrap(cx);
-            let edits = edits.compose([text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
-                new: WrapRow(0)..snapshot.max_point().row(),
+            assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
+            let (snapshot, _edits) = self.sync_through_wrap(cx);
+            let edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+                new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
-            self.block_map.write(snapshot, edits, None).remove(
-                companion
+            self.block_map.deferred_edits.set(edits);
+            self.block_map.retain_blocks_raw(|block| {
+                if companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
-                    .copied()
-                    .collect(),
-            );
+                    .any(|id| *id == block.id)
+                {
+                    return false;
+                }
+                true
+            });
             return;
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
@@ -530,16 +536,11 @@ impl DisplayMap {
         let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
-        // Create a full-range edit to sync transforms, but pass None for
-        // companion_view to skip spacer computation. Spacers will be computed
-        // on the first render when the correct wrap width is known.
         let edits = Patch::new(vec![text::Edit {
             old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
             new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
         }]);
-        self.block_map.set_needs_full_spacer_sync(true);
-        // Leave the block map to be synced by the first caller that needs a snapshot
-        // let reader = self.block_map.read(snapshot.clone(), edits, None);
+        self.block_map.deferred_edits.set(edits);
 
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
@@ -593,13 +594,8 @@ impl DisplayMap {
             }]);
             companion_display_map
                 .block_map
-                .set_needs_full_spacer_sync(true);
-            // Leave the companion to be synced by the first caller that needs a snapshot
-            // companion_display_map.block_map.read(
-            //     companion_wrap_snapshot.clone(),
-            //     companion_edits,
-            //     None,
-            // );
+                .deferred_edits
+                .set(companion_edits);
             companion_display_map.companion = Some((this, companion.clone()));
         });
 

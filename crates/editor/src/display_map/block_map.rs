@@ -45,10 +45,7 @@ pub struct BlockMap {
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
     buffers_with_disabled_headers: HashSet<BufferId>,
-    /// When true, the next sync() will process a full-range edit to compute
-    /// spacers for the entire document. Set by set_companion() when it skips
-    /// the initial sync to defer spacer computation to the first render.
-    needs_full_spacer_sync: Cell<bool>,
+    pub(super) deferred_edits: Cell<Patch<WrapRow>>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -624,7 +621,7 @@ impl BlockMap {
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
-            needs_full_spacer_sync: Cell::new(false),
+            deferred_edits: Cell::default(),
         };
         map.sync(
             &wrap_snapshot,
@@ -656,14 +653,6 @@ impl BlockMap {
                 excerpt_header_height: self.excerpt_header_height,
             },
         }
-    }
-
-    /// Marks this block map as needing a full spacer sync on the next read/sync.
-    ///
-    /// This is used by set_companion() to defer spacer computation to the first
-    /// render, where the correct wrap width will be known.
-    pub(crate) fn set_needs_full_spacer_sync(&self, needs_sync: bool) {
-        self.needs_full_spacer_sync.set(needs_sync);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -774,6 +763,8 @@ impl BlockMap {
     ) {
         let buffer = wrap_snapshot.buffer_snapshot();
 
+        edits = self.deferred_edits.take().compose(edits);
+
         // Handle changing the last excerpt if it is empty.
         if buffer.trailing_excerpt_update_count()
             != self
@@ -789,17 +780,6 @@ impl BlockMap {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
             }]);
-        }
-
-        // If set_companion() deferred the initial sync, force a full-range edit
-        // to compute spacers for the entire document.
-        if self.needs_full_spacer_sync.get() {
-            let max_row = wrap_snapshot.max_point().row() + WrapRow(1);
-            edits = edits.compose([WrapEdit {
-                old: WrapRow(0)..max_row,
-                new: WrapRow(0)..max_row,
-            }]);
-            self.needs_full_spacer_sync.set(false);
         }
 
         // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
