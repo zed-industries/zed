@@ -8,6 +8,7 @@ use gpui::{
 use project::Project;
 use std::path::PathBuf;
 use ui::prelude::*;
+use util::ResultExt;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
@@ -230,7 +231,12 @@ impl MultiWorkspace {
         self.active_workspace_index
     }
 
-    pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+    pub fn activate(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.multi_workspace_enabled(cx) {
             self.workspaces[0] = workspace;
             self.active_workspace_index = 0;
@@ -238,7 +244,7 @@ impl MultiWorkspace {
             return;
         }
 
-        let index = self.add_workspace(workspace, cx);
+        let index = self.add_workspace(workspace, window, cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
             self.serialize(cx);
@@ -248,7 +254,12 @@ impl MultiWorkspace {
 
     /// Adds a workspace to this window without changing which workspace is active.
     /// Returns the index of the workspace (existing or newly inserted).
-    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
+    pub fn add_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
@@ -258,6 +269,7 @@ impl MultiWorkspace {
                 });
             }
             self.workspaces.push(workspace);
+            self.serialize(window, cx);
             cx.notify();
             self.workspaces.len() - 1
         }
@@ -420,7 +432,7 @@ impl MultiWorkspace {
     ) -> Entity<Workspace> {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
         workspace.update(cx, |ws, _| ws.set_random_database_id());
-        self.activate(workspace.clone(), cx);
+        self.activate(workspace.clone(), window, cx);
         workspace
     }
 
@@ -440,8 +452,18 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.activate(new_workspace, cx);
+        self.activate(new_workspace.clone(), window, cx);
         self.focus_active_workspace(window, cx);
+
+        let weak_workspace = new_workspace.downgrade();
+        cx.spawn_in(window, async move |_this, cx| {
+            let workspace_id = crate::persistence::DB.next_id().await?;
+            weak_workspace.update(cx, |workspace, _cx| {
+                workspace.set_database_id(workspace_id);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -449,7 +471,7 @@ impl MultiWorkspace {
             return;
         }
 
-        self.workspaces.remove(index);
+        let removed_workspace = self.workspaces.remove(index);
 
         if self.active_workspace_index >= self.workspaces.len() {
             self.active_workspace_index = self.workspaces.len() - 1;
@@ -457,6 +479,17 @@ impl MultiWorkspace {
             self.active_workspace_index -= 1;
         }
 
+        if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
+            cx.background_spawn(async move {
+                crate::persistence::DB
+                    .set_session_id(workspace_id, None)
+                    .await
+                    .log_err();
+            })
+            .detach();
+        }
+
+        self.serialize(window, cx);
         self.focus_active_workspace(window, cx);
         self.serialize(cx);
         cx.notify();

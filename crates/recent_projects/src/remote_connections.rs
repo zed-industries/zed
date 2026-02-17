@@ -161,7 +161,7 @@ pub async fn open_remote_project(
         let open_results = existing_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
-                multi_workspace.activate(existing_workspace.clone(), cx);
+                multi_workspace.activate(existing_workspace.clone(), window, cx);
                 existing_workspace.update(cx, |workspace, cx| {
                     workspace.open_paths(
                         resolved_paths,

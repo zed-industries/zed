@@ -1321,7 +1321,8 @@ fn quit(_: &Quit, cx: &mut App) {
         }
 
         // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
+        for window in &workspace_windows {
+            let window = *window;
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
                     multi_workspace.workspaces().to_vec()
@@ -1335,7 +1336,7 @@ fn quit(_: &Quit, cx: &mut App) {
             for workspace in workspaces {
                 if let Some(should_close) = window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), cx);
+                        multi_workspace.activate(workspace.clone(), window, cx);
                         window.activate_window();
                         workspace.update(cx, |workspace, cx| {
                             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
@@ -1349,6 +1350,20 @@ fn quit(_: &Quit, cx: &mut App) {
                 }
             }
         }
+        // Flush all pending workspace serialization before quitting so that
+        // session_id/window_id are up-to-date in the database.
+        for window in &workspace_windows {
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx).detach();
+                        });
+                    }
+                })
+                .log_err();
+        }
+
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
     })
@@ -5345,11 +5360,11 @@ mod tests {
             .unwrap();
 
         window
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.activate(workspace2.clone(), cx);
-                multi_workspace.activate(workspace3.clone(), cx);
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace2.clone(), window, cx);
+                multi_workspace.activate(workspace3.clone(), window, cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1, cx);
+                multi_workspace.activate(workspace1, window, cx);
                 assert_eq!(multi_workspace.active_workspace_index(), 0);
             })
             .unwrap();
@@ -5531,9 +5546,9 @@ mod tests {
             .unwrap();
 
         window1
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.activate(workspace1_2.clone(), cx);
-                multi_workspace.activate(workspace1_1.clone(), cx);
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace1_2.clone(), window, cx);
+                multi_workspace.activate(workspace1_1.clone(), window, cx);
             })
             .unwrap();
 

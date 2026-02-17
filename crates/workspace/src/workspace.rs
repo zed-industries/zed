@@ -1823,7 +1823,7 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.activate(workspace.clone(), cx);
+                        multi_workspace.activate(workspace.clone(), window, cx);
                         workspace
                     })?;
                     (window, workspace)
@@ -5811,8 +5811,17 @@ impl Workspace {
         self.database_id
     }
 
+    pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
+        self.database_id = Some(id);
+    }
+
     pub fn session_id(&self) -> Option<String> {
         self.session_id.clone()
+    }
+
+    pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
+        self._schedule_serialize_workspace.take();
+        self.serialize_workspace_internal(window, cx)
     }
 
     pub fn root_paths(&self, cx: &App) -> Vec<Arc<Path>> {
@@ -7921,7 +7930,7 @@ pub async fn restore_multiworkspace(
     };
 
     for session_workspace in group_iter {
-        if session_workspace.paths.is_empty() {
+        let result = if session_workspace.paths.is_empty() {
             cx.update(|cx| {
                 open_workspace_by_id(
                     session_workspace.workspace_id,
@@ -7930,7 +7939,8 @@ pub async fn restore_multiworkspace(
                     cx,
                 )
             })
-            .await?;
+            .await
+            .map(|_| ())
         } else {
             cx.update(|cx| {
                 Workspace::new_local(
@@ -7942,7 +7952,12 @@ pub async fn restore_multiworkspace(
                     cx,
                 )
             })
-            .await?;
+            .await
+            .map(|_| ())
+        };
+
+        if let Err(error) = result {
+            log::error!("Failed to restore workspace in window group: {error:#}");
         }
     }
 
@@ -8496,7 +8511,7 @@ pub fn open_workspace_by_id(
                     workspace.centered_layout = centered_layout;
                     workspace
                 });
-                multi_workspace.add_workspace(workspace.clone(), cx);
+                multi_workspace.add_workspace(workspace.clone(), window, cx);
                 workspace
             })?;
             (window, workspace)
@@ -8631,7 +8646,7 @@ pub fn open_paths(
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(target_workspace.clone(), cx);
+                    multi_workspace.activate(target_workspace.clone(), window, cx);
                     target_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
                             abs_paths,
@@ -8937,7 +8952,7 @@ async fn open_remote_project_inner(
             workspace
         });
 
-        multi_workspace.activate(new_workspace.clone(), cx);
+        multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
     })?;
 
@@ -9024,8 +9039,8 @@ pub fn join_in_room_project(
             existing_window_and_workspace
         {
             existing_window
-                .update(cx, |multi_workspace, _, cx| {
-                    multi_workspace.activate(target_workspace, cx);
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(target_workspace, window, cx);
                 })
                 .ok();
             existing_window
