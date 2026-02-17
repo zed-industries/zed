@@ -44,7 +44,7 @@ jobs:
         }
 
         check_pattern "check_rust" '^(Cargo.lock|Cargo.toml|.*\.rs)$' -qP
-        check_pattern "check_extension" '^.*\.scm$' -qP
+        check_pattern "check_extension" '^(extension\.toml|.*\.scm)$' -qP
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
       check_extension: ${{ steps.filter.outputs.check_extension }}
