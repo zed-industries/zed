@@ -242,9 +242,9 @@ impl MultiWorkspace {
         let index = self.add_workspace(workspace, cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
-            self.serialize(cx);
             cx.notify();
         }
+        self.serialize(cx);
     }
 
     /// Adds a workspace to this window without changing which workspace is active.
@@ -259,7 +259,6 @@ impl MultiWorkspace {
                 });
             }
             self.workspaces.push(workspace);
-            self.serialize(cx);
             cx.notify();
             self.workspaces.len() - 1
         }
