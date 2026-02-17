@@ -3946,18 +3946,7 @@ mod tests {
             }
         }
 
-        fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
-            let sessions = self.sessions.lock();
-            let thread = sessions.get(session_id).unwrap().clone();
-
-            cx.spawn(async move |cx| {
-                thread
-                    .update(cx, |thread, cx| thread.cancel(cx))
-                    .unwrap()
-                    .await
-            })
-            .detach();
-        }
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
 
         fn truncate(
             &self,
@@ -4406,6 +4395,89 @@ mod tests {
             result.is_ok(),
             "send should succeed even when new message added during update_last_checkpoint: {:?}",
             result.err()
+        );
+    }
+
+    /// Tests that when a follow-up message is sent during generation,
+    /// the first turn completing does NOT clear `running_turn` because
+    /// it now belongs to the second turn.
+    #[gpui::test]
+    async fn test_follow_up_message_during_generation_does_not_clear_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        // First handler waits for this signal before completing
+        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let first_complete_rx = RefCell::new(Some(first_complete_rx));
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |params, _thread, _cx| {
+                let first_complete_rx = first_complete_rx.borrow_mut().take();
+                let is_first = params
+                    .prompt
+                    .iter()
+                    .any(|c| matches!(c, acp::ContentBlock::Text(t) if t.text.contains("first")));
+
+                async move {
+                    if is_first {
+                        // First handler waits until signaled
+                        if let Some(rx) = first_complete_rx {
+                            rx.await.ok();
+                        }
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Send first message (turn_id=1) - handler will block
+        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
+
+        // Send second message (turn_id=2) while first is still blocked
+        // This calls cancel() which takes turn 1's running_turn and sets turn 2's
+        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
+
+        let running_turn_after_second_send =
+            thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
+        assert_eq!(
+            running_turn_after_second_send,
+            Some(2),
+            "running_turn should be set to turn 2 after sending second message"
+        );
+
+        // Now signal first handler to complete
+        first_complete_tx.send(()).ok();
+
+        // First request completes - should NOT clear running_turn
+        // because running_turn now belongs to turn 2
+        first_request.await.unwrap();
+
+        let running_turn_after_first =
+            thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
+        assert_eq!(
+            running_turn_after_first,
+            Some(2),
+            "first turn completing should not clear running_turn (belongs to turn 2)"
+        );
+
+        // Second request completes - SHOULD clear running_turn
+        second_request.await.unwrap();
+
+        let running_turn_after_second =
+            thread.read_with(cx, |thread, _| thread.running_turn.is_some());
+        assert!(
+            !running_turn_after_second,
+            "second turn completing should clear running_turn"
         );
     }
 
