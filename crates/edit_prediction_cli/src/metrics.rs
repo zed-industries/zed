@@ -1,9 +1,7 @@
 use collections::HashMap;
 
-use crate::{
-    example::ActualCursor,
-    reorder_patch::{Patch, PatchLine},
-};
+use crate::reorder_patch::{Patch, PatchLine};
+use std::ops::Range;
 
 pub type Counts = HashMap<String, usize>;
 type CountsDelta = HashMap<String, isize>;
@@ -332,6 +330,44 @@ fn count_ngrams(text: &str, n: usize) -> Counts {
     counts
 }
 
+/// Computes the edit distance (sum of deleted + added bytes) between two strings,
+/// ignoring whitespace differences and edits within selections.
+///
+/// Takes a pre-computed diff, the actual text, and the actual selections.
+/// For each edit, strips whitespace from both the deleted and inserted text before comparing.
+/// Edits that fall entirely within a selection are skipped, since selections indicate
+/// uncertain regions where the model expects the user to make changes.
+pub fn whitespace_normalized_edit_distance<S: AsRef<str>>(
+    diff: &[(Range<usize>, S)],
+    actual: &str,
+    actual_selections: &[Range<usize>],
+) -> usize {
+    diff.iter()
+        .map(|(old_range, new_text)| {
+            // Skip edits that are entirely within a selection (uncertain region)
+            let is_within_selection = actual_selections
+                .iter()
+                .any(|sel| sel.start <= old_range.start && old_range.end <= sel.end);
+            if is_within_selection {
+                return 0;
+            }
+
+            let old_text = &actual[old_range.clone()];
+            let old_normalized: String = old_text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let new_normalized: String = new_text
+                .as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if old_normalized == new_normalized {
+                0
+            } else {
+                old_normalized.len() + new_normalized.len()
+            }
+        })
+        .sum()
+}
+
 pub fn braces_disbalance(text: &str) -> usize {
     let mut disbalance = 0isize;
 
@@ -392,10 +428,31 @@ pub fn exact_lines_match(expected_patch: &str, actual_patch: &str) -> Classifica
 /// A whitespace-only change is an added or deleted line whose content is empty or
 /// contains only whitespace. It is "isolated" when it is not adjacent to any
 /// substantive (non-whitespace) change within the same contiguous change group.
-pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCursor>) -> bool {
+/// Checks if a patch contains isolated whitespace changes.
+///
+/// `selections` are byte offsets within the new editable region.
+/// `new_editable_region` is the text of the new editable region (used to compute line numbers).
+/// `editable_region_start_line` is the 0-based line number where the editable region starts.
+pub fn has_isolated_whitespace_changes(
+    patch_str: &str,
+    selections: &[Range<usize>],
+    new_editable_region: &str,
+    editable_region_start_line: usize,
+) -> bool {
     let patch = Patch::parse_unified_diff(patch_str);
 
-    let cursor_new_file_line = cursor.as_ref().map(|c| (c.row + 1) as usize);
+    // Convert selection end offsets to 1-based line numbers in the new file
+    let cursor_new_file_lines: Vec<usize> = selections
+        .iter()
+        .map(|sel| {
+            let cursor_offset = sel.end;
+            let lines_before_cursor = new_editable_region
+                [..cursor_offset.min(new_editable_region.len())]
+                .matches('\n')
+                .count();
+            editable_region_start_line + lines_before_cursor + 1
+        })
+        .collect();
 
     for hunk in &patch.hunks {
         let lines = &hunk.lines;
@@ -406,7 +463,7 @@ pub fn has_isolated_whitespace_changes(patch_str: &str, cursor: Option<&ActualCu
                 PatchLine::Addition(s) => {
                     let addition_line = new_text_line;
                     new_text_line += 1;
-                    if s.trim().is_empty() && cursor_new_file_line == Some(addition_line) {
+                    if s.trim().is_empty() && cursor_new_file_lines.contains(&addition_line) {
                         continue;
                     }
                     s.as_str()
@@ -634,18 +691,8 @@ mod test_optimization {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::example::ActualCursor;
     use indoc::indoc;
-
-    fn cursor_on_line(one_based_line: u32) -> ActualCursor {
-        ActualCursor {
-            path: String::new(),
-            row: one_based_line - 1,
-            column: 0,
-            offset: 0,
-            editable_region_offset: None,
-        }
-    }
+    use language::text_diff;
 
     #[test]
     fn test_delta_chr_f_perfect_match() {
@@ -871,7 +918,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch, None));
+        assert!(has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
@@ -884,7 +931,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch, None));
+        assert!(!has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
@@ -896,7 +943,7 @@ index abc123..def456 100644
             +    println!(\"world\");
              }
         "};
-        assert!(!has_isolated_whitespace_changes(patch, None));
+        assert!(!has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
@@ -908,7 +955,7 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch, None));
+        assert!(has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
@@ -925,13 +972,13 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        assert!(has_isolated_whitespace_changes(patch, None));
+        assert!(has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
     fn test_isolated_whitespace_empty_patch() {
         let patch = "";
-        assert!(!has_isolated_whitespace_changes(patch, None));
+        assert!(!has_isolated_whitespace_changes(patch, &[], "", 0));
     }
 
     #[test]
@@ -945,9 +992,16 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        // New-file line 2 is the added blank line
-        let cursor = cursor_on_line(2);
-        assert!(!has_isolated_whitespace_changes(patch, Some(&cursor)));
+        // New-file line 2 is the added blank line.
+        // To get cursor on line 2 with editable_region_start_line=1:
+        // line = start_line + newlines_before_cursor + 1 = 1 + 0 + 1 = 2
+        let selection_on_line_2 = 0..0;
+        assert!(!has_isolated_whitespace_changes(
+            patch,
+            &[selection_on_line_2],
+            "x",
+            1
+        ));
     }
 
     #[test]
@@ -960,8 +1014,15 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        let cursor = cursor_on_line(1);
-        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+        // To get cursor on line 1 with editable_region_start_line=0:
+        // line = 0 + 0 + 1 = 1
+        let selection_on_line_1 = 0..0;
+        assert!(has_isolated_whitespace_changes(
+            patch,
+            &[selection_on_line_1],
+            "x",
+            0
+        ));
     }
 
     #[test]
@@ -974,7 +1035,85 @@ index abc123..def456 100644
                  println!(\"hello\");
              }
         "};
-        let cursor = cursor_on_line(2);
-        assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+        // Cursor on line 2 shouldn't suppress deletions
+        let selection_on_line_2 = 0..0;
+        assert!(has_isolated_whitespace_changes(
+            patch,
+            &[selection_on_line_2],
+            "x",
+            1
+        ));
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_identical() {
+        let actual = "fn main() { println!(\"hello\"); }";
+        let expected = "fn main() { println!(\"hello\"); }";
+        let diff = text_diff(actual, expected);
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 0);
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_whitespace_only_diff() {
+        // These differ only in whitespace/formatting
+        let actual = "entry.language";
+        let expected = "entry\n            .language";
+        let diff = text_diff(actual, expected);
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 0);
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_with_indentation_diff() {
+        let actual = "    let x = 1;";
+        let expected = "        let x = 1;";
+        let diff = text_diff(actual, expected);
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 0);
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_real_diff() {
+        let actual = "let x = 42;";
+        let expected = "let x = 100;";
+        let diff = text_diff(actual, expected);
+        // "42" -> "100" is 2 deleted + 3 added = 5
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 5);
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_real_diff_with_whitespace() {
+        // Same real diff but with different formatting
+        let actual = "let x = 42;";
+        let expected = "let x =\n    100;";
+        let diff = text_diff(actual, expected);
+        // Should still be 5 (only "42" -> "100" matters)
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 5);
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_skips_selection() {
+        // Edit within selection should be skipped
+        let actual = "import module";
+        let expected = "import other";
+        let diff = text_diff(actual, expected);
+        // Without selection: "module" (6) + "other" (5) = 11
+        assert_eq!(whitespace_normalized_edit_distance(&diff, actual, &[]), 11);
+        // With selection covering "module" (bytes 7..13), the edit is skipped
+        assert_eq!(
+            whitespace_normalized_edit_distance(&diff, actual, &[7..13]),
+            0
+        );
+    }
+
+    #[test]
+    fn test_whitespace_normalized_edit_distance_partial_selection_not_skipped() {
+        // Edit only partially within selection should NOT be skipped
+        let actual = "import module";
+        let expected = "import other";
+        let diff = text_diff(actual, expected);
+        // Selection only covers part of "module"
+        assert_eq!(
+            whitespace_normalized_edit_distance(&diff, actual, &[7..10]),
+            11
+        );
     }
 }

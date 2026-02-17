@@ -188,6 +188,7 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
             id: None,
             edits,
             cursor_position: None,
+            tabstop_selections: Vec::new(),
             edit_preview: Some(edit_preview.clone()),
         })
     }

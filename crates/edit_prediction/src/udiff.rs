@@ -296,7 +296,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
 pub fn apply_diff_to_string_with_hunk_offset(
     diff_str: &str,
     text: &str,
-) -> Result<(String, Option<usize>)> {
+) -> Result<(String, usize)> {
     let mut diff = DiffParser::new(diff_str);
 
     let mut text = text.to_string();
@@ -334,7 +334,8 @@ pub fn apply_diff_to_string_with_hunk_offset(
         }
     }
 
-    Ok((text, first_hunk_offset))
+    let hunk_offset = first_hunk_offset.unwrap_or_else(|| text.find(diff_str).unwrap_or(0));
+    Ok((text, hunk_offset))
 }
 
 /// Returns the individual edits that would be applied by a diff to the given content.

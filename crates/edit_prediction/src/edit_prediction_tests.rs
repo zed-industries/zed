@@ -1692,6 +1692,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
     let prediction = EditPrediction {
         edits,
         cursor_position: None,
+        tabstop_selections: Vec::new(),
         edit_preview,
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),

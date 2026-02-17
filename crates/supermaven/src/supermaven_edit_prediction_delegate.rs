@@ -105,6 +105,7 @@ fn completion_from_diff(
         edits,
         cursor_position: None,
         edit_preview: None,
+        tabstop_selections: Vec::new(),
     }
 }
 

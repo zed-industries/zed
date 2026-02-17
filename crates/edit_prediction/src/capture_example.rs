@@ -40,6 +40,7 @@ pub fn capture_example(
         .remote_origin_url
         .clone()
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
+
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
     let git_store = project.read(cx).git_store().clone();
@@ -175,9 +176,9 @@ pub fn capture_example(
             human_feedback: Vec::new(),
             rating: None,
         };
-        spec.set_cursor_excerpt(
+        spec.set_cursor_excerpt_with_selection(
             &cursor_excerpt,
-            cursor_offset_in_excerpt,
+            cursor_offset_in_excerpt..cursor_offset_in_excerpt,
             &line_comment_prefix,
         );
         Ok(spec)

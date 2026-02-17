@@ -486,6 +486,7 @@ fn propose_edits_with_cursor_position<T: ToOffset>(
                 id: None,
                 edits: edits.collect(),
                 cursor_position,
+                tabstop_selections: vec![],
                 edit_preview: None,
             }))
         })
@@ -517,6 +518,7 @@ fn propose_edits_with_cursor_position_in_insertion<T: ToOffset>(
                 id: None,
                 edits: edits.collect(),
                 cursor_position,
+                tabstop_selections: vec![],
                 edit_preview: None,
             }))
         })
@@ -549,6 +551,7 @@ fn propose_edits_non_zed<T: ToOffset>(
                 id: None,
                 edits: edits.collect(),
                 cursor_position: None,
+                tabstop_selections: vec![],
                 edit_preview: None,
             }))
         })

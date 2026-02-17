@@ -510,7 +510,7 @@ impl BatchingLlmClient {
     }
 
     async fn upload_pending_requests(&self) -> Result<Vec<String>> {
-        const BATCH_CHUNK_SIZE: i32 = 16_000;
+        const BATCH_CHUNK_SIZE: i32 = 10_000;
         let mut all_batch_ids = Vec::new();
         let mut total_uploaded = 0;
 

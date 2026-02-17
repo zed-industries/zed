@@ -70,7 +70,7 @@ pub use element::{
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
-pub use inlays::Inlay;
+pub use inlays::{Inlay, InlayContent};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
@@ -642,6 +642,9 @@ enum EditPrediction {
         /// The anchor is in multibuffer coordinates; after applying edits,
         /// resolve the anchor and add the offset to get the final cursor position.
         cursor_position: Option<(Anchor, usize)>,
+        /// Tabstop selections as (start_anchor, start_offset, end_anchor, end_offset).
+        /// These represent uncertain regions the user can Tab through after accepting.
+        tabstop_selections: Vec<(Anchor, usize, Anchor, usize)>,
         edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
@@ -1150,6 +1153,7 @@ pub struct Editor {
     deferred_selection_effects_state: Option<DeferredSelectionEffectsState>,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
+    snippet_cursor_inlay_ids: Vec<InlayId>,
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     pub diagnostics_max_severity: DiagnosticSeverity,
@@ -2387,6 +2391,7 @@ impl Editor {
             deferred_selection_effects_state: None,
             autoclose_regions: Vec::new(),
             snippet_stack: InvalidationStack::default(),
+            snippet_cursor_inlay_ids: Vec::new(),
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: None,
             active_diagnostics: ActiveDiagnostic::None,
@@ -3550,6 +3555,7 @@ impl Editor {
         self.select_syntax_node_history.try_clear();
         self.invalidate_autoclose_regions(&selection_anchors, buffer);
         self.snippet_stack.invalidate(&selection_anchors, buffer);
+        self.update_snippet_tabstop_highlights(cx);
         self.take_rename(false, window, cx);
 
         let newest_selection = self.selections.newest_anchor();
@@ -4491,7 +4497,10 @@ impl Editor {
         dismissed |= self.mouse_context_menu.take().is_some();
         dismissed |= is_user_requested
             && self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
-        dismissed |= self.snippet_stack.pop().is_some();
+        if self.snippet_stack.pop().is_some() {
+            dismissed = true;
+            self.update_snippet_tabstop_highlights(cx);
+        }
         if self.diff_review_drag_state.is_some() {
             self.cancel_diff_review_drag(cx);
             dismissed = true;
@@ -7856,7 +7865,7 @@ impl Editor {
     }
 
     fn should_show_edit_predictions(&self) -> bool {
-        self.snippet_stack.is_empty() && self.edit_predictions_enabled()
+        self.edit_predictions_enabled()
     }
 
     pub fn edit_prediction_preview_is_active(&self) -> bool {
@@ -8020,6 +8029,7 @@ impl Editor {
             EditPrediction::Edit {
                 edits,
                 cursor_position,
+                tabstop_selections,
                 ..
             } => {
                 self.report_edit_prediction_event(
@@ -8059,9 +8069,73 @@ impl Editor {
                             fallback_cursor_target
                         };
 
-                        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_anchor_ranges([cursor_target..cursor_target]);
-                        });
+                        // Build tabstop ranges from the predicted selections,
+                        // with a final "exit" tabstop at the cursor position so
+                        // that Tab on the last selection collapses the cursor
+                        // instead of indenting.
+                        let tabstop_ranges: Vec<Vec<Range<Anchor>>> =
+                            if tabstop_selections.is_empty() {
+                                Vec::new()
+                            } else {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let mut ranges: Vec<Vec<Range<Anchor>>> = tabstop_selections
+                                    .iter()
+                                    .map(|(start_anchor, start_offset, end_anchor, end_offset)| {
+                                        let start_base = start_anchor.to_offset(&snapshot).0;
+                                        let start_pos = MultiBufferOffset(
+                                            (start_base + start_offset).min(snapshot.len().0),
+                                        );
+                                        let end_base = end_anchor.to_offset(&snapshot).0;
+                                        let end_pos = MultiBufferOffset(
+                                            (end_base + end_offset).min(snapshot.len().0),
+                                        );
+                                        let start = snapshot.anchor_before(start_pos);
+                                        let end = snapshot.anchor_after(end_pos);
+                                        vec![start..end]
+                                    })
+                                    .collect();
+                                ranges.push(vec![cursor_target..cursor_target]);
+                                ranges
+                            };
+
+                        // If we have tabstops, place cursor at exit (final) position
+                        // but keep tabstops on the snippet stack so Shift-Tab can
+                        // navigate backwards through them.
+                        if !tabstop_ranges.is_empty() {
+                            self.change_selections(
+                                SelectionEffects::no_scroll(),
+                                window,
+                                cx,
+                                |s| {
+                                    s.select_anchor_ranges([cursor_target..cursor_target]);
+                                },
+                            );
+
+                            // Push snippet state for Shift-Tab navigation
+                            let has_non_empty_tabstop = {
+                                let snapshot = self.buffer.read(cx).snapshot(cx);
+                                let range = &tabstop_ranges[0][0];
+                                range.start.to_offset(&snapshot) != range.end.to_offset(&snapshot)
+                            };
+                            if tabstop_ranges.len() > 1 || has_non_empty_tabstop {
+                                let choices = vec![None; tabstop_ranges.len()];
+                                self.snippet_stack.push(SnippetState {
+                                    active_index: tabstop_ranges.len() - 1,
+                                    ranges: tabstop_ranges,
+                                    choices,
+                                });
+                                self.update_snippet_tabstop_highlights(cx);
+                            }
+                        } else {
+                            self.change_selections(
+                                SelectionEffects::no_scroll(),
+                                window,
+                                cx,
+                                |s| {
+                                    s.select_anchor_ranges([cursor_target..cursor_target]);
+                                },
+                            );
+                        }
 
                         let selections = self.selections.disjoint_anchors_arc();
                         if let Some(transaction_id_now) =
@@ -8527,14 +8601,20 @@ impl Editor {
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
 
-        let (completion_id, edits, predicted_cursor_position, edit_preview) = match edit_prediction
-        {
+        let (
+            completion_id,
+            edits,
+            predicted_cursor_position,
+            predicted_tabstop_selections,
+            edit_preview,
+        ) = match edit_prediction {
             edit_prediction_types::EditPrediction::Local {
                 id,
                 edits,
                 cursor_position,
+                tabstop_selections,
                 edit_preview,
-            } => (id, edits, cursor_position, edit_preview),
+            } => (id, edits, cursor_position, tabstop_selections, edit_preview),
             edit_prediction_types::EditPrediction::Jump {
                 id,
                 snapshot,
@@ -8572,6 +8652,21 @@ impl Editor {
             let anchor = multibuffer.anchor_in_excerpt(excerpt_id, predicted.anchor)?;
             Some((anchor, predicted.offset))
         });
+
+        let tabstop_selections: Vec<(Anchor, usize, Anchor, usize)> = predicted_tabstop_selections
+            .into_iter()
+            .filter_map(|selection| {
+                let start_anchor =
+                    multibuffer.anchor_in_excerpt(excerpt_id, selection.start.anchor)?;
+                let end_anchor = multibuffer.anchor_in_excerpt(excerpt_id, selection.end.anchor)?;
+                Some((
+                    start_anchor,
+                    selection.start.offset,
+                    end_anchor,
+                    selection.end.offset,
+                ))
+            })
+            .collect();
 
         let first_edit_start = edits.first().unwrap().0.start;
         let first_edit_start_point = first_edit_start.to_point(&multibuffer);
@@ -8669,6 +8764,7 @@ impl Editor {
             EditPrediction::Edit {
                 edits,
                 cursor_position,
+                tabstop_selections,
                 edit_preview,
                 display_mode,
                 snapshot,
@@ -10532,6 +10628,7 @@ impl Editor {
                     ranges,
                     choices,
                 });
+                self.update_snippet_tabstop_highlights(cx);
             }
 
             // Check whether the just-entered snippet ends with an auto-closable bracket.
@@ -10654,11 +10751,74 @@ impl Editor {
                 if snippet.active_index + 1 < snippet.ranges.len() {
                     self.snippet_stack.push(snippet);
                 }
+                self.update_snippet_tabstop_highlights(cx);
                 return true;
             }
         }
 
         false
+    }
+
+    fn update_snippet_tabstop_highlights(&mut self, cx: &mut Context<Self>) {
+        if let Some(snippet) = self.snippet_stack.last() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let mut placeholder_ranges = Vec::new();
+            let mut cursor_positions = Vec::new();
+
+            for (i, tabstop_ranges) in snippet.ranges.iter().enumerate() {
+                if i == snippet.active_index {
+                    continue;
+                }
+                for range in tabstop_ranges {
+                    let start = range.start.to_offset(&snapshot);
+                    let end = range.end.to_offset(&snapshot);
+                    if start == end {
+                        cursor_positions.push(range.start);
+                    } else {
+                        placeholder_ranges.push(range.clone());
+                    }
+                }
+            }
+
+            if placeholder_ranges.is_empty() {
+                self.clear_highlights(HighlightKey::SnippetTabstop, cx);
+            } else {
+                self.highlight_text(
+                    HighlightKey::SnippetTabstop,
+                    placeholder_ranges,
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
+
+            let old_inlay_ids = std::mem::take(&mut self.snippet_cursor_inlay_ids);
+            let new_inlays: Vec<Inlay> = cursor_positions
+                .into_iter()
+                .map(|position| {
+                    let id = InlayId::SnippetCursor(post_inc(&mut self.next_inlay_id));
+                    Inlay {
+                        id,
+                        position,
+                        content: InlayContent::Text("⎸".into()),
+                    }
+                })
+                .collect();
+            self.snippet_cursor_inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
+            self.splice_inlays(&old_inlay_ids, new_inlays, cx);
+        } else {
+            self.clear_highlights(HighlightKey::SnippetTabstop, cx);
+            let old_inlay_ids = std::mem::take(&mut self.snippet_cursor_inlay_ids);
+            if !old_inlay_ids.is_empty() {
+                self.splice_inlays(&old_inlay_ids, Vec::new(), cx);
+            }
+        }
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -10813,6 +10973,9 @@ impl Editor {
 
         if self.move_to_next_snippet_tabstop(window, cx) {
             self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+            if self.snippet_stack.is_empty() {
+                self.refresh_edit_prediction(true, false, window, cx);
+            }
             return;
         }
         cx.propagate();

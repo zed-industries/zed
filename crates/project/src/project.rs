@@ -459,6 +459,7 @@ pub enum PrepareRenameResponse {
 pub enum InlayId {
     EditPrediction(usize),
     DebuggerValue(usize),
+    SnippetCursor(usize),
     // LSP
     Hint(usize),
     Color(usize),
@@ -468,7 +469,7 @@ pub enum InlayId {
 impl InlayId {
     pub fn id(&self) -> usize {
         match self {
-            Self::EditPrediction(id) => *id,
+            Self::SnippetCursor(id) | Self::EditPrediction(id) => *id,
             Self::DebuggerValue(id) => *id,
             Self::Hint(id) => *id,
             Self::Color(id) => *id,

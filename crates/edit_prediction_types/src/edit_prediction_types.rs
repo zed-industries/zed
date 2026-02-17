@@ -80,6 +80,22 @@ impl PredictedCursorPosition {
     }
 }
 
+/// Represents a predicted selection range after an edit is applied.
+///
+/// Used for snippet-style tabstops where the model indicates uncertain regions
+/// (e.g. guessed variable names) that the user can Tab through after accepting.
+#[derive(Copy, Clone, Debug)]
+pub struct PredictedSelection {
+    pub start: PredictedCursorPosition,
+    pub end: PredictedCursorPosition,
+}
+
+impl PredictedSelection {
+    pub fn new(start: PredictedCursorPosition, end: PredictedCursorPosition) -> Self {
+        Self { start, end }
+    }
+}
+
 /// The display mode used when showing an edit prediction to the user.
 /// Used for metrics tracking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +122,7 @@ pub enum EditPrediction {
         id: Option<SharedString>,
         edits: Vec<(Range<language::Anchor>, Arc<str>)>,
         cursor_position: Option<PredictedCursorPosition>,
+        tabstop_selections: Vec<PredictedSelection>,
         edit_preview: Option<language::EditPreview>,
     },
     /// Jump to a different file from the one that requested the prediction

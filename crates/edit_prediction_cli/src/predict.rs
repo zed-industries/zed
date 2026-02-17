@@ -210,7 +210,7 @@ pub async fn run_prediction(
             .push(ExamplePrediction {
                 actual_patch: None,
                 actual_output: String::new(),
-                actual_cursor: None,
+                actual_selections: vec![],
                 error: None,
                 provider,
             });
@@ -332,12 +332,12 @@ async fn predict_anthropic(
             .collect::<Vec<String>>()
             .join("\n");
 
-        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
+        let (actual_patch, actual_selections) = TeacherPrompt::parse(example, &actual_output)?;
 
         let prediction = ExamplePrediction {
             actual_patch: Some(actual_patch),
             actual_output,
-            actual_cursor,
+            actual_selections,
             error: None,
             provider: if batched {
                 PredictionProvider::Teacher(backend)
@@ -405,12 +405,12 @@ async fn predict_openai(
             .collect::<Vec<String>>()
             .join("\n");
 
-        let (actual_patch, actual_cursor) = TeacherPrompt::parse(example, &actual_output)?;
+        let (actual_patch, actual_selections) = TeacherPrompt::parse(example, &actual_output)?;
 
         let prediction = ExamplePrediction {
             actual_patch: Some(actual_patch),
             actual_output,
-            actual_cursor,
+            actual_selections,
             error: None,
             provider: if batched {
                 PredictionProvider::Teacher(backend)

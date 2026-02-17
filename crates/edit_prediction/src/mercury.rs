@@ -214,6 +214,7 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
+                    Vec::new(),
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,

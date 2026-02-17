@@ -5,7 +5,7 @@ use std::{
 };
 
 use cloud_llm_client::EditPredictionRejectReason;
-use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
+use edit_prediction_types::{PredictedCursorPosition, PredictedSelection, interpolate_edits};
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
 use zeta_prompt::ZetaPromptInput;
@@ -38,6 +38,7 @@ impl EditPredictionResult {
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cursor_position: Option<PredictedCursorPosition>,
+        tabstop_selections: Vec<PredictedSelection>,
         buffer_snapshotted_at: Instant,
         response_received_at: Instant,
         inputs: ZetaPromptInput,
@@ -73,6 +74,7 @@ impl EditPredictionResult {
                 id,
                 edits,
                 cursor_position,
+                tabstop_selections,
                 snapshot,
                 edit_preview,
                 inputs,
@@ -89,6 +91,7 @@ pub struct EditPrediction {
     pub id: EditPredictionId,
     pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
     pub cursor_position: Option<PredictedCursorPosition>,
+    pub tabstop_selections: Vec<PredictedSelection>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
@@ -147,6 +150,7 @@ mod tests {
             id: EditPredictionId("prediction-1".into()),
             edits,
             cursor_position: None,
+            tabstop_selections: Vec::new(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,

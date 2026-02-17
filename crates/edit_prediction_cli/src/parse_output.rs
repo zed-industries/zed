@@ -1,10 +1,6 @@
-use crate::{
-    PredictionProvider,
-    example::{ActualCursor, Example},
-    format_prompt::TeacherPrompt,
-    repair,
-};
+use crate::{PredictionProvider, example::Example, format_prompt::TeacherPrompt, repair};
 use anyhow::{Context as _, Result};
+use std::ops::Range;
 use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
@@ -22,10 +18,10 @@ pub fn run_parse_output(example: &mut Example) -> Result<()> {
         .collect();
 
     for (ix, actual_output, provider) in to_parse {
-        let (actual_patch, actual_cursor) =
+        let (actual_patch, actual_selections) =
             parse_prediction_output(example, &actual_output, provider)?;
         example.predictions[ix].actual_patch = Some(actual_patch);
-        example.predictions[ix].actual_cursor = actual_cursor;
+        example.predictions[ix].actual_selections = actual_selections;
     }
 
     Ok(())
@@ -35,7 +31,7 @@ pub fn parse_prediction_output(
     example: &Example,
     actual_output: &str,
     provider: PredictionProvider,
-) -> Result<(String, Option<ActualCursor>)> {
+) -> Result<(String, Vec<Range<usize>>)> {
     match provider {
         PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
             TeacherPrompt::parse(example, actual_output)
@@ -89,7 +85,7 @@ fn parse_zeta2_output(
     example: &Example,
     actual_output: &str,
     format: ZetaFormat,
-) -> Result<(String, Option<ActualCursor>)> {
+) -> Result<(String, Vec<Range<usize>>)> {
     let prompt = &example.prompt.as_ref().context("prompt required")?.input;
     let prompt_inputs = example
         .prompt_inputs
@@ -99,12 +95,10 @@ fn parse_zeta2_output(
     let old_text = extract_zeta2_current_region(prompt, format)?;
 
     let mut new_text = actual_output.to_string();
-    let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
-        new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
-        Some(offset)
-    } else {
-        None
-    };
+    let selection_ranges = TeacherPrompt::extract_selections(&new_text);
+    new_text = new_text
+        .replace(TeacherPrompt::SELECTION_START_MARKER, "")
+        .replace(CURSOR_MARKER, "");
 
     let suffix = match format {
         ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
@@ -162,18 +156,7 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
-    let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
-        ActualCursor::from_editable_region(
-            &example.spec.cursor_path,
-            editable_region_cursor_offset,
-            &new_text,
-            &prompt_inputs.content,
-            editable_region_offset,
-            editable_region_start_line,
-        )
-    });
-
-    Ok((formatted_diff, actual_cursor))
+    Ok((formatted_diff, selection_ranges))
 }
 
 #[cfg(test)]

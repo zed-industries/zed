@@ -252,6 +252,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 id: Some(prediction.id.to_string().into()),
                 edits: edits[edit_start_ix..edit_end_ix].to_vec(),
                 cursor_position: prediction.cursor_position,
+                tabstop_selections: prediction.tabstop_selections.clone(),
                 edit_preview: Some(prediction.edit_preview.clone()),
             })
         })

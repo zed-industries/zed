@@ -7,6 +7,7 @@ use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator as _, IntoStaticStr};
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
+pub const SELECTION_START_MARKER: &str = "<|selection_start|>";
 pub const MAX_PROMPT_TOKENS: usize = 4096;
 
 /// Use up to this amount of the editable region for prefill.

@@ -10,6 +10,7 @@ use http_client::Url;
 use language::{Anchor, Buffer};
 use project::Project;
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::{
     borrow::Cow,
     collections::VecDeque,
@@ -65,10 +66,23 @@ pub struct ExamplePromptInputs {
     pub cursor_row: u32,
     pub cursor_column: u32,
     pub cursor_offset: usize,
+    /// The start offset of the selection. If `None`, the selection is empty
+    /// (cursor only), meaning the selection start equals `cursor_offset`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_start_offset: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt_start_row: Option<u32>,
     pub edit_history: Vec<Arc<zeta_prompt::Event>>,
     pub related_files: Option<Vec<RelatedFile>>,
+}
+
+impl ExamplePromptInputs {
+    /// Returns the selection range. For an empty selection (cursor only),
+    /// returns a range where start == end == cursor_offset.
+    pub fn selection_range(&self) -> std::ops::Range<usize> {
+        let start = self.selection_start_offset.unwrap_or(self.cursor_offset);
+        start..self.cursor_offset
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,62 +101,17 @@ pub struct ExamplePrediction {
     pub actual_patch: Option<String>,
     #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actual_cursor: Option<ActualCursor>,
+    /// Selection ranges within the new editable region (after marker stripping).
+    /// Each range represents a selection where `start..end` are byte offsets.
+    /// An empty selection (cursor only) has `start == end`.
+    ///
+    /// Because the actual patch is generated with full context (all lines of the
+    /// editable region), these offsets are also valid as hunk-content offsets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actual_selections: Vec<Range<usize>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub provider: PredictionProvider,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ActualCursor {
-    pub path: String,
-    pub row: u32,
-    pub column: u32,
-    pub offset: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub editable_region_offset: Option<usize>,
-}
-
-impl ActualCursor {
-    /// Construct an `ActualCursor` from a cursor offset within the new editable region.
-    ///
-    /// - `path`: file path the cursor is in
-    /// - `editable_region_cursor_offset`: byte offset of the cursor within the new editable region text
-    /// - `new_editable_region`: the full new editable region text (after marker removal)
-    /// - `content`: the full file content (before the edit)
-    /// - `editable_region_byte_offset`: byte offset where the editable region starts in `content`
-    /// - `editable_region_start_line`: 0-based line number where the editable region starts in `content`
-    pub fn from_editable_region(
-        path: &std::path::Path,
-        editable_region_cursor_offset: usize,
-        new_editable_region: &str,
-        content: &str,
-        editable_region_byte_offset: usize,
-        editable_region_start_line: usize,
-    ) -> Self {
-        let global_offset = editable_region_byte_offset + editable_region_cursor_offset;
-        let new_region_prefix = &new_editable_region[..editable_region_cursor_offset];
-        let row = (editable_region_start_line + new_region_prefix.matches('\n').count()) as u32;
-        let column = match new_region_prefix.rfind('\n') {
-            Some(pos) => (editable_region_cursor_offset - pos - 1) as u32,
-            None => {
-                let content_prefix = &content[..editable_region_byte_offset];
-                let content_column = match content_prefix.rfind('\n') {
-                    Some(pos) => editable_region_byte_offset - pos - 1,
-                    None => editable_region_byte_offset,
-                };
-                (content_column + editable_region_cursor_offset) as u32
-            }
-        };
-        ActualCursor {
-            path: path.to_string_lossy().to_string(),
-            row,
-            column,
-            offset: global_offset,
-            editable_region_offset: Some(editable_region_cursor_offset),
-        }
-    }
 }
 
 fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -165,10 +134,21 @@ pub struct ExampleScore {
     pub exact_lines_fn: usize,
     #[serde(default)]
     pub reversal_ratio: f32,
+    /// Edit distance between actual and expected text (character-level).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_distance: Option<usize>,
+    /// Edit distance as a percentage: 100 * (original_to_expected - actual_to_expected) / original_to_expected.
+    /// 100% means perfect prediction, 0% means no progress, negative means made things worse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_distance_percentage: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_distance: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_exact_match: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_start_distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_exact_match: Option<bool>,
     pub wrong_editable_region: Option<bool>,
     #[serde(default)]
     pub has_isolated_whitespace_changes: bool,
@@ -337,4 +317,36 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         qa: Vec::new(),
         state: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_actual_selections_roundtrip() {
+        let empty_prediction = ExamplePrediction {
+            actual_patch: None,
+            actual_output: "output".to_string(),
+            actual_selections: vec![],
+            error: None,
+            provider: PredictionProvider::Sweep,
+        };
+        let empty_json = serde_json::to_value(&empty_prediction).unwrap();
+        assert!(empty_json.get("actual_selections").is_none());
+
+        let selections = vec![3..5, 10..10, 20..25];
+
+        let prediction = ExamplePrediction {
+            actual_patch: Some("patch".to_string()),
+            actual_output: "output".to_string(),
+            actual_selections: selections.clone(),
+            error: None,
+            provider: PredictionProvider::Sweep,
+        };
+
+        let json_str = serde_json::to_string(&prediction).unwrap();
+        let roundtrip: ExamplePrediction = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(roundtrip.actual_selections, selections);
+    }
 }
