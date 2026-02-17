@@ -1950,7 +1950,6 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 this.project
                     .update(cx, |project, cx| project.set_agent_location(None, cx));
-                dbg!("Max tokens reached. Usage: {:?}", &this.token_usage);
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
