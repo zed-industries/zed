@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""Fetch a crash report from Sentry and output formatted markdown.
+
+Usage:
+    script/sentry-fetch <issue-short-id-or-numeric-id>
+    script/sentry-fetch ZED-4VS
+    script/sentry-fetch 7243282041
+
+Authentication (checked in order):
+    1. SENTRY_AUTH_TOKEN environment variable
+    2. Token from ~/.sentryclirc (written by `sentry-cli login`)
+
+If neither is found, the script will print setup instructions and exit.
+"""
+
+import argparse
+import configparser
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+SENTRY_BASE_URL = "https://sentry.io/api/0"
+DEFAULT_SENTRY_ORG = "zed-dev"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch a crash report from Sentry and output formatted markdown."
+    )
+    parser.add_argument(
+        "issue",
+        help="Sentry issue short ID (e.g. ZED-4VS) or numeric issue ID",
+    )
+    args = parser.parse_args()
+
+    token = find_auth_token()
+    if not token:
+        print(
+            "Error: No Sentry auth token found.",
+            file=sys.stderr,
+        )
+        print(
+            "\nSet up authentication using one of these methods:\n"
+            "  1. Run `sentry-cli login` (stores token in ~/.sentryclirc)\n"
+            "  2. Set the SENTRY_AUTH_TOKEN environment variable\n"
+            "\nGet a token at https://sentry.io/settings/auth-tokens/",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        issue_id, short_id, issue = resolve_issue(args.issue, token)
+        event = fetch_latest_event(issue_id, token)
+    except FetchError as err:
+        print(f"Error: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    markdown = format_crash_report(issue, event, short_id)
+    print(markdown)
+
+
+class FetchError(Exception):
+    pass
+
+
+def find_auth_token():
+    """Find a Sentry auth token from environment or ~/.sentryclirc.
+
+    Checks in order:
+        1. SENTRY_AUTH_TOKEN environment variable
+        2. auth.token in ~/.sentryclirc (INI format, written by `sentry-cli login`)
+    """
+    token = os.environ.get("SENTRY_AUTH_TOKEN")
+    if token:
+        return token
+
+    sentryclirc_path = os.path.expanduser("~/.sentryclirc")
+    if os.path.isfile(sentryclirc_path):
+        config = configparser.ConfigParser()
+        try:
+            config.read(sentryclirc_path)
+            token = config.get("auth", "token", fallback=None)
+            if token:
+                return token
+        except configparser.Error:
+            pass
+
+    return None
+
+
+def api_get(path, token):
+    """Make an authenticated GET request to the Sentry API."""
+    url = f"{SENTRY_BASE_URL}{path}"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except (json.JSONDecodeError, AttributeError):
+            detail = body
+        raise FetchError(f"Sentry API returned HTTP {err.code} for {path}: {detail}")
+    except urllib.error.URLError as err:
+        raise FetchError(f"Failed to connect to Sentry API: {err.reason}")
+
+
+def resolve_issue(identifier, token):
+    """Resolve a Sentry issue by short ID or numeric ID.
+
+    Returns (issue_id, short_id, issue_data).
+    """
+    if identifier.isdigit():
+        issue = api_get(f"/issues/{identifier}/", token)
+        return identifier, issue.get("shortId", identifier), issue
+
+    result = api_get(f"/organizations/{DEFAULT_SENTRY_ORG}/shortids/{identifier}/", token)
+    group_id = str(result["groupId"])
+    issue = api_get(f"/issues/{group_id}/", token)
+    return group_id, identifier, issue
+
+
+def fetch_latest_event(issue_id, token):
+    """Fetch the latest event for an issue."""
+    return api_get(f"/issues/{issue_id}/events/latest/", token)
+
+
+def format_crash_report(issue, event, short_id):
+    """Format a Sentry issue and event as a markdown crash report."""
+    lines = []
+
+    title = issue.get("title", "Unknown Crash")
+    lines.append(f"# {title}")
+    lines.append("")
+
+    issue_id = issue.get("id", "unknown")
+    project = issue.get("project", {})
+    project_slug = (
+        project.get("slug", "unknown") if isinstance(project, dict) else str(project)
+    )
+    first_seen = issue.get("firstSeen", "unknown")
+    last_seen = issue.get("lastSeen", "unknown")
+    count = issue.get("count", "unknown")
+    sentry_url = f"https://sentry.io/organizations/{DEFAULT_SENTRY_ORG}/issues/{issue_id}/"
+
+    lines.append(f"**Short ID:** {short_id}")
+    lines.append(f"**Issue ID:** {issue_id}")
+    lines.append(f"**Project:** {project_slug}")
+    lines.append(f"**Sentry URL:** {sentry_url}")
+    lines.append(f"**First Seen:** {first_seen}")
+    lines.append(f"**Last Seen:** {last_seen}")
+    lines.append(f"**Event Count:** {count}")
+    lines.append("")
+
+    format_tags(lines, event)
+    format_entries(lines, event)
+
+    return "\n".join(lines)
+
+
+def format_tags(lines, event):
+    """Extract and format tags from the event."""
+    tags = event.get("tags", [])
+    if not tags:
+        return
+
+    lines.append("## Tags")
+    lines.append("")
+    for tag in tags:
+        key = tag.get("key", "") if isinstance(tag, dict) else ""
+        value = tag.get("value", "") if isinstance(tag, dict) else ""
+        if key:
+            lines.append(f"- **{key}:** {value}")
+    lines.append("")
+
+
+def format_entries(lines, event):
+    """Format exception and thread entries from the event."""
+    entries = event.get("entries", [])
+
+    for entry in entries:
+        entry_type = entry.get("type", "")
+
+        if entry_type == "exception":
+            format_exceptions(lines, entry)
+        elif entry_type == "threads":
+            format_threads(lines, entry)
+
+
+def format_exceptions(lines, entry):
+    """Format exception entries."""
+    exceptions = entry.get("data", {}).get("values", [])
+    if not exceptions:
+        return
+
+    lines.append("## Exceptions")
+    lines.append("")
+
+    for i, exc in enumerate(exceptions):
+        exc_type = exc.get("type", "Unknown")
+        exc_value = exc.get("value", "")
+        mechanism = exc.get("mechanism", {})
+
+        lines.append(f"### Exception {i + 1}")
+        lines.append(f"**Type:** {exc_type}")
+        if exc_value:
+            lines.append(f"**Value:** {exc_value}")
+        if mechanism:
+            mech_type = mechanism.get("type", "unknown")
+            handled = mechanism.get("handled")
+            if handled is not None:
+                lines.append(f"**Mechanism:** {mech_type} (handled: {handled})")
+            else:
+                lines.append(f"**Mechanism:** {mech_type}")
+        lines.append("")
+
+        stacktrace = exc.get("stacktrace")
+        if stacktrace:
+            frames = stacktrace.get("frames", [])
+            lines.append("#### Stacktrace")
+            lines.append("")
+            lines.append("```")
+            lines.append(format_frames(frames))
+            lines.append("```")
+            lines.append("")
+
+
+def format_threads(lines, entry):
+    """Format thread entries, focusing on crashed and current threads."""
+    threads = entry.get("data", {}).get("values", [])
+    if not threads:
+        return
+
+    crashed_threads = [t for t in threads if t.get("crashed", False)]
+    current_threads = [
+        t for t in threads if t.get("current", False) and not t.get("crashed", False)
+    ]
+    other_threads = [
+        t
+        for t in threads
+        if not t.get("crashed", False) and not t.get("current", False)
+    ]
+
+    lines.append("## Threads")
+    lines.append("")
+
+    for thread in crashed_threads + current_threads:
+        format_single_thread(lines, thread, show_frames=True)
+
+    if other_threads:
+        lines.append(f"*({len(other_threads)} other threads omitted)*")
+        lines.append("")
+
+
+def format_single_thread(lines, thread, show_frames=False):
+    """Format a single thread entry."""
+    thread_id = thread.get("id", "?")
+    thread_name = thread.get("name", "unnamed")
+    crashed = thread.get("crashed", False)
+    current = thread.get("current", False)
+
+    markers = []
+    if crashed:
+        markers.append("CRASHED")
+    if current:
+        markers.append("current")
+    marker_str = f" ({', '.join(markers)})" if markers else ""
+
+    lines.append(f"### Thread {thread_id}: {thread_name}{marker_str}")
+    lines.append("")
+
+    if not show_frames:
+        return
+
+    stacktrace = thread.get("stacktrace")
+    if not stacktrace:
+        return
+
+    frames = stacktrace.get("frames", [])
+    if frames:
+        lines.append("```")
+        lines.append(format_frames(frames))
+        lines.append("```")
+        lines.append("")
+
+
+def format_frames(frames):
+    """Format stack trace frames for display.
+
+    Sentry provides frames from outermost caller to innermost callee,
+    so we reverse them to show the most recent (crashing) call first,
+    matching the convention used in most crash report displays.
+    """
+    output_lines = []
+
+    for frame in reversed(frames):
+        func = frame.get("function") or frame.get("symbol") or "unknown"
+        filename = (
+            frame.get("filename")
+            or frame.get("absPath")
+            or frame.get("abs_path")
+            or "unknown file"
+        )
+        line_no = frame.get("lineNo") or frame.get("lineno")
+        in_app = frame.get("inApp", frame.get("in_app", False))
+
+        app_marker = "(In app)" if in_app else "(Not in app)"
+        line_info = f"Line {line_no}" if line_no else "Line null"
+
+        output_lines.append(f" {func} in {filename} [{line_info}] {app_marker}")
+
+        context_lines = build_context_lines(frame, line_no)
+        output_lines.extend(context_lines)
+
+    return "\n".join(output_lines)
+
+
+def build_context_lines(frame, suspect_line_no):
+    """Build context code lines for a single frame.
+
+    Handles both Sentry response formats:
+    - preContext/contextLine/postContext (separate fields)
+    - context as an array of [line_no, code] tuples
+    """
+    output = []
+
+    pre_context = frame.get("preContext") or frame.get("pre_context") or []
+    context_line = frame.get("contextLine") or frame.get("context_line")
+    post_context = frame.get("postContext") or frame.get("post_context") or []
+
+    if context_line is not None or pre_context or post_context:
+        for code_line in pre_context:
+            output.append(f"    {code_line}")
+        if context_line is not None:
+            output.append(f"    {context_line}  <-- SUSPECT LINE")
+        for code_line in post_context:
+            output.append(f"    {code_line}")
+        return output
+
+    context = frame.get("context") or []
+    for ctx_entry in context:
+        if isinstance(ctx_entry, list) and len(ctx_entry) >= 2:
+            ctx_line_no = ctx_entry[0]
+            ctx_code = ctx_entry[1]
+            suspect = "  <-- SUSPECT LINE" if ctx_line_no == suspect_line_no else ""
+            output.append(f"    {ctx_code}{suspect}")
+
+    return output
+
+
+if __name__ == "__main__":
+    main()

@@ -195,10 +195,7 @@ fn assign_edit_prediction_provider(
         | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
-            if let Some(project) = editor.project()
-                && let Some(buffer) = &singleton_buffer
-                && buffer.read(cx).file().is_some()
-            {
+            if let Some(project) = editor.project() {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
                     let model = match value {
                         EditPredictionProvider::Sweep => {
@@ -228,7 +225,9 @@ fn assign_edit_prediction_provider(
                     };
 
                     ep_store.set_edit_prediction_model(model);
-                    ep_store.register_buffer(buffer, project, cx);
+                    if let Some(buffer) = &singleton_buffer {
+                        ep_store.register_buffer(buffer, project, cx);
+                    }
                     true
                 });
 

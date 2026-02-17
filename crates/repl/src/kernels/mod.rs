@@ -190,7 +190,7 @@ pub fn python_env_kernel_specifications(
                     let python_path = toolchain.path.to_string();
                     let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    let has_ipykernel = util::command::new_smol_command(&python_path)
+                    let has_ipykernel = util::command::new_command(&python_path)
                         .args(&["-c", "import ipykernel"])
                         .output()
                         .await
@@ -230,6 +230,7 @@ pub fn python_env_kernel_specifications(
 
 pub trait RunningKernel: Send + Debug {
     fn request_tx(&self) -> mpsc::Sender<JupyterMessage>;
+    fn stdin_tx(&self) -> mpsc::Sender<JupyterMessage>;
     fn working_directory(&self) -> &PathBuf;
     fn execution_state(&self) -> &ExecutionState;
     fn set_execution_state(&mut self, state: ExecutionState);

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{Divider, KeyBinding, ListItem, Tab, ThreadItem, Tooltip, prelude::*};
+use ui::{Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
@@ -519,18 +519,13 @@ impl PickerDelegate for WorkspacePickerDelegate {
 
         match entry {
             SidebarEntry::Separator(title) => Some(
-                div()
-                    .px_0p5()
-                    .when(index > 0, |this| this.mt_1().child(Divider::horizontal()))
-                    .child(
-                        ListItem::new("section_header").selectable(false).child(
-                            Label::new(title.clone())
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .when(index > 0, |this| this.mt_1p5())
-                                .mb_1(),
-                        ),
-                    )
+                v_flex()
+                    .when(index > 0, |this| {
+                        this.mt_1()
+                            .gap_2()
+                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    })
+                    .child(ListSubHeader::new(title.clone()).inset(true))
                     .into_any_element(),
             ),
             SidebarEntry::WorkspaceThread(thread_entry) => {
@@ -540,6 +535,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let workspace_index = thread_entry.index;
                 let multi_workspace = self.multi_workspace.clone();
                 let workspace_count = self.multi_workspace.read(cx).workspaces().len();
+                let is_active = self.active_workspace_index == workspace_index;
                 let is_hovered = self.hovered_thread_item == Some(workspace_index);
 
                 let remove_btn = IconButton::new(
@@ -573,7 +569,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
-                    .icon(IconName::Folder)
+                    .icon(if is_active {
+                        IconName::FolderOpen
+                    } else {
+                        IconName::Folder
+                    })
                     .running(running)
                     .generation_done(has_notification)
                     .selected(selected)

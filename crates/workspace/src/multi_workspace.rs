@@ -302,8 +302,28 @@ impl MultiWorkspace {
     }
 
     fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
-        let pane = self.workspace().read(cx).active_pane().clone();
-        let focus_handle = pane.read(cx).focus_handle(cx);
+        // If a dock panel is zoomed, focus it instead of the center pane.
+        // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
+        // which closes the zoomed dock.
+        let focus_handle = {
+            let workspace = self.workspace().read(cx);
+            let mut target = None;
+            for dock in workspace.all_docks() {
+                let dock = dock.read(cx);
+                if dock.is_open() {
+                    if let Some(panel) = dock.active_panel() {
+                        if panel.is_zoomed(window, cx) {
+                            target = Some(panel.panel_focus_handle(cx));
+                            break;
+                        }
+                    }
+                }
+            }
+            target.unwrap_or_else(|| {
+                let pane = workspace.active_pane().clone();
+                pane.read(cx).focus_handle(cx)
+            })
+        };
         window.focus(&focus_handle, cx);
     }
 

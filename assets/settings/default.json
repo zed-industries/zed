@@ -797,7 +797,8 @@
     "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
-    // Whether to hide the root entry when only one folder is open in the window.
+    // Whether to hide the root entry when only one folder is open in the window;
+    // this also affects how file paths appear in the file finder history.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
@@ -931,8 +932,6 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Where to dock the agents panel. Can be 'left' or 'right'.
-    "agents_panel_dock": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -1796,15 +1795,15 @@
         "(?x)",
         "(?<path>",
         "    (",
-        "        # multi-char path: first char (not opening delimiter or space)",
-        "        [^({\\[<\"'`\\ ]",
+        "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+        "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
         "        # middle chars: non-space, and colon/paren only if not followed by digit/paren",
         "        ([^\\ :(]|[:(][^0-9()])*",
         "        # last char: not closing delimiter or colon",
         "        [^()}\\]>\"'`.,;:\\ ]",
         "    |",
-        "        # single-char path: not delimiter, punctuation, or space",
-        "        [^(){}\\[\\]<>\"'`.,;:\\ ]",
+        "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+        "        [^(){}\\[\\]<>\"'`.,;:\\ \\u2500-\\u257F]",
         "    )",
         "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
         "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",

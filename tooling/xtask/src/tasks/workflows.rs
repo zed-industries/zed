@@ -10,6 +10,7 @@ mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
+mod deploy_collab;
 mod extension_bump;
 mod extension_tests;
 mod extension_workflow_rollout;
@@ -45,7 +46,7 @@ impl WorkflowFile {
     fn extension(f: fn() -> Workflow) -> WorkflowFile {
         WorkflowFile {
             source: f,
-            r#type: WorkflowType::ExtensionCI,
+            r#type: WorkflowType::ExtensionCi,
         }
     }
 
@@ -92,7 +93,7 @@ enum WorkflowType {
     Zed,
     /// Workflows living in the `zed-extensions/workflows` repository that are
     /// required workflows for PRs to the extension organization
-    ExtensionCI,
+    ExtensionCi,
     /// Workflows living in each of the extensions to perform checks and version
     /// bumps until a better, more centralized system for that is in place.
     ExtensionsShared,
@@ -115,7 +116,7 @@ impl WorkflowType {
     fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
-            WorkflowType::ExtensionCI => PathBuf::from("extensions/workflows"),
+            WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
@@ -133,6 +134,7 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(cherry_pick::cherry_pick),
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(danger::danger),
+        WorkflowFile::zed(deploy_collab::deploy_collab),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),

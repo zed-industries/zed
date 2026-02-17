@@ -7,7 +7,7 @@ use std::{borrow::Cow, path::PathBuf};
 
 use crate::ExtendingVec;
 
-use crate::{DockPosition, DockSide};
+use crate::DockPosition;
 
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
@@ -24,10 +24,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
-    /// Where to dock the utility pane (the thread view pane).
-    ///
-    /// Default: left
-    pub agents_panel_dock: Option<DockSide>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -119,7 +115,7 @@ pub struct AgentSettingsContent {
     /// require confirmation.
     ///
     /// The global `default` applies when no tool-specific rules match.
-    /// For external agent servers (e.g. Claude Code) that define their own
+    /// For external agent servers (e.g. Claude Agent) that define their own
     /// permission modes, "deny" and "confirm" still take precedence — the
     /// external agent's permission system is only used when Zed would allow
     /// the action. Per-tool regex patterns (`always_allow`, `always_deny`,

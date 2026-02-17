@@ -176,7 +176,7 @@ pub struct AcpThreadView {
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
-    pub title_editor: Option<Entity<Editor>>,
+    pub title_editor: Entity<Editor>,
     pub config_options_view: Option<Entity<ConfigOptionsView>>,
     pub mode_selector: Option<Entity<ModeSelector>>,
     pub model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -266,7 +266,6 @@ impl AcpThreadView {
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
         entry_view_state: Entity<EntryViewState>,
-        title_editor: Option<Entity<Editor>>,
         config_options_view: Option<Entity<ConfigOptionsView>>,
         mode_selector: Option<Entity<ModeSelector>>,
         model_selector: Option<Entity<AcpModelSelectorPopover>>,
@@ -331,6 +330,18 @@ impl AcpThreadView {
         let show_codex_windows_warning = cfg!(windows)
             && project.upgrade().is_some_and(|p| p.read(cx).is_local())
             && agent_name == "Codex";
+
+        let title_editor = {
+            let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_text(thread.read(cx).title(), window, cx);
+                editor.set_read_only(!can_edit);
+                editor
+            });
+            subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
+            editor
+        };
 
         subscriptions.push(cx.subscribe_in(
             &entry_view_state,
@@ -2303,8 +2314,9 @@ impl AcpThreadView {
             return None;
         };
 
-        let title = self.thread.read(cx).title();
         let server_view = self.server_view.clone();
+
+        let is_done = self.thread.read(cx).status() == ThreadStatus::Idle;
 
         Some(
             h_flex()
@@ -2313,10 +2325,24 @@ impl AcpThreadView {
                 .pr_1p5()
                 .w_full()
                 .justify_between()
+                .gap_1()
                 .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
+                .border_color(cx.theme().colors().border)
                 .bg(cx.theme().colors().editor_background.opacity(0.2))
-                .child(Label::new(title).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::ForwardArrowUp)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(self.title_editor.clone())
+                        .when(is_done, |this| {
+                            this.child(Icon::new(IconName::Check).color(Color::Success))
+                        }),
+                )
                 .child(
                     IconButton::new("minimize_subagent", IconName::Minimize)
                         .icon_size(IconSize::Small)
@@ -2646,7 +2672,7 @@ impl AcpThreadView {
             .is_some_and(|model| model.supports_split_token_display())
     }
 
-    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
         let is_generating = thread.status() != ThreadStatus::Idle;
@@ -2732,33 +2758,109 @@ impl AcpThreadView {
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
-                    ),
+                    )
+                    .into_any_element(),
             )
         } else {
             let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
             let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+            let progress_ratio = if usage.max_tokens > 0 {
+                usage.used_tokens as f32 / usage.max_tokens as f32
+            } else {
+                0.0
+            };
+
+            let progress_color = if progress_ratio >= 0.85 {
+                cx.theme().status().warning
+            } else {
+                cx.theme().colors().text_muted
+            };
+            let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
+
+            let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
+
+            let (user_rules_count, project_rules_count) = self
+                .as_native_thread(cx)
+                .map(|thread| {
+                    let project_context = thread.read(cx).project_context().read(cx);
+                    let user_rules = project_context.user_rules.len();
+                    let project_rules = project_context
+                        .worktrees
+                        .iter()
+                        .filter(|wt| wt.rules_file.is_some())
+                        .count();
+                    (user_rules, project_rules)
+                })
+                .unwrap_or((0, 0));
 
             Some(
                 h_flex()
-                    .flex_shrink_0()
-                    .gap_0p5()
-                    .mr_1p5()
-                    .child(token_label(used, "used-tokens-label"))
+                    .id("circular_progress_tokens")
+                    .mt_px()
+                    .mr_1()
                     .child(
-                        Label::new("/")
-                            .size(LabelSize::Small)
-                            .color(separator_color),
+                        CircularProgress::new(
+                            usage.used_tokens as f32,
+                            usage.max_tokens as f32,
+                            px(16.0),
+                            cx,
+                        )
+                        .stroke_width(px(2.))
+                        .progress_color(progress_color),
                     )
-                    .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
+                    .tooltip(Tooltip::element({
+                        move |_, cx| {
+                            v_flex()
+                                .min_w_40()
+                                .child(
+                                    Label::new("Context")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child(Label::new(percentage.clone()))
+                                        .child(Label::new("•").color(separator_color).mx_1())
+                                        .child(Label::new(used.clone()))
+                                        .child(Label::new("/").color(separator_color))
+                                        .child(Label::new(max.clone()).color(Color::Muted)),
+                                )
+                                .when(user_rules_count > 0 || project_rules_count > 0, |this| {
+                                    this.child(
+                                        v_flex()
+                                            .mt_1p5()
+                                            .pt_1p5()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(
+                                                Label::new("Rules")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .when(user_rules_count > 0, |this| {
+                                                this.child(Label::new(format!(
+                                                    "{} user rules",
+                                                    user_rules_count
+                                                )))
+                                            })
+                                            .when(project_rules_count > 0, |this| {
+                                                this.child(Label::new(format!(
+                                                    "{} project rules",
+                                                    project_rules_count
+                                                )))
+                                            }),
+                                    )
+                                })
+                                .into_any_element()
+                        }
+                    }))
+                    .into_any_element(),
             )
         }
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
 
@@ -3616,6 +3718,8 @@ impl AcpThreadView {
         if let Some(editing_index) = self.editing_message
             && editing_index < entry_ix
         {
+            let is_subagent = self.is_subagent();
+
             let backdrop = div()
                 .id(("backdrop", entry_ix))
                 .size_full()
@@ -3629,7 +3733,7 @@ impl AcpThreadView {
             div()
                 .relative()
                 .child(primary)
-                .child(backdrop)
+                .when(!is_subagent, |this| this.child(backdrop))
                 .into_any_element()
         } else {
             primary
@@ -4371,6 +4475,12 @@ impl AcpThreadView {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
 
+        let confirmation_options = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { options, .. } => Some(options),
+            _ => None,
+        };
+        let needs_confirmation = confirmation_options.is_some();
+
         let output = terminal_data.output();
         let command_finished = output.is_some();
         let truncated_output =
@@ -4439,7 +4549,7 @@ impl AcpThreadView {
                             .color(Color::Muted),
                     ),
             )
-            .when(!command_finished, |header| {
+            .when(!command_finished && !needs_confirmation, |header| {
                 header
                     .gap_1p5()
                     .child(
@@ -4616,6 +4726,14 @@ impl AcpThreadView {
                                 .into_any_element()
                         })),
                 )
+            })
+            .when_some(confirmation_options, |this, options| {
+                this.child(self.render_permission_buttons(
+                    options,
+                    entry_ix,
+                    tool_call.id.clone(),
+                    cx,
+                ))
             })
             .into_any()
     }
@@ -5876,7 +5994,7 @@ impl AcpThreadView {
                 if is_canceled_or_failed {
                     "Subagent Canceled"
                 } else {
-                    "Spawning Subagent…"
+                    "Creating Subagent…"
                 }
                 .into()
             });
@@ -6742,7 +6860,7 @@ impl AcpThreadView {
 
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
-        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.model_selector
@@ -6751,7 +6869,7 @@ impl AcpThreadView {
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
-            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
             self.agent_name.clone()
         }
     }
@@ -7083,10 +7201,6 @@ impl AcpThreadView {
     }
 
     fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return;
-        }
-
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };

@@ -32,6 +32,7 @@ use futures::{
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
+use heck::ToSnakeCase as _;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
@@ -628,6 +629,13 @@ pub struct NewTerminal {
 pub struct ToolPermissionContext {
     pub tool_name: String,
     pub input_values: Vec<String>,
+    pub scope: ToolPermissionScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPermissionScope {
+    ToolInput,
+    SymlinkTarget,
 }
 
 impl ToolPermissionContext {
@@ -635,6 +643,15 @@ impl ToolPermissionContext {
         Self {
             tool_name: tool_name.into(),
             input_values,
+            scope: ToolPermissionScope::ToolInput,
+        }
+    }
+
+    pub fn symlink_target(tool_name: impl Into<String>, target_paths: Vec<String>) -> Self {
+        Self {
+            tool_name: tool_name.into(),
+            input_values: target_paths,
+            scope: ToolPermissionScope::SymlinkTarget,
         }
     }
 
@@ -668,6 +685,20 @@ impl ToolPermissionContext {
 
         let tool_name = &self.tool_name;
         let input_values = &self.input_values;
+        if self.scope == ToolPermissionScope::SymlinkTarget {
+            return acp_thread::PermissionOptions::Flat(vec![
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("allow"),
+                    "Yes",
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                acp::PermissionOption::new(
+                    acp::PermissionOptionId::new("deny"),
+                    "No",
+                    acp::PermissionOptionKind::RejectOnce,
+                ),
+            ]);
+        }
 
         // Check if the user's shell supports POSIX-like command chaining.
         // See the doc comment above for the full explanation of why this is needed.
@@ -982,6 +1013,20 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
+        // Extract saved output and status first, so they're available even if tool is not found
+        let output = tool_result
+            .as_ref()
+            .and_then(|result| result.output.clone());
+        let status = tool_result
+            .as_ref()
+            .map_or(acp::ToolCallStatus::Failed, |result| {
+                if result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                }
+            });
+
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -996,14 +1041,25 @@ impl Thread {
         });
 
         let Some(tool) = tool else {
+            // Tool not found (e.g., MCP server not connected after restart),
+            // but still display the saved result if available.
+            // We need to send both ToolCall and ToolCallUpdate events because the UI
+            // only converts raw_output to displayable content in update_fields, not from_acp.
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
                     acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
-                        .status(acp::ToolCallStatus::Failed)
+                        .status(status)
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
+            stream.update_tool_call_fields(
+                &tool_use.id,
+                acp::ToolCallUpdateFields::new()
+                    .status(status)
+                    .raw_output(output),
+                None,
+            );
             return;
         };
 
@@ -1017,9 +1073,6 @@ impl Thread {
             tool_use.input.clone(),
         );
 
-        let output = tool_result
-            .as_ref()
-            .and_then(|result| result.output.clone());
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
             let (_cancellation_tx, cancellation_rx) = watch::channel(false);
@@ -1036,17 +1089,7 @@ impl Thread {
         stream.update_tool_call_fields(
             &tool_use.id,
             acp::ToolCallUpdateFields::new()
-                .status(
-                    tool_result
-                        .as_ref()
-                        .map_or(acp::ToolCallStatus::Failed, |result| {
-                            if result.is_error {
-                                acp::ToolCallStatus::Failed
-                            } else {
-                                acp::ToolCallStatus::Completed
-                            }
-                        }),
-                )
+                .status(status)
                 .raw_output(output),
             None,
         );
@@ -1464,6 +1507,7 @@ impl Thread {
         let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count(),
+            max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -1952,6 +1996,7 @@ impl Thread {
                         tool_name,
                         raw_input,
                         json_parse_error,
+                        event_stream,
                     ),
                 )));
             }
@@ -2037,42 +2082,7 @@ impl Thread {
             kind = tool.kind();
         }
 
-        // Ensure the last message ends in the current tool use
-        let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
-            if let AgentMessageContent::ToolUse(last_tool_use) = content {
-                if last_tool_use.id == tool_use.id {
-                    *last_tool_use = tool_use.clone();
-                    false
-                } else {
-                    true
-                }
-            } else {
-                true
-            }
-        });
-
-        if push_new_tool_use {
-            event_stream.send_tool_call(
-                &tool_use.id,
-                &tool_use.name,
-                title,
-                kind,
-                tool_use.input.clone(),
-            );
-            last_message
-                .content
-                .push(AgentMessageContent::ToolUse(tool_use.clone()));
-        } else {
-            event_stream.update_tool_call_fields(
-                &tool_use.id,
-                acp::ToolCallUpdateFields::new()
-                    .title(title.as_str())
-                    .kind(kind)
-                    .raw_input(tool_use.input.clone()),
-                None,
-            );
-        }
+        self.send_or_update_tool_use(&tool_use, title, kind, event_stream);
 
         if !tool_use.is_input_complete {
             return None;
@@ -2139,7 +2149,23 @@ impl Thread {
         tool_name: Arc<str>,
         raw_input: Arc<str>,
         json_parse_error: String,
+        event_stream: &ThreadEventStream,
     ) -> LanguageModelToolResult {
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: raw_input.to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        self.send_or_update_tool_use(
+            &tool_use,
+            SharedString::from(&tool_use.name),
+            acp::ToolKind::Other,
+            event_stream,
+        );
+
         let tool_output = format!("Error parsing input JSON: {json_parse_error}");
         LanguageModelToolResult {
             tool_use_id,
@@ -2147,6 +2173,51 @@ impl Thread {
             is_error: true,
             content: LanguageModelToolResultContent::Text(tool_output.into()),
             output: Some(serde_json::Value::String(raw_input.to_string())),
+        }
+    }
+
+    fn send_or_update_tool_use(
+        &mut self,
+        tool_use: &LanguageModelToolUse,
+        title: SharedString,
+        kind: acp::ToolKind,
+        event_stream: &ThreadEventStream,
+    ) {
+        // Ensure the last message ends in the current tool use
+        let last_message = self.pending_message();
+        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
+            if let AgentMessageContent::ToolUse(last_tool_use) = content {
+                if last_tool_use.id == tool_use.id {
+                    *last_tool_use = tool_use.clone();
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        });
+
+        if push_new_tool_use {
+            event_stream.send_tool_call(
+                &tool_use.id,
+                &tool_use.name,
+                title,
+                kind,
+                tool_use.input.clone(),
+            );
+            last_message
+                .content
+                .push(AgentMessageContent::ToolUse(tool_use.clone()));
+        } else {
+            event_stream.update_tool_call_fields(
+                &tool_use.id,
+                acp::ToolCallUpdateFields::new()
+                    .title(title.as_str())
+                    .kind(kind)
+                    .raw_input(tool_use.input.clone()),
+                None,
+            );
         }
     }
 
@@ -2454,13 +2525,14 @@ impl Thread {
         }
 
         // When there are duplicate tool names, disambiguate by prefixing them
-        // with the server ID. In the rare case there isn't enough space for the
-        // disambiguated tool name, keep only the last tool with this name.
+        // with the server ID (converted to snake_case for API compatibility).
+        // In the rare case there isn't enough space for the disambiguated tool
+        // name, keep only the last tool with this name.
         for (server_id, tool_name, tool) in context_server_tools {
             if duplicate_tool_names.contains(&tool_name) {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
-                    let mut disambiguated = server_id.0.to_string();
+                    let mut disambiguated = server_id.0.to_snake_case();
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
@@ -2682,10 +2754,12 @@ impl Thread {
             | ApiEndpointNotFound { .. }
             | PromptTooLarge { .. } => None,
             // These errors might be transient, so retry them
-            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 1,
-            }),
+            SerializeRequest { .. } | BuildRequestBody { .. } | StreamEndedUnexpectedly { .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 1,
+                })
+            }
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
                 if status_code.is_client_error() || status_code.is_server_error() =>
@@ -3495,5 +3569,119 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
         size: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use language_model::LanguageModelToolUseId;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        cx.update(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+
+            let thread = cx.new(|cx| {
+                Thread::new(
+                    project,
+                    project_context,
+                    context_server_registry,
+                    templates,
+                    None,
+                    cx,
+                )
+            });
+
+            let (event_tx, _event_rx) = mpsc::unbounded();
+            let event_stream = ThreadEventStream(event_tx);
+
+            (thread, event_stream)
+        })
+    }
+
+    #[gpui::test]
+    async fn test_handle_tool_use_json_parse_error_adds_tool_use_to_content(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+                let tool_name: Arc<str> = Arc::from("test_tool");
+                let raw_input: Arc<str> = Arc::from("{invalid json");
+                let json_parse_error = "expected value at line 1 column 1".to_string();
+
+                // Call the function under test
+                let result = thread.handle_tool_use_json_parse_error_event(
+                    tool_use_id.clone(),
+                    tool_name.clone(),
+                    raw_input.clone(),
+                    json_parse_error,
+                    &event_stream,
+                );
+
+                // Verify the result is an error
+                assert!(result.is_error);
+                assert_eq!(result.tool_use_id, tool_use_id);
+                assert_eq!(result.tool_name, tool_name);
+                assert!(matches!(
+                    result.content,
+                    LanguageModelToolResultContent::Text(_)
+                ));
+
+                // Verify the tool use was added to the message content
+                {
+                    let last_message = thread.pending_message();
+                    assert_eq!(
+                        last_message.content.len(),
+                        1,
+                        "Should have one tool_use in content"
+                    );
+
+                    match &last_message.content[0] {
+                        AgentMessageContent::ToolUse(tool_use) => {
+                            assert_eq!(tool_use.id, tool_use_id);
+                            assert_eq!(tool_use.name, tool_name);
+                            assert_eq!(tool_use.raw_input, raw_input.to_string());
+                            assert!(tool_use.is_input_complete);
+                            // Should fall back to empty object for invalid JSON
+                            assert_eq!(tool_use.input, json!({}));
+                        }
+                        _ => panic!("Expected ToolUse content"),
+                    }
+                }
+
+                // Insert the tool result (simulating what the caller does)
+                thread
+                    .pending_message()
+                    .tool_results
+                    .insert(result.tool_use_id.clone(), result);
+
+                // Verify the tool result was added
+                let last_message = thread.pending_message();
+                assert_eq!(
+                    last_message.tool_results.len(),
+                    1,
+                    "Should have one tool_result"
+                );
+                assert!(last_message.tool_results.contains_key(&tool_use_id));
+            });
+        });
     }
 }

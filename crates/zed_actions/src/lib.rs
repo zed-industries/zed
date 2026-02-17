@@ -434,8 +434,8 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Code onboarding modal.
-            OpenClaudeCodeOnboardingModal,
+            /// Opens the Claude Agent onboarding modal.
+            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -450,8 +450,6 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
-            /// Toggles the utility/agent pane open/closed state.
-            ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
         ]

@@ -3,6 +3,7 @@ use collections::HashMap;
 use crate::{
     example::ActualCursor,
     reorder_patch::{Patch, PatchLine},
+    word_diff::{DiffOp, diff_tokens, tokenize},
 };
 
 pub type Counts = HashMap<String, usize>;
@@ -484,6 +485,91 @@ pub fn is_editable_region_correct(actual_patch: &str) -> bool {
     }
 
     true
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TokenChangeCounts {
+    pub inserted_tokens: usize,
+    pub deleted_tokens: usize,
+}
+
+/// Counts the number of inserted and deleted tokens in a unified diff patch.
+///
+/// Tokens are words and whitespace sequences (as defined by `word_diff::tokenize`).
+/// Within each hunk, the old (`-`) and new (`+`) lines are compared at the token level
+/// using an LCS-based diff, so modified lines only count the actually changed tokens
+/// rather than the entire line.
+pub fn count_patch_token_changes(patch: &str) -> TokenChangeCounts {
+    let mut counts = TokenChangeCounts::default();
+    let mut old_lines: Vec<&str> = Vec::new();
+    let mut new_lines: Vec<&str> = Vec::new();
+
+    let flush =
+        |old_lines: &mut Vec<&str>, new_lines: &mut Vec<&str>, counts: &mut TokenChangeCounts| {
+            if old_lines.is_empty() && new_lines.is_empty() {
+                return;
+            }
+
+            let old_text: String = old_lines
+                .iter()
+                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let new_text: String = new_lines
+                .iter()
+                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let old_tokens = tokenize(&old_text);
+            let new_tokens = tokenize(&new_text);
+            let ops = diff_tokens(&old_tokens, &new_tokens);
+
+            for op in ops {
+                match op {
+                    DiffOp::Equal(..) => {}
+                    DiffOp::Delete(start, end) => {
+                        counts.deleted_tokens += end - start;
+                    }
+                    DiffOp::Insert(start, end) => {
+                        counts.inserted_tokens += end - start;
+                    }
+                    DiffOp::Replace {
+                        old_start,
+                        old_end,
+                        new_start,
+                        new_end,
+                    } => {
+                        counts.deleted_tokens += old_end - old_start;
+                        counts.inserted_tokens += new_end - new_start;
+                    }
+                }
+            }
+
+            old_lines.clear();
+            new_lines.clear();
+        };
+
+    for line in patch.lines() {
+        if line.starts_with("---")
+            || line.starts_with("+++")
+            || line.starts_with("@@")
+            || line.starts_with("diff ")
+            || line.starts_with("index ")
+        {
+            flush(&mut old_lines, &mut new_lines, &mut counts);
+        } else if line.starts_with('-') {
+            old_lines.push(line);
+        } else if line.starts_with('+') {
+            new_lines.push(line);
+        } else {
+            flush(&mut old_lines, &mut new_lines, &mut counts);
+        }
+    }
+
+    flush(&mut old_lines, &mut new_lines, &mut counts);
+    counts
 }
 
 #[cfg(test)]
@@ -976,5 +1062,117 @@ index abc123..def456 100644
         "};
         let cursor = cursor_on_line(2);
         assert!(has_isolated_whitespace_changes(patch, Some(&cursor)));
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_real_world_rename() {
+        // Real-world patch that was reported as returning 0 tokens
+        let patch = "--- a/sip_call\\README.md\n+++ b/sip_call\\README.md\n@@ -1,1 +1,1 @@\n-# \n+# SIP Call\n";
+        let counts = count_patch_token_changes(patch);
+        // "# " vs "# SIP Call" — the "SIP" and "Call" tokens (and a whitespace token) are inserted
+        assert!(
+            counts.inserted_tokens > 0,
+            "expected inserted tokens > 0, got {}",
+            counts.inserted_tokens
+        );
+        assert_eq!(counts.deleted_tokens, 0);
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_real_world_expansion() {
+        // Real-world patch: single token expanded to multiple lines
+        let patch = "--- a/task1/src/app/app.html\n+++ b/task1/src/app/app.html\n@@ -1,7 +1,9 @@\n <style>\n-  m\n+  main {\n+    \n+  }\n </style>\n \n <main>\n   \n </main>\n";
+        let counts = count_patch_token_changes(patch);
+        assert!(
+            counts.inserted_tokens > 0,
+            "expected inserted tokens > 0, got {}",
+            counts.inserted_tokens
+        );
+        assert!(
+            counts.deleted_tokens > 0,
+            "expected deleted tokens > 0, got {}",
+            counts.deleted_tokens
+        );
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_simple_replacement() {
+        let patch = indoc! {"
+            @@ -1,3 +1,3 @@
+             fn main() {
+            -    println!(\"hello\");
+            +    println!(\"world\");
+             }
+        "};
+        let counts = count_patch_token_changes(patch);
+        assert_eq!(counts.deleted_tokens, 1, "deleted: \"hello\"");
+        assert_eq!(counts.inserted_tokens, 1, "inserted: \"world\"");
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_insertion_only() {
+        let patch = indoc! {"
+            @@ -1,2 +1,3 @@
+             fn main() {
+            +    println!(\"hello\");
+             }
+        "};
+        let counts = count_patch_token_changes(patch);
+        assert_eq!(counts.deleted_tokens, 0);
+        assert!(counts.inserted_tokens > 0);
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_deletion_only() {
+        let patch = indoc! {"
+            @@ -1,3 +1,2 @@
+             fn main() {
+            -    println!(\"hello\");
+             }
+        "};
+        let counts = count_patch_token_changes(patch);
+        assert!(counts.deleted_tokens > 0);
+        assert_eq!(counts.inserted_tokens, 0);
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_empty_patch() {
+        let patch = "";
+        let counts = count_patch_token_changes(patch);
+        assert_eq!(counts.deleted_tokens, 0);
+        assert_eq!(counts.inserted_tokens, 0);
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_multiple_hunks() {
+        let patch = indoc! {"
+            @@ -1,3 +1,3 @@
+             fn main() {
+            -    let x = 1;
+            +    let x = 2;
+             }
+            @@ -10,3 +10,3 @@
+             fn other() {
+            -    let y = 3;
+            +    let y = 4;
+             }
+        "};
+        let counts = count_patch_token_changes(patch);
+        assert_eq!(counts.deleted_tokens, 2, "deleted: \"1\" and \"3\"");
+        assert_eq!(counts.inserted_tokens, 2, "inserted: \"2\" and \"4\"");
+    }
+
+    #[test]
+    fn test_count_patch_token_changes_multiword_change() {
+        let patch = indoc! {"
+            @@ -1,1 +1,1 @@
+            -hello world foo
+            +hello bar baz
+        "};
+        let counts = count_patch_token_changes(patch);
+        // "world" and "foo" deleted, "bar" and "baz" inserted
+        // (whitespace tokens between them may also count)
+        assert!(counts.deleted_tokens >= 2);
+        assert!(counts.inserted_tokens >= 2);
     }
 }

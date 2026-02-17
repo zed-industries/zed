@@ -196,21 +196,29 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::BlockQuote(block_quote)])
                 }
                 Tag::CodeBlock(kind) => {
-                    let language = match kind {
-                        pulldown_cmark::CodeBlockKind::Indented => None,
+                    let (language, scale) = match kind {
+                        pulldown_cmark::CodeBlockKind::Indented => (None, None),
                         pulldown_cmark::CodeBlockKind::Fenced(language) => {
                             if language.is_empty() {
-                                None
+                                (None, None)
                             } else {
-                                Some(language.to_string())
+                                let parts: Vec<&str> = language.split_whitespace().collect();
+                                let lang = parts.first().map(|s| s.to_string());
+                                let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
+                                (lang, scale)
                             }
                         }
                     };
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await?;
-                    Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    if language.as_deref() == Some("mermaid") {
+                        let mermaid_diagram = self.parse_mermaid_diagram(scale).await?;
+                        Some(vec![ParsedMarkdownElement::MermaidDiagram(mermaid_diagram)])
+                    } else {
+                        let code_block = self.parse_code_block(language).await?;
+                        Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    }
                 }
                 Tag::HtmlBlock => {
                     self.cursor += 1;
@@ -803,6 +811,50 @@ impl<'a> MarkdownParser<'a> {
             contents: code.into(),
             language,
             highlights,
+        })
+    }
+
+    async fn parse_mermaid_diagram(
+        &mut self,
+        scale: Option<u32>,
+    ) -> Option<ParsedMarkdownMermaidDiagram> {
+        let Some((_event, source_range)) = self.previous() else {
+            return None;
+        };
+
+        let source_range = source_range.clone();
+        let mut code = String::new();
+
+        while !self.eof() {
+            let Some((current, _source_range)) = self.current() else {
+                break;
+            };
+
+            match current {
+                Event::Text(text) => {
+                    code.push_str(text);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
+        let scale = scale.unwrap_or(100).clamp(10, 500);
+
+        Some(ParsedMarkdownMermaidDiagram {
+            source_range,
+            contents: ParsedMarkdownMermaidDiagramContents {
+                contents: code.into(),
+                scale,
+            },
         })
     }
 

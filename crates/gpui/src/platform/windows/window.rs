@@ -80,7 +80,6 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
     pub(crate) executor: ForegroundExecutor,
-    pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: PriorityQueueReceiver<RunnableVariant>,
     pub(crate) platform_window_handle: HWND,
@@ -239,11 +238,10 @@ impl WindowsWindowInner {
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
             executor: context.executor.clone(),
-            windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
-            system_settings: WindowsSystemSettings::new(context.display),
+            system_settings: WindowsSystemSettings::new(),
             parent_hwnd: context.parent_hwnd,
         }))
     }
@@ -293,6 +291,7 @@ impl WindowsWindowInner {
                         }
                     }
                 };
+                set_non_rude_hwnd(this.hwnd, !this.state.is_fullscreen());
                 unsafe { set_window_long(this.hwnd, GWL_STYLE, style.0 as isize) };
                 unsafe {
                     SetWindowPos(
@@ -363,7 +362,6 @@ struct WindowCreateContext {
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
-    windows_version: WindowsVersion,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -385,7 +383,6 @@ impl WindowsWindow {
             icon,
             executor,
             current_cursor,
-            windows_version,
             drop_target_helper,
             validation_number,
             main_receiver,
@@ -465,7 +462,6 @@ impl WindowsWindow {
             min_size: params.window_min_size,
             executor,
             current_cursor,
-            windows_version,
             drop_target_helper,
             validation_number,
             main_receiver,
@@ -500,6 +496,7 @@ impl WindowsWindow {
         let this = this.unwrap();
 
         register_drag_drop(&this)?;
+        set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
@@ -1462,6 +1459,17 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
         }
+    }
+}
+
+// When the platform title bar is hidden, Windows may think that our application is meant to appear 'fullscreen'
+// and will stop the taskbar from appearing on top of our window. Prevent this.
+// https://devblogs.microsoft.com/oldnewthing/20250522-00/?p=111211
+fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
+    if non_rude {
+        unsafe { SetPropW(hwnd, w!("NonRudeHWND"), Some(HANDLE(1 as _))) }.log_err();
+    } else {
+        unsafe { RemovePropW(hwnd, w!("NonRudeHWND")) }.log_err();
     }
 }
 
