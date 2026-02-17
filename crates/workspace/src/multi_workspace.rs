@@ -407,7 +407,6 @@ impl MultiWorkspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        workspace.update(cx, |ws, _| ws.set_random_database_id());
         Self::new(workspace, window, cx)
     }
 
@@ -419,7 +418,6 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Entity<Workspace> {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        workspace.update(cx, |ws, _| ws.set_random_database_id());
         self.activate(workspace.clone(), cx);
         workspace
     }
