@@ -1,5 +1,7 @@
 //! Word-diff utilities for converting unified diffs to word-diff format.
 
+use similar::{DiffTag, TextDiff};
+
 /// Convert unified diff to word-diff format.
 ///
 /// This transforms line-based diffs into word-level diffs where:
@@ -187,130 +189,28 @@ pub(crate) enum DiffOp {
     },
 }
 
-/// Compute diff operations between two token sequences using a simple LCS-based algorithm.
+/// Compute diff operations between two token sequences using `similar`'s Myers diff.
 pub(crate) fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
-    // Build LCS table
-    let m = old.len();
-    let n = new.len();
-
-    if m == 0 && n == 0 {
-        return vec![];
-    }
-    if m == 0 {
-        return vec![DiffOp::Insert(0, n)];
-    }
-    if n == 0 {
-        return vec![DiffOp::Delete(0, m)];
-    }
-
-    // LCS dynamic programming
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            if old[i - 1] == new[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+    let diff = TextDiff::from_slices(old, new);
+    diff.ops()
+        .iter()
+        .map(|op| {
+            let tag = op.tag();
+            let old_range = op.old_range();
+            let new_range = op.new_range();
+            match tag {
+                DiffTag::Equal => DiffOp::Equal(old_range.start, old_range.end),
+                DiffTag::Delete => DiffOp::Delete(old_range.start, old_range.end),
+                DiffTag::Insert => DiffOp::Insert(new_range.start, new_range.end),
+                DiffTag::Replace => DiffOp::Replace {
+                    old_start: old_range.start,
+                    old_end: old_range.end,
+                    new_start: new_range.start,
+                    new_end: new_range.end,
+                },
             }
-        }
-    }
-
-    // Backtrack to find operations
-    let mut ops = Vec::new();
-    let mut i = m;
-    let mut j = n;
-
-    // We'll collect in reverse order, then reverse at the end
-    let mut stack: Vec<(usize, usize, bool)> = Vec::new(); // (index, end, is_old)
-
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
-            stack.push((i - 1, i, true)); // Equal marker (using old index)
-            stack.push((j - 1, j, false)); // Paired with new index
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            // Insert from new
-            stack.push((j - 1, j, false));
-            j -= 1;
-        } else {
-            // Delete from old
-            stack.push((i - 1, i, true));
-            i -= 1;
-        }
-    }
-
-    // Process the stack to build proper DiffOps
-    // This is a simplified approach - just iterate through and build ops
-    let mut old_idx = 0;
-    let mut new_idx = 0;
-
-    while old_idx < m || new_idx < n {
-        // Find next matching pair
-        let mut old_match = None;
-        let mut new_match = None;
-
-        for oi in old_idx..m {
-            for ni in new_idx..n {
-                if old[oi] == new[ni] {
-                    old_match = Some(oi);
-                    new_match = Some(ni);
-                    break;
-                }
-            }
-            if old_match.is_some() {
-                break;
-            }
-        }
-
-        match (old_match, new_match) {
-            (Some(om), Some(nm)) => {
-                // Handle any deletions/insertions before the match
-                if old_idx < om && new_idx < nm {
-                    ops.push(DiffOp::Replace {
-                        old_start: old_idx,
-                        old_end: om,
-                        new_start: new_idx,
-                        new_end: nm,
-                    });
-                } else if old_idx < om {
-                    ops.push(DiffOp::Delete(old_idx, om));
-                } else if new_idx < nm {
-                    ops.push(DiffOp::Insert(new_idx, nm));
-                }
-
-                // Find the extent of the equal sequence
-                let mut eq_end_old = om;
-                let mut eq_end_new = nm;
-                while eq_end_old < m && eq_end_new < n && old[eq_end_old] == new[eq_end_new] {
-                    eq_end_old += 1;
-                    eq_end_new += 1;
-                }
-
-                ops.push(DiffOp::Equal(om, eq_end_old));
-                old_idx = eq_end_old;
-                new_idx = eq_end_new;
-            }
-            _ => {
-                // No more matches, handle remaining
-                if old_idx < m && new_idx < n {
-                    ops.push(DiffOp::Replace {
-                        old_start: old_idx,
-                        old_end: m,
-                        new_start: new_idx,
-                        new_end: n,
-                    });
-                } else if old_idx < m {
-                    ops.push(DiffOp::Delete(old_idx, m));
-                } else if new_idx < n {
-                    ops.push(DiffOp::Insert(new_idx, n));
-                }
-                break;
-            }
-        }
-    }
-
-    ops
+        })
+        .collect()
 }
 
 #[cfg(test)]
