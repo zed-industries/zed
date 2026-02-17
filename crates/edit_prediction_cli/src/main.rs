@@ -1041,11 +1041,9 @@ fn main() {
                                 }
                             }
 
-                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
                             let project = repo_examples
                                 .iter()
-                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
-                                .or_else(|| app_state.project_cache.get(repo_url));
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()));
 
                             if let Some(project) = project {
                                 let mut cx = cx.clone();
@@ -1069,7 +1067,6 @@ fn main() {
                                 }
                             }
 
-                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }
