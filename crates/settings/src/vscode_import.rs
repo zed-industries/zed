@@ -181,7 +181,6 @@ impl VsCodeSettings {
             collaboration_panel: None,
             debugger: None,
             diagnostics: None,
-            disable_ai: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
             file_finder: None,
@@ -510,6 +509,7 @@ impl VsCodeSettings {
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
+            disable_ai: None,
         }
     }
 

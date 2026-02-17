@@ -94,9 +94,7 @@ async fn main() -> Result<()> {
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
 
-                    app = app
-                        .merge(collab::api::routes(rpc_server.clone()))
-                        .merge(collab::rpc::routes(rpc_server.clone()));
+                    app = app.merge(collab::rpc::routes(rpc_server.clone()));
 
                     on_shutdown = Some(Box::new(move || rpc_server.teardown()));
                 }

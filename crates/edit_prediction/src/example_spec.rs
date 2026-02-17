@@ -66,6 +66,7 @@ pub struct CapturedPromptInput {
     pub excerpt_start_row: Option<u32>,
     pub events: Vec<CapturedEvent>,
     pub related_files: Vec<CapturedRelatedFile>,
+    #[serde(default)]
     pub in_open_source_repo: bool,
 }
 
@@ -75,6 +76,7 @@ pub struct CapturedEvent {
     pub old_path: Arc<Path>,
     pub diff: String,
     pub predicted: bool,
+    #[serde(default)]
     pub in_open_source_repo: bool,
 }
 

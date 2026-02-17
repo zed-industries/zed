@@ -1016,7 +1016,7 @@ impl<T> PipelineState<T> {
     ) -> Result<()> {
         if self.buffer_size < data.len() {
             let new_buffer_size = data.len().next_power_of_two();
-            log::info!(
+            log::debug!(
                 "Updating {} buffer size from {} to {}",
                 self.label,
                 self.buffer_size,

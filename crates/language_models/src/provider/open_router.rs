@@ -314,6 +314,10 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_tool_calls()
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
         if model_id.contains("gemini") || model_id.contains("grok") {

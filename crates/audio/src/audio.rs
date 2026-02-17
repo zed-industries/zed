@@ -54,13 +54,21 @@ pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
 pub fn init(cx: &mut App) {
     LIVE_SETTINGS.initialize(cx);
-    // TODO(jk): this is currently cached only once at startup - we should observe and react instead
+}
+
+// TODO(jk): this is currently cached only once - we should observe and react instead
+pub fn ensure_devices_initialized(cx: &mut App) {
+    if cx.has_global::<AvailableAudioDevices>() {
+        return;
+    }
+    cx.default_global::<AvailableAudioDevices>();
     let task = cx
         .background_executor()
         .spawn(async move { get_available_audio_devices() });
     cx.spawn(async move |cx: &mut AsyncApp| {
         let devices = task.await;
-        cx.update(|cx| cx.set_global(AvailableAudioDevices(devices)))
+        cx.update(|cx| cx.set_global(AvailableAudioDevices(devices)));
+        cx.refresh();
     })
     .detach();
 }

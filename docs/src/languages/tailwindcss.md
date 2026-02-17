@@ -6,17 +6,17 @@ Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previ
 
 Languages which can be used with Tailwind CSS in Zed:
 
-- [Astro](./astro.md)
+- [Astro](./astro.md#using-the-tailwind-css-language-server-with-astro)
 - [CSS](./css.md)
-- [ERB](./ruby.md)
+- [ERB](./ruby.md#using-the-tailwind-css-language-server-with-ruby)
 - [Gleam](./gleam.md)
-- [HEEx](./elixir.md#heex)
-- [HTML](./html.md)
-- [TypeScript](./typescript.md)
-- [JavaScript](./javascript.md)
-- [PHP](./php.md)
-- [Svelte](./svelte.md)
-- [Vue](./vue.md)
+- [HEEx](./elixir.md#using-the-tailwind-css-language-server-with-heex)
+- [HTML](./html.md#using-the-tailwind-css-language-server-with-html)
+- [TypeScript](./typescript.md#using-the-tailwind-css-language-server-with-typescript)
+- [JavaScript](./javascript.md#using-the-tailwind-css-language-server-with-javascript)
+- [PHP](./php.md#using-the-tailwind-css-language-server-with-php)
+- [Svelte](./svelte.md#using-the-tailwind-css-language-server-with-svelte)
+- [Vue](./vue.md#using-the-tailwind-css-language-server-with-vue)
 
 ## Configuration
 

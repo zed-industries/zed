@@ -427,7 +427,7 @@ impl ManagedNodeRuntime {
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
         let valid = if fs::metadata(&node_binary).await.is_ok() {
-            let result = util::command::new_smol_command(&node_binary)
+            let result = util::command::new_command(&node_binary)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
                 .arg("--version")
@@ -555,7 +555,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     ) -> Result<Output> {
         let attempt = || async {
             let npm_command = self.npm_command(proxy, subcommand, args).await?;
-            let mut command = util::command::new_smol_command(npm_command.path);
+            let mut command = util::command::new_command(npm_command.path);
             command.args(npm_command.args);
             command.envs(npm_command.env);
             configure_npm_command(&mut command, directory);
@@ -640,7 +640,7 @@ pub struct SystemNodeRuntime {
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(22, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
-        let output = util::command::new_smol_command(&node)
+        let output = util::command::new_command(&node)
             .arg("--version")
             .output()
             .await
@@ -723,7 +723,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         args: &[&str],
     ) -> anyhow::Result<Output> {
         let npm_command = self.npm_command(proxy, subcommand, args).await?;
-        let mut command = util::command::new_smol_command(npm_command.path);
+        let mut command = util::command::new_command(npm_command.path);
         command.args(npm_command.args);
         command.envs(npm_command.env);
         configure_npm_command(&mut command, directory);
@@ -841,7 +841,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     }
 }
 
-fn configure_npm_command(command: &mut smol::process::Command, directory: Option<&Path>) {
+fn configure_npm_command(command: &mut util::command::Command, directory: Option<&Path>) {
     if let Some(directory) = directory {
         command.current_dir(directory);
         command.args(["--prefix".into(), directory.to_path_buf()]);
