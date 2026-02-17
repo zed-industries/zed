@@ -479,6 +479,7 @@ impl DisplayMap {
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
+        log::trace!("set_companion");
         let this = cx.weak_entity();
         // Reverting to no companion, recompute the block map to clear spacers
         // and balancing blocks.
@@ -504,8 +505,7 @@ impl DisplayMap {
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
-        // Note, throwing away the wrap edits because we're going to recompute the maximal range for the block map regardless
-        let old_max_row = self.block_map.wrap_snapshot.borrow().max_point().row();
+        // Note, throwing away the wrap edits because we defer spacer computation to the first render.
         let snapshot = {
             let edits = self.buffer_subscription.consume();
             let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -529,28 +529,18 @@ impl DisplayMap {
             snapshot
         };
 
-        let (companion_wrap_snapshot, companion_wrap_edits) =
+        let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
-        let edits = Patch::new(
-            [text::Edit {
-                old: WrapRow(0)..old_max_row,
-                new: WrapRow(0)..snapshot.max_point().row(),
-            }]
-            .into_iter()
-            .collect(),
-        );
-
-        let reader = self.block_map.read(
-            snapshot.clone(),
-            edits.clone(),
-            Some(CompanionView::new(
-                self.entity_id,
-                &companion_wrap_snapshot,
-                &companion_wrap_edits,
-                companion.read(cx),
-            )),
-        );
+        // Create a full-range edit to sync transforms, but pass None for
+        // companion_view to skip spacer computation. Spacers will be computed
+        // on the first render when the correct wrap width is known.
+        let edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+            new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
+        }]);
+        self.block_map.set_needs_full_spacer_sync(true);
+        let reader = self.block_map.read(snapshot.clone(), edits, None);
 
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
@@ -584,15 +574,26 @@ impl DisplayMap {
                         .insert(block.id, their_id);
                 });
             }
+            // Sync companion's transforms but skip spacer computation (pass None
+            // for companion_view). Spacers will be computed on the first render.
+            let companion_edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..companion_display_map
+                        .block_map
+                        .wrap_snapshot
+                        .borrow()
+                        .max_point()
+                        .row()
+                        + WrapRow(1),
+                new: WrapRow(0)..companion_wrap_snapshot.max_point().row() + WrapRow(1),
+            }]);
+            companion_display_map
+                .block_map
+                .set_needs_full_spacer_sync(true);
             companion_display_map.block_map.read(
-                companion_wrap_snapshot,
-                companion_wrap_edits,
-                Some(CompanionView::new(
-                    companion_display_map.entity_id,
-                    &snapshot,
-                    &edits,
-                    companion.read(cx),
-                )),
+                companion_wrap_snapshot.clone(),
+                companion_edits,
+                None,
             );
             companion_display_map.companion = Some((this, companion.clone()));
         });
@@ -771,6 +772,7 @@ impl DisplayMap {
     /// Creates folds for the given creases.
     #[instrument(skip_all)]
     pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
+        log::trace!("fold");
         if self.companion().is_some() {
             return;
         }
@@ -1302,6 +1304,7 @@ impl DisplayMap {
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
+        log::trace!("update_fold_widths");
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);

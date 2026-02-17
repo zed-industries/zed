@@ -506,6 +506,7 @@ impl SplittableEditor {
         if self.lhs.is_some() {
             return;
         }
+        log::trace!("split");
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -968,6 +969,7 @@ impl SplittableEditor {
         let Some(lhs) = self.lhs.take() else {
             return;
         };
+        log::trace!("unsplit");
         self.rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
             let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);

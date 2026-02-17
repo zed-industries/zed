@@ -16,7 +16,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::{self, Ordering},
     fmt::Debug,
     ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
@@ -45,6 +45,10 @@ pub struct BlockMap {
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
     buffers_with_disabled_headers: HashSet<BufferId>,
+    /// When true, the next sync() will process a full-range edit to compute
+    /// spacers for the entire document. Set by set_companion() when it skips
+    /// the initial sync to defer spacer computation to the first render.
+    needs_full_spacer_sync: Cell<bool>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -620,6 +624,7 @@ impl BlockMap {
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
+            needs_full_spacer_sync: Cell::new(false),
         };
         map.sync(
             &wrap_snapshot,
@@ -651,6 +656,14 @@ impl BlockMap {
                 excerpt_header_height: self.excerpt_header_height,
             },
         }
+    }
+
+    /// Marks this block map as needing a full spacer sync on the next read/sync.
+    ///
+    /// This is used by set_companion() to defer spacer computation to the first
+    /// render, where the correct wrap width will be known.
+    pub(crate) fn set_needs_full_spacer_sync(&self, needs_sync: bool) {
+        self.needs_full_spacer_sync.set(needs_sync);
     }
 
     #[ztracing::instrument(skip_all)]
@@ -754,6 +767,15 @@ impl BlockMap {
         mut edits: WrapPatch,
         companion_view: Option<CompanionView>,
     ) {
+        {
+            let is_rhs =
+                companion_view.map(|view| view.companion.is_rhs(view.companion.rhs_display_map_id));
+            log::trace!("sync is_rhs={is_rhs:?}",);
+            // if is_rhs.is_none() {
+            //     let bt = std::backtrace::Backtrace::force_capture();
+            //     log::trace!("  {bt:#}");
+            // }
+        }
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -771,6 +793,17 @@ impl BlockMap {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
             }]);
+        }
+
+        // If set_companion() deferred the initial sync, force a full-range edit
+        // to compute spacers for the entire document.
+        if self.needs_full_spacer_sync.get() {
+            let max_row = wrap_snapshot.max_point().row() + WrapRow(1);
+            edits = edits.compose([WrapEdit {
+                old: WrapRow(0)..max_row,
+                new: WrapRow(0)..max_row,
+            }]);
+            self.needs_full_spacer_sync.set(false);
         }
 
         // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
@@ -872,6 +905,7 @@ impl BlockMap {
         while let Some(edit) = edits.next() {
             let span = ztracing::debug_span!("while edits", edit = ?edit);
             let _enter = span.enter();
+            log::trace!("edit={edit:?}");
 
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
