@@ -41,7 +41,7 @@ def validate_crash_ids(ids: list[str]) -> list[str]:
     return valid
 
 
-MAX_TOP = 10
+MAX_TOP = 100
 
 
 def prefetch_crash_data(crashes: list[dict[str, str]], output_dir: str) -> None:
@@ -98,6 +98,8 @@ def resolve_crashes(args) -> list[dict[str, str]]:
                 args.org,
                 "--top",
                 str(top),
+                "--sample-size",
+                str(args.sample_size),
                 "--output",
                 output_path,
             ],
@@ -202,7 +204,13 @@ def run_pipeline_for_crash(args, crash_id: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local background-agent MVP dry-run workflow")
     parser.add_argument("--crash-ids", help="Comma-separated crash IDs (e.g. ZED-4VS,ZED-123)")
-    parser.add_argument("--top", type=int, default=3, help="Top N crashes when --crash-ids is omitted (max 10)")
+    parser.add_argument("--top", type=int, default=3, help="Top N crashes when --crash-ids is omitted (max 100)")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=100,
+        help="Number of unresolved issues to consider for candidate selection",
+    )
     parser.add_argument("--org", default="zed-dev", help="Sentry org slug")
     parser.add_argument(
         "--select-only",

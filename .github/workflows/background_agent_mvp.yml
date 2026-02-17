@@ -78,8 +78,16 @@ jobs:
           ARGS=(--select-only --prefetch-dir "$PREFETCH_DIR" --org "$SENTRY_ORG")
           if [ -n "$INPUT_CRASH_IDS" ]; then
             ARGS+=(--crash-ids "$INPUT_CRASH_IDS")
-          elif [ -n "$INPUT_TOP" ]; then
-            ARGS+=(--top "$INPUT_TOP")
+          else
+            TARGET_DRAFT_PRS="${INPUT_TOP:-3}"
+            if ! [[ "$TARGET_DRAFT_PRS" =~ ^[0-9]+$ ]] || [ "$TARGET_DRAFT_PRS" -lt 1 ]; then
+              TARGET_DRAFT_PRS="3"
+            fi
+            CANDIDATE_TOP=$((TARGET_DRAFT_PRS * 5))
+            if [ "$CANDIDATE_TOP" -gt 100 ]; then
+              CANDIDATE_TOP=100
+            fi
+            ARGS+=(--top "$CANDIDATE_TOP" --sample-size 100)
           fi
 
           IDS="$(python3 script/run-background-agent-mvp-local "${ARGS[@]}")"
@@ -93,10 +101,12 @@ jobs:
           echo "ids=$IDS" >> "$GITHUB_OUTPUT"
 
       - name: Run background agent pipeline per crash
+        id: pipeline
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEWERS: ${{ steps.reviewers.outputs.reviewers }}
           CRASH_IDS: ${{ steps.candidates.outputs.ids }}
+          TARGET_DRAFT_PRS_INPUT: ${{ inputs.top }}
         run: |
           set -euo pipefail
 
@@ -105,10 +115,20 @@ jobs:
 
           # Crash ID format validation regex
           CRASH_ID_PATTERN='^[A-Za-z0-9]+-[A-Za-z0-9]+$'
+          TARGET_DRAFT_PRS="${TARGET_DRAFT_PRS_INPUT:-3}"
+          if ! [[ "$TARGET_DRAFT_PRS" =~ ^[0-9]+$ ]] || [ "$TARGET_DRAFT_PRS" -lt 1 ]; then
+            TARGET_DRAFT_PRS="3"
+          fi
+          CREATED_DRAFT_PRS=0
 
           IFS=',' read -r -a CRASH_ID_ARRAY <<< "$CRASH_IDS"
 
           for CRASH_ID in "${CRASH_ID_ARRAY[@]}"; do
+            if [ "$CREATED_DRAFT_PRS" -ge "$TARGET_DRAFT_PRS" ]; then
+              echo "Reached target draft PR count ($TARGET_DRAFT_PRS), stopping candidate processing"
+              break
+            fi
+
             CRASH_ID="$(echo "$CRASH_ID" | xargs)"
             [ -z "$CRASH_ID" ] && continue
 
@@ -176,6 +196,14 @@ jobs:
               continue
             fi
 
+            for REPORT_FILE in ANALYSIS.md LINKED_ISSUES.md PR_BODY.md; do
+              if [ -f "$REPORT_FILE" ]; then
+                echo "::group::${CRASH_ID} ${REPORT_FILE}"
+                cat "$REPORT_FILE"
+                echo "::endgroup::"
+              fi
+            done
+
             if git diff --quiet; then
               echo "No code changes produced for $CRASH_ID"
               continue
@@ -222,7 +250,13 @@ jobs:
                 gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWER" || true
               done
             fi
+
+            CREATED_DRAFT_PRS=$((CREATED_DRAFT_PRS + 1))
+            echo "Created/updated draft PRs this run: $CREATED_DRAFT_PRS/$TARGET_DRAFT_PRS"
           done
+
+          echo "created_draft_prs=$CREATED_DRAFT_PRS" >> "$GITHUB_OUTPUT"
+          echo "target_draft_prs=$TARGET_DRAFT_PRS" >> "$GITHUB_OUTPUT"
 
       - name: Cleanup pre-fetched crash data
         if: always()
@@ -233,12 +267,15 @@ jobs:
         env:
           SUMMARY_CRASH_IDS: ${{ steps.candidates.outputs.ids }}
           SUMMARY_REVIEWERS: ${{ steps.reviewers.outputs.reviewers }}
+          SUMMARY_CREATED_DRAFT_PRS: ${{ steps.pipeline.outputs.created_draft_prs }}
+          SUMMARY_TARGET_DRAFT_PRS: ${{ steps.pipeline.outputs.target_draft_prs }}
         run: |
           {
             echo "## Background Agent MVP"
             echo ""
             echo "- Crash IDs: ${SUMMARY_CRASH_IDS:-none}"
             echo "- Reviewer routing: ${SUMMARY_REVIEWERS:-NOT CONFIGURED}"
+            echo "- Draft PRs created: ${SUMMARY_CREATED_DRAFT_PRS:-0}/${SUMMARY_TARGET_DRAFT_PRS:-3}"
             echo "- Pipeline: investigate -> link-issues -> fix -> draft PR"
           } >> "$GITHUB_STEP_SUMMARY"
 
