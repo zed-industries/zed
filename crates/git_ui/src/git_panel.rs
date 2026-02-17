@@ -1142,11 +1142,7 @@ impl GitPanel {
         };
 
         if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
-            let Some(new_selected_entry) = new_index.checked_add(1).filter(|ix| *ix < item_count)
-            else {
-                return;
-            };
-            self.selected_entry = Some(new_selected_entry);
+            self.selected_entry = Some(new_index.saturating_add(1));
         } else {
             self.selected_entry = Some(new_index);
         }
@@ -7236,15 +7232,15 @@ mod tests {
             path!("/project"),
             json!({
                 ".git": {},
-                "src": {
-                    "a": {
-                        "foo.rs": "fn foo() {}",
-                    },
-                    "b": {
-                        "bar.rs": "fn bar() {}",
-                        "baz.rs": "fn baz() {}",
-                    },
+                "bar": {
+                    "bar1.py": "print('bar1')",
+                    "bar2.py": "print('bar2')",
                 },
+                "foo": {
+                    "foo1.py": "print('foo1')",
+                    "foo2.py": "print('foo2')",
+                },
+                "foobar.py": "print('foobar')",
             }),
         )
         .await;
@@ -7252,9 +7248,11 @@ mod tests {
         fs.set_status_for_repo(
             path!("/project/.git").as_ref(),
             &[
-                ("src/a/foo.rs", StatusCode::Modified.worktree()),
-                ("src/b/bar.rs", StatusCode::Modified.worktree()),
-                ("src/b/baz.rs", StatusCode::Modified.worktree()),
+                ("bar/bar1.py", StatusCode::Modified.worktree()),
+                ("bar/bar2.py", StatusCode::Modified.worktree()),
+                ("foo/foo1.py", StatusCode::Modified.worktree()),
+                ("foo/foo2.py", StatusCode::Modified.worktree()),
+                ("foobar.py", FileStatus::Untracked),
             ],
         );
 
@@ -7296,53 +7294,69 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let src_b_key = panel.read_with(cx, |panel, _| {
+        let foo_key = panel.read_with(cx, |panel, _| {
             panel
                 .entries
                 .iter()
                 .find_map(|entry| match entry {
-                    GitListEntry::Directory(dir) if dir.key.path == repo_path("src/b") => {
+                    GitListEntry::Directory(dir) if dir.key.path == repo_path("foo") => {
                         Some(dir.key.clone())
                     }
                     _ => None,
                 })
-                .expect("src/b directory should exist in tree view")
+                .expect("foo directory should exist in tree view")
         });
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.toggle_directory(&src_b_key, window, cx);
+            panel.toggle_directory(&foo_key, window, cx);
         });
 
-        let src_b_idx = panel.read_with(cx, |panel, _| {
+        let foo_idx = panel.read_with(cx, |panel, _| {
             let state = panel
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&src_b_key).copied(), Some(false));
+            assert_eq!(state.expanded_dirs.get(&foo_key).copied(), Some(false));
 
-            let src_b_idx = panel
+            let foo_idx = panel
                 .entries
                 .iter()
                 .enumerate()
                 .find_map(|(index, entry)| match entry {
-                    GitListEntry::Directory(dir) if dir.key.path == repo_path("src/b") => {
-                        Some(index)
-                    }
+                    GitListEntry::Directory(dir) if dir.key.path == repo_path("foo") => Some(index),
                     _ => None,
                 })
-                .expect("src/b directory should exist in tree view");
+                .expect("foo directory should exist in tree view");
 
-            assert_eq!(state.logical_indices.last().copied(), Some(src_b_idx));
-            src_b_idx
+            let foo_logical_idx = state
+                .logical_indices
+                .iter()
+                .position(|&index| index == foo_idx)
+                .expect("foo directory should be visible");
+            let next_logical_idx = state.logical_indices[foo_logical_idx + 1];
+            assert!(matches!(
+                panel.entries.get(next_logical_idx),
+                Some(GitListEntry::Header(GitHeaderEntry {
+                    header: Section::New
+                }))
+            ));
+
+            foo_idx
         });
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.selected_entry = Some(src_b_idx);
+            panel.selected_entry = Some(foo_idx);
             panel.select_next(&menu::SelectNext, window, cx);
         });
 
         panel.read_with(cx, |panel, _| {
-            assert_eq!(panel.selected_entry, Some(src_b_idx));
+            let selected_idx = panel.selected_entry.expect("selection should be set");
+            let selected_entry = panel
+                .entries
+                .get(selected_idx)
+                .and_then(|entry| entry.status_entry())
+                .expect("selected entry should be a status entry");
+            assert_eq!(selected_entry.repo_path, repo_path("foobar.py"));
         });
     }
 
