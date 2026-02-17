@@ -209,16 +209,14 @@ impl TeacherPrompt {
     }
 
     pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
-        // Extract updated (new) editable region from the model response.
-        // The model may include editable region markers in its output, so we need to strip them.
-        let new_editable_region = extract_last_codeblock(response);
-
         // Check if the model indicated no edits are needed
-        if new_editable_region.trim() == Self::NO_EDITS {
+        let last_codeblock = extract_last_codeblock(&response);
+        if last_codeblock.trim() == Self::NO_EDITS {
             return Ok((String::new(), None));
         }
 
-        let new_editable_region = Self::extract_editable_region(&new_editable_region)?;
+        // Extract updated (new) editable region from the model response.
+        let new_editable_region = Self::extract_editable_region(&response)?;
         let cursor_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
         let mut new_editable_region = new_editable_region.replace(Self::USER_CURSOR_MARKER, "");
         let old_editable_region = Self::extract_editable_region(
