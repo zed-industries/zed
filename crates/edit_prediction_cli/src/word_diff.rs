@@ -129,29 +129,38 @@ fn compute_word_diff(old_text: &str, new_text: &str) -> String {
     result
 }
 
-/// Tokenize text into words and whitespace sequences.
-fn tokenize(text: &str) -> Vec<&str> {
+/// Classify a character into one of three token classes:
+/// - 0: identifier (alphanumeric or `_`)
+/// - 1: whitespace
+/// - 2: punctuation (everything else, each character becomes its own token)
+fn char_class(ch: char) -> u8 {
+    if ch.is_alphanumeric() || ch == '_' {
+        0
+    } else if ch.is_whitespace() {
+        1
+    } else {
+        2
+    }
+}
+
+/// Tokenize text into identifier words, whitespace runs, and individual punctuation characters.
+///
+/// This splitting aligns with the syntactic atoms of source code so that the
+/// LCS-based diff can produce fine-grained, meaningful change regions.
+pub(crate) fn tokenize(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut chars = text.char_indices().peekable();
 
     while let Some((start, ch)) = chars.next() {
-        if ch.is_whitespace() {
-            // Collect contiguous whitespace
-            let mut end = start + ch.len_utf8();
-            while let Some(&(_, next_ch)) = chars.peek() {
-                if next_ch.is_whitespace() {
-                    end += next_ch.len_utf8();
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            tokens.push(&text[start..end]);
+        let class = char_class(ch);
+        if class == 2 {
+            // Punctuation: each character is a separate token
+            tokens.push(&text[start..start + ch.len_utf8()]);
         } else {
-            // Collect contiguous non-whitespace
+            // Identifier or whitespace: collect contiguous run of same class
             let mut end = start + ch.len_utf8();
             while let Some(&(_, next_ch)) = chars.peek() {
-                if !next_ch.is_whitespace() {
+                if char_class(next_ch) == class {
                     end += next_ch.len_utf8();
                     chars.next();
                 } else {
@@ -166,7 +175,7 @@ fn tokenize(text: &str) -> Vec<&str> {
 }
 
 #[derive(Debug)]
-enum DiffOp {
+pub(crate) enum DiffOp {
     Equal(usize, usize),
     Delete(usize, usize),
     Insert(usize, usize),
@@ -179,7 +188,7 @@ enum DiffOp {
 }
 
 /// Compute diff operations between two token sequences using a simple LCS-based algorithm.
-fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
+pub(crate) fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
     // Build LCS table
     let m = old.len();
     let n = new.len();
@@ -315,6 +324,24 @@ mod tests {
 
         let tokens = tokenize("  multiple   spaces  ");
         assert_eq!(tokens, vec!["  ", "multiple", "   ", "spaces", "  "]);
+
+        let tokens = tokenize("self.name");
+        assert_eq!(tokens, vec!["self", ".", "name"]);
+
+        let tokens = tokenize("foo(bar, baz)");
+        assert_eq!(tokens, vec!["foo", "(", "bar", ",", " ", "baz", ")"]);
+
+        let tokens = tokenize("hello_world");
+        assert_eq!(tokens, vec!["hello_world"]);
+
+        let tokens = tokenize("fn();");
+        assert_eq!(tokens, vec!["fn", "(", ")", ";"]);
+
+        let tokens = tokenize("foo_bar123 + baz");
+        assert_eq!(tokens, vec!["foo_bar123", " ", "+", " ", "baz"]);
+
+        let tokens = tokenize("print(\"hello\")");
+        assert_eq!(tokens, vec!["print", "(", "\"", "hello", "\"", ")"]);
     }
 
     #[test]
