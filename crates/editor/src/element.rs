@@ -5542,10 +5542,11 @@ impl EditorElement {
         row_range: Range<DisplayRow>,
         row_infos: &[RowInfo],
         text_hitbox: &Hitbox,
-        newest_cursor_position: Option<DisplayPoint>,
+        newest_cursor_row: Option<DisplayRow>,
         line_height: Pixels,
         right_margin: Pixels,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        sticky_header_height: Pixels,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         highlighted_rows: &BTreeMap<DisplayRow, LineHighlight>,
         editor: Entity<Editor>,
@@ -5554,14 +5555,12 @@ impl EditorElement {
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
         let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
+        let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
         let mut controls = vec![];
         let mut control_bounds = vec![];
 
-        let active_positions = [
-            hovered_diff_hunk_row.map(|row| DisplayPoint::new(row, 0)),
-            newest_cursor_position,
-        ];
+        let active_rows = [hovered_diff_hunk_row, newest_cursor_row];
 
         for (hunk, _) in display_hunks {
             if let DisplayDiffHunk::Unfolded {
@@ -5572,9 +5571,16 @@ impl EditorElement {
                 ..
             } = &hunk
             {
-                if display_row_range.start < row_range.start
-                    || display_row_range.start >= row_range.end
-                {
+                if display_row_range.start >= row_range.end {
+                    // hunk is fully below the viewport
+                    continue;
+                }
+                if display_row_range.end <= row_range.start {
+                    // hunk is fully above the viewport
+                    continue;
+                }
+                let row_ix = display_row_range.start.0.saturating_sub(row_range.start.0);
+                if row_infos[row_ix as usize].diff_status.is_none() {
                     continue;
                 }
                 if highlighted_rows
@@ -5593,20 +5599,27 @@ impl EditorElement {
                 {
                     continue;
                 }
-                let row_ix = (display_row_range.start - row_range.start).0 as usize;
-                if row_infos[row_ix].diff_status.is_none() {
-                    continue;
-                }
 
-                if active_positions
+                if active_rows
                     .iter()
-                    .any(|p| p.is_some_and(|p| display_row_range.contains(&p.row())))
+                    .any(|row| row.is_some_and(|row| display_row_range.contains(&row)))
                 {
-                    let y = (display_row_range.start.as_f64()
+                    let hunk_start_y: Pixels = (display_row_range.start.as_f64()
                         * ScrollPixelOffset::from(line_height)
                         + ScrollPixelOffset::from(text_hitbox.bounds.top())
                         - scroll_pixel_position.y)
                         .into();
+
+                    let y: Pixels = if hunk_start_y >= sticky_top {
+                        hunk_start_y
+                    } else {
+                        let hunk_end_y: Pixels = hunk_start_y
+                            + (display_row_range.len() as f64
+                                * ScrollPixelOffset::from(line_height))
+                            .into();
+                        let max_y = hunk_end_y - line_height;
+                        sticky_top.min(max_y)
+                    };
 
                     let mut element = render_diff_hunk_controls(
                         display_row_range.start.0,
@@ -10751,6 +10764,35 @@ impl Element for EditorElement {
 
                     let mode = snapshot.mode.clone();
 
+                    let sticky_scroll_header_height = sticky_headers
+                        .as_ref()
+                        .and_then(|headers| headers.lines.last())
+                        .map_or(Pixels::ZERO, |last| last.offset + line_height);
+
+                    let sticky_header_height = if sticky_buffer_header.is_some() {
+                        let full_height = FILE_HEADER_HEIGHT as f32 * line_height;
+                        let display_row = blocks
+                            .iter()
+                            .filter(|block| block.is_buffer_header)
+                            .find_map(|block| {
+                                block.row.filter(|row| row.0 > scroll_position.y as u32)
+                            });
+                        let offset = match display_row {
+                            Some(display_row) => {
+                                let max_row = display_row.0.saturating_sub(FILE_HEADER_HEIGHT);
+                                let offset = (scroll_position.y - max_row as f64).max(0.0);
+                                let slide_up =
+                                    Pixels::from(offset * ScrollPixelOffset::from(line_height));
+
+                                (full_height - slide_up).max(Pixels::ZERO)
+                            }
+                            None => full_height,
+                        };
+                        sticky_scroll_header_height + offset
+                    } else {
+                        sticky_scroll_header_height
+                    };
+
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
                         if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
                             (vec![], vec![])
@@ -10759,10 +10801,11 @@ impl Element for EditorElement {
                                 start_row..end_row,
                                 &row_infos,
                                 &text_hitbox,
-                                newest_selection_head,
+                                current_selection_head,
                                 line_height,
                                 right_margin,
                                 scroll_pixel_position,
+                                sticky_header_height,
                                 &display_hunks,
                                 &highlighted_rows,
                                 self.editor.clone(),

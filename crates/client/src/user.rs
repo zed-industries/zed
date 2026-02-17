@@ -2,7 +2,7 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, Plan, PlanInfo};
+use cloud_api_client::{GetAuthenticatedUserResponse, Organization, Plan, PlanInfo};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
@@ -109,6 +109,8 @@ pub struct UserStore {
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    current_organization: Option<Arc<Organization>>,
+    organizations: Vec<Arc<Organization>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -178,6 +180,8 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
+            current_organization: None,
+            organizations: Vec::new(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -257,6 +261,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_organizations();
                                 this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -731,6 +736,11 @@ impl UserStore {
         cx.notify();
     }
 
+    pub fn clear_organizations(&mut self) {
+        self.organizations.clear();
+        self.current_organization = None;
+    }
+
     pub fn clear_plan_and_usage(&mut self) {
         self.plan_info = None;
         self.edit_prediction_usage = None;
@@ -748,6 +758,9 @@ impl UserStore {
                 .telemetry
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
+
+        self.organizations = response.organizations.into_iter().map(Arc::new).collect();
+        self.current_organization = self.organizations.first().cloned();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,

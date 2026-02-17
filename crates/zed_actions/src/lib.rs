@@ -434,8 +434,8 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Code onboarding modal.
-            OpenClaudeCodeOnboardingModal,
+            /// Opens the Claude Agent onboarding modal.
+            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.

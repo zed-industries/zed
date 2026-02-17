@@ -674,21 +674,34 @@ impl SplittableEditor {
         // stream this
         for (path, diff) in path_diffs {
             self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
-                lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
-                    for (lhs, rhs) in LhsEditor::update_path_excerpts_from_rhs(
+                let sync_result = lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
+                    LhsEditor::update_path_excerpts_from_rhs(
                         path.clone(),
                         rhs_multibuffer,
                         lhs_multibuffer,
                         diff.clone(),
                         lhs_cx,
-                    ) {
-                        companion.add_excerpt_mapping(lhs, rhs);
+                    )
+                });
+
+                if let Some((lhs_excerpt_ids, rhs_merge_groups)) = sync_result {
+                    let mut final_rhs_ids = Vec::with_capacity(lhs_excerpt_ids.len());
+                    for group in rhs_merge_groups {
+                        if group.len() == 1 {
+                            final_rhs_ids.push(group[0]);
+                        } else {
+                            let merged_id = rhs_multibuffer.merge_excerpts(&group, cx);
+                            final_rhs_ids.push(merged_id);
+                        }
                     }
-                    companion.add_buffer_mapping(
-                        diff.read(lhs_cx).base_text(lhs_cx).remote_id(),
-                        diff.read(lhs_cx).buffer_id,
-                    );
-                })
+
+                    for (rhs_id, lhs_id) in final_rhs_ids.iter().zip(lhs_excerpt_ids.iter()) {
+                        companion.add_excerpt_mapping(*lhs_id, *rhs_id);
+                    }
+                    let lhs_buffer_id = diff.read(cx).base_text(cx).remote_id();
+                    let rhs_buffer_id = diff.read(cx).buffer_id;
+                    companion.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
+                }
             });
         }
 
@@ -1940,18 +1953,52 @@ fn mutate_excerpts_for_paths<R>(
     let result = mutate(rhs_multibuffer, cx);
 
     if let Some(lhs) = lhs {
+        let mut sync_results = Vec::new();
+        let mut diffs_for_mapping = Vec::new();
+
         for ((path, diff), old_rhs_ids) in paths_with_diffs.into_iter().zip(old_rhs_ids) {
-            lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
+            let sync_result = lhs.multibuffer.update(cx, |lhs_multibuffer, lhs_cx| {
                 LhsEditor::sync_path_excerpts(
                     path,
                     old_rhs_ids,
                     rhs_multibuffer,
                     lhs_multibuffer,
-                    diff,
+                    diff.clone(),
                     rhs_display_map,
                     lhs_cx,
-                );
+                )
             });
+            if let Some(sync_result) = sync_result {
+                sync_results.push(sync_result);
+                diffs_for_mapping.push(diff);
+            }
+        }
+
+        for ((lhs_excerpt_ids, rhs_merge_groups), diff) in
+            sync_results.into_iter().zip(diffs_for_mapping.into_iter())
+        {
+            let mut final_rhs_ids = Vec::with_capacity(lhs_excerpt_ids.len());
+            for group in rhs_merge_groups {
+                if group.len() == 1 {
+                    final_rhs_ids.push(group[0]);
+                } else {
+                    let merged_id = rhs_multibuffer.merge_excerpts(&group, cx);
+                    final_rhs_ids.push(merged_id);
+                }
+            }
+
+            debug_assert_eq!(final_rhs_ids.len(), lhs_excerpt_ids.len());
+
+            if let Some(companion) = rhs_display_map.read(cx).companion().cloned() {
+                let lhs_buffer_id = diff.read(cx).base_text(cx).remote_id();
+                let rhs_buffer_id = diff.read(cx).buffer_id;
+                companion.update(cx, |c, _| {
+                    for (rhs_id, lhs_id) in final_rhs_ids.iter().zip(lhs_excerpt_ids.iter()) {
+                        c.add_excerpt_mapping(*lhs_id, *rhs_id);
+                    }
+                    c.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
+                });
+            }
         }
     }
 
@@ -1965,13 +2012,13 @@ impl LhsEditor {
         lhs_multibuffer: &mut MultiBuffer,
         diff: Entity<BufferDiff>,
         lhs_cx: &mut Context<MultiBuffer>,
-    ) -> Vec<(ExcerptId, ExcerptId)> {
+    ) -> Option<(Vec<ExcerptId>, Vec<Vec<ExcerptId>>)> {
         let rhs_excerpt_ids: Vec<ExcerptId> =
             rhs_multibuffer.excerpts_for_path(&path_key).collect();
 
         let Some(excerpt_id) = rhs_multibuffer.excerpts_for_path(&path_key).next() else {
             lhs_multibuffer.remove_excerpts_for_path(path_key, lhs_cx);
-            return Vec::new();
+            return None;
         };
 
         let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(lhs_cx);
@@ -2007,14 +2054,14 @@ impl LhsEditor {
             })
             .collect();
 
-        let (ids, _) = lhs_multibuffer.update_path_excerpts(
-            path_key.clone(),
+        let lhs_result = lhs_multibuffer.update_path_excerpts(
+            path_key,
             base_text_buffer.clone(),
             &base_text_buffer_snapshot,
             new,
             lhs_cx,
         );
-        if !ids.is_empty()
+        if !lhs_result.excerpt_ids.is_empty()
             && lhs_multibuffer
                 .diff_for(base_text_buffer.read(lhs_cx).remote_id())
                 .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
@@ -2022,12 +2069,32 @@ impl LhsEditor {
             lhs_multibuffer.add_inverted_diff(diff, lhs_cx);
         }
 
-        let lhs_excerpt_ids: Vec<ExcerptId> =
-            lhs_multibuffer.excerpts_for_path(&path_key).collect();
+        let rhs_merge_groups: Vec<Vec<ExcerptId>> = {
+            let mut groups = Vec::new();
+            let mut current_group = Vec::new();
+            let mut last_id = None;
 
-        debug_assert_eq!(rhs_excerpt_ids.len(), lhs_excerpt_ids.len());
+            for (i, &lhs_id) in lhs_result.excerpt_ids.iter().enumerate() {
+                if last_id == Some(lhs_id) {
+                    current_group.push(rhs_excerpt_ids[i]);
+                } else {
+                    if !current_group.is_empty() {
+                        groups.push(current_group);
+                    }
+                    current_group = vec![rhs_excerpt_ids[i]];
+                    last_id = Some(lhs_id);
+                }
+            }
+            if !current_group.is_empty() {
+                groups.push(current_group);
+            }
+            groups
+        };
 
-        lhs_excerpt_ids.into_iter().zip(rhs_excerpt_ids).collect()
+        let deduplicated_lhs_ids: Vec<ExcerptId> =
+            lhs_result.excerpt_ids.iter().dedup().copied().collect();
+
+        Some((deduplicated_lhs_ids, rhs_merge_groups))
     }
 
     fn sync_path_excerpts(
@@ -2038,7 +2105,7 @@ impl LhsEditor {
         diff: Entity<BufferDiff>,
         rhs_display_map: &Entity<DisplayMap>,
         lhs_cx: &mut Context<MultiBuffer>,
-    ) {
+    ) -> Option<(Vec<ExcerptId>, Vec<Vec<ExcerptId>>)> {
         let old_lhs_excerpt_ids: Vec<ExcerptId> =
             lhs_multibuffer.excerpts_for_path(&path_key).collect();
 
@@ -2048,25 +2115,13 @@ impl LhsEditor {
             });
         }
 
-        let mappings = Self::update_path_excerpts_from_rhs(
+        Self::update_path_excerpts_from_rhs(
             path_key,
             rhs_multibuffer,
             lhs_multibuffer,
-            diff.clone(),
+            diff,
             lhs_cx,
-        );
-
-        let lhs_buffer_id = diff.read(lhs_cx).base_text(lhs_cx).remote_id();
-        let rhs_buffer_id = diff.read(lhs_cx).buffer_id;
-
-        if let Some(companion) = rhs_display_map.read(lhs_cx).companion().cloned() {
-            companion.update(lhs_cx, |c, _| {
-                for (lhs, rhs) in mappings {
-                    c.add_excerpt_mapping(lhs, rhs);
-                }
-                c.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
-            });
-        }
+        )
     }
 }
 
@@ -5454,6 +5509,69 @@ mod tests {
             get_block_height(&lhs_editor, lhs_block_id, &mut cx),
             Some(5)
         );
+    }
+
+    #[gpui::test]
+    async fn test_edit_spanning_excerpt_boundaries_then_resplit(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+            ddd
+            eee
+            fff
+            ggg
+            hhh
+            iii
+            jjj
+            kkk
+            lll
+        "
+        .unindent();
+        let current_text = base_text.clone();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&buffer, cx);
+            editor.set_excerpts_for_path(
+                path,
+                buffer.clone(),
+                vec![
+                    Point::new(0, 0)..Point::new(3, 3),
+                    Point::new(5, 0)..Point::new(8, 3),
+                    Point::new(10, 0)..Point::new(11, 3),
+                ],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 0)..Point::new(10, 0), "")], None, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.unsplit(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |splittable_editor, window, cx| {
+            splittable_editor.split(window, cx);
+        });
+
+        cx.run_until_parked();
     }
 
     #[gpui::test]

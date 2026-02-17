@@ -219,6 +219,25 @@ pub fn word_diff_ranges(
     (old_ranges, new_ranges)
 }
 
+/// Computes character-level diff between two strings.
+///
+/// Usually, you should use `text_diff`, which performs a word-wise diff.
+pub fn char_diff<'a>(old_text: &'a str, new_text: &'a str) -> Vec<(Range<usize>, &'a str)> {
+    let mut input: InternedInput<&str> = InternedInput::default();
+    input.update_before(tokenize_chars(old_text));
+    input.update_after(tokenize_chars(new_text));
+    let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
+    diff_internal(&input, |old_byte_range, new_byte_range, _, _| {
+        let replacement = if new_byte_range.is_empty() {
+            ""
+        } else {
+            &new_text[new_byte_range]
+        };
+        edits.push((old_byte_range, replacement));
+    });
+    edits
+}
+
 pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
     pub max_word_diff_len: usize,
@@ -361,6 +380,14 @@ fn diff_internal(
     );
 }
 
+fn tokenize_chars(text: &str) -> impl Iterator<Item = &str> {
+    let mut chars = text.char_indices().peekable();
+    iter::from_fn(move || {
+        let (start, c) = chars.next()?;
+        Some(&text[start..start + c.len_utf8()])
+    })
+}
+
 fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<Item = &str> {
     let classifier =
         CharClassifier::new(language_scope).scope_context(Some(CharScopeContext::Completion));
@@ -476,6 +503,23 @@ mod tests {
         assert_eq!(
             apply_reversed_diff_patch(new_text, &patch).unwrap(),
             old_text
+        );
+    }
+
+    #[test]
+    fn test_char_diff() {
+        assert_eq!(char_diff("", ""), vec![]);
+        assert_eq!(char_diff("", "abc"), vec![(0..0, "abc")]);
+        assert_eq!(char_diff("abc", ""), vec![(0..3, "")]);
+        assert_eq!(char_diff("ac", "abc"), vec![(1..1, "b")]); // "b" inserted
+        assert_eq!(char_diff("abc", "ac"), vec![(1..2, "")]); // "b" deleted
+        assert_eq!(char_diff("abc", "adc"), vec![(1..2, "d")]); // "b" replaced with "d"
+        assert_eq!(char_diff("日", "日本語"), vec![(3..3, "本語")]); // "本語" inserted
+        assert_eq!(char_diff("日本語", "日"), vec![(3..9, "")]); // "本語" deleted
+        assert_eq!(char_diff("🎉", "🎉🎊🎈"), vec![(4..4, "🎊🎈")]); // "🎊🎈" inserted
+        assert_eq!(
+            char_diff("test日本", "test日本語です"),
+            vec![(10..10, "語です")]
         );
     }
 

@@ -885,6 +885,7 @@ pub struct TokenUsage {
     pub used_tokens: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub max_output_tokens: Option<u64>,
 }
 
 impl TokenUsage {
@@ -1963,6 +1964,7 @@ impl AcpThread {
                     Ok(r) => {
                         if r.stop_reason == acp::StopReason::MaxTokens {
                             cx.emit(AcpThreadEvent::Error);
+                            log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             return Err(anyhow!("Max tokens reached"));
                         }
 
@@ -2011,6 +2013,7 @@ impl AcpThread {
                     }
                     Err(e) => {
                         cx.emit(AcpThreadEvent::Error);
+                        log::error!("Error in run turn: {:?}", e);
                         Err(e)
                     }
                 }

@@ -248,7 +248,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
-            (Feature::AgentClaude, vec!["claude", "claude code"]),
+            (
+                Feature::AgentClaude,
+                vec!["claude", "claude code", "claude agent"],
+            ),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
             (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (
@@ -1587,8 +1590,8 @@ impl ExtensionsPage {
         for feature in &self.upsells {
             let banner = match feature {
                 Feature::AgentClaude => self.render_feature_upsell_banner(
-                    "Claude Code support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-code".into(),
+                    "Claude Agent support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
                     false,
                     cx,
                 ),

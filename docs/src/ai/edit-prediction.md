@@ -1,6 +1,6 @@
 ---
-title: AI Code Completion in Zed - Zeta, Copilot, Supermaven
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Supermaven, or Codestral. Multi-line predictions on every keystroke.
+title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Sweep, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
 ---
 
 # Edit Prediction
@@ -8,7 +8,7 @@ description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copi
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Supermaven, and Codestral.
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Sweep, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 

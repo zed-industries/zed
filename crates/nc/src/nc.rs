@@ -3,11 +3,6 @@ use anyhow::Result;
 #[cfg(windows)]
 pub fn main(_socket: &str) -> Result<()> {
     // It looks like we can't get an async stdio stream on Windows from smol.
-    //
-    // We decided to merge this with a panic on Windows since this is only used
-    // by the experimental Claude Code Agent Server.
-    //
-    // We're tracking this internally, and we will address it before shipping the integration.
     panic!("--nc isn't yet supported on Windows");
 }
 
