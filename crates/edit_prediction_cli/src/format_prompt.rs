@@ -160,7 +160,7 @@ pub fn zeta2_output_for_patch(
         // We need to add where the hunk context matched in the editable region to compute
         // the actual cursor position in the result.
         let hunk_start = first_hunk_offset.unwrap_or(0);
-        let offset = (hunk_start + cursor_offset).min(result.len());
+        let offset = result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()));
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
