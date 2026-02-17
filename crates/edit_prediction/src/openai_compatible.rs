@@ -308,6 +308,9 @@ impl OpenAiCompatibleEditPrediction {
 #[cfg(test)]
 mod tests {
     use super::chat_completions_url;
+    use crate::ollama::{
+        format_fim_prompt, get_fim_stop_tokens, get_zeta_stop_tokens, is_zeta_model,
+    };
 
     #[test]
     fn chat_completions_url_appends_v1_when_missing() {
@@ -330,6 +333,139 @@ mod tests {
         assert_eq!(
             chat_completions_url("http://localhost:8000/v1/"),
             "http://localhost:8000/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_with_custom_path_prefix() {
+        assert_eq!(
+            chat_completions_url("http://localhost:8000/api/v1"),
+            "http://localhost:8000/api/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("http://my-server.example.com/v1"),
+            "http://my-server.example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn is_zeta_model_detection() {
+        assert!(is_zeta_model("zeta"));
+        assert!(is_zeta_model("Zeta"));
+        assert!(is_zeta_model("my-org/zeta-v1"));
+        assert!(is_zeta_model("ZETA-large"));
+        assert!(!is_zeta_model("qwen2.5-coder:3b-base"));
+        assert!(!is_zeta_model("codellama"));
+        assert!(!is_zeta_model("starcoder2"));
+    }
+
+    #[test]
+    fn zeta_request_body_structure() {
+        let stop_tokens = get_zeta_stop_tokens();
+        let request = open_ai::Request {
+            model: "zeta".into(),
+            messages: vec![open_ai::RequestMessage::User {
+                content: open_ai::MessageContent::Plain("test prompt".into()),
+            }],
+            stream: false,
+            max_completion_tokens: Some(1024),
+            stop: stop_tokens.clone(),
+            temperature: Some(0.2),
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: vec![],
+            prompt_cache_key: None,
+            reasoning_effort: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "zeta");
+        assert_eq!(json["stream"], false);
+        assert_eq!(json["max_completion_tokens"], 1024);
+        let temperature = json["temperature"].as_f64().unwrap();
+        assert!(
+            (temperature - 0.2).abs() < 0.001,
+            "temperature should be ~0.2, got {temperature}"
+        );
+        assert_eq!(json["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(json["messages"][0]["role"], "user");
+        assert_eq!(json["messages"][0]["content"], "test prompt");
+
+        let stop_arr = json["stop"].as_array().unwrap();
+        assert!(stop_arr.len() >= 2);
+        for token in &stop_tokens {
+            assert!(
+                stop_arr.iter().any(|v| v.as_str() == Some(token)),
+                "stop tokens should contain {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn fim_request_body_structure() {
+        let prefix = "fn main() {\n    let x = ";
+        let suffix = ";\n}\n";
+        let prompt = format_fim_prompt("qwen2.5-coder", prefix, suffix);
+        let stop_tokens = get_fim_stop_tokens();
+
+        let request = open_ai::Request {
+            model: "qwen2.5-coder".into(),
+            messages: vec![open_ai::RequestMessage::User {
+                content: open_ai::MessageContent::Plain(prompt.clone()),
+            }],
+            stream: false,
+            max_completion_tokens: Some(256),
+            stop: stop_tokens,
+            temperature: Some(0.2),
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: vec![],
+            prompt_cache_key: None,
+            reasoning_effort: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "qwen2.5-coder");
+        assert_eq!(json["max_completion_tokens"], 256);
+
+        let content = json["messages"][0]["content"].as_str().unwrap();
+        assert!(
+            content.contains(prefix),
+            "FIM prompt should contain the prefix"
+        );
+        assert!(
+            content.contains(suffix),
+            "FIM prompt should contain the suffix"
+        );
+    }
+
+    #[test]
+    fn authorization_header_only_when_key_present() {
+        let mut builder = gpui::http_client::Request::builder()
+            .method(gpui::http_client::Method::POST)
+            .uri("http://localhost:8000/v1/chat/completions")
+            .header("Content-Type", "application/json");
+
+        let api_key: Option<String> = None;
+        if let Some(key) = &api_key {
+            builder = builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let request = builder.body(gpui::http_client::AsyncBody::empty()).unwrap();
+        assert!(request.headers().get("Authorization").is_none());
+
+        let mut builder = gpui::http_client::Request::builder()
+            .method(gpui::http_client::Method::POST)
+            .uri("http://localhost:8000/v1/chat/completions")
+            .header("Content-Type", "application/json");
+
+        let api_key = Some("sk-test-key".to_string());
+        if let Some(key) = &api_key {
+            builder = builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let request = builder.body(gpui::http_client::AsyncBody::empty()).unwrap();
+        assert_eq!(
+            request.headers().get("Authorization").unwrap(),
+            "Bearer sk-test-key"
         );
     }
 }

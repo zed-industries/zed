@@ -85,6 +85,7 @@ pub enum EditPredictionProvider {
     Zed,
     Codestral,
     Ollama,
+    #[serde(rename = "openai_compatible")]
     OpenAiCompatible,
     Sweep,
     Mercury,
@@ -107,6 +108,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Zed,
             Codestral,
             Ollama,
+            #[serde(rename = "openai_compatible")]
             OpenAiCompatible,
             Sweep,
             Mercury,
@@ -1166,5 +1168,129 @@ mod test {
                 .expect("options were flattened")
                 .contains_key("tabWidth")
         );
+    }
+
+    #[test]
+    fn test_edit_prediction_provider_deserialization() {
+        let cases: &[(&str, EditPredictionProvider)] = &[
+            ("\"none\"", EditPredictionProvider::None),
+            ("\"copilot\"", EditPredictionProvider::Copilot),
+            ("\"supermaven\"", EditPredictionProvider::Supermaven),
+            ("\"zed\"", EditPredictionProvider::Zed),
+            ("\"codestral\"", EditPredictionProvider::Codestral),
+            ("\"ollama\"", EditPredictionProvider::Ollama),
+            (
+                "\"openai_compatible\"",
+                EditPredictionProvider::OpenAiCompatible,
+            ),
+            ("\"sweep\"", EditPredictionProvider::Sweep),
+            ("\"mercury\"", EditPredictionProvider::Mercury),
+        ];
+        for (json, expected) in cases {
+            let parsed: EditPredictionProvider = serde_json::from_str(json).unwrap_or_else(|err| {
+                panic!("Failed to deserialize {json}: {err}");
+            });
+            assert_eq!(parsed, *expected, "mismatch for {json}");
+        }
+    }
+
+    #[test]
+    fn test_edit_prediction_provider_serialization_roundtrip() {
+        let providers = [
+            EditPredictionProvider::None,
+            EditPredictionProvider::Copilot,
+            EditPredictionProvider::Supermaven,
+            EditPredictionProvider::Zed,
+            EditPredictionProvider::Codestral,
+            EditPredictionProvider::Ollama,
+            EditPredictionProvider::OpenAiCompatible,
+            EditPredictionProvider::Sweep,
+            EditPredictionProvider::Mercury,
+        ];
+        for provider in providers {
+            let json = serde_json::to_string(&provider).unwrap();
+            let roundtripped: EditPredictionProvider = serde_json::from_str(&json).unwrap();
+            assert_eq!(roundtripped, provider, "roundtrip failed for {json}");
+        }
+    }
+
+    #[test]
+    fn test_edit_prediction_provider_openai_compatible_not_open_ai_compatible() {
+        let result = serde_json::from_str::<EditPredictionProvider>("\"open_ai_compatible\"");
+        assert!(
+            result.is_err(),
+            "\"open_ai_compatible\" (with extra underscore) should not be accepted"
+        );
+
+        let serialized = serde_json::to_string(&EditPredictionProvider::OpenAiCompatible).unwrap();
+        assert_eq!(
+            serialized, "\"openai_compatible\"",
+            "should serialize as openai_compatible, not open_ai_compatible"
+        );
+    }
+
+    #[test]
+    fn test_edit_prediction_settings_with_openai_compatible() {
+        let raw = r#"{
+            "provider": "openai_compatible",
+            "openai_compatible": {
+                "api_url": "http://localhost:8000/v1",
+                "model": "zeta",
+                "max_output_tokens": 512,
+                "api_key": "test-key"
+            }
+        }"#;
+        let settings: EditPredictionSettingsContent =
+            serde_json::from_str(raw).expect("Failed to parse edit prediction settings");
+        assert_eq!(
+            settings.provider,
+            Some(EditPredictionProvider::OpenAiCompatible)
+        );
+        let compat = settings
+            .openai_compatible
+            .expect("openai_compatible should be present");
+        assert_eq!(compat.model.as_deref(), Some("zeta"));
+        assert_eq!(compat.max_output_tokens, Some(512));
+        assert_eq!(compat.api_url.as_deref(), Some("http://localhost:8000/v1"));
+        assert_eq!(compat.api_key.as_deref(), Some("test-key"));
+    }
+
+    #[test]
+    fn test_edit_prediction_settings_openai_compatible_minimal() {
+        let raw = r#"{
+            "provider": "openai_compatible",
+            "openai_compatible": {
+                "model": "my-model"
+            }
+        }"#;
+        let settings: EditPredictionSettingsContent =
+            serde_json::from_str(raw).expect("Failed to parse edit prediction settings");
+        assert_eq!(
+            settings.provider,
+            Some(EditPredictionProvider::OpenAiCompatible)
+        );
+        let compat = settings
+            .openai_compatible
+            .expect("openai_compatible should be present");
+        assert_eq!(compat.model.as_deref(), Some("my-model"));
+        assert_eq!(compat.max_output_tokens, None);
+        assert_eq!(compat.api_url, None);
+        assert_eq!(compat.api_key, None);
+    }
+
+    #[test]
+    fn test_edit_prediction_settings_openai_compatible_empty_block() {
+        let raw = r#"{
+            "openai_compatible": {}
+        }"#;
+        let settings: EditPredictionSettingsContent =
+            serde_json::from_str(raw).expect("Failed to parse edit prediction settings");
+        let compat = settings
+            .openai_compatible
+            .expect("openai_compatible should be present");
+        assert_eq!(compat.model, None);
+        assert_eq!(compat.max_output_tokens, None);
+        assert_eq!(compat.api_url, None);
+        assert_eq!(compat.api_key, None);
     }
 }

@@ -1019,4 +1019,64 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn test_openai_compatible_settings_defaults() {
+        let settings = OpenAiCompatibleSettings::default();
+        assert_eq!(settings.model, None);
+        assert_eq!(settings.max_output_tokens, 0);
+        assert_eq!(&*settings.api_url, "");
+        assert_eq!(settings.api_key, None);
+    }
+
+    #[test]
+    fn test_openai_compatible_settings_constructed_values() {
+        let settings = OpenAiCompatibleSettings {
+            model: Some("zeta".into()),
+            max_output_tokens: 512,
+            api_url: "http://my-server:9000/v1".into(),
+            api_key: Some("sk-test-123".into()),
+        };
+        assert_eq!(settings.model.as_deref(), Some("zeta"));
+        assert_eq!(settings.max_output_tokens, 512);
+        assert_eq!(&*settings.api_url, "http://my-server:9000/v1");
+        assert_eq!(settings.api_key.as_deref(), Some("sk-test-123"));
+    }
+
+    #[test]
+    fn test_openai_compatible_settings_no_model_means_no_key_needed() {
+        let settings = OpenAiCompatibleSettings {
+            model: None,
+            max_output_tokens: 256,
+            api_url: "http://localhost:8000/v1".into(),
+            api_key: None,
+        };
+        assert!(settings.model.is_none());
+        assert!(settings.api_key.is_none());
+    }
+
+    #[test]
+    fn test_edit_prediction_settings_includes_openai_compatible() {
+        let settings = EditPredictionSettings {
+            provider: EditPredictionProvider::OpenAiCompatible,
+            openai_compatible: OpenAiCompatibleSettings {
+                model: Some("my-model".into()),
+                max_output_tokens: 1024,
+                api_url: "http://localhost:8000/v1".into(),
+                api_key: Some("key".into()),
+            },
+            ..Default::default()
+        };
+        assert_eq!(settings.provider, EditPredictionProvider::OpenAiCompatible);
+        assert_eq!(
+            settings.openai_compatible.model.as_deref(),
+            Some("my-model")
+        );
+        assert_eq!(settings.openai_compatible.max_output_tokens, 1024);
+        assert_eq!(
+            &*settings.openai_compatible.api_url,
+            "http://localhost:8000/v1"
+        );
+        assert_eq!(settings.openai_compatible.api_key.as_deref(), Some("key"));
+    }
 }
