@@ -670,6 +670,10 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
+    pub fn current_organization(&self) -> Option<Arc<Organization>> {
+        self.current_organization.clone()
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
