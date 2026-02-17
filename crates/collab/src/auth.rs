@@ -64,20 +64,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         )
     })?;
 
-    // In development, allow impersonation using the admin API token.
-    // Don't allow this in production because we can't tell who is doing
-    // the impersonating.
-    let validate_result = if let (Some(admin_token), true) = (
-        access_token.strip_prefix("ADMIN_TOKEN:"),
-        state.config.is_development(),
-    ) {
-        Ok(VerifyAccessTokenResult {
-            is_valid: state.config.api_token == admin_token,
-            impersonator_id: None,
-        })
-    } else {
-        verify_access_token(access_token, user_id, &state.db).await
-    };
+    let validate_result = verify_access_token(access_token, user_id, &state.db).await;
 
     if let Ok(validate_result) = validate_result
         && validate_result.is_valid
@@ -88,17 +75,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
             .await?
             .with_context(|| format!("user {user_id} not found"))?;
 
-        if let Some(impersonator_id) = validate_result.impersonator_id {
-            let admin = state
-                .db
-                .get_user_by_id(impersonator_id)
-                .await?
-                .with_context(|| format!("user {impersonator_id} not found"))?;
-            req.extensions_mut()
-                .insert(Principal::Impersonated { user, admin });
-        } else {
-            req.extensions_mut().insert(Principal::User(user));
-        };
+        req.extensions_mut().insert(Principal::User(user));
         return Ok::<_, Error>(next.run(req).await);
     }
 
@@ -125,7 +102,6 @@ pub fn hash_access_token(token: &str) -> String {
 
 pub struct VerifyAccessTokenResult {
     pub is_valid: bool,
-    pub impersonator_id: Option<UserId>,
 }
 
 /// Checks that the given access token is valid for the given user.
@@ -172,12 +148,5 @@ pub async fn verify_access_token(
         db.update_access_token_hash(db_token.id, &new_hash).await?;
     }
 
-    Ok(VerifyAccessTokenResult {
-        is_valid,
-        impersonator_id: if db_token.impersonated_user_id.is_some() {
-            Some(db_token.user_id)
-        } else {
-            None
-        },
-    })
+    Ok(VerifyAccessTokenResult { is_valid })
 }
