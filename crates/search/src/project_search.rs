@@ -2634,6 +2634,115 @@ pub mod tests {
     use util_macros::perf;
     use workspace::{DeploySearch, MultiWorkspace};
 
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+
+            editor::init(cx);
+            crate::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .search
+                        .get_or_insert_default()
+                        .search_on_input = Some(false);
+                });
+            });
+        });
+    }
+
+    fn perform_search(
+        search_view: WindowHandle<ProjectSearchView>,
+        text: impl Into<Arc<str>>,
+        cx: &mut TestAppContext,
+    ) {
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.query_editor.update(cx, |query_editor, cx| {
+                    query_editor.set_text(text, window, cx)
+                });
+                search_view.search(false, cx);
+            })
+            .unwrap();
+        // Ensure editor highlights appear after the search is done
+        cx.executor().advance_clock(
+            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
+        );
+        cx.background_executor.run_until_parked();
+    }
+
+    fn perform_incremental_search(
+        search_view: WindowHandle<ProjectSearchView>,
+        text: impl Into<Arc<str>>,
+        cx: &mut TestAppContext,
+    ) {
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.query_editor.update(cx, |query_editor, cx| {
+                    query_editor.set_text(text, window, cx)
+                });
+                search_view.search(true, cx);
+            })
+            .unwrap();
+        cx.executor().advance_clock(
+            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
+        );
+        cx.background_executor.run_until_parked();
+    }
+
+    fn read_match_count(
+        search_view: WindowHandle<ProjectSearchView>,
+        cx: &mut TestAppContext,
+    ) -> usize {
+        search_view
+            .read_with(cx, |search_view, cx| {
+                search_view.entity.read(cx).match_ranges.len()
+            })
+            .unwrap()
+    }
+
+    fn read_match_texts(
+        search_view: WindowHandle<ProjectSearchView>,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        search_view
+            .read_with(cx, |search_view, cx| {
+                let search = search_view.entity.read(cx);
+                let snapshot = search.excerpts.read(cx).snapshot(cx);
+                search
+                    .match_ranges
+                    .iter()
+                    .map(|range| snapshot.text_for_range(range.clone()).collect::<String>())
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    fn assert_all_highlights_match_query(
+        search_view: WindowHandle<ProjectSearchView>,
+        query: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let match_texts = read_match_texts(search_view, cx);
+        assert_eq!(
+            match_texts.len(),
+            read_match_count(search_view, cx),
+            "match texts count should equal match_ranges count for query {query:?}"
+        );
+        for text in &match_texts {
+            assert_eq!(
+                text.to_uppercase(),
+                query.to_uppercase(),
+                "every highlighted range should match the query {query:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_split_glob_patterns() {
         assert_eq!(split_glob_patterns("a,b,c"), vec!["a", "b", "c"]);
@@ -4993,95 +5102,6 @@ pub mod tests {
             .unwrap();
     }
 
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-
-            theme::init(theme::LoadThemes::JustBase, cx);
-
-            editor::init(cx);
-            crate::init(cx);
-
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .editor
-                        .search
-                        .get_or_insert_default()
-                        .search_on_input = Some(false);
-                });
-            });
-        });
-    }
-
-    fn perform_search(
-        search_view: WindowHandle<ProjectSearchView>,
-        text: impl Into<Arc<str>>,
-        cx: &mut TestAppContext,
-    ) {
-        search_view
-            .update(cx, |search_view, window, cx| {
-                search_view.query_editor.update(cx, |query_editor, cx| {
-                    query_editor.set_text(text, window, cx)
-                });
-                search_view.search(false, cx);
-            })
-            .unwrap();
-        // Ensure editor highlights appear after the search is done
-        cx.executor().advance_clock(
-            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
-        );
-        cx.background_executor.run_until_parked();
-    }
-
-    fn perform_incremental_search(
-        search_view: WindowHandle<ProjectSearchView>,
-        text: impl Into<Arc<str>>,
-        cx: &mut TestAppContext,
-    ) {
-        search_view
-            .update(cx, |search_view, window, cx| {
-                search_view.query_editor.update(cx, |query_editor, cx| {
-                    query_editor.set_text(text, window, cx)
-                });
-                search_view.search(true, cx);
-            })
-            .unwrap();
-        cx.executor().advance_clock(
-            editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
-        );
-        cx.background_executor.run_until_parked();
-    }
-
-    fn read_match_count(
-        search_view: WindowHandle<ProjectSearchView>,
-        cx: &mut TestAppContext,
-    ) -> usize {
-        search_view
-            .read_with(cx, |search_view, cx| {
-                search_view.entity.read(cx).match_ranges.len()
-            })
-            .unwrap()
-    }
-
-    fn read_search_text(
-        search_view: WindowHandle<ProjectSearchView>,
-        cx: &mut TestAppContext,
-    ) -> String {
-        search_view
-            .read_with(cx, |search_view, cx| {
-                search_view
-                    .results_editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .text()
-            })
-            .unwrap()
-    }
-
     #[gpui::test]
     async fn test_incremental_search_narrows_and_widens(cx: &mut TestAppContext) {
         init_test(cx);
@@ -5108,85 +5128,33 @@ pub mod tests {
         let search_view = cx.add_window(|window, cx| {
             ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
         });
+        let expected_one_matches = vec![
+            "one", "ONE", "ONE", "ONE", "ONE", "one", "ONE", "one", "ONE", "one", "ONE",
+        ];
 
         // Initial non-incremental search for "ONE"
         perform_search(search_view, "ONE", cx);
-
-        let initial_text = read_search_text(search_view, cx);
-        let initial_match_count = read_match_count(search_view, cx);
-
-        assert!(
-            initial_text.contains("ONE"),
-            "Initial search should find ONE"
-        );
-        assert!(
-            initial_match_count > 3,
-            "Should have multiple matches for ONE, got {initial_match_count}"
-        );
+        assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
+        assert_all_highlights_match_query(search_view, "ONE", cx);
 
         // Narrow to "ONEROUS" — only one match in one.rs
         perform_incremental_search(search_view, "ONEROUS", cx);
-
-        let narrowed_text = read_search_text(search_view, cx);
-        let narrowed_match_count = read_match_count(search_view, cx);
-
-        assert!(
-            narrowed_text.contains("ONEROUS"),
-            "Narrowed search should find ONEROUS"
-        );
-        assert_eq!(
-            narrowed_match_count, 1,
-            "Should have exactly 1 match for ONEROUS"
-        );
-        assert!(
-            !narrowed_text.contains("ONLY_ONE"),
-            "Narrowed search should not include ONLY_ONE file"
-        );
+        assert_eq!(read_match_texts(search_view, cx), vec!["ONEROUS"]);
+        assert_all_highlights_match_query(search_view, "ONEROUS", cx);
 
         // Widen back to "ONE" — should restore all results
         perform_incremental_search(search_view, "ONE", cx);
-
-        let widened_match_count = read_match_count(search_view, cx);
-        let widened_text = read_search_text(search_view, cx);
-
-        assert!(
-            widened_text.contains("ONE"),
-            "Widened search should find ONE again"
-        );
-        assert_eq!(
-            widened_match_count, initial_match_count,
-            "Widened search should have same match count as initial search"
-        );
+        assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
+        assert_all_highlights_match_query(search_view, "ONE", cx);
 
         // Narrow to "ONLY_ONE" — single match in only_one.rs
         perform_incremental_search(search_view, "ONLY_ONE", cx);
-
-        let only_one_text = read_search_text(search_view, cx);
-        let only_one_match_count = read_match_count(search_view, cx);
-
-        assert!(only_one_text.contains("ONLY_ONE"), "Should find ONLY_ONE");
-        assert_eq!(
-            only_one_match_count, 1,
-            "Should have exactly 1 match for ONLY_ONE"
-        );
+        assert_eq!(read_match_texts(search_view, cx), vec!["ONLY_ONE"]);
+        assert_all_highlights_match_query(search_view, "ONLY_ONE", cx);
 
         // Widen back to "ONE" one more time — full cycle
         perform_incremental_search(search_view, "ONE", cx);
-
-        let final_match_count = read_match_count(search_view, cx);
-        let final_text = read_search_text(search_view, cx);
-
-        assert_eq!(
-            final_match_count, initial_match_count,
-            "Final widened search should match initial count"
-        );
-        assert!(
-            final_text.contains("ONLY_ONE"),
-            "Final results should include ONLY_ONE file"
-        );
-        assert!(
-            final_text.contains("ONEROUS"),
-            "Final results should include ONEROUS"
-        );
+        assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
+        assert_all_highlights_match_query(search_view, "ONE", cx);
     }
 }
