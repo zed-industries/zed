@@ -1876,7 +1876,7 @@ impl Workspace {
 
                                 workspace
                             });
-                            cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                         }
                     })?;
                     let workspace =
@@ -7972,8 +7972,8 @@ pub async fn restore_multiworkspace(
 
     if state.sidebar_open {
         window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.open_sidebar(window, cx);
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
             })
             .ok();
     }
@@ -8413,7 +8413,7 @@ pub fn open_workspace_by_id(
                         workspace.centered_layout = centered_layout;
                         workspace
                     });
-                    cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 }
             })?;
 
@@ -8961,7 +8961,7 @@ pub fn join_in_room_project(
                     let workspace = cx.new(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     });
-                    cx.new(|cx| MultiWorkspace::new(workspace, cx))
+                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                 })
             })?
         };
