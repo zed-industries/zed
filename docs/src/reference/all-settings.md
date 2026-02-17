@@ -3278,7 +3278,7 @@ Non-negative `integer` values
 
 - Description: Whether to search on input in project search.
 - Setting: `search_on_input`
-- Default: `false`
+- Default: `true`
 
 ### Center On Match
 

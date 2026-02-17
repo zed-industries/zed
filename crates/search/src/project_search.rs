@@ -4989,6 +4989,16 @@ pub mod tests {
 
             editor::init(cx);
             crate::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .search
+                        .get_or_insert_default()
+                        .search_on_input = Some(false);
+                });
+            });
         });
     }
 
