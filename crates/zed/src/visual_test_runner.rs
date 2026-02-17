@@ -2790,7 +2790,7 @@ impl gpui::Render for ErrorWrappingTestView {
         _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        use ui::{Callout, IconName, Severity, prelude::*, v_flex};
+        use ui::{Button, Callout, IconName, LabelSize, Severity, prelude::*, v_flex};
 
         let long_error_message = "Rate limit reached for gpt-5.2-codex in organization \
             org-QmYpir6k6dkULKU1XUSN6pal on tokens per min (TPM): Limit 500000, Used 442480, \
@@ -2810,6 +2810,21 @@ impl gpui::Render for ErrorWrappingTestView {
                     .severity(Severity::Warning)
                     .title(long_error_message)
                     .description(retry_description),
+            )
+            .child(
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title("An Error Happened")
+                    .description(long_error_message)
+                    .actions_slot(Button::new("dismiss", "Dismiss").label_size(LabelSize::Small)),
+            )
+            .child(
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title(long_error_message)
+                    .actions_slot(Button::new("retry", "Retry").label_size(LabelSize::Small)),
             )
     }
 }
