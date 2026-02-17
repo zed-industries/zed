@@ -3715,11 +3715,7 @@ impl ProjectPanel {
         }
         Some((worktree, entry))
     }
-    fn write_entries_to_system_clipboard(
-        &self,
-        entries: &BTreeSet<SelectedEntry>,
-        cx: &mut App,
-    ) {
+    fn write_entries_to_system_clipboard(&self, entries: &BTreeSet<SelectedEntry>, cx: &mut App) {
         let project = self.project.read(cx);
         let paths: Vec<String> = entries
             .iter()
