@@ -1004,6 +1004,23 @@ pub fn into_bedrock(
         }
     }
 
+    // Bedrock requires that thinking blocks come before all other content in
+    // assistant messages. When consecutive assistant messages are merged (e.g.,
+    // an incomplete response followed by a complete one), text blocks can end
+    // up before thinking blocks, violating this constraint. Use a stable sort
+    // to move thinking blocks to the front while preserving relative order.
+    for message in &mut new_messages {
+        if message.role == bedrock::BedrockRole::Assistant {
+            message.content.sort_by_key(|block| {
+                if matches!(block, BedrockInnerContent::ReasoningContent(_)) {
+                    0
+                } else {
+                    1
+                }
+            });
+        }
+    }
+
     let mut tool_spec: Vec<BedrockTool> = if supports_tool_use {
         request
             .tools
@@ -1671,5 +1688,151 @@ impl ConfigurationView {
                 .size(LabelSize::Small)
                 .color(Color::Muted)
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::{LanguageModelRequestMessage, MessageContent};
+
+    fn bedrock_request_with_messages(
+        messages: Vec<LanguageModelRequestMessage>,
+    ) -> bedrock::Request {
+        let request = LanguageModelRequest {
+            messages,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+        };
+        into_bedrock(
+            request,
+            "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
+            1.0,
+            16000,
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(10000),
+            },
+            false,
+            false,
+            false,
+        )
+        .expect("into_bedrock should succeed")
+    }
+
+    #[test]
+    fn test_thinking_blocks_reordered_before_text_after_merge() {
+        // Simulate the bug: an incomplete assistant response (text only, no thinking
+        // block) followed by a complete assistant response (thinking + text). When
+        // into_bedrock merges these consecutive same-role messages, the text from
+        // the first message would end up before the thinking block from the second,
+        // causing Bedrock to reject the request with:
+        //   "If an assistant message contains any thinking blocks, the first block
+        //    must be thinking or redacted_thinking. Found text."
+        let result = bedrock_request_with_messages(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Incomplete assistant response (e.g., interrupted mid-stream)
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("The".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Complete assistant response with thinking
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Thinking {
+                        text: "Let me think about this.".to_string(),
+                        signature: Some("valid-sig".to_string()),
+                    },
+                    MessageContent::Text("Here is my full response.".to_string()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        // The two assistant messages should be merged into one
+        let assistant_messages: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == bedrock::BedrockRole::Assistant)
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "consecutive assistant messages should be merged"
+        );
+
+        let content = &assistant_messages[0].content;
+        assert_eq!(content.len(), 3, "merged message should have 3 content blocks");
+
+        // The thinking block must come first, regardless of insertion order
+        assert!(
+            matches!(content[0], BedrockInnerContent::ReasoningContent(_)),
+            "first block must be a thinking block, got: {:?}",
+            content[0]
+        );
+        assert!(
+            matches!(content[1], BedrockInnerContent::Text(_)),
+            "second block should be text"
+        );
+        assert!(
+            matches!(content[2], BedrockInnerContent::Text(_)),
+            "third block should be text"
+        );
+    }
+
+    #[test]
+    fn test_thinking_block_order_preserved_when_already_correct() {
+        // When a single assistant message already has thinking first, the order
+        // should remain unchanged.
+        let result = bedrock_request_with_messages(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Thinking {
+                        text: "thinking".to_string(),
+                        signature: Some("sig".to_string()),
+                    },
+                    MessageContent::Text("response".to_string()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        let assistant_msg = result
+            .messages
+            .iter()
+            .find(|m| m.role == bedrock::BedrockRole::Assistant)
+            .expect("should have assistant message");
+
+        assert!(matches!(
+            assistant_msg.content[0],
+            BedrockInnerContent::ReasoningContent(_)
+        ));
+        assert!(matches!(
+            assistant_msg.content[1],
+            BedrockInnerContent::Text(_)
+        ));
     }
 }

@@ -348,6 +348,17 @@ pub fn into_anthropic_count_tokens_request(
         }
     }
 
+    // Same thinking-block-first reordering as in into_anthropic — see comment there.
+    for message in &mut new_messages {
+        if message.role == anthropic::Role::Assistant {
+            message.content.sort_by_key(|block| match block {
+                anthropic::RequestContent::Thinking { .. }
+                | anthropic::RequestContent::RedactedThinking { .. } => 0,
+                _ => 1,
+            });
+        }
+    }
+
     CountTokensRequest {
         model,
         messages: new_messages,
@@ -687,6 +698,21 @@ pub fn into_anthropic(
                 }
                 system_message.push_str(&message.string_contents());
             }
+        }
+    }
+
+    // Anthropic requires that thinking blocks come before all other content in
+    // assistant messages. When consecutive assistant messages are merged (e.g.,
+    // an incomplete response followed by a complete one), text blocks can end
+    // up before thinking blocks, violating this constraint. Use a stable sort
+    // to move thinking blocks to the front while preserving relative order.
+    for message in &mut new_messages {
+        if message.role == anthropic::Role::Assistant {
+            message.content.sort_by_key(|block| match block {
+                anthropic::RequestContent::Thinking { .. }
+                | anthropic::RequestContent::RedactedThinking { .. } => 0,
+                _ => 1,
+            });
         }
     }
 
@@ -1256,6 +1282,146 @@ mod tests {
             0,
             "An assistant message whose only content was an unsigned thinking block \
              should be omitted entirely"
+        );
+    }
+
+    fn request_with_multiple_messages(
+        messages: Vec<LanguageModelRequestMessage>,
+    ) -> anthropic::Request {
+        let request = LanguageModelRequest {
+            messages,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+        };
+        into_anthropic(
+            request,
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            16000,
+            AnthropicModelMode::Thinking {
+                budget_tokens: Some(10000),
+            },
+        )
+    }
+
+    #[test]
+    fn test_thinking_blocks_reordered_before_text_after_merge() {
+        // Simulate the bug: an incomplete assistant response (text only, no thinking
+        // block) followed by a complete assistant response (thinking + text). When
+        // into_anthropic merges these consecutive same-role messages, the text from
+        // the first message would end up before the thinking block from the second,
+        // causing the API to reject the request with:
+        //   "If an assistant message contains any thinking blocks, the first block
+        //    must be thinking or redacted_thinking. Found text."
+        let result = request_with_multiple_messages(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Incomplete assistant response (e.g., interrupted mid-stream)
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("The".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Complete assistant response with thinking
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Thinking {
+                        text: "Let me think about this.".to_string(),
+                        signature: Some("valid-sig".to_string()),
+                    },
+                    MessageContent::Text("Here is my full response.".to_string()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        // The two assistant messages should be merged into one
+        let assistant_messages: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == anthropic::Role::Assistant)
+            .collect();
+        assert_eq!(
+            assistant_messages.len(),
+            1,
+            "consecutive assistant messages should be merged"
+        );
+
+        let content = &assistant_messages[0].content;
+        assert_eq!(content.len(), 3, "merged message should have 3 content blocks");
+
+        // The thinking block must come first, regardless of insertion order
+        assert!(
+            matches!(&content[0], anthropic::RequestContent::Thinking { .. }),
+            "first block must be a thinking block, got: {:?}",
+            content[0]
+        );
+        assert!(
+            matches!(&content[1], anthropic::RequestContent::Text { .. }),
+            "second block should be text"
+        );
+        assert!(
+            matches!(&content[2], anthropic::RequestContent::Text { .. }),
+            "third block should be text"
+        );
+    }
+
+    #[test]
+    fn test_redacted_thinking_blocks_also_reordered_before_text() {
+        let result = request_with_multiple_messages(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Incomplete assistant response
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("The".to_string())],
+                cache: false,
+                reasoning_details: None,
+            },
+            // Complete assistant response with redacted thinking
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::RedactedThinking("redacted-data".to_string()),
+                    MessageContent::Text("Response after redacted thinking.".to_string()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        let assistant_messages: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == anthropic::Role::Assistant)
+            .collect();
+        assert_eq!(assistant_messages.len(), 1);
+
+        let content = &assistant_messages[0].content;
+        assert_eq!(content.len(), 3);
+
+        assert!(
+            matches!(&content[0], anthropic::RequestContent::RedactedThinking { .. }),
+            "first block must be a redacted thinking block, got: {:?}",
+            content[0]
         );
     }
 }
