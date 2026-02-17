@@ -5,6 +5,7 @@ use indoc::formatdoc;
 use indoc::indoc;
 use serde_json::json;
 
+use crate::tasks::workflows::steps::CheckoutStep;
 use crate::tasks::workflows::{
     extension_bump::{RepositoryTarget, generate_token},
     runners,
@@ -67,17 +68,15 @@ fn fetch_extension_repos() -> NamedJob {
 }
 
 fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo() -> Step<Use> {
-        steps::checkout_repo()
-            .name("checkout_zed_repo")
-            .add_with(("path", "zed"))
-            .add_with(("fetch-depth", "0"))
+    fn checkout_zed_repo() -> CheckoutStep {
+        steps::checkout_repo().with_full_history().with_path("zed")
     }
 
-    fn checkout_extension_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token)
-            .add_with(("repository", "zed-extensions/${{ matrix.repo }}"))
-            .add_with(("path", "extension"))
+    fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo()
+            .with_token(token)
+            .with_repository("zed-extensions/${{ matrix.repo }}")
+            .with_path("extension")
     }
 
     fn get_previous_tag_commit() -> (Step<Run>, StepOutput) {
@@ -253,8 +252,8 @@ fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
 }
 
 fn create_rollout_tag(rollout_job: &NamedJob) -> NamedJob {
-    fn checkout_zed_repo(token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token).add_with(("fetch-depth", "0"))
+    fn checkout_zed_repo(token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo().with_full_history().with_token(token)
     }
 
     fn update_rollout_tag() -> Step<Run> {

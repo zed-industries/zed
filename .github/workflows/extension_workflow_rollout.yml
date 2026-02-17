@@ -52,19 +52,19 @@ jobs:
         permission-pull-requests: write
         permission-contents: write
         permission-workflows: write
-    - name: checkout_zed_repo
+    - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        path: zed
         fetch-depth: '0'
-    - name: steps::checkout_repo_with_token
+        path: zed
+    - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
         token: ${{ steps.generate-token.outputs.token }}
-        repository: zed-extensions/${{ matrix.repo }}
         path: extension
+        repository: zed-extensions/${{ matrix.repo }}
     - id: prev-tag
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_previous_tag_commit
       run: |
@@ -167,12 +167,12 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         permission-contents: write
-    - name: steps::checkout_repo_with_token
+    - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        token: ${{ steps.generate-token.outputs.token }}
         fetch-depth: '0'
+        token: ${{ steps.generate-token.outputs.token }}
     - name: extension_workflow_rollout::create_rollout_tag::configure_git
       run: |
         git config user.name "zed-zippy[bot]"

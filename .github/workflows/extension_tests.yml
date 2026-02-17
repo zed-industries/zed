@@ -86,6 +86,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
     - id: cache-zed-extension-cli
       name: extension_tests::cache_zed_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830

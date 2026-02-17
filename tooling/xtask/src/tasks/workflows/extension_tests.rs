@@ -85,7 +85,7 @@ pub(crate) fn check_extension() -> NamedJob {
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_LARGE_RAM)
         .timeout_minutes(4u32)
-        .add_step(steps::checkout_repo())
+        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
         .add_step(cache_download)
         .add_step(download_zed_extension_cli(cache_hit))
         .add_step(check())
