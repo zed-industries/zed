@@ -935,7 +935,7 @@ impl InlaySnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        self.inlay_point_cursor().map(point)
+        self.inlay_point_cursor().map(point, Bias::Left)
     }
 
     /// Converts a buffer offset range into one or more `InlayOffset` ranges that
@@ -1257,7 +1257,7 @@ pub struct InlayPointCursor<'transforms> {
 
 impl InlayPointCursor<'_> {
     #[ztracing::instrument(skip_all)]
-    pub fn map(&mut self, point: Point) -> InlayPoint {
+    pub fn map(&mut self, point: Point, bias: Bias) -> InlayPoint {
         let cursor = &mut self.cursor;
         if cursor.did_seek() {
             cursor.seek_forward(&point, Bias::Left);
@@ -1269,7 +1269,7 @@ impl InlayPointCursor<'_> {
                 Some(Transform::Isomorphic(_)) => {
                     if point == cursor.end().0 {
                         while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
-                            if inlay.position.bias() == Bias::Right {
+                            if bias == Bias::Left && inlay.position.bias() == Bias::Right {
                                 break;
                             } else {
                                 cursor.next();
@@ -1282,7 +1282,7 @@ impl InlayPointCursor<'_> {
                     }
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    if inlay.position.bias() == Bias::Left {
+                    if inlay.position.bias() == Bias::Left || bias == Bias::Right {
                         cursor.next();
                     } else {
                         return cursor.start().1;

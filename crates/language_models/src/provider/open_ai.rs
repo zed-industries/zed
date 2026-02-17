@@ -327,6 +327,10 @@ impl LanguageModel for OpenAiLanguageModel {
         }
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model.reasoning_effort().is_some()
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }

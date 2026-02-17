@@ -128,10 +128,10 @@ impl AgentTool for ToolRequiringPermission {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: "tool_requiring_permission".to_string(),
-                    input_values: vec![String::new()],
-                };
+                let context = crate::ToolPermissionContext::new(
+                    "tool_requiring_permission",
+                    vec![String::new()],
+                );
                 Some(event_stream.authorize("Authorize?", context, cx))
             }
         };

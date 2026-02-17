@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{ResultExt as _, command::new_smol_command, markdown::MarkdownCodeBlock};
+use util::{ResultExt as _, command::new_command, markdown::MarkdownCodeBlock};
 
 use crate::{
     AgentAppState, ToolMetrics,
@@ -1072,7 +1072,7 @@ pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
+    let output = new_command("git")
         .current_dir(repo_path)
         .args(args)
         .output()

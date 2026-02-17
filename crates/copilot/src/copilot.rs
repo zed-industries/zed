@@ -1402,7 +1402,7 @@ async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()>
 
     log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
 
-    let output = util::command::new_smol_command(node_path)
+    let output = util::command::new_command(node_path)
         .arg("--version")
         .output()
         .await

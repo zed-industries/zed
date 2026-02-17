@@ -149,8 +149,80 @@ The PHP extension provides a debug adapter for PHP via Xdebug. There are several
 
 These are common troubleshooting tips, in case you run into issues:
 
-- Ensure that you have Xdebug installed for the version of PHP you’re running.
+- Ensure that you have Xdebug installed for the version of PHP you're running.
 - Ensure that Xdebug is configured to run in `debug` mode.
 - Ensure that Xdebug is actually starting a debugging session.
 - Ensure that the host and port matches between Xdebug and Zed.
-- Look at the diagnostics log by using the `xdebug_info()` function in the page you’re trying to debug.
+- Look at the diagnostics log by using the `xdebug_info()` function in the page you're trying to debug.
+
+## Using the Tailwind CSS Language Server with PHP
+
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in PHP files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "php": "html"
+        },
+        "experimental": {
+          "classRegex": [
+            "class=\"([^\"]*)\"",
+            "class='([^']*)'",
+            "class=\\\"([^\\\"]*)\\\""
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings, you will get completions for Tailwind CSS classes in HTML attributes inside PHP files. Examples:
+
+```php
+<?php
+// PHP file with HTML:
+?>
+<div class="flex items-center <completion here>">
+  <p class="text-lg font-bold <completion here>">Hello World</p>
+</div>
+```
+
+### Laravel/Blade
+
+For Laravel/Blade files, you may need additional configuration to handle Blade directives:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "php": "html",
+          "blade": "html"
+        },
+        "experimental": {
+          "classRegex": [
+            "class=\"([^\"]*)\"",
+            "class='([^']*)'",
+            "class=\\\"([^\\\"]*)\\\"",
+            "@class\\(\\[([^\\]]*)\\]\\)"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+This will also provide completions in Blade directives like:
+
+```blade
+{{-- Blade file --}}
+<div class="flex {{ $customClass }} <completion here>">
+  @class(['flex', 'items-center', '<completion here>'])
+</div>
+```
