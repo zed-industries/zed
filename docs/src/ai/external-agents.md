@@ -76,7 +76,7 @@ Gemini CLI supports the same workflows as Zed's first-party agent: code generati
 ## Claude Agent
 
 Similar to Gemini CLI, you can also run [Claude Agent](https://platform.claude.com/docs/en/agent-sdk/overview) directly via Zed's [agent panel](./agent-panel.md).
-Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the hood, and communicates to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/claude-code-acp).
+Under the hood, Zed runs the Claude Agent SDK, which runs Claude Code under the hood, and communicates to it over ACP, through [a dedicated adapter](https://github.com/zed-industries/claude-agent-acp).
 
 ### Getting Started
 
@@ -104,7 +104,7 @@ Then, run `/login`, and authenticate either via API key, or via `Log in with Cla
 
 #### Installation
 
-The first time you create a Claude Agent thread, Zed will install [@zed-industries/claude-code-acp](https://github.com/zed-industries/claude-code-acp).
+The first time you create a Claude Agent thread, Zed will install [@zed-industries/claude-agent-acp](https://github.com/zed-industries/claude-agent-acp).
 This installation is only available to Zed and is kept up to date as you use the agent.
 
 Zed will always use this managed version of the Claude Agent adapter, which includes a vendored version of the Claude Code CLI, even if you have it installed globally.
