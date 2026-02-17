@@ -478,7 +478,6 @@ impl DisplayMap {
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
-        log::trace!("set_companion");
         let this = cx.weak_entity();
         // Reverting to no companion, recompute the block map to clear spacers
         // and balancing blocks.
@@ -778,7 +777,6 @@ impl DisplayMap {
     /// Creates folds for the given creases.
     #[instrument(skip_all)]
     pub fn fold<T: Clone + ToOffset>(&mut self, creases: Vec<Crease<T>>, cx: &mut Context<Self>) {
-        log::trace!("fold");
         if self.companion().is_some() {
             return;
         }
@@ -1310,7 +1308,6 @@ impl DisplayMap {
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
-        log::trace!("update_fold_widths");
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);

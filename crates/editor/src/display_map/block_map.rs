@@ -772,15 +772,6 @@ impl BlockMap {
         mut edits: WrapPatch,
         companion_view: Option<CompanionView>,
     ) {
-        {
-            let is_rhs =
-                companion_view.map(|view| view.companion.is_rhs(view.companion.rhs_display_map_id));
-            log::trace!("sync is_rhs={is_rhs:?}",);
-            // if is_rhs.is_none() {
-            //     let bt = std::backtrace::Backtrace::force_capture();
-            //     log::trace!("  {bt:#}");
-            // }
-        }
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -910,7 +901,6 @@ impl BlockMap {
         while let Some(edit) = edits.next() {
             let span = ztracing::debug_span!("while edits", edit = ?edit);
             let _enter = span.enter();
-            log::trace!("edit={edit:?}");
 
             let mut old_start = edit.old.start;
             let mut new_start = edit.new.start;
