@@ -75,7 +75,7 @@ use zed_actions::{
     agent::{
         OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding,
     },
-    assistant::{OpenRulesLibrary, ToggleFocus},
+    assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -786,6 +786,22 @@ impl AgentPanel {
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
+        }
+    }
+
+    pub fn toggle(
+        workspace: &mut Workspace,
+        _: &Toggle,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            if !workspace.toggle_panel_focus::<Self>(window, cx) {
+                workspace.close_panel::<Self>(window, cx);
+            }
         }
     }
 
