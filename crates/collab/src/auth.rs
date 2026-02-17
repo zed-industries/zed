@@ -123,8 +123,7 @@ pub async fn verify_access_token(
     let token: AccessTokenJson = serde_json::from_str(token)?;
 
     let db_token = db.get_access_token(token.id).await?;
-    let token_user_id = db_token.impersonated_user_id.unwrap_or(db_token.user_id);
-    if token_user_id != user_id {
+    if db_token.user_id != user_id {
         return Err(anyhow::anyhow!("no such access token"))?;
     }
     let t0 = Instant::now();

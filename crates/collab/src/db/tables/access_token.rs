@@ -7,7 +7,6 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: AccessTokenId,
     pub user_id: UserId,
-    pub impersonated_user_id: Option<UserId>,
     pub hash: String,
 }
 

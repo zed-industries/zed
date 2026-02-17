@@ -7,7 +7,6 @@ impl Database {
     pub async fn create_access_token(
         &self,
         user_id: UserId,
-        impersonated_user_id: Option<UserId>,
         access_token_hash: &str,
         max_access_token_count: usize,
     ) -> Result<AccessTokenId> {
@@ -18,7 +17,6 @@ impl Database {
 
             let token = access_token::ActiveModel {
                 user_id: ActiveValue::set(user_id),
-                impersonated_user_id: ActiveValue::set(impersonated_user_id),
                 hash: ActiveValue::set(access_token_hash.into()),
                 ..Default::default()
             }
