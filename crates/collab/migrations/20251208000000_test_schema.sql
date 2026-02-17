@@ -213,22 +213,6 @@ CREATE SEQUENCE public.extensions_id_seq
 
 ALTER SEQUENCE public.extensions_id_seq OWNED BY public.extensions.id;
 
-CREATE TABLE public.feature_flags (
-    id integer NOT NULL,
-    flag character varying(255) NOT NULL,
-    enabled_for_all boolean DEFAULT false NOT NULL
-);
-
-CREATE SEQUENCE public.feature_flags_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.feature_flags_id_seq OWNED BY public.feature_flags.id;
-
 CREATE TABLE public.followers (
     id integer NOT NULL,
     room_id integer NOT NULL,
@@ -439,11 +423,6 @@ CREATE TABLE public.shared_threads (
     updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
-CREATE TABLE public.user_features (
-    user_id integer NOT NULL,
-    feature_id integer NOT NULL
-);
-
 CREATE TABLE public.users (
     id integer NOT NULL,
     github_login character varying,
@@ -536,8 +515,6 @@ ALTER TABLE ONLY public.contacts ALTER COLUMN id SET DEFAULT nextval('public.con
 
 ALTER TABLE ONLY public.extensions ALTER COLUMN id SET DEFAULT nextval('public.extensions_id_seq'::regclass);
 
-ALTER TABLE ONLY public.feature_flags ALTER COLUMN id SET DEFAULT nextval('public.feature_flags_id_seq'::regclass);
-
 ALTER TABLE ONLY public.followers ALTER COLUMN id SET DEFAULT nextval('public.followers_id_seq'::regclass);
 
 ALTER TABLE ONLY public.notification_kinds ALTER COLUMN id SET DEFAULT nextval('public.notification_kinds_id_seq'::regclass);
@@ -595,12 +572,6 @@ ALTER TABLE ONLY public.extension_versions
 ALTER TABLE ONLY public.extensions
     ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_flag_key UNIQUE (flag);
-
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.followers
     ADD CONSTRAINT followers_pkey PRIMARY KEY (id);
 
@@ -639,9 +610,6 @@ ALTER TABLE ONLY public.servers
 
 ALTER TABLE ONLY public.shared_threads
     ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_pkey PRIMARY KEY (user_id, feature_id);
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
@@ -692,8 +660,6 @@ CREATE UNIQUE INDEX index_extensions_external_id ON public.extensions USING btre
 
 CREATE INDEX index_extensions_total_download_count ON public.extensions USING btree (total_download_count);
 
-CREATE UNIQUE INDEX index_feature_flags ON public.feature_flags USING btree (id);
-
 CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_id_a ON public.followers USING btree (project_id, leader_connection_server_id, leader_connection_id, follower_connection_server_id, follower_connection_id);
 
 CREATE INDEX index_followers_on_room_id ON public.followers USING btree (room_id);
@@ -743,12 +709,6 @@ CREATE UNIQUE INDEX index_rooms_on_channel_id ON public.rooms USING btree (chann
 CREATE INDEX index_settings_files_on_project_id ON public.worktree_settings_files USING btree (project_id);
 
 CREATE INDEX index_settings_files_on_project_id_and_wt_id ON public.worktree_settings_files USING btree (project_id, worktree_id);
-
-CREATE INDEX index_user_features_on_feature_id ON public.user_features USING btree (feature_id);
-
-CREATE INDEX index_user_features_on_user_id ON public.user_features USING btree (user_id);
-
-CREATE UNIQUE INDEX index_user_features_user_id_and_feature_id ON public.user_features USING btree (user_id, feature_id);
 
 CREATE UNIQUE INDEX index_users_github_login ON public.users USING btree (github_login);
 
@@ -891,12 +851,6 @@ ALTER TABLE ONLY public.rooms
 
 ALTER TABLE ONLY public.shared_threads
     ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.feature_flags(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;

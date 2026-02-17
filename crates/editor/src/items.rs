@@ -46,7 +46,8 @@ use workspace::{
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
-        Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItem,
+        SearchableItemHandle,
     },
 };
 use workspace::{
@@ -1496,12 +1497,15 @@ impl Editor {
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
-    fn get_matches(&self, _window: &mut Window, _: &mut App) -> Vec<Range<Anchor>> {
-        self.background_highlights
-            .get(&HighlightKey::BufferSearchHighlights)
-            .map_or(Vec::new(), |(_color, ranges)| {
-                ranges.iter().cloned().collect()
-            })
+    fn get_matches(&self, _window: &mut Window, _: &mut App) -> (Vec<Range<Anchor>>, SearchToken) {
+        (
+            self.background_highlights
+                .get(&HighlightKey::BufferSearchHighlights)
+                .map_or(Vec::new(), |(_color, ranges)| {
+                    ranges.iter().cloned().collect()
+                }),
+            SearchToken::default(),
+        )
     }
 
     fn clear_matches(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -1517,6 +1521,7 @@ impl SearchableItem for Editor {
         &mut self,
         matches: &[Range<Anchor>],
         active_match_index: Option<usize>,
+        _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1630,6 +1635,7 @@ impl SearchableItem for Editor {
         &mut self,
         index: usize,
         matches: &[Range<Anchor>],
+        _token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1648,6 +1654,7 @@ impl SearchableItem for Editor {
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        _token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1660,6 +1667,7 @@ impl SearchableItem for Editor {
         &mut self,
         identifier: &Self::Match,
         query: &SearchQuery,
+        _token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1683,6 +1691,7 @@ impl SearchableItem for Editor {
         &mut self,
         matches: &mut dyn Iterator<Item = &Self::Match>,
         query: &SearchQuery,
+        _token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1725,6 +1734,7 @@ impl SearchableItem for Editor {
         current_index: usize,
         direction: Direction,
         count: usize,
+        _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
@@ -1832,6 +1842,7 @@ impl SearchableItem for Editor {
         &mut self,
         direction: Direction,
         matches: &[Range<Anchor>],
+        _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
@@ -2006,6 +2017,7 @@ fn restore_serialized_buffer_contents(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
+    use workspace::MultiWorkspace;
 
     use super::*;
     use fs::MTime;
@@ -2060,8 +2072,10 @@ mod tests {
         // Test case 1: Deserialize with path and contents
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
@@ -2097,8 +2111,10 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2135,8 +2151,10 @@ mod tests {
                 project.languages().add(languages::rust_lang())
             });
 
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2171,8 +2189,10 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2201,8 +2221,10 @@ mod tests {
         // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
@@ -2241,8 +2263,10 @@ mod tests {
 
             // Create an empty project with no worktrees
             let project = Project::test(fs.clone(), [], cx).await;
-            let (workspace, cx) =
-                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 11000 as ItemId;

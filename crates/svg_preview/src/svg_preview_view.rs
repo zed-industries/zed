@@ -141,7 +141,7 @@ impl SvgPreviewView {
         buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<usize> {
-        let buffer_id = buffer.entity_id();
+        let buffer_id = buffer.read(cx).as_singleton()?.entity_id();
         pane.items_of_type::<SvgPreviewView>()
             .find(|view| {
                 view.read(cx)

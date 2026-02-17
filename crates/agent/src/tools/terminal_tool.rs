@@ -95,7 +95,11 @@ impl AgentTool for TerminalTool {
         };
 
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, &input.command, settings);
+        let decision = decide_permission_from_settings(
+            Self::NAME,
+            std::slice::from_ref(&input.command),
+            settings,
+        );
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -103,10 +107,8 @@ impl AgentTool for TerminalTool {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: Self::NAME.to_string(),
-                    input_value: input.command.clone(),
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
                 Some(event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx))
             }
         };

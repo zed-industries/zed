@@ -9,10 +9,10 @@ use semver::Version as SemanticVersion;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 use util::ResultExt;
+use util::command::Stdio;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -400,7 +400,7 @@ impl DockerExecConnection {
         src_path: String,
         dst_path: String,
     ) -> Result<()> {
-        let mut command = util::command::new_smol_command(&docker_cli);
+        let mut command = util::command::new_command(&docker_cli);
         command.arg("cp");
         command.arg("-a");
         command.arg(&src_path);
@@ -419,7 +419,7 @@ impl DockerExecConnection {
             );
         }
 
-        let mut chown_command = util::command::new_smol_command(&docker_cli);
+        let mut chown_command = util::command::new_command(&docker_cli);
         chown_command.arg("exec");
         chown_command.arg(connection_options.container_id);
         chown_command.arg("chown");
@@ -469,7 +469,7 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
@@ -589,7 +589,7 @@ impl DockerExecConnection {
 
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_smol_command("kill")
+            if let Ok(_) = util::command::new_command("kill")
                 .arg(pid.to_string())
                 .spawn()
             {
@@ -658,7 +658,7 @@ impl RemoteConnection for DockerExecConnection {
         if reconnect {
             docker_args.push("--reconnect".to_string());
         }
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())

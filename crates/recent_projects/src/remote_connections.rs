@@ -8,7 +8,7 @@ use askpass::EncryptedPassword;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
-use gpui::{AppContext, AsyncApp, PromptLevel};
+use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
 use language::Point;
 use project::trusted_worktrees;
@@ -19,7 +19,10 @@ use remote::{
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
 use util::paths::PathWithPosition;
-use workspace::{AppState, Workspace};
+use workspace::{
+    AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation, Workspace,
+    find_existing_workspace,
+};
 
 pub use remote_connection::{
     RemoteClientDelegate, RemoteConnectionModal, RemoteConnectionPrompt, SshConnectionHeader,
@@ -131,8 +134,74 @@ pub async fn open_remote_project(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let created_new_window = open_options.replace_window.is_none();
-    let window = if let Some(window) = open_options.replace_window {
-        window
+
+    let (existing, open_visible) = find_existing_workspace(
+        &paths,
+        &open_options,
+        &SerializedWorkspaceLocation::Remote(connection_options.clone()),
+        cx,
+    )
+    .await;
+
+    if let Some((existing_window, existing_workspace)) = existing {
+        let remote_connection = cx
+            .update(|cx| {
+                existing_workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .remote_client()
+                    .and_then(|client| client.read(cx).remote_connection())
+            })
+            .ok_or_else(|| anyhow::anyhow!("no remote connection for existing remote workspace"))?;
+
+        let (resolved_paths, paths_with_positions) =
+            determine_paths_with_positions(&remote_connection, paths).await;
+
+        let open_results = existing_window
+            .update(cx, |multi_workspace, window, cx| {
+                window.activate_window();
+                multi_workspace.activate(existing_workspace.clone(), cx);
+                existing_workspace.update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        resolved_paths,
+                        OpenOptions {
+                            visible: Some(open_visible),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })?
+            .await;
+
+        _ = existing_window.update(cx, |multi_workspace, _, cx| {
+            let workspace = multi_workspace.workspace().clone();
+            workspace.update(cx, |workspace, cx| {
+                for item in open_results.iter().flatten() {
+                    if let Err(e) = item {
+                        workspace.show_error(&e, cx);
+                    }
+                }
+            });
+        });
+
+        let items = open_results
+            .into_iter()
+            .map(|r| r.and_then(|r| r.ok()))
+            .collect::<Vec<_>>();
+        navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
+
+        return Ok(());
+    }
+
+    let (window, initial_workspace) = if let Some(window) = open_options.replace_window {
+        let workspace = window.update(cx, |multi_workspace, _, _| {
+            multi_workspace.workspace().clone()
+        })?;
+        (window, workspace)
     } else {
         let workspace_position = cx
             .update(|cx| {
@@ -145,7 +214,7 @@ pub async fn open_remote_project(
             cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
         options.window_bounds = workspace_position.window_bounds;
 
-        cx.open_window(options, |window, cx| {
+        let window = cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
@@ -159,12 +228,17 @@ pub async fn open_remote_project(
                 },
                 cx,
             );
-            cx.new(|cx| {
+            let workspace = cx.new(|cx| {
                 let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
-            })
-        })?
+            });
+            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+        })?;
+        let workspace = window.update(cx, |multi_workspace, _, _cx| {
+            multi_workspace.workspace().clone()
+        })?;
+        (window, workspace)
     };
 
     loop {
@@ -172,35 +246,38 @@ pub async fn open_remote_project(
         let delegate = window.update(cx, {
             let paths = paths.clone();
             let connection_options = connection_options.clone();
-            move |workspace, window, cx| {
+            let initial_workspace = initial_workspace.clone();
+            move |_multi_workspace: &mut MultiWorkspace, window, cx| {
                 window.activate_window();
-                workspace.hide_modal(window, cx);
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    RemoteConnectionModal::new(&connection_options, paths, window, cx)
-                });
+                initial_workspace.update(cx, |workspace, cx| {
+                    workspace.hide_modal(window, cx);
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        RemoteConnectionModal::new(&connection_options, paths, window, cx)
+                    });
 
-                let ui = workspace
-                    .active_modal::<RemoteConnectionModal>(cx)?
-                    .read(cx)
-                    .prompt
-                    .clone();
+                    let ui = workspace
+                        .active_modal::<RemoteConnectionModal>(cx)?
+                        .read(cx)
+                        .prompt
+                        .clone();
 
-                ui.update(cx, |ui, _cx| {
-                    ui.set_cancellation_tx(cancel_tx);
-                });
+                    ui.update(cx, |ui, _cx| {
+                        ui.set_cancellation_tx(cancel_tx);
+                    });
 
-                Some(Arc::new(RemoteClientDelegate::new(
-                    window.window_handle(),
-                    ui.downgrade(),
-                    if let RemoteConnectionOptions::Ssh(options) = &connection_options {
-                        options
-                            .password
-                            .as_deref()
-                            .and_then(|pw| EncryptedPassword::try_from(pw).ok())
-                    } else {
-                        None
-                    },
-                )))
+                    Some(Arc::new(RemoteClientDelegate::new(
+                        window.window_handle(),
+                        ui.downgrade(),
+                        if let RemoteConnectionOptions::Ssh(options) = &connection_options {
+                            options
+                                .password
+                                .as_deref()
+                                .and_then(|pw| EncryptedPassword::try_from(pw).ok())
+                        } else {
+                            None
+                        },
+                    )))
+                })
             }
         })?;
 
@@ -209,13 +286,11 @@ pub async fn open_remote_project(
         let connection = remote::connect(connection_options.clone(), delegate.clone(), cx);
         let connection = select! {
             _ = cancel_rx => {
-                window
-                    .update(cx, |workspace, _, cx| {
-                        if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                            ui.update(cx, |modal, cx| modal.finished(cx))
-                        }
-                    })
-                    .ok();
+                initial_workspace.update(cx, |workspace, cx| {
+                    if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                        ui.update(cx, |modal, cx| modal.finished(cx))
+                    }
+                });
 
                 break;
             },
@@ -224,13 +299,11 @@ pub async fn open_remote_project(
         let remote_connection = match connection {
             Ok(connection) => connection,
             Err(e) => {
-                window
-                    .update(cx, |workspace, _, cx| {
-                        if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                            ui.update(cx, |modal, cx| modal.finished(cx))
-                        }
-                    })
-                    .ok();
+                initial_workspace.update(cx, |workspace, cx| {
+                    if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                        ui.update(cx, |modal, cx| modal.finished(cx))
+                    }
+                });
                 log::error!("Failed to open project: {e:#}");
                 let response = window
                     .update(cx, |_, window, cx| {
@@ -284,13 +357,11 @@ pub async fn open_remote_project(
             })
             .await;
 
-        window
-            .update(cx, |workspace, _, cx| {
-                if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-                    ui.update(cx, |modal, cx| modal.finished(cx))
-                }
-            })
-            .ok();
+        initial_workspace.update(cx, |workspace, cx| {
+            if let Some(ui) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                ui.update(cx, |modal, cx| modal.finished(cx))
+            }
+        });
 
         match opened_items {
             Err(e) => {
@@ -320,63 +391,74 @@ pub async fn open_remote_project(
                     continue;
                 }
 
-                window
-                    .update(cx, |workspace, window, cx| {
-                        if created_new_window {
-                            window.remove_window();
-                        }
-                        trusted_worktrees::track_worktree_trust(
-                            workspace.project().read(cx).worktree_store(),
-                            None,
-                            None,
-                            None,
-                            cx,
-                        );
-                    })
-                    .ok();
+                if created_new_window {
+                    window
+                        .update(cx, |_, window, _| window.remove_window())
+                        .ok();
+                }
+                initial_workspace.update(cx, |workspace, cx| {
+                    trusted_worktrees::track_worktree_trust(
+                        workspace.project().read(cx).worktree_store(),
+                        None,
+                        None,
+                        None,
+                        cx,
+                    );
+                });
             }
 
             Ok(items) => {
-                for (item, path) in items.into_iter().zip(paths_with_positions) {
-                    let Some(item) = item else {
-                        continue;
-                    };
-                    let Some(row) = path.row else {
-                        continue;
-                    };
-                    if let Some(active_editor) = item.downcast::<Editor>() {
-                        window
-                            .update(cx, |_, window, cx| {
-                                active_editor.update(cx, |editor, cx| {
-                                    let row = row.saturating_sub(1);
-                                    let col = path.column.unwrap_or(0).saturating_sub(1);
-                                    editor.go_to_singleton_buffer_point(
-                                        Point::new(row, col),
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            })
-                            .ok();
-                    }
-                }
+                navigate_to_positions(&window, items, &paths_with_positions, cx);
             }
         }
 
         break;
     }
 
+    // Register the remote client with extensions. We use `multi_workspace.workspace()` here
+    // (not `initial_workspace`) because `open_remote_project_inner` activated the new remote
+    // workspace, so the active workspace is now the one with the remote project.
     window
-        .update(cx, |workspace, _, cx| {
-            if let Some(client) = workspace.project().read(cx).remote_client() {
-                if let Some(extension_store) = ExtensionStore::try_global(cx) {
-                    extension_store
-                        .update(cx, |store, cx| store.register_remote_client(client, cx));
+        .update(cx, |multi_workspace: &mut MultiWorkspace, _, cx| {
+            let workspace = multi_workspace.workspace().clone();
+            workspace.update(cx, |workspace, cx| {
+                if let Some(client) = workspace.project().read(cx).remote_client() {
+                    if let Some(extension_store) = ExtensionStore::try_global(cx) {
+                        extension_store
+                            .update(cx, |store, cx| store.register_remote_client(client, cx));
+                    }
                 }
-            }
+            });
         })
         .ok();
     Ok(())
+}
+
+pub fn navigate_to_positions(
+    window: &WindowHandle<MultiWorkspace>,
+    items: impl IntoIterator<Item = Option<Box<dyn workspace::item::ItemHandle>>>,
+    positions: &[PathWithPosition],
+    cx: &mut AsyncApp,
+) {
+    for (item, path) in items.into_iter().zip(positions) {
+        let Some(item) = item else {
+            continue;
+        };
+        let Some(row) = path.row else {
+            continue;
+        };
+        if let Some(active_editor) = item.downcast::<Editor>() {
+            window
+                .update(cx, |_, window, cx| {
+                    active_editor.update(cx, |editor, cx| {
+                        let row = row.saturating_sub(1);
+                        let col = path.column.unwrap_or(0).saturating_sub(1);
+                        editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                    });
+                })
+                .ok();
+        }
+    }
 }
 
 pub(crate) async fn determine_paths_with_positions(
@@ -411,7 +493,7 @@ async fn path_exists(connection: &Arc<dyn RemoteConnection>, path: &Path) -> boo
     ) else {
         return false;
     };
-    let Ok(mut child) = util::command::new_smol_command(command.program)
+    let Ok(mut child) = util::command::new_command(command.program)
         .args(command.args)
         .envs(command.env)
         .spawn()
@@ -433,6 +515,7 @@ mod tests {
     use remote_server::{HeadlessAppState, HeadlessProject};
     use serde_json::json;
     use util::path;
+    use workspace::find_existing_workspace;
 
     #[gpui::test]
     async fn test_open_remote_project_with_mock_connection(
@@ -500,14 +583,143 @@ mod tests {
         let windows = cx.update(|cx| cx.windows().len());
         assert_eq!(windows, 1, "Should have opened a window");
 
-        let workspace_handle = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+        let multi_workspace_handle =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
 
-        workspace_handle
-            .update(cx, |workspace, _, cx| {
-                let project = workspace.project().read(cx);
-                assert!(project.is_remote(), "Project should be a remote project");
+        multi_workspace_handle
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let project = workspace.project().read(cx);
+                    assert!(project.is_remote(), "Project should be a remote project");
+                });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_reuse_existing_remote_workspace_window(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                        "lib.rs": "pub fn hello() {}",
+                    },
+                    "README.md": "# Test Project",
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        // First open: create a new window for the remote project.
+        let paths = vec![PathBuf::from(path!("/project"))];
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            opts.clone(),
+            paths,
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("first open_remote_project should succeed");
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "First open should create exactly one window"
+        );
+
+        let first_window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        // Verify find_existing_workspace discovers the remote workspace.
+        let search_paths = vec![PathBuf::from(path!("/project/src/lib.rs"))];
+        let (found, _open_visible) = find_existing_workspace(
+            &search_paths,
+            &workspace::OpenOptions::default(),
+            &SerializedWorkspaceLocation::Remote(opts.clone()),
+            &mut async_cx,
+        )
+        .await;
+
+        assert!(
+            found.is_some(),
+            "find_existing_workspace should locate the existing remote workspace"
+        );
+        let (found_window, _found_workspace) = found.unwrap();
+        assert_eq!(
+            found_window, first_window,
+            "find_existing_workspace should return the same window"
+        );
+
+        // Second open with the same connection options should reuse the window.
+        let second_paths = vec![PathBuf::from(path!("/project/src/lib.rs"))];
+        open_remote_project(
+            opts.clone(),
+            second_paths,
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("second open_remote_project should succeed via reuse");
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "Second open should reuse the existing window, not create a new one"
+        );
+
+        let still_first_window =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        assert_eq!(
+            still_first_window, first_window,
+            "The window handle should be the same after reuse"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
