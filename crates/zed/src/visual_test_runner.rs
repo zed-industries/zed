@@ -45,7 +45,7 @@ fn main() {
 // All macOS-specific imports grouped together
 #[cfg(target_os = "macos")]
 use {
-    acp_thread::{AgentConnection, RetryStatus, StubAgentConnection},
+    acp_thread::{AgentConnection, StubAgentConnection},
     agent_client_protocol as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
@@ -67,7 +67,7 @@ use {
         path::{Path, PathBuf},
         rc::Rc,
         sync::Arc,
-        time::{Duration, Instant},
+        time::Duration,
     },
     util::ResultExt as _,
     workspace::{AppState, MultiWorkspace, Workspace, WorkspaceId},
