@@ -89,6 +89,13 @@ pub enum Model {
         alias = "claude-opus-4-6-thinking-latest"
     )]
     ClaudeOpus4_6Thinking,
+    #[serde(rename = "claude-sonnet-4-6", alias = "claude-sonnet-4-6-latest")]
+    ClaudeSonnet4_6,
+    #[serde(
+        rename = "claude-sonnet-4-6-thinking",
+        alias = "claude-sonnet-4-6-thinking-latest"
+    )]
+    ClaudeSonnet4_6Thinking,
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5SonnetV2,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
@@ -209,6 +216,10 @@ impl Model {
             Ok(Self::Claude3_7Sonnet)
         } else if id.starts_with("claude-3-7-sonnet-thinking") {
             Ok(Self::Claude3_7SonnetThinking)
+        } else if id.starts_with("claude-sonnet-4-6-thinking") {
+            Ok(Self::ClaudeSonnet4_6Thinking)
+        } else if id.starts_with("claude-sonnet-4-6") {
+            Ok(Self::ClaudeSonnet4_6)
         } else if id.starts_with("claude-sonnet-4-5-thinking") {
             Ok(Self::ClaudeSonnet4_5Thinking)
         } else if id.starts_with("claude-sonnet-4-5") {
@@ -236,6 +247,8 @@ impl Model {
             Model::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking",
             Model::ClaudeOpus4_6 => "claude-opus-4-6",
             Model::ClaudeOpus4_6Thinking => "claude-opus-4-6-thinking",
+            Model::ClaudeSonnet4_6 => "claude-sonnet-4-6",
+            Model::ClaudeSonnet4_6Thinking => "claude-sonnet-4-6-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
@@ -307,6 +320,9 @@ impl Model {
                 "anthropic.claude-opus-4-5-20251101-v1:0"
             }
             Model::ClaudeOpus4_6 | Model::ClaudeOpus4_6Thinking => "anthropic.claude-opus-4-6-v1",
+            Model::ClaudeSonnet4_6 | Model::ClaudeSonnet4_6Thinking => {
+                "anthropic.claude-sonnet-4-6"
+            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
@@ -375,6 +391,8 @@ impl Model {
             Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_6Thinking => "Claude Opus 4.6 Thinking",
+            Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
+            Self::ClaudeSonnet4_6Thinking => "Claude Sonnet 4.6 Thinking",
             Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
@@ -449,7 +467,9 @@ impl Model {
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking => 200_000,
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -465,6 +485,8 @@ impl Model {
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
             Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking
             | Self::ClaudeHaiku4_5
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking => 64_000,
@@ -500,7 +522,9 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking => 1.0,
+            | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
@@ -530,6 +554,8 @@ impl Model {
             | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_5Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking
             | Self::Claude3_5Haiku
             | Self::ClaudeHaiku4_5 => true,
 
@@ -571,7 +597,9 @@ impl Model {
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking => true,
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking => true,
 
             // Custom models - check if they have cache configuration
             Self::Custom {
@@ -597,7 +625,9 @@ impl Model {
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking => Some(BedrockModelCacheConfiguration {
+            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeSonnet4_6
+            | Self::ClaudeSonnet4_6Thinking => Some(BedrockModelCacheConfiguration {
                 max_cache_anchors: 4,
                 min_total_token: 1024,
             }),
@@ -634,6 +664,9 @@ impl Model {
             Model::ClaudeOpus4_6Thinking => BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::default(),
             },
+            Model::ClaudeSonnet4_6Thinking => BedrockModelMode::AdaptiveThinking {
+                effort: BedrockAdaptiveThinkingEffort::default(),
+            },
             _ => BedrockModelMode::Default,
         }
     }
@@ -658,6 +691,8 @@ impl Model {
                 | Model::ClaudeSonnet4Thinking
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking
         );
 
         let region_group = if region.starts_with("us-gov-") {
@@ -699,7 +734,9 @@ impl Model {
                 | Model::ClaudeSonnet4
                 | Model::ClaudeSonnet4Thinking
                 | Model::ClaudeSonnet4_5
-                | Model::ClaudeSonnet4_5Thinking,
+                | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking,
                 "global",
                 _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
@@ -710,19 +747,29 @@ impl Model {
                 | Model::Claude3_7Sonnet
                 | Model::Claude3_7SonnetThinking
                 | Model::ClaudeSonnet4_5
-                | Model::ClaudeSonnet4_5Thinking,
+                | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking,
                 "us-gov",
                 _,
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             (
-                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking,
                 "apac",
                 "ap-southeast-2" | "ap-southeast-4",
             ) => Ok(format!("au.{}", model_id)),
 
             (
-                Model::ClaudeHaiku4_5 | Model::ClaudeSonnet4_5 | Model::ClaudeSonnet4_5Thinking,
+                Model::ClaudeHaiku4_5
+                | Model::ClaudeSonnet4_5
+                | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking,
                 "apac",
                 "ap-northeast-1" | "ap-northeast-3",
             ) => Ok(format!("jp.{}", model_id)),
@@ -746,6 +793,8 @@ impl Model {
                 | Model::ClaudeSonnet4Thinking
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking
                 | Model::ClaudeOpus4
                 | Model::ClaudeOpus4Thinking
                 | Model::ClaudeOpus4_1
@@ -788,6 +837,8 @@ impl Model {
                 | Model::ClaudeSonnet4
                 | Model::ClaudeSonnet4_5
                 | Model::ClaudeSonnet4_5Thinking
+                | Model::ClaudeSonnet4_6
+                | Model::ClaudeSonnet4_6Thinking
                 | Model::ClaudeOpus4_6
                 | Model::ClaudeOpus4_6Thinking
                 | Model::Claude3Haiku
