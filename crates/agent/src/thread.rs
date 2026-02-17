@@ -493,6 +493,7 @@ impl AgentMessage {
             cache: false,
             reasoning_details: self.reasoning_details.clone(),
         };
+        let mut emitted_tool_use_ids = collections::HashSet::default();
         for chunk in &self.content {
             match chunk {
                 AgentMessageContent::Text(text) => {
@@ -515,6 +516,7 @@ impl AgentMessage {
                 }
                 AgentMessageContent::ToolUse(tool_use) => {
                     if self.tool_results.contains_key(&tool_use.id) {
+                        emitted_tool_use_ids.insert(tool_use.id.clone());
                         assistant_message
                             .content
                             .push(language_model::MessageContent::ToolUse(tool_use.clone()));
@@ -531,6 +533,9 @@ impl AgentMessage {
         };
 
         for tool_result in self.tool_results.values() {
+            if !emitted_tool_use_ids.contains(&tool_result.tool_use_id) {
+                continue;
+            }
             let mut tool_result = tool_result.clone();
             // Surprisingly, the API fails if we return an empty string here.
             // It thinks we are sending a tool use without a tool result.
@@ -3683,5 +3688,98 @@ mod tests {
                 assert!(last_message.tool_results.contains_key(&tool_use_id));
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod agent_message_tests {
+    use super::*;
+    use language_model::{
+        LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+        LanguageModelToolUseId, MessageContent, Role,
+    };
+
+    #[test]
+    fn test_to_request_skips_orphaned_tool_results() {
+        // Reproduce the bug from a real broken thread: message has 4 ToolUse entries
+        // in content but 5 tool_results (one orphaned with no matching ToolUse).
+        // The API rejects this because the user message has more toolResult blocks
+        // than the assistant message has toolUse blocks.
+
+        let tool_id_a: LanguageModelToolUseId = "tool_a".into();
+        let tool_id_b: LanguageModelToolUseId = "tool_b".into();
+        let orphan_id: LanguageModelToolUseId = "tool_orphan".into();
+
+        let mut tool_results = IndexMap::default();
+        for (id, name) in [
+            (tool_id_a.clone(), "read_file"),
+            (tool_id_b.clone(), "grep"),
+            (orphan_id.clone(), "read_file"),
+        ] {
+            tool_results.insert(
+                id.clone(),
+                LanguageModelToolResult {
+                    tool_use_id: id,
+                    tool_name: name.into(),
+                    is_error: false,
+                    content: LanguageModelToolResultContent::Text("result".into()),
+                    output: None,
+                },
+            );
+        }
+
+        let message = AgentMessage {
+            content: vec![
+                AgentMessageContent::Text("Let me check.".into()),
+                AgentMessageContent::ToolUse(LanguageModelToolUse {
+                    id: tool_id_a.clone(),
+                    name: "read_file".into(),
+                    raw_input: "{}".into(),
+                    input: serde_json::json!({}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+                AgentMessageContent::ToolUse(LanguageModelToolUse {
+                    id: tool_id_b.clone(),
+                    name: "grep".into(),
+                    raw_input: "{}".into(),
+                    input: serde_json::json!({}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                }),
+                // Note: no ToolUse for orphan_id
+            ],
+            tool_results,
+            reasoning_details: None,
+        };
+
+        let request_messages = message.to_request();
+
+        let assistant_msg = request_messages
+            .iter()
+            .find(|m| m.role == Role::Assistant)
+            .expect("should have assistant message");
+        let user_msg = request_messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .expect("should have user message");
+
+        let tool_use_count = assistant_msg
+            .content
+            .iter()
+            .filter(|c| matches!(c, MessageContent::ToolUse(_)))
+            .count();
+        let tool_result_count = user_msg
+            .content
+            .iter()
+            .filter(|c| matches!(c, MessageContent::ToolResult(_)))
+            .count();
+
+        assert_eq!(
+            tool_use_count, tool_result_count,
+            "tool_result count ({tool_result_count}) must equal tool_use count ({tool_use_count}); orphaned results must be dropped"
+        );
+        assert_eq!(tool_use_count, 2);
+        assert_eq!(tool_result_count, 2);
     }
 }
