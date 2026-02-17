@@ -4359,9 +4359,11 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
+            WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
+                self.invalidate_diagnostic_summaries_for_updated_entries(*worktree_id, changes, cx);
+            }
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
-            | WorktreeStoreEvent::WorktreeUpdatedEntries(..)
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
             | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
         }
@@ -4424,6 +4426,10 @@ impl LspStore {
 
             language::BufferEvent::Saved => {
                 self.on_buffer_saved(buffer, cx);
+            }
+
+            language::BufferEvent::Reloaded => {
+                self.on_buffer_reloaded(buffer, cx);
             }
 
             _ => {}
@@ -7921,6 +7927,52 @@ impl LspStore {
         None
     }
 
+    fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return;
+        };
+        let worktree_id = file.worktree_id(cx);
+        let path = file.path().clone();
+
+        let Some(summaries_for_tree) = self.diagnostic_summaries.get_mut(&worktree_id) else {
+            return;
+        };
+
+        let Some(summaries_by_server_id) = summaries_for_tree.remove(&path) else {
+            return;
+        };
+
+        let mut cleared_paths: Vec<ProjectPath> = Vec::new();
+        for (server_id, _) in &summaries_by_server_id {
+            if let Some((client, project_id)) = self.downstream_client.clone() {
+                client
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id,
+                        worktree_id: worktree_id.to_proto(),
+                        summary: Some(proto::DiagnosticSummary {
+                            path: path.as_ref().to_proto(),
+                            language_server_id: server_id.0 as u64,
+                            error_count: 0,
+                            warning_count: 0,
+                        }),
+                        more_summaries: Vec::new(),
+                    })
+                    .log_err();
+            }
+        }
+        cleared_paths.push(ProjectPath {
+            worktree_id,
+            path: path.clone(),
+        });
+        for (server_id, _) in summaries_by_server_id {
+            cx.emit(LspStoreEvent::DiagnosticsUpdated {
+                server_id,
+                paths: cleared_paths.clone(),
+            });
+        }
+    }
+
     async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
         maybe!(async move {
             let mut refreshed_servers = HashSet::default();
@@ -8085,6 +8137,61 @@ impl LspStore {
             let to_remove = local.remove_worktree(id_to_remove, cx);
             for server in to_remove {
                 self.language_server_statuses.remove(&server);
+            }
+        }
+    }
+
+    fn invalidate_diagnostic_summaries_for_updated_entries(
+        &mut self,
+        worktree_id: WorktreeId,
+        changes: &UpdatedEntriesSet,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(summaries_for_tree) = self.diagnostic_summaries.get_mut(&worktree_id) else {
+            return;
+        };
+
+        let mut cleared_paths: Vec<ProjectPath> = Vec::new();
+        let mut cleared_server_ids: HashSet<LanguageServerId> = HashSet::default();
+
+        for (path, _, change) in changes.iter() {
+            match change {
+                PathChange::Removed | PathChange::Updated | PathChange::AddedOrUpdated => {
+                    if let Some(summaries_by_server_id) = summaries_for_tree.remove(path) {
+                        for (server_id, _) in &summaries_by_server_id {
+                            cleared_server_ids.insert(*server_id);
+                            if let Some((client, project_id)) = self.downstream_client.clone() {
+                                client
+                                    .send(proto::UpdateDiagnosticSummary {
+                                        project_id,
+                                        worktree_id: worktree_id.to_proto(),
+                                        summary: Some(proto::DiagnosticSummary {
+                                            path: path.as_ref().to_proto(),
+                                            language_server_id: server_id.0 as u64,
+                                            error_count: 0,
+                                            warning_count: 0,
+                                        }),
+                                        more_summaries: Vec::new(),
+                                    })
+                                    .log_err();
+                            }
+                        }
+                        cleared_paths.push(ProjectPath {
+                            worktree_id,
+                            path: path.clone(),
+                        });
+                    }
+                }
+                PathChange::Added | PathChange::Loaded => {}
+            }
+        }
+
+        if !cleared_paths.is_empty() {
+            for server_id in cleared_server_ids {
+                cx.emit(LspStoreEvent::DiagnosticsUpdated {
+                    server_id,
+                    paths: cleared_paths.clone(),
+                });
             }
         }
     }
@@ -10739,6 +10846,7 @@ impl LspStore {
             }
         });
 
+        let mut cleared_paths: Vec<ProjectPath> = Vec::new();
         for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
             summaries.retain(|path, summaries_by_server_id| {
                 if summaries_by_server_id.remove(&server_id).is_some() {
@@ -10757,10 +10865,20 @@ impl LspStore {
                             })
                             .log_err();
                     }
+                    cleared_paths.push(ProjectPath {
+                        worktree_id: *worktree_id,
+                        path: path.clone(),
+                    });
                     !summaries_by_server_id.is_empty()
                 } else {
                     true
                 }
+            });
+        }
+        if !cleared_paths.is_empty() {
+            cx.emit(LspStoreEvent::DiagnosticsUpdated {
+                server_id,
+                paths: cleared_paths,
             });
         }
 
