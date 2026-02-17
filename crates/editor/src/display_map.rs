@@ -1936,14 +1936,17 @@ impl DisplaySnapshot {
         })
     }
 
-    /// Returns combined highlight styles (tree-sitter syntax + semantic tokens)
-    /// for a byte range within the specified buffer.
+    /// Returns highlight styles for a byte range within the specified buffer.
     /// Returned ranges are 0-based relative to `buffer_range.start`.
-    pub(super) fn combined_highlights(
+    ///
+    /// When `include_syntax` is true, styles combine tree-sitter syntax and
+    /// semantic tokens. When false, only semantic token styles are returned.
+    pub(super) fn highlights_for_buffer_range(
         &self,
         buffer_id: BufferId,
         buffer_range: Range<usize>,
         syntax_theme: &theme::SyntaxTheme,
+        include_syntax: bool,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let multibuffer = self.buffer_snapshot();
 
@@ -1966,8 +1969,11 @@ impl DisplaySnapshot {
             });
 
         let Some(multibuffer_range) = multibuffer_range else {
-            // Range is outside all excerpts (e.g. symbol name not in a
-            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
+            // Range is outside all excerpts. Combined mode falls back to
+            // buffer-level syntax highlights. Semantic-only mode has no data.
+            if !include_syntax {
+                return Vec::new();
+            }
             let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
                 (buffer.remote_id() == buffer_id).then(|| buffer.clone())
             });
@@ -2008,9 +2014,13 @@ impl DisplaySnapshot {
                 continue;
             }
 
-            let syntax_style = chunk
-                .syntax_highlight_id
-                .and_then(|id| id.style(syntax_theme));
+            let syntax_style = if include_syntax {
+                chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(syntax_theme))
+            } else {
+                None
+            };
             let overlay_style = chunk.highlight_style;
 
             let combined = match (syntax_style, overlay_style) {
