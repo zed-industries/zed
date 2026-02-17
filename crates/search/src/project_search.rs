@@ -398,6 +398,13 @@ impl ProjectSearch {
                 limit_reached |= has_reached_limit;
 
                 if incremental {
+                    let buffers_with_ranges: Vec<_> = buffers_with_ranges
+                        .into_iter()
+                        .filter(|(_, ranges)| !ranges.is_empty())
+                        .collect();
+                    if buffers_with_ranges.is_empty() {
+                        continue;
+                    }
                     let (mut chunk_ranges, chunk_paths) = project_search
                         .update(cx, |project_search, cx| {
                             let mut paths = Vec::new();
@@ -467,16 +474,22 @@ impl ProjectSearch {
             if incremental {
                 project_search
                     .update(cx, |project_search, cx| {
-                        project_search.excerpts.update(cx, |excerpts, cx| {
-                            let stale = excerpts
-                                .paths()
-                                .filter(|path| !seen_paths.contains(*path))
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            for path in stale {
-                                excerpts.remove_excerpts_for_path(path, cx);
-                            }
-                        });
+                        if seen_paths.is_empty() {
+                            project_search
+                                .excerpts
+                                .update(cx, |excerpts, cx| excerpts.clear(cx));
+                        } else {
+                            project_search.excerpts.update(cx, |excerpts, cx| {
+                                let stale = excerpts
+                                    .paths()
+                                    .filter(|path| !seen_paths.contains(*path))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                for path in stale {
+                                    excerpts.remove_excerpts_for_path(path, cx);
+                                }
+                            });
+                        }
                         project_search.no_results = Some(project_search.match_ranges.is_empty());
                         project_search.limit_reached = limit_reached;
                         project_search.pending_search.take();
