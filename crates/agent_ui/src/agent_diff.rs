@@ -1,6 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
-use action_log::{ActionLog, ActionLogTelemetry};
+use action_log::{ActionLog, ActionLogTelemetry, LastRejectUndo};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -18,7 +18,7 @@ use gpui::{
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
-use language::{Buffer, Capability, OffsetRangeExt, Point};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
@@ -282,15 +282,50 @@ impl AgentDiffPane {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
-        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
 
-        action_log
-            .update(cx, |action_log, cx| {
-                action_log.reject_all_edits(Some(telemetry), cx)
-            })
-            .detach();
+        let buffers: Vec<_> = self
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .collect();
 
-        if has_changes {
+        if buffers.is_empty() {
+            return;
+        }
+
+        let mut undo_buffers = Vec::new();
+
+        for buffer in buffers {
+            let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
+                buffer.read(cx).remote_id(),
+            )];
+
+            let (task, undo_info) = action_log.update(cx, |action_log, cx| {
+                action_log.reject_edits_in_ranges(
+                    buffer,
+                    buffer_ranges,
+                    Some(telemetry.clone()),
+                    cx,
+                )
+            });
+
+            task.detach_and_log_err(cx);
+
+            if let Some(undo) = undo_info {
+                undo_buffers.push(undo);
+            }
+        }
+
+        if !undo_buffers.is_empty() {
+            action_log.update(cx, |action_log, _cx| {
+                action_log.set_last_reject_undo(LastRejectUndo {
+                    buffers: undo_buffers,
+                });
+            });
+
             if let Some(workspace) = self.workspace.upgrade() {
                 workspace.update(cx, |workspace, cx| {
                     crate::ui::show_undo_reject_toast(workspace, action_log, cx);
@@ -1613,22 +1648,56 @@ impl AgentDiff {
     }
 
     fn reject_all(
-        _editor: &Entity<Editor>,
+        editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
         _window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
-        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
 
-        action_log
-            .update(cx, |action_log, cx| {
-                action_log.reject_all_edits(Some(telemetry), cx)
-            })
-            .detach();
+        // Get unique buffers from the editor (only reject what's visible in this editor)
+        let buffers: Vec<_> = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .collect();
 
-        if has_changes {
+        if buffers.is_empty() {
+            return PostReviewState::AllReviewed;
+        }
+
+        let mut undo_buffers = Vec::new();
+
+        for buffer in buffers {
+            let buffer_ranges = vec![Anchor::min_max_range_for_buffer(
+                buffer.read(cx).remote_id(),
+            )];
+
+            let (task, undo_info) = action_log.update(cx, |action_log, cx| {
+                action_log.reject_edits_in_ranges(
+                    buffer,
+                    buffer_ranges,
+                    Some(telemetry.clone()),
+                    cx,
+                )
+            });
+
+            task.detach_and_log_err(cx);
+
+            if let Some(undo) = undo_info {
+                undo_buffers.push(undo);
+            }
+        }
+
+        if !undo_buffers.is_empty() {
+            action_log.update(cx, |action_log, _cx| {
+                action_log.set_last_reject_undo(LastRejectUndo {
+                    buffers: undo_buffers,
+                });
+            });
             PostReviewState::AllReviewedWithUndo(action_log)
         } else {
             PostReviewState::AllReviewed
