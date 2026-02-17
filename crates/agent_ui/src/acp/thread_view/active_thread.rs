@@ -1399,7 +1399,11 @@ impl AcpThreadView {
             .detach();
 
         if has_changes {
-            self.show_undo_reject_toast(action_log, window, cx);
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    crate::ui::show_undo_reject_toast(workspace, action_log, cx);
+                });
+            }
         }
     }
 
@@ -1414,32 +1418,6 @@ impl AcpThreadView {
         action_log
             .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
             .detach_and_log_err(cx)
-    }
-
-    fn show_undo_reject_toast(
-        &self,
-        action_log: Entity<ActionLog>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        workspace.update(cx, |workspace, cx| {
-            let action_log_weak = action_log.downgrade();
-            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
-                    .action("Undo", move |_window, cx| {
-                        if let Some(action_log) = action_log_weak.upgrade() {
-                            action_log
-                                .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-                                .detach_and_log_err(cx);
-                        }
-                    })
-            });
-            workspace.toggle_status_toast(status_toast, cx);
-        });
     }
 
     pub fn open_edited_buffer(

@@ -12,7 +12,6 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
 
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
@@ -292,29 +291,12 @@ impl AgentDiffPane {
             .detach();
 
         if has_changes {
-            self.show_undo_reject_toast(action_log, cx);
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    crate::ui::show_undo_reject_toast(workspace, action_log, cx);
+                });
+            }
         }
-    }
-
-    fn show_undo_reject_toast(&self, action_log: Entity<ActionLog>, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        workspace.update(cx, |workspace, cx| {
-            let action_log_weak = action_log.downgrade();
-            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
-                    .action("Undo", move |_window, cx| {
-                        if let Some(action_log) = action_log_weak.upgrade() {
-                            action_log
-                                .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-                                .detach_and_log_err(cx);
-                        }
-                    })
-            });
-            workspace.toggle_status_toast(status_toast, cx);
-        });
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1713,18 +1695,7 @@ impl AgentDiff {
         let review_result = review(&editor, &thread, window, cx);
 
         if let PostReviewState::AllReviewedWithUndo(action_log) = &review_result {
-            let action_log_weak = action_log.downgrade();
-            let status_toast = StatusToast::new("Agent Changes Rejected", cx, move |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Undo).color(Color::Muted))
-                    .action("Undo", move |_window, cx| {
-                        if let Some(action_log) = action_log_weak.upgrade() {
-                            action_log
-                                .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-                                .detach_and_log_err(cx);
-                        }
-                    })
-            });
-            workspace.toggle_status_toast(status_toast, cx);
+            crate::ui::show_undo_reject_toast(workspace, action_log.clone(), cx);
         }
 
         if matches!(
