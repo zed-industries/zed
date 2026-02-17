@@ -1,17 +1,22 @@
 use core::slice;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
+use std::path::PathBuf;
 
 use cocoa::{
-    appkit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF},
+    appkit::{
+        NSFilenamesPboardType, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString,
+        NSPasteboardTypeTIFF,
+    },
     base::{id, nil},
-    foundation::NSData,
+    foundation::{NSData, NSFastEnumeration, NSString},
 };
 use objc::{msg_send, runtime::Object, sel, sel_impl};
+use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
 use crate::{
-    ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, asset_cache::hash,
-    platform::mac::ns_string,
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat,
+    asset_cache::hash, platform::mac::ns_string,
 };
 
 pub struct Pasteboard {
@@ -43,28 +48,41 @@ impl Pasteboard {
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
-        // First, see if it's a string.
         unsafe {
-            let pasteboard_types: id = self.inner.types();
-            let string_type: id = ns_string("public.utf8-plain-text");
+            // Check for file paths first (e.g. files copied in Finder), because Finder
+            // puts both NSFilenamesPboardType and public.utf8-plain-text on the pasteboard.
+            // If we checked strings first, we'd return the path as plain text and never
+            // see the file paths.
+            let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
+            if filenames != nil {
+                let mut paths = SmallVec::new();
+                for file in filenames.iter() {
+                    let f = NSString::UTF8String(file);
+                    let path = CStr::from_ptr(f).to_string_lossy().into_owned();
+                    paths.push(PathBuf::from(path));
+                }
+                if !paths.is_empty() {
+                    let mut entries =
+                        vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths))];
 
-            if msg_send![pasteboard_types, containsObject: string_type] {
-                let data = self.inner.dataForType(string_type);
-                if data == nil {
-                    return None;
-                } else if data.bytes().is_null() {
-                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                    // "If the length of the NSData object is 0, this property returns nil."
-                    return Some(self.read_string(&[]));
-                } else {
-                    let bytes =
-                        slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize);
+                    // Also include the string representation so text editors can
+                    // paste the path as text.
+                    if let Some(string_item) = self.read_string_from_pasteboard() {
+                        entries.push(string_item);
+                    }
 
-                    return Some(self.read_string(bytes));
+                    return Some(ClipboardItem { entries });
                 }
             }
 
-            // If it wasn't a string, try the various supported image types.
+            // Next, check for a plain string.
+            if let Some(string_entry) = self.read_string_from_pasteboard() {
+                return Some(ClipboardItem {
+                    entries: vec![string_entry],
+                });
+            }
+
+            // Finally, try the various supported image types.
             for format in ImageFormat::iter() {
                 if let Some(item) = self.read_image(format) {
                     return Some(item);
@@ -72,7 +90,6 @@ impl Pasteboard {
             }
         }
 
-        // If it wasn't a string or a supported image type, give up.
         None
     }
 
@@ -96,8 +113,24 @@ impl Pasteboard {
         }
     }
 
-    fn read_string(&self, text_bytes: &[u8]) -> ClipboardItem {
+    unsafe fn read_string_from_pasteboard(&self) -> Option<ClipboardEntry> {
         unsafe {
+            let pasteboard_types: id = self.inner.types();
+            let string_type: id = ns_string("public.utf8-plain-text");
+
+            if !msg_send![pasteboard_types, containsObject: string_type] {
+                return None;
+            }
+
+            let data = self.inner.dataForType(string_type);
+            let text_bytes: &[u8] = if data == nil {
+                return None;
+            } else if data.bytes().is_null() {
+                &[]
+            } else {
+                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
+            };
+
             let text = String::from_utf8_lossy(text_bytes).to_string();
             let metadata = self
                 .data_for_type(self.text_hash_type)
@@ -113,9 +146,7 @@ impl Pasteboard {
                     }
                 });
 
-            ClipboardItem {
-                entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
-            }
+            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
         }
     }
 
