@@ -8832,8 +8832,9 @@ impl LineWithInvisibles {
                             if highlighted_chunk.is_tab {
                                 if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
-                                        line_start_offset: line_scratchspace.len(),
-                                        line_end_offset: line_scratchspace.len() + line_chunk.len(),
+                                        line_start_offset: line_ingested_utf8_bytes,
+                                        line_end_offset: line_ingested_utf8_bytes
+                                            + line_chunk.len(),
                                     });
                                 }
                             } else {
