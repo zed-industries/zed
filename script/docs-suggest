@@ -305,14 +305,21 @@ PROMPT_HEADER
 - **Settings pattern**: Show Settings Editor UI first, then JSON as alternative
 - **Keybindings**: Use `{#kb action::Name}` syntax, not hardcoded keys
 - **Terminology**: "folder" not "directory", "project" not "workspace", "Settings Editor" not "settings UI"
+- **SEO keyword targeting**: For each docs page you suggest updating, choose one
+  primary keyword/intent phrase using the page's user intent
 - **SEO metadata**: Every updated/new docs page should include frontmatter with
   `title` and `description` (single-line `key: value` entries)
 - **Metadata quality**: Titles should clearly state page intent (~50-60 chars),
   descriptions should summarize the reader outcome (~140-160 chars)
-- **SEO structure**: Keep exactly one H1, preserve logical H1→H2→H3 hierarchy,
-  and add internal links where they improve task flow
-- **Keyword usage**: Use primary terms naturally in title/opening paragraph;
-  never keyword-stuff
+- **Keyword usage**: Use the primary keyword naturally in frontmatter and in page
+  body at least once; never keyword-stuff
+- **SEO structure**: Keep exactly one H1 and preserve logical H1→H2→H3
+  hierarchy
+- **Internal links minimum**: Non-reference pages should include at least 3
+  useful internal docs links; reference pages can include fewer when extra links
+  would be noise
+- **Marketing links**: For main feature pages, include a relevant `zed.dev`
+  marketing link alongside docs links
 
 ### What Requires Documentation
 
@@ -408,6 +415,16 @@ Respond with ONE of these formats:
 #### 1. [docs/src/path/to/file.md]
 - **Section**: [existing section to update, or "New section"]
 - **Change**: [Add/Update/Remove]
+- **Target keyword**: [single keyword/intent phrase for this page]
+- **Frontmatter**:
+  ```yaml
+  ---
+  title: ...
+  description: ...
+  ---
+  ```
+- **Links**: [List at least 3 internal docs links for non-reference pages; if
+  this is a main feature page, include one relevant `zed.dev` marketing link]
 - **Suggestion**: [Specific text or description of what to add/change]
 
 #### 2. [docs/src/another/file.md]

@@ -85,12 +85,13 @@ description: One sentence describing what this page covers. Used in search resul
 
 #### Frontmatter SEO Guidelines
 
+- Choose one primary keyword/intent phrase for each page
 - Write unique `title` values that clearly state the page topic and target user
   intent; aim for ~50-60 characters
 - Write `description` values that summarize what the reader can do on the page;
   aim for ~140-160 characters
-- Put the primary topic phrase in the title and early in the opening paragraph,
-  naturally (no keyword stuffing)
+- Use the primary keyword naturally in the `title` and page body at least once
+  (usually in the opening paragraph); avoid keyword stuffing
 
 ### Section Ordering
 
@@ -250,10 +251,15 @@ End pages with related links when helpful:
 
 - Ensure each page is reachable from at least one other docs page (no orphan
   pages)
-- Add links to closely related docs where they help users complete the next
-  task
+- For non-reference pages, include at least 3 internal links to related docs
+  when possible
+- Reference pages (for example, `docs/src/reference/*`) can use fewer links when
+  extra links would add noise
+- Add links to closely related docs where they help users complete the next task
 - Use descriptive link text that tells users what they will get on the linked
   page
+- For main feature pages with a matching marketing page, include a relevant
+  `zed.dev` marketing link in addition to docs links
 
 ---
 
@@ -347,6 +353,8 @@ Before any documentation change is considered complete:
 Before finalizing documentation:
 
 - [ ] Frontmatter includes `title` and `description`
+- [ ] Page has a clear primary keyword/intent phrase
+- [ ] Primary keyword appears naturally in the page body (no keyword stuffing)
 - [ ] Opening paragraph explains what and why
 - [ ] Settings show UI first, then JSON examples
 - [ ] Actions use `{#action ...}` and `{#kb ...}` syntax
@@ -354,6 +362,8 @@ Before finalizing documentation:
 - [ ] Anchor IDs on sections likely to be linked
 - [ ] Version callouts where behavior differs by release
 - [ ] No orphan pages (linked from somewhere)
+- [ ] Non-reference pages include at least 3 useful internal docs links
+- [ ] Main feature pages include a relevant `zed.dev` marketing link
 - [ ] Passes Prettier formatting check
 - [ ] Passes brand voice rubric (see `brand-voice/rubric.md`)
 
