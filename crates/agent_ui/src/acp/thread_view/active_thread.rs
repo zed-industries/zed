@@ -51,26 +51,17 @@ impl ThreadFeedbackState {
         };
         cx.background_spawn(async move {
             let thread = task.await?;
-            if let Some(organization) = organization {
-                client
-                    .cloud_client()
-                    .submit_agent_feedback(SubmitAgentThreadFeedbackBody {
-                        organization_id: organization.id.clone(),
-                        agent: agent_telemetry_id.to_string(),
-                        session_id: session_id.to_string(),
-                        rating: rating.to_string(),
-                        thread,
-                    })
-                    .await?;
-            } else {
-                telemetry::event!(
-                    "Agent Thread Rated",
-                    agent = agent_telemetry_id,
-                    session_id = session_id,
-                    rating = rating,
-                    thread = thread
-                );
-            }
+
+            client
+                .cloud_client()
+                .submit_agent_feedback(SubmitAgentThreadFeedbackBody {
+                    organization_id: organization.map(|organization| organization.id.clone()),
+                    agent: agent_telemetry_id.to_string(),
+                    session_id: session_id.to_string(),
+                    rating: rating.to_string(),
+                    thread,
+                })
+                .await?;
 
             anyhow::Ok(())
         })
