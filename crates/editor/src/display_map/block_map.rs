@@ -761,15 +761,15 @@ impl BlockMap {
         mut edits: WrapPatch,
         companion_view: Option<CompanionView>,
     ) {
-        let _timer =
-            zlog::time!("block map sync").warn_if_gt(std::time::Duration::from_millis(100));
+        let start = std::time::Instant::now();
 
         let buffer = wrap_snapshot.buffer_snapshot();
 
-        edits = self.deferred_edits.take().compose(edits);
+        let input_edits = edits.clone();
+        let deferred_edits = self.deferred_edits.take();
+        edits = deferred_edits.clone().compose(edits);
 
-        // Handle changing the last excerpt if it is empty.
-        if buffer.trailing_excerpt_update_count()
+        let trailing_excerpt_edit = if buffer.trailing_excerpt_update_count()
             != self
                 .wrap_snapshot
                 .borrow()
@@ -778,15 +778,18 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1); // this is end of file
-            edits = edits.compose([WrapEdit {
+            let edit_end = max_point.row() + WrapRow(1);
+            let edit = WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
-            }]);
-        }
+            };
+            edits = edits.compose([edit.clone()]);
+            Some(edit)
+        } else {
+            None
+        };
 
-        // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
-        if let Some(CompanionView {
+        let companion_edits_in_my_space: Vec<WrapEdit> = if let Some(CompanionView {
             companion_wrap_snapshot: companion_new_snapshot,
             companion_wrap_edits: companion_edits,
             companion,
@@ -860,14 +863,20 @@ impl BlockMap {
                 }
                 merged_edits.push(edit);
             }
+            merged_edits
+        } else {
+            Vec::new()
+        };
 
-            edits = edits.compose(merged_edits);
+        if !companion_edits_in_my_space.is_empty() {
+            edits = edits.compose(companion_edits_in_my_space.clone());
         }
 
-        let edits = edits.into_inner();
-        if edits.is_empty() {
+        let final_edits = edits.into_inner();
+        if final_edits.is_empty() {
             return;
         }
+        let edits = final_edits;
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
@@ -1132,6 +1141,30 @@ impl BlockMap {
 
         drop(cursor);
         *transforms = new_transforms;
+
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_millis(100) {
+            fn truncate_edits<T: std::fmt::Debug>(edits: Vec<T>) -> String {
+                const MAX_EDITS: usize = 10;
+                if edits.len() <= MAX_EDITS {
+                    format!("{:?}", edits)
+                } else {
+                    format!(
+                        "{:?} ... and {} more",
+                        &edits[..MAX_EDITS],
+                        edits.len() - MAX_EDITS
+                    )
+                }
+            }
+            eprintln!(
+                "block_map sync took {:?}. input_edits: {}, deferred_edits: {}, trailing_excerpt_edit: {:?}, companion_edits_in_my_space: {}",
+                elapsed,
+                truncate_edits(input_edits.into_inner()),
+                truncate_edits(deferred_edits.into_inner()),
+                trailing_excerpt_edit,
+                truncate_edits(companion_edits_in_my_space),
+            );
+        }
     }
 
     #[ztracing::instrument(skip_all)]
