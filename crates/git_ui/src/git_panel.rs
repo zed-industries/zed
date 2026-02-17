@@ -54,6 +54,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
+use project_panel_settings::ProjectPanelSettings;
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -218,8 +219,6 @@ fn git_panel_context_menu(
 const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
-// TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
-const TREE_INDENT: f32 = 16.0;
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -4695,6 +4694,8 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
+
         let (is_tree_view, entry_count) = match &self.view_mode {
             GitPanelViewMode::Tree(state) => (true, state.logical_indices.len()),
             GitPanelViewMode::Flat => (false, self.entries.len()),
@@ -4777,7 +4778,10 @@ impl GitPanel {
                             }),
                         )
                         .when(is_tree_view, |list| {
-                            let indent_size = px(TREE_INDENT);
+                            const LEFT_OFFSET: Pixels = px(14.);
+
+                            let indent_size = px(indent_size);
+
                             list.with_decoration(
                                 ui::indent_guides(indent_size, IndentGuideColors::panel(cx))
                                     .with_compute_indents_fn(
@@ -4786,11 +4790,7 @@ impl GitPanel {
                                             this.compute_visible_depths(range)
                                         },
                                     )
-                                    .with_render_fn(cx.entity(), |_, params, _, _| {
-                                        // Magic number to align the tree item is 3 here
-                                        // because we're using 12px as the left-side padding
-                                        // and 3 makes the alignment work with the bounding box of the icon
-                                        let left_offset = px(TREE_INDENT + 3_f32);
+                                    .with_render_fn(cx.entity(), move |_, params, _, _| {
                                         let indent_size = params.indent_size;
                                         let item_height = params.item_height;
 
@@ -4800,7 +4800,7 @@ impl GitPanel {
                                             .map(|layout| {
                                                 let bounds = Bounds::new(
                                                     point(
-                                                        layout.offset.x * indent_size + left_offset,
+                                                        layout.offset.x * indent_size + LEFT_OFFSET,
                                                         layout.offset.y * item_height,
                                                     ),
                                                     size(px(1.), layout.length * item_height),
@@ -4990,6 +4990,7 @@ impl GitPanel {
         let tree_view = GitPanelSettings::get_global(cx).tree_view;
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
+        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
@@ -5075,7 +5076,7 @@ impl GitPanel {
             .child(git_status_icon(status))
             .map(|this| {
                 if tree_view {
-                    this.pl(px(depth as f32 * TREE_INDENT)).child(
+                    this.pl(px(depth as f32 * indent_size)).child(
                         self.entry_label(display_name, label_color)
                             .when(status.is_deleted(), Label::strikethrough)
                             .truncate(),
@@ -5198,6 +5199,8 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
+
         // TODO: Have not yet plugin the self.marked_entries. Not sure when and why we need that
         let selected = self.selected_entry == Some(ix);
         let label_color = Color::Muted;
@@ -5252,7 +5255,7 @@ impl GitPanel {
         let name_row = h_flex()
             .min_w_0()
             .gap_1()
-            .pl(px(entry.depth as f32 * TREE_INDENT))
+            .pl(px(entry.depth as f32 * indent_size))
             .child(
                 Icon::new(folder_icon)
                     .size(IconSize::Small)

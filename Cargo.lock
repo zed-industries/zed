@@ -7175,6 +7175,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "project_panel_settings",
  "prompt_store",
  "rand 0.9.2",
  "remote",

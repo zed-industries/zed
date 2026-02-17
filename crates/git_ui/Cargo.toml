@@ -43,6 +43,7 @@ notifications.workspace = true
 panel.workspace = true
 picker.workspace = true
 project.workspace = true
+project_panel_settings.workspace = true
 prompt_store.workspace = true
 remote_connection.workspace = true
 remote.workspace = true
