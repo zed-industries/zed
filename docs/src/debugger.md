@@ -165,7 +165,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Settings
 
-Configure debugger settings in Settings ({#kb zed::OpenSettings}), or add the following to your `settings.json`. Settings are grouped under the `debugger` key:
+The settings for the debugger are grouped under the `debugger` key in `settings.json`:
 
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.

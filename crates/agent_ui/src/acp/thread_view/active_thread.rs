@@ -1,3 +1,4 @@
+use cloud_api_types::SubmitAgentThreadFeedbackBody;
 use gpui::{Corner, List};
 use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
@@ -23,6 +24,11 @@ impl ThreadFeedbackState {
             return;
         };
 
+        let project = thread.read(cx).project().read(cx);
+        let client = project.client();
+        let user_store = project.user_store();
+        let organization = user_store.read(cx).current_organization();
+
         if self.feedback == Some(feedback) {
             return;
         }
@@ -45,13 +51,18 @@ impl ThreadFeedbackState {
         };
         cx.background_spawn(async move {
             let thread = task.await?;
-            telemetry::event!(
-                "Agent Thread Rated",
-                agent = agent_telemetry_id,
-                session_id = session_id,
-                rating = rating,
-                thread = thread
-            );
+
+            client
+                .cloud_client()
+                .submit_agent_feedback(SubmitAgentThreadFeedbackBody {
+                    organization_id: organization.map(|organization| organization.id.clone()),
+                    agent: agent_telemetry_id.to_string(),
+                    session_id: session_id.to_string(),
+                    rating: rating.to_string(),
+                    thread,
+                })
+                .await?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -2861,10 +2872,6 @@ impl AcpThreadView {
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
 
@@ -4479,6 +4486,12 @@ impl AcpThreadView {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
 
+        let confirmation_options = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { options, .. } => Some(options),
+            _ => None,
+        };
+        let needs_confirmation = confirmation_options.is_some();
+
         let output = terminal_data.output();
         let command_finished = output.is_some();
         let truncated_output =
@@ -4547,7 +4560,7 @@ impl AcpThreadView {
                             .color(Color::Muted),
                     ),
             )
-            .when(!command_finished, |header| {
+            .when(!command_finished && !needs_confirmation, |header| {
                 header
                     .gap_1p5()
                     .child(
@@ -4724,6 +4737,14 @@ impl AcpThreadView {
                                 .into_any_element()
                         })),
                 )
+            })
+            .when_some(confirmation_options, |this, options| {
+                this.child(self.render_permission_buttons(
+                    options,
+                    entry_ix,
+                    tool_call.id.clone(),
+                    cx,
+                ))
             })
             .into_any()
     }
@@ -6850,7 +6871,7 @@ impl AcpThreadView {
 
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
-        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.model_selector
@@ -6859,7 +6880,7 @@ impl AcpThreadView {
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
-            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
             self.agent_name.clone()
         }
     }
@@ -7191,10 +7212,6 @@ impl AcpThreadView {
     }
 
     fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<CloudThinkingEffortFeatureFlag>() {
-            return;
-        }
-
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };

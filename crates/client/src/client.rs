@@ -34,7 +34,6 @@ use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
-    fmt::Write as _,
     future::Future,
     marker::PhantomData,
     path::PathBuf,
@@ -1390,15 +1389,10 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = http.build_url(&format!(
+                    let url = http.build_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
                         port, public_key_string
                     ));
-
-                    if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
-                        log::info!("impersonating user @{}", impersonate_login);
-                        write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
-                    }
 
                     open_url_tx.send(url).log_err();
 

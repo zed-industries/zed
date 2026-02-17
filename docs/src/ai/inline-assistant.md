@@ -47,7 +47,7 @@ This works well with excerpts in [multibuffers](../multibuffers.md).
 
 You can use the Inline Assistant to send the same prompt to multiple models at once.
 
-Add the following to your settings file to configure this ([how to edit](../configuring-zed.md#settings-files)):
+Here's how you can customize your `settings.json` to add this functionality:
 
 ```json [settings]
 {

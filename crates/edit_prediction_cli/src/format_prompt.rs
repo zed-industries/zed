@@ -160,7 +160,7 @@ pub fn zeta2_output_for_patch(
         // We need to add where the hunk context matched in the editable region to compute
         // the actual cursor position in the result.
         let hunk_start = first_hunk_offset.unwrap_or(0);
-        let offset = (hunk_start + cursor_offset).min(result.len());
+        let offset = result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()));
         result.insert_str(offset, zeta_prompt::CURSOR_MARKER);
     }
 
@@ -209,16 +209,15 @@ impl TeacherPrompt {
     }
 
     pub fn parse(example: &Example, response: &str) -> Result<(String, Option<ActualCursor>)> {
-        // Extract updated (new) editable region from the model response.
-        // The model may include editable region markers in its output, so we need to strip them.
-        let new_editable_region = extract_last_codeblock(response);
-
         // Check if the model indicated no edits are needed
-        if new_editable_region.trim() == Self::NO_EDITS {
-            return Ok((String::new(), None));
+        if let Some(last_codeblock) = extract_last_codeblock(&response) {
+            if last_codeblock.trim() == Self::NO_EDITS {
+                return Ok((String::new(), None));
+            }
         }
 
-        let new_editable_region = Self::extract_editable_region(&new_editable_region)?;
+        // Extract updated (new) editable region from the model response.
+        let new_editable_region = Self::extract_editable_region(&response)?;
         let cursor_offset = new_editable_region.find(Self::USER_CURSOR_MARKER);
         let mut new_editable_region = new_editable_region.replace(Self::USER_CURSOR_MARKER, "");
         let old_editable_region = Self::extract_editable_region(
@@ -433,36 +432,49 @@ pub fn extract_cursor_excerpt_from_example(example: &Example) -> Option<String> 
     Some(result)
 }
 
-pub(crate) fn extract_last_codeblock(text: &str) -> String {
-    let mut last_block = None;
-    let mut search_start = 0;
+pub(crate) fn extract_last_codeblock(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
 
-    while let Some(start) = text[search_start..].find("```") {
-        let start = start + search_start;
-        let bytes = text.as_bytes();
-        let mut backtick_end = start;
+    // Search from the end for a closing fence (line containing only backticks, 3+)
+    let mut closing_line_idx = None;
+    let mut backtick_count = 0;
 
-        while backtick_end < bytes.len() && bytes[backtick_end] == b'`' {
-            backtick_end += 1;
-        }
-
-        let backtick_count = backtick_end - start;
-        let closing_pattern = format!("\n{}", "`".repeat(backtick_count));
-
-        while backtick_end < bytes.len() && bytes[backtick_end] != b'\n' {
-            backtick_end += 1;
-        }
-
-        if let Some(end_pos) = text[backtick_end..].find(&closing_pattern) {
-            let code_block = &text[backtick_end + 1..backtick_end + end_pos + 1];
-            last_block = Some(code_block.to_string());
-            search_start = backtick_end + end_pos + closing_pattern.len();
-        } else {
+    for i in (0..lines.len()).rev() {
+        let line = lines[i].trim();
+        if line.len() >= 3 && line.chars().all(|c| c == '`') {
+            closing_line_idx = Some(i);
+            backtick_count = line.len();
             break;
         }
     }
 
-    last_block.unwrap_or_else(|| text.to_string())
+    let closing_idx = closing_line_idx?;
+
+    // Search backwards for matching opening fence
+    // Opening fence starts with same backtick count, possibly followed by language/metadata
+    let opening_pattern = "`".repeat(backtick_count);
+
+    for i in (0..closing_idx).rev() {
+        let line = lines[i];
+        if line.starts_with(&opening_pattern) {
+            // Ensure it's exactly the right number of backticks (not more)
+            let rest = &line[backtick_count..];
+            if rest.is_empty() || !rest.starts_with('`') {
+                // Found matching opening fence
+                // Extract content between opening and closing (exclusive)
+                if closing_idx > i + 1 {
+                    let content = lines[i + 1..closing_idx].join("\n");
+                    // Preserve trailing newline to match previous behavior
+                    return Some(format!("{}\n", content));
+                } else {
+                    // Empty block
+                    return Some(String::new());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -482,7 +494,7 @@ mod tests {
             last block
             `````
             "};
-        let last_block = extract_last_codeblock(text);
+        let last_block = extract_last_codeblock(text).unwrap();
         assert_eq!(last_block, "last block\n");
     }
 
@@ -495,7 +507,7 @@ mod tests {
             more content
             `````
             "};
-        let last_block = extract_last_codeblock(text);
+        let last_block = extract_last_codeblock(text).unwrap();
         assert_eq!(
             last_block,
             "content with ``` inline\nand ```python nested\nmore content\n"
@@ -510,7 +522,7 @@ mod tests {
             and here```more```stuff
             `````
             "};
-        let last_block = extract_last_codeblock(text);
+        let last_block = extract_last_codeblock(text).unwrap();
         assert_eq!(
             last_block,
             "here is some `code` with inline backticks\nand here```more```stuff\n"
@@ -559,7 +571,7 @@ mod tests {
             ```
             `````
             "#};
-        let last_block = extract_last_codeblock(text);
+        let last_block = extract_last_codeblock(text).unwrap();
         assert_eq!(
             last_block,
             indoc::indoc! {r#"
@@ -601,7 +613,42 @@ mod tests {
             NO_EDITS
             `````
         "};
-        let codeblock = extract_last_codeblock(response);
+        let codeblock = extract_last_codeblock(response).unwrap();
         assert_eq!(codeblock.trim(), TeacherPrompt::NO_EDITS);
+    }
+
+    #[test]
+    fn test_extract_codeblock_no_valid_block() {
+        // Text with no code blocks should return None
+        let text = "Just some plain text without any code blocks";
+        assert!(extract_last_codeblock(text).is_none());
+
+        // Unclosed code block should return None
+        let text = indoc::indoc! {"
+            ```
+            unclosed block
+        "};
+        assert!(extract_last_codeblock(text).is_none());
+
+        // Analysis text with nested markdown but no proper outer block
+        let text = indoc::indoc! {"
+            # Analysis
+            Looking at this:
+            ```
+            some code
+            ```
+            But then more analysis without wrapping block
+        "};
+        // This should find the inner block
+        let result = extract_last_codeblock(text).unwrap();
+        assert_eq!(result, "some code\n");
+    }
+
+    #[test]
+    fn test_extract_codeblock_no_trailing_newline() {
+        // Text ending without trailing newline after closing fence
+        let text = "`````\ncontent here\n`````";
+        let result = extract_last_codeblock(text).unwrap();
+        assert_eq!(result, "content here\n");
     }
 }

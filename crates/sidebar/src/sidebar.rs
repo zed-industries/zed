@@ -535,6 +535,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let workspace_index = thread_entry.index;
                 let multi_workspace = self.multi_workspace.clone();
                 let workspace_count = self.multi_workspace.read(cx).workspaces().len();
+                let is_active = self.active_workspace_index == workspace_index;
                 let is_hovered = self.hovered_thread_item == Some(workspace_index);
 
                 let remove_btn = IconButton::new(
@@ -568,7 +569,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
-                    .icon(IconName::Folder)
+                    .icon(if is_active {
+                        IconName::FolderOpen
+                    } else {
+                        IconName::Folder
+                    })
                     .running(running)
                     .generation_done(has_notification)
                     .selected(selected)

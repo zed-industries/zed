@@ -9,7 +9,7 @@ This guide explains how Zed's settings system works, including the Settings Edit
 
 For visual customization (themes, fonts, icons), see [Appearance](./appearance.md).
 
-## Settings Editor {#settings-editor}
+## Settings Editor
 
 The **Settings Editor** ({#kb zed::OpenSettings}) is the primary way to configure Zed. It provides a searchable interface where you can browse available settings, see their current values, and make changes.
 
@@ -22,9 +22,9 @@ As you type in the search box, matching settings appear with descriptions and co
 
 > **Note:** Not all settings are available in the Settings Editor yet. Some advanced options, like language formatters, require editing the JSON file directly.
 
-## Settings Files {#settings-files}
+## Settings Files
 
-### User Settings {#user-settings}
+### User Settings
 
 Your user settings apply globally across all projects. Open the file with {#kb zed::OpenSettingsFile} or run `zed: open settings file` from the command palette.
 
@@ -36,11 +36,11 @@ The file is located at:
 
 The syntax is JSON with support for `//` comments.
 
-### Default Settings {#default-settings}
+### Default Settings
 
 To see all available settings with their default values, run {#action zed::OpenDefaultSettings} from the command palette. This opens a read-only reference you can use when editing your own settings.
 
-### Project Settings {#project-settings}
+### Project Settings
 
 Override user settings for a specific project by creating a `.zed/settings.json` file in your project root. Run {#action zed::OpenProjectSettings} to create this file.
 
@@ -59,7 +59,7 @@ You can also add settings files in subdirectories for more granular control.
 
 **Limitation:** Not all settings can be set at the project level. Settings that affect the editor globally (like `theme` or `vim_mode`) only work in user settings. Project settings are limited to editor behavior and language tooling options like `tab_size`, `formatter`, and `format_on_save`.
 
-## How Settings Merge {#settings-merge}
+## How Settings Merge
 
 Settings are applied in layers:
 

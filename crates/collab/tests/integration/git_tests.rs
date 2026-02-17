@@ -67,7 +67,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
                 cx,
             )
         });
-        MultiWorkspace::new(workspace, cx)
+        MultiWorkspace::new(workspace, window, cx)
     });
     let cx_b = &mut VisualTestContext::from_window(*window_b, cx_b);
     let workspace_b = window_b

@@ -48,7 +48,7 @@ To create JSX snippets you have to use `javascript.json` snippets file, instead 
 
 The `feature_paths` option in `simple-completion-language-server` is disabled by default.
 
-If you want to enable it you can add the following to your `settings.json` ([how to edit](./configuring-zed.md#settings-files)):
+If you want to enable it you can add the following to your `settings.json`:
 
 ```json [settings]
 {

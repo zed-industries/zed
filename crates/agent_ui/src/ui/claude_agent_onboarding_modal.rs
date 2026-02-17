@@ -8,7 +8,7 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_panel::{AgentPanel, AgentType};
 
-macro_rules! claude_code_onboarding_event {
+macro_rules! claude_agent_onboarding_event {
     ($name:expr) => {
         telemetry::event!($name, source = "ACP Claude Code Onboarding");
     };
@@ -37,21 +37,21 @@ impl ClaudeCodeOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::ClaudeCode, window, cx);
+                    panel.new_agent_thread(AgentType::ClaudeAgent, window, cx);
                 });
             }
         });
 
         cx.emit(DismissEvent);
 
-        claude_code_onboarding_event!("Open Panel Clicked");
+        claude_agent_onboarding_event!("Open Panel Clicked");
     }
 
     fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url(&zed_urls::external_agents_docs(cx));
         cx.notify();
 
-        claude_code_onboarding_event!("Documentation Link Clicked");
+        claude_agent_onboarding_event!("Documentation Link Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -172,7 +172,7 @@ impl Render for ClaudeCodeOnboardingModal {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new("New Claude Code Thread").size(LabelSize::Small)),
+                            .child(Label::new("New Claude Agent Thread").size(LabelSize::Small)),
                     )
                     .child(illustration_element(
                         IconName::Stop,
@@ -190,11 +190,11 @@ impl Render for ClaudeCodeOnboardingModal {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .child(Headline::new("Claude Code: Natively in Zed").size(HeadlineSize::Large));
+            .child(Headline::new("Claude Agent: Natively in Zed").size(HeadlineSize::Large));
 
-        let copy = "Powered by the Agent Client Protocol, you can now run Claude Code as\na first-class citizen in Zed's agent panel.";
+        let copy = "Powered by the Agent Client Protocol, you can now run Claude Agent as\na first-class citizen in Zed's agent panel.";
 
-        let open_panel_button = Button::new("open-panel", "Start with Claude Code")
+        let open_panel_button = Button::new("open-panel", "Start with Claude Agent")
             .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
@@ -210,7 +210,7 @@ impl Render for ClaudeCodeOnboardingModal {
         let close_button = h_flex().absolute().top_2().right_2().child(
             IconButton::new("cancel", IconName::Close).on_click(cx.listener(
                 |_, _: &ClickEvent, _window, cx| {
-                    claude_code_onboarding_event!("Canceled", trigger = "X click");
+                    claude_agent_onboarding_event!("Canceled", trigger = "X click");
                     cx.emit(DismissEvent);
                 },
             )),
@@ -227,7 +227,7 @@ impl Render for ClaudeCodeOnboardingModal {
             .overflow_hidden()
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
-                claude_code_onboarding_event!("Canceled", trigger = "Action");
+                claude_agent_onboarding_event!("Canceled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, cx| {

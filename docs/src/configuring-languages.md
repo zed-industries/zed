@@ -16,7 +16,7 @@ For a list of supported languages, see [Supported Languages](./languages.md). To
 
 ## Language-specific Settings
 
-Zed allows you to override global settings for individual languages. You can configure many of these in Settings ({#kb zed::OpenSettings}) by searching for the language name. For more advanced configuration, add settings to your `settings.json` under the `languages` key (some nested settings require manual JSON editing).
+Zed allows you to override global settings for individual languages. These custom configurations are defined in your `settings.json` file under the `languages` key.
 
 Here's an example of language-specific settings:
 
@@ -58,7 +58,7 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, configure [`file_types`](./reference/all-settings.md#file-types) in Settings ({#kb zed::OpenSettings}), or add them to your `settings.json`:
+To set up custom file associations, use the [`file_types`](./reference/all-settings.md#file-types) setting in your `settings.json`:
 
 ```json [settings]
 "file_types": {
@@ -136,7 +136,7 @@ Not all languages in Zed support toolchain discovery and selection, but for thos
 
 ### Configuring Language Servers
 
-Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json` ([how to edit](./configuring-zed.md#settings-files)):
+Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 
 ```json [settings]
   "lsp": {
@@ -240,7 +240,7 @@ Language servers are automatically downloaded or launched if found in your path,
 
 ### Enabling or Disabling Language Servers
 
-You can toggle language server support globally or per-language in Settings ({#kb zed::OpenSettings}), or in your `settings.json`:
+You can toggle language server support globally or per-language:
 
 ```json [settings]
   "languages": {
@@ -258,7 +258,7 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. See [`formatter`](./reference/all-settings.md#formatter) docs for more. You can configure basic formatting options in Settings ({#kb zed::OpenSettings}), or configure formatters globally or per-language in your `settings.json` (some formatter settings require manual JSON editing):
+Zed supports both built-in and external formatters. See [`formatter`](./reference/all-settings.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
 ```json [settings]
 "languages": {
@@ -419,7 +419,7 @@ You can customize token colors and styles through `global_lsp_settings.semantic_
 
 ### Inlay Hints
 
-Inlay hints provide additional information inline in your code, such as parameter names or inferred types. Configure inlay hints in Settings ({#kb zed::OpenSettings}), or add the following to your `settings.json`:
+Inlay hints provide additional information inline in your code, such as parameter names or inferred types. Configure inlay hints in your `settings.json`:
 
 ```json [settings]
 "inlay_hints": {

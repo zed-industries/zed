@@ -9,7 +9,7 @@ Semantic tokens provide richer syntax highlighting by using information from lan
 
 ## Enabling Semantic Tokens
 
-Semantic tokens are controlled by the `semantic_tokens` setting. By default, semantic tokens are disabled. Configure this in Settings ({#kb zed::OpenSettings}), or add the following to your `settings.json`:
+Semantic tokens are controlled by the `semantic_tokens` setting. By default, semantic tokens are disabled.
 
 ```json [settings]
 {
@@ -45,7 +45,7 @@ You can configure this globally or per-language:
 
 ## Customizing Token Colors
 
-Semantic tokens are styled using rules that map LSP token types and modifiers to theme styles or custom colors. Zed provides sensible defaults, but you can customize these in your `settings.json` ([how to edit](./configuring-zed.md#settings-files)): add rules under `global_lsp_settings.semantic_token_rules` key.
+Semantic tokens are styled using rules that map LSP token types and modifiers to theme styles or custom colors. Zed provides sensible defaults, but you can customize these in your settings.json: add rules under `global_lsp_settings.semantic_token_rules` key.
 
 Rules are matched in order, and the first matching rule wins.
 User-defined rules take precedence over defaults.

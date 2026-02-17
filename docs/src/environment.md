@@ -18,7 +18,7 @@ In order to make the best use of these features, it's helpful to understand wher
 
 ## Where does Zed get its environment variables from?
 
-How Zed was started influences which environment variables Zed can use. Clicking the icon in the macOS Dock or a Linux window manager produces different results than starting via the CLI `zed`.
+How Zed was started — whether it's icon was clicked in the macOS Dock or in a Linux window manager, or whether it was started via the CLI `zed` that comes with Zed — influences which environment variables Zed can use.
 
 ### Launched from the CLI
 
@@ -94,4 +94,4 @@ After looking up a language server, Zed starts them.
 These language server processes always inherit Zed's process environment. But, depending on the language server look-up, additional environment variables might be set or overwrite the process environment.
 
 - If the language server was found in the project environment's `$PATH`, then the project environment's is passed along to the language server process. Where the project environment comes from depends on how the project was opened, via CLI or not. See previous point on look-up of language servers.
-- If the language server was not found in the project environment, Zed tries to install it globally and start it globally. In that case, the process will inherit Zed's process environment. If the project was opened via CLI, it also inherits from the CLI environment.
+- If the language servers was not found in the project environment, Zed tries to install it globally and start it globally. In that case, the process will inherit Zed's process environment, and — if the project was opened via ClI — from the CLI.

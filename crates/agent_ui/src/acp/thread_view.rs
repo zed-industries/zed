@@ -20,10 +20,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{
-    AgentSharingFeatureFlag, AgentV2FeatureFlag, CloudThinkingEffortFeatureFlag,
-    FeatureFlagAppExt as _,
-};
+use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -1106,8 +1103,6 @@ impl AcpServerView {
                 if should_send_queued {
                     self.send_queued_message_at_index(0, false, window, cx);
                 }
-
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
@@ -1162,7 +1157,6 @@ impl AcpServerView {
                         }
                     });
                 }
-                self.history.update(cx, |history, cx| history.refresh(cx));
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 if let Some(active) = self.thread_view(&thread_id) {
@@ -2388,7 +2382,7 @@ impl AcpServerView {
 
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
-        // For ACP agents, use the agent name (e.g., "Claude Code", "Gemini CLI")
+        // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.active_thread()
@@ -2397,7 +2391,7 @@ impl AcpServerView {
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
-            // ACP agent - use the agent name (e.g., "Claude Code", "Gemini CLI")
+            // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
             self.agent.name()
         }
     }
