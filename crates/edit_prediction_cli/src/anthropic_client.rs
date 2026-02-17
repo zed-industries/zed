@@ -11,6 +11,7 @@ use reqwest_client::ReqwestClient;
 use sqlez::bindable::Bind;
 use sqlez::bindable::StaticColumnCount;
 use sqlez_macros::sql;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::Path;
@@ -517,6 +518,7 @@ impl BatchingLlmClient {
 
         let mut current_batch_rows = Vec::new();
         let mut current_batch_size = 0usize;
+        let mut pending_hashes: HashSet<String> = HashSet::new();
         loop {
             let rows: Vec<(String, String)> = {
                 let connection = self.connection.lock().unwrap();
@@ -534,9 +536,15 @@ impl BatchingLlmClient {
 
             // Split rows into sub-batches based on size
             let mut batches_to_upload = Vec::new();
+            let mut new_rows_added = 0;
 
             for row in rows {
                 let (hash, request_str) = row;
+
+                // Skip rows already added to current_batch_rows but not yet uploaded
+                if pending_hashes.contains(&hash) {
+                    continue;
+                }
                 let serializable_request: SerializableRequest = serde_json::from_str(&request_str)?;
 
                 let messages: Vec<Message> = serializable_request
@@ -586,8 +594,16 @@ impl BatchingLlmClient {
                     current_batch_size = 0;
                 }
 
+                pending_hashes.insert(hash.clone());
                 current_batch_rows.push((hash, batch_request));
                 current_batch_size += estimated_size;
+                new_rows_added += 1;
+            }
+
+            // If no new rows were added this iteration, all pending requests are already
+            // in current_batch_rows, so we should break to avoid an infinite loop
+            if new_rows_added == 0 {
+                break;
             }
 
             // Only upload full batches, keep the partial batch for the next iteration
@@ -595,6 +611,11 @@ impl BatchingLlmClient {
             for (batch_rows, batch_size) in batches_to_upload {
                 let request_hashes: Vec<String> =
                     batch_rows.iter().map(|(hash, _)| hash.clone()).collect();
+
+                // Remove uploaded hashes from pending set
+                for hash in &request_hashes {
+                    pending_hashes.remove(hash);
+                }
                 let batch_requests: Vec<anthropic::batches::BatchRequest> =
                     batch_rows.into_iter().map(|(_, req)| req).collect();
 
