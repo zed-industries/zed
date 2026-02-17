@@ -2780,6 +2780,7 @@ impl MultiBuffer {
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
         );
+        dbg!("EXPAND OR COLLAPSE DIFF HUNKS INNER");
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }

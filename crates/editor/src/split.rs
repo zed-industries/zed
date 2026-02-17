@@ -646,7 +646,11 @@ impl SplittableEditor {
         self.rhs_editor.update(cx, |editor, cx| {
             editor.set_delegate_expand_excerpts(true);
             editor.buffer().update(cx, |rhs_multibuffer, cx| {
+                // This has to recompute the whole multibuffer
+                // FIXME could this be causing us to sync _before_ we have the companion?
+                dbg!(">>>>>>>>>>> set show deleted hunks");
                 rhs_multibuffer.set_show_deleted_hunks(false, cx);
+                dbg!("<<<<<<<<<<< set show deleted hunks");
                 rhs_multibuffer.set_use_extended_diff_range(true, cx);
             })
         });

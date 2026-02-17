@@ -478,6 +478,7 @@ impl DisplayMap {
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
+        dbg!(">>>>>>>>>>> set companion");
         let this = cx.weak_entity();
         // Reverting to no companion, recompute the block map to clear spacers
         // and balancing blocks.

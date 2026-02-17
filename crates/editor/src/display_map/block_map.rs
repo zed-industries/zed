@@ -761,6 +761,9 @@ impl BlockMap {
         mut edits: WrapPatch,
         companion_view: Option<CompanionView>,
     ) {
+        let _timer =
+            zlog::time!("block map sync").warn_if_gt(std::time::Duration::from_millis(100));
+
         let buffer = wrap_snapshot.buffer_snapshot();
 
         edits = self.deferred_edits.take().compose(edits);

@@ -23924,6 +23924,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let _timer =
+            zlog::time!("on buffer event").warn_if_gt(std::time::Duration::from_millis(100));
+
         match event {
             multi_buffer::Event::Edited { edited_buffer } => {
                 self.scrollbar_marker_state.dirty = true;
