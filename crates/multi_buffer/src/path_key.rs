@@ -13,6 +13,12 @@ use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
 };
 
+#[derive(Debug, Clone)]
+pub struct PathExcerptInsertResult {
+    pub excerpt_ids: Vec<ExcerptId>,
+    pub added_new_excerpt: bool,
+}
+
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
     // Used by the derived PartialOrd & Ord
@@ -268,12 +274,15 @@ impl MultiBuffer {
         counts: Vec<usize>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let (excerpt_ids, added_a_new_excerpt) =
-            self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
+        let insert_result = self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
 
         let mut result = Vec::new();
         let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(counts.into_iter()) {
+        for (excerpt_id, range_count) in insert_result
+            .excerpt_ids
+            .into_iter()
+            .zip(counts.into_iter())
+        {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
@@ -283,7 +292,7 @@ impl MultiBuffer {
                 result.push(range)
             }
         }
-        (result, added_a_new_excerpt)
+        (result, insert_result.added_new_excerpt)
     }
 
     pub fn update_path_excerpts(
@@ -293,7 +302,7 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> (Vec<ExcerptId>, bool) {
+    ) -> PathExcerptInsertResult {
         let mut insert_after = self
             .excerpts_by_path
             .range(..path.clone())
@@ -443,6 +452,9 @@ impl MultiBuffer {
             self.excerpts_by_path.insert(path, excerpt_ids);
         }
 
-        (excerpt_ids, added_a_new_excerpt)
+        PathExcerptInsertResult {
+            excerpt_ids,
+            added_new_excerpt: added_a_new_excerpt,
+        }
     }
 }
