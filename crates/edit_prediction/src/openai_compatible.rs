@@ -35,6 +35,15 @@ struct RequestOutput {
     buffer_snapshotted_at: Instant,
 }
 
+fn chat_completions_url(api_url: &str) -> String {
+    let trimmed = api_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        format!("{}/chat/completions", trimmed)
+    } else {
+        format!("{}/v1/chat/completions", trimmed)
+    }
+}
+
 impl OpenAiCompatibleEditPrediction {
     pub fn new() -> Self {
         Self
@@ -154,9 +163,17 @@ impl OpenAiCompatibleEditPrediction {
                     in_open_source_repo: false,
                 };
 
-                let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
-                let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
-                let prompt = format_fim_prompt(&model, &prefix, &suffix);
+                let Some((prefix, suffix)) = inputs
+                    .cursor_excerpt
+                    .split_at_checked(inputs.cursor_offset_in_excerpt)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "cursor offset {} was out of bounds for excerpt length {}",
+                        inputs.cursor_offset_in_excerpt,
+                        inputs.cursor_excerpt.len()
+                    ));
+                };
+                let prompt = format_fim_prompt(&model, prefix, suffix);
                 let stop_tokens = get_fim_stop_tokens();
 
                 (prompt, stop_tokens, None, inputs)
@@ -181,7 +198,7 @@ impl OpenAiCompatibleEditPrediction {
             let buf = serde_json::to_vec(&request_body)?;
             let body: http_client::AsyncBody = buf.into();
 
-            let url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
+            let url = chat_completions_url(&api_url);
 
             let mut request_builder = http_client::Request::builder()
                 .method(http_client::Method::POST)
@@ -234,7 +251,7 @@ impl OpenAiCompatibleEditPrediction {
 
             let edits = if is_zeta {
                 let editable_range =
-                    editable_range_override.expect("zeta model should have editable range");
+                    editable_range_override.context("zeta model should have editable range")?;
 
                 let cleaned = clean_zeta_completion(&response_str);
                 match zeta1::parse_edits(cleaned, editable_range, &snapshot) {
@@ -285,5 +302,34 @@ impl OpenAiCompatibleEditPrediction {
                 .await,
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chat_completions_url;
+
+    #[test]
+    fn chat_completions_url_appends_v1_when_missing() {
+        assert_eq!(
+            chat_completions_url("http://localhost:8000"),
+            "http://localhost:8000/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("http://localhost:8000/"),
+            "http://localhost:8000/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_does_not_duplicate_v1() {
+        assert_eq!(
+            chat_completions_url("http://localhost:8000/v1"),
+            "http://localhost:8000/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("http://localhost:8000/v1/"),
+            "http://localhost:8000/v1/chat/completions"
+        );
     }
 }

@@ -720,13 +720,25 @@ impl settings::Settings for AllLanguageSettings {
             api_url: ollama.api_url.unwrap().into(),
         };
 
-        let openai_compatible = edit_predictions.openai_compatible.unwrap();
-        let openai_compatible_settings = OpenAiCompatibleSettings {
-            model: openai_compatible.model,
-            max_output_tokens: openai_compatible.max_output_tokens.unwrap(),
-            api_url: openai_compatible.api_url.unwrap().into(),
-            api_key: openai_compatible.api_key,
-        };
+        let openai_compatible_settings =
+            if let Some(openai_compatible) = edit_predictions.openai_compatible {
+                OpenAiCompatibleSettings {
+                    model: openai_compatible.model,
+                    max_output_tokens: openai_compatible.max_output_tokens.unwrap_or(256),
+                    api_url: openai_compatible
+                        .api_url
+                        .unwrap_or_else(|| "http://localhost:8000/v1".into())
+                        .into(),
+                    api_key: openai_compatible.api_key,
+                }
+            } else {
+                OpenAiCompatibleSettings {
+                    model: None,
+                    max_output_tokens: 256,
+                    api_url: "http://localhost:8000/v1".into(),
+                    api_key: None,
+                }
+            };
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
