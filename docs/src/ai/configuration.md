@@ -4,8 +4,8 @@ When using AI in Zed, you can configure multiple dimensions:
 
 1. Which LLM providers you can use
    - Zed's hosted models, which require [authentication](../authentication.md) and [subscription](./subscription.md)
-   - [Using your own API keys](./llm-providers.md), which do not
-   - Using [external agents like Claude Code](./external-agents.md), which do not
+   - [Using your own API keys](./llm-providers.md), which do not require the above
+   - Using [external agents like Claude Agent](./external-agents.md), which also do not require the above
 2. [Model parameters and usage](./agent-settings.md#model-settings)
 3. [Interactions with the Agent Panel](./agent-settings.md#agent-panel-settings)
 

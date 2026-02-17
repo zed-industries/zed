@@ -7,12 +7,12 @@ use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
-    agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME},
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent};
 
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
@@ -195,9 +195,11 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
                 })
-                .register_action(|workspace, _: &OpenClaudeCodeOnboardingModal, window, cx| {
-                    ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
-                })
+                .register_action(
+                    |workspace, _: &OpenClaudeAgentOnboardingModal, window, cx| {
+                        ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
+                    },
+                )
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
                     window.refresh();
@@ -271,7 +273,7 @@ pub enum AgentType {
     NativeAgent,
     TextThread,
     Gemini,
-    ClaudeCode,
+    ClaudeAgent,
     Codex,
     Custom {
         name: SharedString,
@@ -283,7 +285,7 @@ impl AgentType {
         match self {
             Self::NativeAgent | Self::TextThread => "Zed Agent".into(),
             Self::Gemini => "Gemini CLI".into(),
-            Self::ClaudeCode => "Claude Code".into(),
+            Self::ClaudeAgent => "Claude Agent".into(),
             Self::Codex => "Codex".into(),
             Self::Custom { name, .. } => name.into(),
         }
@@ -293,7 +295,7 @@ impl AgentType {
         match self {
             Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
-            Self::ClaudeCode => Some(IconName::AiClaude),
+            Self::ClaudeAgent => Some(IconName::AiClaude),
             Self::Codex => Some(IconName::AiOpenAi),
             Self::Custom { .. } => Some(IconName::Sparkle),
         }
@@ -304,7 +306,7 @@ impl From<ExternalAgent> for AgentType {
     fn from(value: ExternalAgent) -> Self {
         match value {
             ExternalAgent::Gemini => Self::Gemini,
-            ExternalAgent::ClaudeCode => Self::ClaudeCode,
+            ExternalAgent::ClaudeCode => Self::ClaudeAgent,
             ExternalAgent::Codex => Self::Codex,
             ExternalAgent::Custom { name } => Self::Custom { name },
             ExternalAgent::NativeAgent => Self::NativeAgent,
@@ -937,7 +939,7 @@ impl AgentPanel {
             AgentType::NativeAgent => Some(HistoryKind::AgentThreads),
             AgentType::TextThread => Some(HistoryKind::TextThreads),
             AgentType::Gemini
-            | AgentType::ClaudeCode
+            | AgentType::ClaudeAgent
             | AgentType::Codex
             | AgentType::Custom { .. } => {
                 if self.acp_history.read(cx).has_session_list() {
@@ -1577,7 +1579,7 @@ impl AgentPanel {
         match &self.selected_agent {
             AgentType::NativeAgent => Some(ExternalAgent::NativeAgent),
             AgentType::Gemini => Some(ExternalAgent::Gemini),
-            AgentType::ClaudeCode => Some(ExternalAgent::ClaudeCode),
+            AgentType::ClaudeAgent => Some(ExternalAgent::ClaudeCode),
             AgentType::Codex => Some(ExternalAgent::Codex),
             AgentType::Custom { name } => Some(ExternalAgent::Custom { name: name.clone() }),
             AgentType::TextThread => None,
@@ -1644,8 +1646,8 @@ impl AgentPanel {
             AgentType::Gemini => {
                 self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
             }
-            AgentType::ClaudeCode => {
-                self.selected_agent = AgentType::ClaudeCode;
+            AgentType::ClaudeAgent => {
+                self.selected_agent = AgentType::ClaudeAgent;
                 self.serialize(cx);
                 self.external_thread(
                     Some(crate::ExternalAgent::ClaudeCode),
@@ -2320,8 +2322,8 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("Claude Code")
-                                    .when(is_agent_selected(AgentType::ClaudeCode), |this| {
+                                ContextMenuEntry::new("Claude Agent")
+                                    .when(is_agent_selected(AgentType::ClaudeAgent), |this| {
                                         this.action(Box::new(NewExternalAgentThread {
                                             agent: None,
                                         }))
@@ -2339,7 +2341,7 @@ impl AgentPanel {
                                                     {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_agent_thread(
-                                                                AgentType::ClaudeCode,
+                                                                AgentType::ClaudeAgent,
                                                                 window,
                                                                 cx,
                                                             );
@@ -2418,7 +2420,7 @@ impl AgentPanel {
                                     .external_agents()
                                     .filter(|name| {
                                         name.0 != GEMINI_NAME
-                                            && name.0 != CLAUDE_CODE_NAME
+                                            && name.0 != CLAUDE_AGENT_NAME
                                             && name.0 != CODEX_NAME
                                     })
                                     .cloned()
