@@ -14,6 +14,8 @@ use workspace::AppState;
 
 const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
 const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
+const OPENAI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8000/v1";
+const OPENAI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "zeta";
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -65,6 +67,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             .into_any_element(),
         ),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
+        Some(render_openai_compatible_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
@@ -329,6 +332,34 @@ fn sweep_settings() -> Box<[SettingsPageItem]> {
     })])
 }
 
+fn render_openai_compatible_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let openai_compatible_settings = openai_compatible_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(
+            openai_compatible_settings.iter().enumerate(),
+            true,
+            window,
+            cx,
+        )
+        .into_any_element();
+
+    v_flex()
+        .id("openai-compatible")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("OpenAI Compatible")
+                .icon(IconName::AiOpenAiCompat)
+                .no_padding(true),
+        )
+        .child(div().px_neg_8().child(additional_fields))
+}
+
 fn render_ollama_provider(
     settings_window: &SettingsWindow,
     window: &mut Window,
@@ -446,6 +477,137 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens = value;
                 },
                 json_path: Some("edit_predictions.ollama.max_output_tokens"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+    ])
+}
+
+fn openai_compatible_settings() -> Box<[SettingsPageItem]> {
+    Box::new([
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API URL",
+            description: "The base URL of your OpenAI-compatible server (e.g. vLLM, TGI, llama.cpp).",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .openai_compatible
+                        .as_ref()?
+                        .api_url
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .openai_compatible
+                        .get_or_insert_default()
+                        .api_url = value;
+                },
+                json_path: Some("edit_predictions.openai_compatible.api_url"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OPENAI_COMPATIBLE_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Model",
+            description: "The model name to use for edit predictions.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .openai_compatible
+                        .as_ref()?
+                        .model
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .openai_compatible
+                        .get_or_insert_default()
+                        .model = value;
+                },
+                json_path: Some("edit_predictions.openai_compatible.model"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OPENAI_COMPATIBLE_MODEL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API Key",
+            description: "Optional API key for authenticated endpoints. Falls back to OPENAI_COMPATIBLE_EDIT_PREDICTION_API_KEY env var.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .openai_compatible
+                        .as_ref()?
+                        .api_key
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .openai_compatible
+                        .get_or_insert_default()
+                        .api_key = value;
+                },
+                json_path: Some("edit_predictions.openai_compatible.api_key"),
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Max Output Tokens",
+            description: "The maximum number of tokens to generate.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .openai_compatible
+                        .as_ref()?
+                        .max_output_tokens
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .openai_compatible
+                        .get_or_insert_default()
+                        .max_output_tokens = value;
+                },
+                json_path: Some("edit_predictions.openai_compatible.max_output_tokens"),
             }),
             metadata: None,
             files: USER,

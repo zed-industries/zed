@@ -59,6 +59,7 @@ pub mod mercury;
 pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
+pub mod openai_compatible;
 mod prediction;
 pub mod sweep_ai;
 
@@ -76,6 +77,7 @@ use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
+use crate::openai_compatible::OpenAiCompatibleEditPrediction;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
@@ -138,6 +140,7 @@ pub struct EditPredictionStore {
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     pub ollama: Ollama,
+    pub openai_compatible: OpenAiCompatibleEditPrediction,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -152,6 +155,7 @@ pub enum EditPredictionModel {
     Sweep,
     Mercury,
     Ollama,
+    OpenAiCompatible,
 }
 
 #[derive(Clone)]
@@ -688,6 +692,7 @@ impl EditPredictionStore {
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
             ollama: Ollama::new(),
+            openai_compatible: OpenAiCompatibleEditPrediction::new(),
 
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -739,6 +744,9 @@ impl EditPredictionStore {
             }
             EditPredictionModel::Ollama => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
+            }
+            EditPredictionModel::OpenAiCompatible => {
+                edit_prediction_types::EditPredictionIconSet::new(IconName::AiOpenAiCompat)
             }
         }
     }
@@ -1285,7 +1293,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Ollama => {}
+            EditPredictionModel::Ollama | EditPredictionModel::OpenAiCompatible => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
                 zeta2::edit_prediction_accepted(self, current_prediction, cx)
             }
@@ -1431,7 +1439,9 @@ impl EditPredictionStore {
                     })
                     .log_err();
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
+            EditPredictionModel::Sweep
+            | EditPredictionModel::Ollama
+            | EditPredictionModel::OpenAiCompatible => {}
             EditPredictionModel::Mercury => {
                 mercury::edit_prediction_rejected(
                     prediction_id,
@@ -1621,9 +1631,12 @@ impl EditPredictionStore {
             -> Task<Result<Option<(EditPredictionResult, PredictionRequestedBy)>>>
         + 'static,
     ) {
-        let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
-        let drop_on_cancel = is_ollama;
-        let max_pending_predictions = if is_ollama { 1 } else { 2 };
+        let is_local = matches!(
+            self.edit_prediction_model,
+            EditPredictionModel::Ollama | EditPredictionModel::OpenAiCompatible
+        );
+        let drop_on_cancel = is_local;
+        let max_pending_predictions = if is_local { 1 } else { 2 };
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
@@ -1855,6 +1868,9 @@ impl EditPredictionStore {
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
             EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
+            EditPredictionModel::OpenAiCompatible => {
+                self.openai_compatible.request_prediction(inputs, cx)
+            }
         };
 
         cx.spawn(async move |this, cx| {

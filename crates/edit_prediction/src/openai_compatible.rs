@@ -1,5 +1,10 @@
 use crate::{
     EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    ollama::{
+        clean_fim_completion, clean_zeta_completion, format_fim_prompt, get_fim_stop_tokens,
+        get_zeta_stop_tokens, is_zeta_model,
+    },
+    open_ai_response::text_from_response,
     prediction::EditPredictionResult,
     zeta1::{
         self, MAX_CONTEXT_TOKENS as ZETA_MAX_CONTEXT_TOKENS,
@@ -8,80 +13,20 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, SharedString, Task, http_client};
+use gpui::{App, AppContext as _, Entity, Task, http_client};
 use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
 };
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
-use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{
-    ZetaPromptInput,
-    zeta1::{EDITABLE_REGION_END_MARKER, format_zeta1_prompt},
-};
+use zeta_prompt::{ZetaPromptInput, zeta1::format_zeta1_prompt};
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
-pub struct Ollama;
+pub struct OpenAiCompatibleEditPrediction;
 
-#[derive(Debug, Serialize)]
-struct OllamaGenerateRequest {
-    model: String,
-    prompt: String,
-    raw: bool,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<OllamaGenerateOptions>,
-}
-
-#[derive(Debug, Serialize)]
-struct OllamaGenerateOptions {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    num_predict: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stop: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaGenerateResponse {
-    created_at: String,
-    response: String,
-}
-
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
-
-pub fn is_available(cx: &App) -> bool {
-    LanguageModelRegistry::read_global(cx)
-        .provider(&PROVIDER_ID)
-        .is_some_and(|provider| provider.is_authenticated(cx))
-}
-
-pub fn ensure_authenticated(cx: &mut App) {
-    if let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) {
-        provider.authenticate(cx).detach_and_log_err(cx);
-    }
-}
-
-pub fn fetch_models(cx: &mut App) -> Vec<SharedString> {
-    let Some(provider) = LanguageModelRegistry::read_global(cx).provider(&PROVIDER_ID) else {
-        return Vec::new();
-    };
-    provider.authenticate(cx).detach_and_log_err(cx);
-    let mut models: Vec<SharedString> = provider
-        .provided_models(cx)
-        .into_iter()
-        .map(|model| SharedString::from(model.id().0.to_string()))
-        .collect();
-    models.sort();
-    models
-}
-
-/// Output from the Ollama HTTP request, containing all data needed to create the prediction result.
-struct OllamaRequestOutput {
-    created_at: String,
+struct RequestOutput {
+    id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
     snapshot: BufferSnapshot,
     response_received_at: Instant,
@@ -90,7 +35,7 @@ struct OllamaRequestOutput {
     buffer_snapshotted_at: Instant,
 }
 
-impl Ollama {
+impl OpenAiCompatibleEditPrediction {
     pub fn new() -> Self {
         Self
     }
@@ -106,13 +51,23 @@ impl Ollama {
         }: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let settings = &all_language_settings(None, cx).edit_predictions.ollama;
+        let settings = &all_language_settings(None, cx)
+            .edit_predictions
+            .openai_compatible;
         let Some(model) = settings.model.clone() else {
             return Task::ready(Ok(None));
         };
         let api_url = settings.api_url.clone();
+        let api_key = settings
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("OPENAI_COMPATIBLE_EDIT_PREDICTION_API_KEY").ok());
 
-        log::debug!("Ollama: Requesting completion (model: {})", model);
+        log::debug!(
+            "OpenAI Compatible: Requesting completion (model: {}, url: {})",
+            model,
+            api_url
+        );
 
         let full_path: Arc<Path> = snapshot
             .file()
@@ -126,20 +81,16 @@ impl Ollama {
 
         let is_zeta = is_zeta_model(&model);
 
-        // Zeta generates more tokens than FIM models. Ideally, we'd use MAX_REWRITE_TOKENS,
-        // but this might be too slow for local deployments. So we make it configurable,
-        // but we also have this hardcoded multiplier for now.
+        let max_output_tokens = settings.max_output_tokens;
         let max_output_tokens = if is_zeta {
-            settings.max_output_tokens * 4
+            max_output_tokens * 4
         } else {
-            settings.max_output_tokens
+            max_output_tokens
         };
 
         let result = cx.background_spawn(async move {
             let zeta_editable_region_tokens = max_output_tokens as usize;
 
-            // For zeta models, use the dedicated zeta1 functions which handle their own
-            // range computation with the correct token limits.
             let (prompt, stop_tokens, editable_range_override, inputs) = if is_zeta {
                 let path_str = full_path.to_string_lossy();
                 let input_excerpt = zeta1::excerpt_for_cursor_position(
@@ -211,65 +162,90 @@ impl Ollama {
                 (prompt, stop_tokens, None, inputs)
             };
 
-            let request = OllamaGenerateRequest {
+            let request_body = open_ai::Request {
                 model: model.clone(),
-                prompt,
-                raw: true,
+                messages: vec![open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::Plain(prompt),
+                }],
                 stream: false,
-                options: Some(OllamaGenerateOptions {
-                    num_predict: Some(max_output_tokens),
-                    temperature: Some(0.2),
-                    stop: Some(stop_tokens),
-                }),
+                max_completion_tokens: Some(max_output_tokens as u64),
+                stop: stop_tokens,
+                temperature: Some(0.2),
+                tool_choice: None,
+                parallel_tool_calls: None,
+                tools: vec![],
+                prompt_cache_key: None,
+                reasoning_effort: None,
             };
 
-            let request_body = serde_json::to_string(&request)?;
-            let http_request = http_client::Request::builder()
+            let buf = serde_json::to_vec(&request_body)?;
+            let body: http_client::AsyncBody = buf.into();
+
+            let url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
+
+            let mut request_builder = http_client::Request::builder()
                 .method(http_client::Method::POST)
-                .uri(format!("{}/api/generate", api_url))
-                .header("Content-Type", "application/json")
-                .body(http_client::AsyncBody::from(request_body))?;
+                .uri(&url)
+                .header("Content-Type", "application/json");
+
+            if let Some(key) = &api_key {
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", key));
+            }
+
+            let http_request = request_builder.body(body)?;
 
             let mut response = http_client.send(http_request).await?;
             let status = response.status();
 
-            log::debug!("Ollama: Response status: {}", status);
+            log::debug!("OpenAI Compatible: Response status: {}", status);
 
             if !status.is_success() {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
-                return Err(anyhow::anyhow!("Ollama API error: {} - {}", status, body));
+                return Err(anyhow::anyhow!(
+                    "OpenAI Compatible API error: {} - {}",
+                    status,
+                    body
+                ));
             }
 
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            let ollama_response: OllamaGenerateResponse =
-                serde_json::from_str(&body).context("Failed to parse Ollama response")?;
+            let mut body_bytes: Vec<u8> = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body_bytes)
+                .await
+                .context("Failed to read response body")?;
 
             let response_received_at = Instant::now();
 
             log::debug!(
-                "Ollama: Completion received ({:.2}s)",
+                "OpenAI Compatible: Completion received ({:.2}s)",
                 (response_received_at - buffer_snapshotted_at).as_secs_f64()
             );
+
+            let mut open_ai_response: open_ai::Response =
+                serde_json::from_slice(&body_bytes).context("Failed to parse OpenAI response")?;
+
+            let id = std::mem::take(&mut open_ai_response.id);
+            let response_str = text_from_response(open_ai_response).unwrap_or_default();
+
+            log::trace!("openai_compatible response: {}", response_str);
 
             let edits = if is_zeta {
                 let editable_range =
                     editable_range_override.expect("zeta model should have editable range");
 
-                log::trace!("ollama response: {}", ollama_response.response);
-
-                let response = clean_zeta_completion(&ollama_response.response);
-                match zeta1::parse_edits(&response, editable_range, &snapshot) {
+                let cleaned = clean_zeta_completion(&response_str);
+                match zeta1::parse_edits(cleaned, editable_range, &snapshot) {
                     Ok(edits) => edits,
                     Err(err) => {
-                        log::warn!("Ollama zeta: Failed to parse response: {}", err);
+                        log::warn!("OpenAI Compatible zeta: Failed to parse response: {}", err);
                         vec![]
                     }
                 }
             } else {
-                let completion: Arc<str> = clean_fim_completion(&ollama_response.response).into();
+                let completion: Arc<str> = clean_fim_completion(&response_str).into();
                 if completion.is_empty() {
                     vec![]
                 } else {
@@ -279,8 +255,8 @@ impl Ollama {
                 }
             };
 
-            anyhow::Ok(OllamaRequestOutput {
-                created_at: ollama_response.created_at,
+            anyhow::Ok(RequestOutput {
+                id,
                 edits,
                 snapshot,
                 response_received_at,
@@ -291,10 +267,12 @@ impl Ollama {
         });
 
         cx.spawn(async move |cx: &mut gpui::AsyncApp| {
-            let output = result.await.context("Ollama edit prediction failed")?;
+            let output = result
+                .await
+                .context("OpenAI Compatible edit prediction failed")?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
-                    EditPredictionId(output.created_at.into()),
+                    EditPredictionId(output.id.into()),
                     &output.buffer,
                     &output.snapshot,
                     output.edits.into(),
@@ -308,101 +286,4 @@ impl Ollama {
             ))
         })
     }
-}
-
-pub(crate) fn is_zeta_model(model: &str) -> bool {
-    model.to_lowercase().contains("zeta")
-}
-
-pub(crate) fn get_zeta_stop_tokens() -> Vec<String> {
-    vec![EDITABLE_REGION_END_MARKER.to_string(), "```".to_string()]
-}
-
-pub(crate) fn format_fim_prompt(model: &str, prefix: &str, suffix: &str) -> String {
-    let model_base = model.split(':').next().unwrap_or(model);
-
-    match model_base {
-        "codellama" | "code-llama" => {
-            format!("<PRE> {prefix} <SUF>{suffix} <MID>")
-        }
-        "starcoder" | "starcoder2" | "starcoderbase" => {
-            format!("<fim_prefix>{prefix}<fim_suffix>{suffix}<fim_middle>")
-        }
-        "deepseek-coder" | "deepseek-coder-v2" => {
-            format!("<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>")
-        }
-        "qwen2.5-coder" | "qwen-coder" | "qwen" => {
-            format!("<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>")
-        }
-        "codegemma" => {
-            format!("<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>")
-        }
-        "codestral" | "mistral" => {
-            format!("[SUFFIX]{suffix}[PREFIX]{prefix}")
-        }
-        "glm" | "glm-4" | "glm-4.5" => {
-            format!("<|code_prefix|>{prefix}<|code_suffix|>{suffix}<|code_middle|>")
-        }
-        _ => {
-            format!("<fim_prefix>{prefix}<fim_suffix>{suffix}<fim_middle>")
-        }
-    }
-}
-
-pub(crate) fn get_fim_stop_tokens() -> Vec<String> {
-    vec![
-        "<|endoftext|>".to_string(),
-        "<|file_separator|>".to_string(),
-        "<|fim_pad|>".to_string(),
-        "<|fim_prefix|>".to_string(),
-        "<|fim_middle|>".to_string(),
-        "<|fim_suffix|>".to_string(),
-        "<fim_prefix>".to_string(),
-        "<fim_middle>".to_string(),
-        "<fim_suffix>".to_string(),
-        "<PRE>".to_string(),
-        "<SUF>".to_string(),
-        "<MID>".to_string(),
-        "[PREFIX]".to_string(),
-        "[SUFFIX]".to_string(),
-    ]
-}
-
-pub(crate) fn clean_zeta_completion(mut response: &str) -> &str {
-    if let Some(last_newline_ix) = response.rfind('\n') {
-        let last_line = &response[last_newline_ix + 1..];
-        if EDITABLE_REGION_END_MARKER.starts_with(&last_line) {
-            response = &response[..last_newline_ix]
-        }
-    }
-    response
-}
-
-pub(crate) fn clean_fim_completion(response: &str) -> String {
-    let mut result = response.to_string();
-
-    let end_tokens = [
-        "<|endoftext|>",
-        "<|file_separator|>",
-        "<|fim_pad|>",
-        "<|fim_prefix|>",
-        "<|fim_middle|>",
-        "<|fim_suffix|>",
-        "<fim_prefix>",
-        "<fim_middle>",
-        "<fim_suffix>",
-        "<PRE>",
-        "<SUF>",
-        "<MID>",
-        "[PREFIX]",
-        "[SUFFIX]",
-    ];
-
-    for token in &end_tokens {
-        if let Some(pos) = result.find(token) {
-            result.truncate(pos);
-        }
-    }
-
-    result
 }

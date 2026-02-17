@@ -85,6 +85,7 @@ pub enum EditPredictionProvider {
     Zed,
     Codestral,
     Ollama,
+    OpenAiCompatible,
     Sweep,
     Mercury,
     Experimental(&'static str),
@@ -106,6 +107,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Zed,
             Codestral,
             Ollama,
+            OpenAiCompatible,
             Sweep,
             Mercury,
             Experimental(String),
@@ -118,6 +120,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
+            Content::OpenAiCompatible => EditPredictionProvider::OpenAiCompatible,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
@@ -146,6 +149,7 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
+            | EditPredictionProvider::OpenAiCompatible
             | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
@@ -160,6 +164,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
+            EditPredictionProvider::OpenAiCompatible => Some("OpenAI Compatible"),
             EditPredictionProvider::Experimental(
                 EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
             ) => Some("Zeta2"),
@@ -190,6 +195,8 @@ pub struct EditPredictionSettingsContent {
     pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
+    /// Settings specific to OpenAI-compatible providers (vLLM, TGI, llama.cpp, etc.).
+    pub openai_compatible: Option<OpenAiCompatibleEditPredictionSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -287,6 +294,28 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: "http://localhost:11434"
     pub api_url: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OpenAiCompatibleEditPredictionSettingsContent {
+    /// Model name to use for completions (e.g. "zeta" or a HuggingFace model ID).
+    ///
+    /// Default: none (must be configured)
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+    /// Base URL for the OpenAI-compatible API (e.g. "http://localhost:8000/v1").
+    ///
+    /// Default: "http://localhost:8000/v1"
+    pub api_url: Option<String>,
+    /// Optional API key for authenticated endpoints.
+    /// If not set, falls back to the OPENAI_COMPATIBLE_EDIT_PREDICTION_API_KEY environment variable.
+    ///
+    /// Default: none
+    pub api_key: Option<String>,
 }
 
 /// The mode in which edit predictions should be displayed.

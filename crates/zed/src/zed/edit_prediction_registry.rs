@@ -191,6 +191,7 @@ fn assign_edit_prediction_provider(
         value @ (EditPredictionProvider::Experimental(_)
         | EditPredictionProvider::Zed
         | EditPredictionProvider::Ollama
+        | EditPredictionProvider::OpenAiCompatible
         | EditPredictionProvider::Sweep
         | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -209,6 +210,9 @@ fn assign_edit_prediction_provider(
                                 return false;
                             }
                             edit_prediction::EditPredictionModel::Ollama
+                        }
+                        EditPredictionProvider::OpenAiCompatible => {
+                            edit_prediction::EditPredictionModel::OpenAiCompatible
                         }
                         EditPredictionProvider::Experimental(name)
                             if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME

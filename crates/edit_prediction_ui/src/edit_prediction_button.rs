@@ -403,6 +403,60 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::OpenAiCompatible => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("openai-compatible")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::OpenAiCompatible,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("openai-compatible-icon", IconName::AiOpenAiCompat)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |_window, cx| {
+                                let settings = all_language_settings(None, cx);
+                                let tooltip_meta = match settings
+                                    .edit_predictions
+                                    .openai_compatible
+                                    .model
+                                    .as_deref()
+                                {
+                                    Some(model) if !model.trim().is_empty() => {
+                                        format!("Powered by OpenAI Compatible ({model})")
+                                    }
+                                    _ => {
+                                        "OpenAI Compatible model not configured — configure a model before use"
+                                            .to_string()
+                                    }
+                                };
+
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    tooltip_meta,
+                                    cx,
+                                )
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             provider @ (EditPredictionProvider::Experimental(_)
             | EditPredictionProvider::Zed
             | EditPredictionProvider::Sweep
@@ -1498,6 +1552,15 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     if edit_prediction::ollama::is_available(cx) {
         providers.push(EditPredictionProvider::Ollama);
+    }
+
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .openai_compatible
+        .model
+        .is_some()
+    {
+        providers.push(EditPredictionProvider::OpenAiCompatible);
     }
 
     if edit_prediction::sweep_ai::sweep_api_token(cx)

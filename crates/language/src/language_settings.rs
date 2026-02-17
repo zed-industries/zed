@@ -399,6 +399,8 @@ pub struct EditPredictionSettings {
     pub sweep: SweepSettings,
     /// Settings specific to Ollama.
     pub ollama: OllamaSettings,
+    /// Settings specific to OpenAI-compatible providers (vLLM, TGI, llama.cpp, etc.).
+    pub openai_compatible: OpenAiCompatibleSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -464,6 +466,18 @@ pub struct OllamaSettings {
     pub max_output_tokens: u32,
     /// Custom API URL to use for Ollama.
     pub api_url: Arc<str>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OpenAiCompatibleSettings {
+    /// Model name to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_output_tokens: u32,
+    /// Base URL for the OpenAI-compatible API.
+    pub api_url: Arc<str>,
+    /// Optional API key for authenticated endpoints.
+    pub api_key: Option<String>,
 }
 
 impl AllLanguageSettings {
@@ -706,6 +720,14 @@ impl settings::Settings for AllLanguageSettings {
             api_url: ollama.api_url.unwrap().into(),
         };
 
+        let openai_compatible = edit_predictions.openai_compatible.unwrap();
+        let openai_compatible_settings = OpenAiCompatibleSettings {
+            model: openai_compatible.model,
+            max_output_tokens: openai_compatible.max_output_tokens.unwrap(),
+            api_url: openai_compatible.api_url.unwrap().into(),
+            api_key: openai_compatible.api_key,
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -745,6 +767,7 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 sweep: sweep_settings,
                 ollama: ollama_settings,
+                openai_compatible: openai_compatible_settings,
                 enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
             },
