@@ -439,10 +439,6 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
-    fn remove_untracked_files() -> Step<Run> {
-        named::bash("git clean -df")
-    }
-
     fn ensure_fresh_merge() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             if [ -z "$GITHUB_BASE_REF" ];
@@ -475,7 +471,6 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
             .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
             .add_step(steps::checkout_repo().with_full_history())
-            .add_step(remove_untracked_files())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
             .add_step(bufbuild_breaking_action()),

@@ -607,8 +607,6 @@ jobs:
       with:
         clean: false
         fetch-depth: '0'
-    - name: run_tests::check_postgres_and_protobuf_migrations::remove_untracked_files
-      run: git clean -df
     - name: run_tests::check_postgres_and_protobuf_migrations::ensure_fresh_merge
       run: |
         if [ -z "$GITHUB_BASE_REF" ];

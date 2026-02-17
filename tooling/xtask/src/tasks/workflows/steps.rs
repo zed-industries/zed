@@ -60,6 +60,7 @@ enum FetchDepth {
 #[derive(Default)]
 pub(crate) struct CheckoutStep {
     fetch_depth: FetchDepth,
+    name: Option<String>,
     token: Option<String>,
     path: Option<String>,
     repository: Option<String>,
@@ -69,6 +70,11 @@ pub(crate) struct CheckoutStep {
 impl CheckoutStep {
     pub fn with_full_history(mut self) -> Self {
         self.fetch_depth = FetchDepth::Full;
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
         self
     }
 
@@ -105,7 +111,7 @@ impl CheckoutStep {
 
 impl From<CheckoutStep> for Step<Use> {
     fn from(value: CheckoutStep) -> Self {
-        Step::new("steps::checkout_repo")
+        Step::new(value.name.unwrap_or("steps::checkout_repo".to_string()))
             .uses(
                 "actions",
                 "checkout",

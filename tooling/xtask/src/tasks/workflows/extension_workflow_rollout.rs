@@ -69,11 +69,15 @@ fn fetch_extension_repos() -> NamedJob {
 
 fn rollout_workflows_to_extension(fetch_repos_job: &NamedJob) -> NamedJob {
     fn checkout_zed_repo() -> CheckoutStep {
-        steps::checkout_repo().with_full_history().with_path("zed")
+        steps::checkout_repo()
+            .with_full_history()
+            .with_path("zed")
+            .with_custom_name("checkout_zed_repo")
     }
 
     fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo()
+            .with_custom_name("checkout_extension_repo")
             .with_token(token)
             .with_repository("zed-extensions/${{ matrix.repo }}")
             .with_path("extension")
