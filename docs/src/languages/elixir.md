@@ -24,7 +24,7 @@ The Elixir extension offers language server support for `expert`, `elixir-ls`, `
 
 ### Expert
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -39,7 +39,7 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 
 ### Next LS
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -54,7 +54,7 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 
 ### Lexical
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -89,7 +89,7 @@ brew install elixir-ls
 
 If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), configure it as an external formatter. Formatting will occur on file save.
 
-Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add the following to your `settings.json`:
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, or add to your settings file:
 
 ```json [settings]
 {
@@ -109,7 +109,7 @@ Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Eli
 
 ### Additional workspace configuration options
 
-You can pass additional elixir-ls workspace configuration options via lsp settings in `settings.json`.
+You can pass additional elixir-ls workspace configuration options via `lsp` settings in your settings file ([how to edit](../configuring-zed.md#settings-files)).
 
 The following example disables dialyzer:
 
@@ -133,7 +133,7 @@ Zed also supports HEEx templates. HEEx is a mix of [EEx](https://hexdocs.pm/eex/
 
 #### Using the Tailwind CSS Language Server with HEEx
 
-To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HEEx files, you need to configure the language server so that it knows about where to look for CSS classes by adding the following to your `settings.json`:
+To get all features (autocomplete, linting, and hover docs) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HEEx files, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {

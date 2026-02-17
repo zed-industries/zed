@@ -180,7 +180,7 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
+Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings file.
 
 Which settings file you should use depends on the kind of setting you want to make:
 

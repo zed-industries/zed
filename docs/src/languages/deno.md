@@ -13,7 +13,7 @@ Deno support is available through the [Deno extension](https://github.com/zed-ex
 
 To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable Deno.
 
-Configure language servers and formatters in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript/TypeScript/TSX, or add the following to your `settings.json`:
+Configure language servers and formatters in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript/TypeScript/TSX, or add to your settings file:
 
 ```json [settings]
 {
@@ -66,7 +66,7 @@ TBD: Deno TypeScript REPL instructions [docs/repl#typescript-deno](../repl.md#ty
 
 ## Configuration completion
 
-To get completions for `deno.json` or `package.json` you can add the following to your `settings.json`: (More info here https://zed.dev/docs/languages/json)
+To get completions for `deno.json` or `package.json`, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)). For more details, see [JSON](./json.md).
 
 ```json [settings]
 "lsp": {
