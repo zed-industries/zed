@@ -203,7 +203,8 @@ impl Worktree {
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
-    let entries = raw_worktrees.as_ref().split("\n\n");
+    let normalized = raw_worktrees.as_ref().replace("\r\n", "\n");
+    let entries = normalized.split("\n\n");
     for entry in entries {
         let mut path = None;
         let mut sha = None;
@@ -1585,9 +1586,11 @@ impl GitRepository for RealGitRepository {
             OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
             OsString::from("add"),
+            OsString::from("-b"),
+            OsString::from(name.as_str()),
+            OsString::from("--"),
             OsString::from(final_path.as_os_str()),
         ];
-        args.extend([OsString::from("-b"), OsString::from(name.as_str())]);
         if let Some(from_commit) = from_commit {
             args.push(OsString::from(from_commit));
         } else {
@@ -1621,11 +1624,12 @@ impl GitRepository for RealGitRepository {
                     "--no-optional-locks".into(),
                     "worktree".into(),
                     "remove".into(),
-                    path.as_os_str().into(),
                 ];
                 if force {
                     args.push("--force".into());
                 }
+                args.push("--".into());
+                args.push(path.as_os_str().into());
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(args)
                     .await?;
@@ -1645,6 +1649,7 @@ impl GitRepository for RealGitRepository {
                     "--no-optional-locks".into(),
                     "worktree".into(),
                     "move".into(),
+                    "--".into(),
                     old_path.as_os_str().into(),
                     new_path.as_os_str().into(),
                 ];
@@ -3687,6 +3692,14 @@ mod tests {
         // Leading/trailing whitespace on lines should be tolerated
         let input =
             "  worktree /home/user/project  \n  HEAD abc123  \n  branch refs/heads/main  \n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].sha.as_ref(), "abc123");
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+
+        // Windows-style line endings should be handled
+        let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));

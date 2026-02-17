@@ -434,8 +434,12 @@ impl GitRepository for FakeGitRepository {
             fs.with_git_state(&dot_git_path, true, {
                 let path = path.clone();
                 move |state| {
+                    if state.branches.contains(&name) {
+                        bail!("a branch named '{}' already exists", name);
+                    }
                     let ref_name = format!("refs/heads/{name}");
                     let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
+                    state.refs.insert(ref_name.clone(), sha.clone());
                     state.worktrees.push(Worktree {
                         path,
                         ref_name: ref_name.into(),
@@ -456,7 +460,17 @@ impl GitRepository for FakeGitRepository {
         let dot_git_path = self.dot_git_path.clone();
         async move {
             executor.simulate_random_delay().await;
-            // Remove the directory first, then update state
+            // Validate the worktree exists in state before touching the filesystem
+            fs.with_git_state(&dot_git_path, false, {
+                let path = path.clone();
+                move |state| {
+                    if !state.worktrees.iter().any(|w| w.path == path) {
+                        bail!("no worktree found at path: {}", path.display());
+                    }
+                    Ok(())
+                }
+            })??;
+            // Now remove the directory
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -465,13 +479,10 @@ impl GitRepository for FakeGitRepository {
                 },
             )
             .await?;
+            // Update state
             fs.with_git_state(&dot_git_path, true, move |state| {
-                let initial_len = state.worktrees.len();
                 state.worktrees.retain(|worktree| worktree.path != path);
-                if state.worktrees.len() == initial_len {
-                    bail!("no worktree found at path: {}", path.display());
-                }
-                Ok(())
+                Ok::<(), anyhow::Error>(())
             })??;
             Ok(())
         }
@@ -484,7 +495,17 @@ impl GitRepository for FakeGitRepository {
         let dot_git_path = self.dot_git_path.clone();
         async move {
             executor.simulate_random_delay().await;
-            // Move the directory first, then update state
+            // Validate the worktree exists in state before touching the filesystem
+            fs.with_git_state(&dot_git_path, false, {
+                let old_path = old_path.clone();
+                move |state| {
+                    if !state.worktrees.iter().any(|w| w.path == old_path) {
+                        bail!("no worktree found at path: {}", old_path.display());
+                    }
+                    Ok(())
+                }
+            })??;
+            // Now move the directory
             fs.rename(
                 &old_path,
                 &new_path,
@@ -495,18 +516,15 @@ impl GitRepository for FakeGitRepository {
                 },
             )
             .await?;
+            // Update state
             fs.with_git_state(&dot_git_path, true, move |state| {
                 let worktree = state
                     .worktrees
                     .iter_mut()
-                    .find(|worktree| worktree.path == old_path);
-                match worktree {
-                    Some(worktree) => {
-                        worktree.path = new_path;
-                        Ok(())
-                    }
-                    None => bail!("no worktree found at path: {}", old_path.display()),
-                }
+                    .find(|worktree| worktree.path == old_path)
+                    .expect("worktree was validated above");
+                worktree.path = new_path;
+                Ok::<(), anyhow::Error>(())
             })??;
             Ok(())
         }
