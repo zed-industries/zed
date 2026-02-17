@@ -6,6 +6,8 @@ Your previous prediction has quality issues that need to be addressed. Please ge
 
 {quality_feedback}
 
+{token_change_info}
+
 ## Your Previous Prediction (word-diff format)
 
 `````

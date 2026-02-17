@@ -11,6 +11,7 @@ use crate::{
     anthropic_client::AnthropicClient,
     example::{ActualCursor, Example, ExamplePrediction},
     format_prompt::{TeacherPrompt, extract_last_codeblock},
+    metrics::count_patch_token_changes,
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
@@ -168,10 +169,26 @@ pub fn build_repair_message(example: &Example) -> Result<String> {
 
     let actual_patch_word_diff = unified_to_word_diff(actual_patch);
 
+    let token_counts = count_patch_token_changes(actual_patch);
+    let mut token_change_info = format!(
+        "\n## Token Change Statistics\n\n\
+         - **Deleted tokens**: {}\n\
+         - **Inserted tokens**: {}",
+        token_counts.deleted_tokens, token_counts.inserted_tokens,
+    );
+    if token_counts.deleted_tokens > 100 || token_counts.inserted_tokens > 100 {
+        token_change_info.push_str(
+            "\n\n> **Note:** The token change count is high. \
+             Consider producing a more scoped edit that targets only the lines \
+             that truly need to change, rather than rewriting large sections.",
+        );
+    }
+
     let prompt_template = crate::prompt_assets::get_prompt("repair.md");
     Ok(prompt_template
         .replace("{actual_patch_word_diff}", &actual_patch_word_diff)
-        .replace("{quality_feedback}", &quality_feedback))
+        .replace("{quality_feedback}", &quality_feedback)
+        .replace("{token_change_info}", &token_change_info))
 }
 
 /// Check if an example needs repair based on QA feedback or computed scores.
