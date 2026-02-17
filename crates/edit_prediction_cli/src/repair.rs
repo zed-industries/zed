@@ -210,15 +210,16 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 /// Handles the `KEEP_PREVIOUS` sentinel by copying the teacher's prediction,
 /// and delegates normal output to `TeacherPrompt::parse`.
 pub fn parse(example: &Example, actual_output: &str) -> Result<(String, Option<ActualCursor>)> {
-    let last_codeblock = extract_last_codeblock(actual_output);
-    if last_codeblock.trim() == KEEP_PREVIOUS {
-        let original = example
-            .predictions
-            .first()
-            .context("no original prediction to keep")?;
-        let patch = original.actual_patch.clone().unwrap_or_default();
-        let cursor = original.actual_cursor.clone();
-        return Ok((patch, cursor));
+    if let Some(last_codeblock) = extract_last_codeblock(actual_output) {
+        if last_codeblock.trim() == KEEP_PREVIOUS {
+            let original = example
+                .predictions
+                .first()
+                .context("no original prediction to keep")?;
+            let patch = original.actual_patch.clone().unwrap_or_default();
+            let cursor = original.actual_cursor.clone();
+            return Ok((patch, cursor));
+        }
     }
 
     TeacherPrompt::parse(example, actual_output)
