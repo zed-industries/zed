@@ -1,7 +1,6 @@
 use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{Datelike, Local, NaiveDate, TimeDelta};
-use std::fmt::Display;
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
@@ -12,6 +11,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
+use std::fmt::Display;
 
 use std::collections::{HashMap, HashSet};
 

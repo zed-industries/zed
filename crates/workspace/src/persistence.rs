@@ -1607,7 +1607,14 @@ impl WorkspaceDb {
 
     fn recent_workspaces(
         &self,
-    ) -> Result<Vec<(WorkspaceId, PathList, Option<RemoteConnectionId>, DateTime<Utc>)>> {
+    ) -> Result<
+        Vec<(
+            WorkspaceId,
+            PathList,
+            Option<RemoteConnectionId>,
+            DateTime<Utc>,
+        )>,
+    > {
         Ok(self
             .recent_workspaces_query()?
             .into_iter()
@@ -1796,7 +1803,14 @@ impl WorkspaceDb {
     pub async fn recent_workspaces_on_disk(
         &self,
         fs: &dyn Fs,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList, DateTime<Utc>)>> {
+    ) -> Result<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    > {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let remote_connections = self.remote_connections()?;
@@ -1843,7 +1857,14 @@ impl WorkspaceDb {
     pub async fn last_workspace(
         &self,
         fs: &dyn Fs,
-    ) -> Result<Option<(WorkspaceId, SerializedWorkspaceLocation, PathList, DateTime<Utc>)>> {
+    ) -> Result<
+        Option<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    > {
         Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
     }
 

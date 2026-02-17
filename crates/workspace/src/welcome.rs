@@ -213,7 +213,14 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList, DateTime<Utc>)>>,
+    recent_workspaces: Option<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    >,
 }
 
 impl WelcomePage {
@@ -273,7 +280,9 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths, _timestamp)) = recent_workspaces.get(action.index) {
+            if let Some((_workspace_id, location, paths, _timestamp)) =
+                recent_workspaces.get(action.index)
+            {
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
 
                 if is_local {

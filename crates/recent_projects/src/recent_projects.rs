@@ -627,7 +627,12 @@ impl Render for RecentProjects {
 pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
     open_folders: Vec<OpenFolderEntry>,
-    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList, DateTime<Utc>)>,
+    workspaces: Vec<(
+        WorkspaceId,
+        SerializedWorkspaceLocation,
+        PathList,
+        DateTime<Utc>,
+    )>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
     render_paths: bool,
@@ -670,7 +675,12 @@ impl RecentProjectsDelegate {
 
     pub fn set_workspaces(
         &mut self,
-        workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList, DateTime<Utc>)>,
+        workspaces: Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
     ) {
         self.workspaces = workspaces;
         let has_non_local_recent = !self
