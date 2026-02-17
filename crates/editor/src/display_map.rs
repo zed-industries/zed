@@ -486,7 +486,7 @@ impl DisplayMap {
                 return;
             };
             assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
-            let (snapshot, _edits, _) = self.sync_through_wrap(cx);
+            let (snapshot, _edits) = self.sync_through_wrap(cx);
             let edits = Patch::new(vec![text::Edit {
                 old: WrapRow(0)
                     ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
@@ -511,10 +511,10 @@ impl DisplayMap {
 
         // Note, throwing away the wrap edits because we defer spacer computation to the first render.
         let snapshot = {
-            let (_wrap_snapshot, _wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
-            let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+            let edits = self.buffer_subscription.consume();
+            let snapshot = self.buffer.read(cx).snapshot(cx);
             let tab_size = Self::tab_size(&self.buffer, cx);
-            let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, vec![]);
+            let (snapshot, edits) = self.inlay_map.sync(snapshot, edits.into_inner());
             let (mut writer, snapshot, edits) = self.fold_map.write(snapshot, edits);
             let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
             let (_snapshot, _edits) = self
@@ -534,10 +534,7 @@ impl DisplayMap {
         };
 
         let (companion_wrap_snapshot, _companion_wrap_edits) =
-            companion_display_map.update(cx, |dm, cx| {
-                let (snapshot, edits, _) = dm.sync_through_wrap(cx);
-                (snapshot, edits)
-            });
+            companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
         let edits = Patch::new(vec![text::Edit {
             old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
@@ -582,8 +579,6 @@ impl DisplayMap {
                         .insert(block.id, their_id);
                 });
             }
-            // Sync companion's transforms but skip spacer computation (pass None
-            // for companion_view). Spacers will be computed on the first render.
             let companion_edits = Patch::new(vec![text::Edit {
                 old: WrapRow(0)
                     ..companion_display_map
@@ -621,22 +616,16 @@ impl DisplayMap {
             .copied()
     }
 
-    fn sync_through_wrap(
-        &mut self,
-        cx: &mut App,
-    ) -> (WrapSnapshot, WrapPatch, Vec<text::Edit<MultiBufferOffset>>) {
+    fn sync_through_wrap(&mut self, cx: &mut App) -> (WrapSnapshot, WrapPatch) {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_edits = self.buffer_subscription.consume().into_inner();
+        let edits = self.buffer_subscription.consume().into_inner();
 
-        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, buffer_edits.clone());
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (wrap_snapshot, wrap_edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-
-        (wrap_snapshot, wrap_edits, buffer_edits)
+        self.wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx))
     }
 
     fn with_synced_companion_mut<R>(
@@ -652,7 +641,7 @@ impl DisplayMap {
             return callback(None, cx);
         };
         companion_display_map.update(cx, |companion_display_map, cx| {
-            let (companion_wrap_snapshot, companion_wrap_edits, _) =
+            let (companion_wrap_snapshot, companion_wrap_edits) =
                 companion_display_map.sync_through_wrap(cx);
             companion_display_map
                 .buffer
@@ -675,13 +664,10 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
-        let (self_wrap_snapshot, self_wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
             companion_dm
-                .update(cx, |dm, cx| {
-                    let (snapshot, edits, _) = dm.sync_through_wrap(cx);
-                    (snapshot, edits)
-                })
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
         let companion_ref = self.companion.as_ref().map(|(_, c)| c.read(cx));
@@ -743,7 +729,7 @@ impl DisplayMap {
     }
 
     fn snapshot_simple(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
-        let (wrap_snapshot, wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
+        let (wrap_snapshot, wrap_edits) = self.sync_through_wrap(cx);
 
         let block_snapshot = self
             .block_map
@@ -926,7 +912,7 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
         self.block_map
             .write(self_wrap_snapshot, self_wrap_edits, None)
             .disable_header_for_buffer(buffer_id);
@@ -940,7 +926,7 @@ impl DisplayMap {
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
 
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         Self::with_synced_companion_mut(
             self.entity_id,
@@ -966,7 +952,7 @@ impl DisplayMap {
     ) {
         let buffer_ids: Vec<_> = buffer_ids.into_iter().collect();
 
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         Self::with_synced_companion_mut(
             self.entity_id,
@@ -1095,7 +1081,7 @@ impl DisplayMap {
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Vec<CustomBlockId> {
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
         Self::with_synced_companion_mut(
             self.entity_id,
             &self.companion,
@@ -1114,7 +1100,7 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn resize_blocks(&mut self, heights: HashMap<CustomBlockId, u32>, cx: &mut Context<Self>) {
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         Self::with_synced_companion_mut(
             self.entity_id,
@@ -1139,7 +1125,7 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn remove_blocks(&mut self, ids: HashSet<CustomBlockId>, cx: &mut Context<Self>) {
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         Self::with_synced_companion_mut(
             self.entity_id,
@@ -1163,14 +1149,11 @@ impl DisplayMap {
         block_id: CustomBlockId,
         cx: &mut Context<Self>,
     ) -> Option<DisplayRow> {
-        let (self_wrap_snapshot, self_wrap_edits, _) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits) = self.sync_through_wrap(cx);
 
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
             companion_dm
-                .update(cx, |dm, cx| {
-                    let (snapshot, edits, _) = dm.sync_through_wrap(cx);
-                    (snapshot, edits)
-                })
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
 
@@ -1364,10 +1347,7 @@ impl DisplayMap {
 
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
             companion_dm
-                .update(cx, |dm, cx| {
-                    let (snapshot, edits, _) = dm.sync_through_wrap(cx);
-                    (snapshot, edits)
-                })
+                .update(cx, |dm, cx| dm.sync_through_wrap(cx))
                 .ok()
         });
 

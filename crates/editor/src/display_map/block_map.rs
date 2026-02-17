@@ -765,6 +765,7 @@ impl BlockMap {
 
         edits = self.deferred_edits.take().compose(edits);
 
+        // Handle changing the last excerpt if it is empty.
         if buffer.trailing_excerpt_update_count()
             != self
                 .wrap_snapshot
@@ -774,13 +775,14 @@ impl BlockMap {
         {
             let max_point = wrap_snapshot.max_point();
             let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-            let edit_end = max_point.row() + WrapRow(1);
+            let edit_end = max_point.row() + WrapRow(1); // this is end of file
             edits = edits.compose([WrapEdit {
                 old: edit_start..edit_end,
                 new: edit_start..edit_end,
             }]);
         }
 
+        // Pull in companion edits to ensure we recompute spacers in ranges that have changed in the companion.
         if let Some(CompanionView {
             companion_wrap_snapshot: companion_new_snapshot,
             companion_wrap_edits: companion_edits,
@@ -855,14 +857,14 @@ impl BlockMap {
                 }
                 merged_edits.push(edit);
             }
+
             edits = edits.compose(merged_edits);
         }
 
-        let final_edits = edits.into_inner();
-        if final_edits.is_empty() {
+        let edits = edits.into_inner();
+        if edits.is_empty() {
             return;
         }
-        let edits = final_edits;
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
