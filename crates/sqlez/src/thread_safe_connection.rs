@@ -7,12 +7,18 @@ use std::{
     ops::Deref,
     sync::{Arc, LazyLock},
     thread,
+    time::Duration,
 };
 use thread_local::ThreadLocal;
 
-use crate::{connection::Connection, domain::Migrator, util::UnboundedSyncSender};
+use crate::{
+    connection::Connection, connection::is_transient_lock_error, domain::Migrator,
+    util::UnboundedSyncSender,
+};
 
 const MIGRATION_RETRIES: usize = 10;
+const INIT_PRAGMA_RETRIES: usize = 10;
+const INIT_PRAGMA_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 type QueuedWrite = Box<dyn 'static + Send + FnOnce()>;
 type WriteQueue = Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>;
@@ -82,12 +88,54 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
         self.connection
             .write(move |connection| {
                 if let Some(db_initialize_query) = db_initialize_query {
-                    connection.exec(db_initialize_query).with_context(|| {
-                        format!(
-                            "Db initialize query failed to execute: {}",
-                            db_initialize_query
-                        )
-                    })?()?;
+                    let mut last_err = None;
+
+                    for attempt in 0..INIT_PRAGMA_RETRIES {
+                        match connection
+                            .exec(db_initialize_query)
+                            .and_then(|mut exec| exec())
+                        {
+                            Ok(()) => {
+                                if attempt > 0 {
+                                    log::info!(
+                                        "Database initialization PRAGMAs succeeded on attempt {}",
+                                        attempt + 1
+                                    );
+                                }
+                                last_err = None;
+                                break;
+                            }
+                            Err(err) => {
+                                let extended_code = connection.last_extended_error_code();
+                                if !is_transient_lock_error(extended_code) {
+                                    return Err(err).with_context(|| {
+                                        format!(
+                                            "Db initialize query failed with non-transient error (code {}): {}",
+                                            extended_code, db_initialize_query
+                                        )
+                                    });
+                                }
+
+                                log::warn!(
+                                    "Database initialization PRAGMA attempt {} failed with transient lock error (code {}), retrying in {}ms",
+                                    attempt + 1,
+                                    extended_code,
+                                    INIT_PRAGMA_RETRY_DELAY.as_millis()
+                                );
+                                last_err = Some(err);
+                                thread::sleep(INIT_PRAGMA_RETRY_DELAY);
+                            }
+                        }
+                    }
+
+                    if let Some(err) = last_err {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "Db initialize query failed after {} retries: {}",
+                                INIT_PRAGMA_RETRIES, db_initialize_query
+                            )
+                        });
+                    }
                 }
 
                 // Retry failed migrations in case they were run in parallel from different
@@ -301,6 +349,8 @@ mod test {
                 let builder =
                     ThreadSafeConnection::builder::<TestDomain>("annoying-test.db", false)
                         .with_db_initialization_query("PRAGMA journal_mode=WAL")
+                        // Intentionally low busy_timeout to stress-test concurrent initialization.
+                        // Production code uses a much higher value (see DB_INITIALIZE_QUERY in db crate).
                         .with_connection_initialize_query(indoc! {"
                                 PRAGMA synchronous=NORMAL;
                                 PRAGMA busy_timeout=1;

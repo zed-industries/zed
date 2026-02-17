@@ -9,6 +9,13 @@ use std::{
 use anyhow::Result;
 use libsqlite3_sys::*;
 
+/// Returns true if the given SQLite extended error code represents a transient
+/// lock/busy condition that may resolve on retry.
+pub fn is_transient_lock_error(extended_code: i32) -> bool {
+    let primary_code = extended_code & 0xFF;
+    primary_code == SQLITE_BUSY || primary_code == SQLITE_LOCKED
+}
+
 pub struct Connection {
     pub(crate) sqlite3: *mut sqlite3,
     persistent: bool,
@@ -207,6 +214,10 @@ impl Connection {
 
             anyhow::bail!("Sqlite call failed with code {code} and message: {message:?}")
         }
+    }
+
+    pub fn last_extended_error_code(&self) -> i32 {
+        unsafe { sqlite3_extended_errcode(self.sqlite3) }
     }
 
     pub(crate) fn with_write<T>(&self, callback: impl FnOnce(&Connection) -> T) -> T {

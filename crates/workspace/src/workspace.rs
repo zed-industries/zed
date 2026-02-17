@@ -7145,12 +7145,16 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                         cx,
                         |cx| {
                             cx.new(|cx| {
-                                MessageNotification::new("Failed to load the database file.", cx)
-                                    .primary_message("File an Issue")
-                                    .primary_icon(IconName::Plus)
-                                    .primary_on_click(|window, cx| {
-                                        window.dispatch_action(Box::new(FileBugReport), cx)
-                                    })
+                                MessageNotification::new(
+                                    "The database file could not be opened. Zed is running with temporary storage — recent projects, window layout, and other persisted data are unavailable. This is usually caused by a temporary lock and restarting Zed should fix it.",
+                                    cx,
+                                )
+                                .with_title("Database Unavailable")
+                                .secondary_message("File an Issue")
+                                .secondary_icon(IconName::Plus)
+                                .secondary_on_click(|window, cx| {
+                                    window.dispatch_action(Box::new(FileBugReport), cx)
+                                })
                             })
                         },
                     );

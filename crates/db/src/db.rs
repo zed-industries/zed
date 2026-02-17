@@ -27,8 +27,8 @@ const CONNECTION_INITIALIZE_QUERY: &str = sql!(
 );
 
 const DB_INITIALIZE_QUERY: &str = sql!(
+    PRAGMA busy_timeout=1000;
     PRAGMA journal_mode=WAL;
-    PRAGMA busy_timeout=500;
     PRAGMA case_sensitive_like=TRUE;
     PRAGMA synchronous=NORMAL;
 );
@@ -292,6 +292,46 @@ mod tests {
         }
 
         for guard in guards.into_iter() {
+            assert!(guard.join().is_ok());
+        }
+    }
+
+    #[gpui::test(iterations = 30)]
+    async fn test_concurrent_db_initialization(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        enum ConcurrentDB {}
+
+        impl Domain for ConcurrentDB {
+            const NAME: &str = "concurrent_init_test";
+            const MIGRATIONS: &[&str] = &[sql!(
+                CREATE TABLE IF NOT EXISTS concurrent_test(value TEXT);
+            )];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("ConcurrentInitTest")
+            .tempdir()
+            .unwrap();
+
+        let mut guards = vec![];
+        for _ in 0..10 {
+            let tmp_path = tempdir.path().to_path_buf();
+            let guard = thread::spawn(move || {
+                let connection = smol::block_on(open_db::<ConcurrentDB>(
+                    tmp_path.as_path(),
+                    release_channel::ReleaseChannel::Dev.dev_name(),
+                ));
+                assert!(
+                    connection.persistent(),
+                    "Expected persistent file-backed connection, got in-memory fallback"
+                );
+            });
+
+            guards.push(guard);
+        }
+
+        for guard in guards {
             assert!(guard.join().is_ok());
         }
     }
