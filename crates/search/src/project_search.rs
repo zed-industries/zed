@@ -39,7 +39,6 @@ use std::{
     ops::{Not, Range},
     pin::pin,
     sync::Arc,
-    time::Duration,
 };
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
@@ -964,7 +963,6 @@ impl ProjectSearchView {
                     let search_settings = &EditorSettings::get_global(cx).search;
                     if search_settings.search_on_input {
                         if this.query_editor.read(cx).is_empty(cx) {
-                            this.current_search_on_input = Task::ready(());
                             this.entity.update(cx, |model, cx| {
                                 model.pending_search = None;
                                 model.match_ranges.clear();
@@ -975,18 +973,7 @@ impl ProjectSearchView {
                                 cx.notify();
                             });
                         } else {
-                            let debounce = search_settings.search_on_input_debounce_ms;
-                            this.current_search_on_input = cx.spawn(async move |this, cx| {
-                                if debounce > 0 {
-                                    cx.background_executor()
-                                        .timer(Duration::from_millis(debounce))
-                                        .await;
-                                }
-                                this.update(cx, |this, cx| {
-                                    this.search(true, cx);
-                                })
-                                .ok();
-                            });
+                            this.search(true, cx);
                         }
                     }
                 }

@@ -2844,7 +2844,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -3280,12 +3279,6 @@ Non-negative `integer` values
 - Description: Whether to search on input in project search.
 - Setting: `search_on_input`
 - Default: `false`
-
-### Search On Input Debounce Ms
-
-- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
-- Setting: `search_on_input_debounce_ms`
-- Default: `200`
 
 ### Center On Match
 
