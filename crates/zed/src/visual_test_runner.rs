@@ -2568,7 +2568,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                         Workspace::new(None, project2.clone(), app_state.clone(), window, cx)
                     });
                     cx.new(|cx| {
-                        let mut multi_workspace = MultiWorkspace::new(workspace1, cx);
+                        let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
                         multi_workspace.activate(workspace2, cx);
                         multi_workspace
                     })
