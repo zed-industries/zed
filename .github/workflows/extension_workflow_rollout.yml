@@ -56,7 +56,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
         path: zed
     - name: checkout_extension_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -171,7 +171,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
         token: ${{ steps.generate-token.outputs.token }}
     - name: extension_workflow_rollout::create_rollout_tag::configure_git
       run: |

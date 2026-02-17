@@ -33,7 +33,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |

@@ -19,7 +19,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
     - name: steps::cargo_fmt
       run: cargo fmt --all -- --check
     - name: ./script/clippy
@@ -491,7 +491,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
     - name: release::download_workflow_artifacts
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:

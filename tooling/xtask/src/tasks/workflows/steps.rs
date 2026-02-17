@@ -122,7 +122,7 @@ impl From<CheckoutStep> for Step<Use> {
             .add_with(("clean", false))
             .map(|step| match value.fetch_depth {
                 FetchDepth::Shallow => step,
-                FetchDepth::Full => step.add_with(("fetch-depth", "0")),
+                FetchDepth::Full => step.add_with(("fetch-depth", 0)),
                 FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
             })
             .map(|step| match value.token {

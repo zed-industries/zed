@@ -17,7 +17,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
@@ -47,7 +47,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-        fetch-depth: '0'
+        fetch-depth: 0
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
