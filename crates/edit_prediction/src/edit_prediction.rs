@@ -2268,7 +2268,6 @@ impl EditPredictionStore {
             let output = prediction
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits);
-            let feedback = feedback.clone();
             async move {
                 client
                     .cloud_client()
