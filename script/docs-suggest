@@ -305,6 +305,14 @@ PROMPT_HEADER
 - **Settings pattern**: Show Settings Editor UI first, then JSON as alternative
 - **Keybindings**: Use `{#kb action::Name}` syntax, not hardcoded keys
 - **Terminology**: "folder" not "directory", "project" not "workspace", "Settings Editor" not "settings UI"
+- **SEO metadata**: Every updated/new docs page should include frontmatter with
+  `title` and `description` (single-line `key: value` entries)
+- **Metadata quality**: Titles should clearly state page intent (~50-60 chars),
+  descriptions should summarize the reader outcome (~140-160 chars)
+- **SEO structure**: Keep exactly one H1, preserve logical H1→H2→H3 hierarchy,
+  and add internal links where they improve task flow
+- **Keyword usage**: Use primary terms naturally in title/opening paragraph;
+  never keyword-stuff
 
 ### What Requires Documentation
 

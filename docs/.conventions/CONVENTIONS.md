@@ -80,6 +80,17 @@ description: One sentence describing what this page covers. Used in search resul
 
 - `title`: Feature name, optionally with "- Zed" suffix for SEO
 - `description`: Concise summary for search engines and link previews
+- Keep frontmatter values as simple single-line `key: value` entries (no
+  multiline values, no quotes) for compatibility with the docs postprocessor
+
+#### Frontmatter SEO Guidelines
+
+- Write unique `title` values that clearly state the page topic and target user
+  intent; aim for ~50-60 characters
+- Write `description` values that summarize what the reader can do on the page;
+  aim for ~140-160 characters
+- Put the primary topic phrase in the title and early in the opening paragraph,
+  naturally (no keyword stuffing)
 
 ### Section Ordering
 
@@ -234,6 +245,15 @@ End pages with related links when helpful:
 - [Agent Panel](./agent-panel.md): Agentic editing with file read/write
 - [Inline Assistant](./inline-assistant.md): Prompt-driven code transformations
 ```
+
+### SEO Linking Guidelines
+
+- Ensure each page is reachable from at least one other docs page (no orphan
+  pages)
+- Add links to closely related docs where they help users complete the next
+  task
+- Use descriptive link text that tells users what they will get on the linked
+  page
 
 ---
 
