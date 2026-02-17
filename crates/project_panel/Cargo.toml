@@ -30,6 +30,7 @@ itertools.workspace = true
 menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
+project_panel_settings.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true

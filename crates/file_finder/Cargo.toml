@@ -24,6 +24,7 @@ menu.workspace = true
 open_path_prompt.workspace = true
 picker.workspace = true
 project.workspace = true
+project_panel_settings.workspace = true
 settings.workspace = true
 serde.workspace = true
 text.workspace = true
