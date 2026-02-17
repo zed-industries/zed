@@ -4,6 +4,8 @@ mod plan;
 mod timestamp;
 pub mod websocket_protocol;
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::extension::*;
@@ -17,6 +19,8 @@ pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
 pub struct GetAuthenticatedUserResponse {
     pub user: AuthenticatedUser,
     pub feature_flags: Vec<String>,
+    #[serde(default)]
+    pub organizations: Vec<Organization>,
     pub plan: PlanInfo,
 }
 
@@ -29,6 +33,15 @@ pub struct AuthenticatedUser {
     pub name: Option<String>,
     pub is_staff: bool,
     pub accepted_tos_at: Option<Timestamp>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct OrganizationId(Arc<str>);
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct Organization {
+    pub id: OrganizationId,
+    pub name: Arc<str>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
