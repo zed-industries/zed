@@ -1689,7 +1689,7 @@ fn get_platform_info() -> Option<(&'static str, &'static str, &'static str)> {
     } else if cfg!(target_os = "windows") {
         "pc-windows-msvc"
     } else if cfg!(target_os = "linux") {
-        "unknown-linux-gnu"
+        "unknown-linux-musl"
     } else {
         return None;
     };
