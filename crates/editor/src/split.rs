@@ -2066,7 +2066,7 @@ impl LhsEditor {
                 .diff_for(base_text_buffer.read(lhs_cx).remote_id())
                 .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
         {
-            lhs_multibuffer.add_inverted_diff(diff.clone(), lhs_cx);
+            lhs_multibuffer.add_inverted_diff(diff, lhs_cx);
         }
 
         let rhs_merge_groups: Vec<Vec<ExcerptId>> = {
