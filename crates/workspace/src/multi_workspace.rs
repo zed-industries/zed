@@ -100,6 +100,7 @@ pub struct MultiWorkspace {
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     _sidebar_subscription: Option<Subscription>,
+    pending_removal_tasks: Vec<Task<()>>,
 }
 
 impl MultiWorkspace {
@@ -111,6 +112,7 @@ impl MultiWorkspace {
             sidebar: None,
             sidebar_open: false,
             _sidebar_subscription: None,
+            pending_removal_tasks: Vec::new(),
         }
     }
 
@@ -398,6 +400,10 @@ impl MultiWorkspace {
         self.workspace().read(cx).database_id()
     }
 
+    pub fn take_pending_removal_tasks(&mut self) -> Vec<Task<()>> {
+        std::mem::take(&mut self.pending_removal_tasks)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_random_database_id(&mut self, cx: &mut Context<Self>) {
         self.workspace().update(cx, |workspace, _cx| {
@@ -443,13 +449,20 @@ impl MultiWorkspace {
         self.focus_active_workspace(window, cx);
 
         let weak_workspace = new_workspace.downgrade();
-        cx.spawn_in(window, async move |_this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let workspace_id = crate::persistence::DB.next_id().await?;
-            weak_workspace
-                .update(cx, |workspace, _cx| {
-                    workspace.set_database_id(workspace_id);
-                })
-                .log_err();
+            this.update_in(cx, |this, window, cx| {
+                if let Some(workspace) = weak_workspace.upgrade() {
+                    workspace.update(cx, |workspace, _cx| {
+                        workspace.set_database_id(workspace_id);
+                    });
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.flush_serialization(window, cx).detach();
+                    });
+                }
+                this.serialize(cx);
+            })
+            .log_err();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -469,13 +482,13 @@ impl MultiWorkspace {
         }
 
         if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
-            cx.background_spawn(async move {
-                crate::persistence::DB
-                    .set_session_id(workspace_id, None)
-                    .await
-                    .log_err();
-            })
-            .detach();
+            self.pending_removal_tasks
+                .push(cx.background_spawn(async move {
+                    crate::persistence::DB
+                        .delete_workspace_by_id(workspace_id)
+                        .await
+                        .log_err();
+                }));
         }
 
         self.serialize(cx);

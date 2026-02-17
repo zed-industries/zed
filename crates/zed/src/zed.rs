@@ -1352,17 +1352,28 @@ fn quit(_: &Quit, cx: &mut App) {
         }
         // Flush all pending workspace serialization before quitting so that
         // session_id/window_id are up-to-date in the database.
+        let mut flush_tasks = Vec::new();
         for window in &workspace_windows {
-            window
+            if let Some(tasks) = window
                 .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx).detach();
-                        });
-                    }
+                    let mut tasks: Vec<Task<()>> = multi_workspace
+                        .workspaces()
+                        .iter()
+                        .map(|workspace| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.flush_serialization(window, cx)
+                            })
+                        })
+                        .collect();
+                    tasks.append(&mut multi_workspace.take_pending_removal_tasks());
+                    tasks
                 })
-                .log_err();
+                .log_err()
+            {
+                flush_tasks.extend(tasks);
+            }
         }
+        futures::future::join_all(flush_tasks).await;
 
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
