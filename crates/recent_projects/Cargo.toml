@@ -18,6 +18,7 @@ test-support = ["remote/test-support", "remote_connection/test-support", "projec
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 askpass.workspace = true
 db.workspace = true
 dev_container.workspace = true

@@ -1,5 +1,6 @@
 use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
+use chrono::{DateTime, Duration, Utc};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
@@ -294,11 +295,41 @@ impl WorkspacePickerDelegate {
             .collect();
 
         if !recent.is_empty() {
-            self.entries
-                .push(SidebarEntry::Separator("Recent Projects".into()));
+            let now = Utc::now();
+            let one_day_ago = now - Duration::days(1);
+            let one_week_ago = now - Duration::days(7);
+            let one_month_ago = now - Duration::days(30);
+
+            let mut current_section: Option<&'static str> = None;
+
             for project in recent {
+                let section = Self::time_section_for_timestamp(project.timestamp, one_day_ago, one_week_ago, one_month_ago);
+
+                if current_section != Some(section) {
+                    current_section = Some(section);
+                    self.entries
+                        .push(SidebarEntry::Separator(section.into()));
+                }
+
                 self.entries.push(SidebarEntry::RecentProject(project));
             }
+        }
+    }
+
+    fn time_section_for_timestamp(
+        timestamp: DateTime<Utc>,
+        one_day_ago: DateTime<Utc>,
+        one_week_ago: DateTime<Utc>,
+        one_month_ago: DateTime<Utc>,
+    ) -> &'static str {
+        if timestamp >= one_day_ago {
+            "Today"
+        } else if timestamp >= one_week_ago {
+            "This Week"
+        } else if timestamp >= one_month_ago {
+            "This Month"
+        } else {
+            "A While Ago"
         }
     }
 
