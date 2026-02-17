@@ -1437,10 +1437,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (custom_command, None)
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "claude-code-acp".into(),
-                    "@zed-industries/claude-code-acp".into(),
-                    "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.5.2".parse().unwrap()),
+                    "claude-agent-acp".into(),
+                    "@zed-industries/claude-agent-acp".into(),
+                    "node_modules/@zed-industries/claude-agent-acp/dist/index.js".into(),
+                    Some("0.17.0".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -1449,26 +1449,8 @@ impl ExternalAgentServer for LocalClaudeCode {
                 )
                 .await?;
                 command.env = Some(env);
-                let login = command
-                    .args
-                    .first()
-                    .and_then(|path| {
-                        path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
-                    })
-                    .map(|path_prefix| task::SpawnInTerminal {
-                        command: Some(command.path.to_string_lossy().into_owned()),
-                        args: vec![
-                            Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-agent-sdk/cli.js")
-                                .to_string_lossy()
-                                .to_string(),
-                            "/login".into(),
-                        ],
-                        env: command.env.clone().unwrap_or_default(),
-                        label: "claude /login".into(),
-                        ..Default::default()
-                    });
-                (command, login)
+
+                (command, None)
             };
 
             command.env.get_or_insert_default().extend(extra_env);
