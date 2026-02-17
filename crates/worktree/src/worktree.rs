@@ -344,6 +344,7 @@ enum ScanState {
     RootUpdated {
         new_path: Arc<SanitizedPath>,
     },
+    RootDeleted,
 }
 
 struct UpdateObservationState {
@@ -357,6 +358,8 @@ pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
     DeletedEntry(ProjectEntryId),
+    /// The worktree root itself has been deleted (for single-file worktrees)
+    Deleted,
 }
 
 impl EventEmitter<Event> for Worktree {}
@@ -1084,6 +1087,7 @@ impl LocalWorktree {
                 };
                 let fs_case_sensitive = fs.is_case_sensitive().await;
 
+                let is_single_file = snapshot.snapshot.root_dir().is_none();
                 let mut scanner = BackgroundScanner {
                     fs,
                     fs_case_sensitive,
@@ -1106,6 +1110,7 @@ impl LocalWorktree {
                     share_private_files,
                     settings,
                     watcher,
+                    is_single_file,
                 };
 
                 scanner
@@ -1133,6 +1138,13 @@ impl LocalWorktree {
                         }
                         ScanState::RootUpdated { new_path } => {
                             this.update_abs_path_and_refresh(new_path, cx);
+                        }
+                        ScanState::RootDeleted => {
+                            log::info!(
+                                "worktree root {} no longer exists, closing worktree",
+                                this.abs_path().display()
+                            );
+                            cx.emit(Event::Deleted);
                         }
                     }
                 });
@@ -3740,6 +3752,9 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    /// Whether this is a single-file worktree (root is a file, not a directory).
+    /// Used to determine if we should give up after repeated canonicalization failures.
+    is_single_file: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -4031,6 +4046,18 @@ impl BackgroundScanner {
                         .ok();
                 } else {
                     log::error!("root path could not be canonicalized: {err:#}");
+
+                    // For single-file worktrees, if we can't canonicalize and the file handle
+                    // fallback also failed, the file is gone - close the worktree
+                    if self.is_single_file {
+                        log::info!(
+                            "single-file worktree root {:?} no longer exists, marking as deleted",
+                            root_path.as_path()
+                        );
+                        self.status_updates_tx
+                            .unbounded_send(ScanState::RootDeleted)
+                            .ok();
+                    }
                 }
                 return;
             }
