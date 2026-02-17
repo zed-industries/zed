@@ -927,6 +927,11 @@ pub struct RetryStatus {
     pub duration: Duration,
 }
 
+struct RunningTurn {
+    id: u32,
+    send_task: Task<()>,
+}
+
 pub struct AcpThread {
     parent_session_id: Option<acp::SessionId>,
     title: SharedString,
@@ -935,7 +940,8 @@ pub struct AcpThread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    running_turn: Option<(u32, Task<()>)>,
+    turn_id: u32,
+    running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
     token_usage: Option<TokenUsage>,
@@ -1170,6 +1176,7 @@ impl AcpThread {
             title: title.into(),
             project,
             running_turn: None,
+            turn_id: 0,
             connection,
             session_id,
             token_usage: None,
@@ -1915,15 +1922,15 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
-        let turn_id = 1;
-
-        self.running_turn = Some((
-            turn_id,
-            cx.spawn(async move |this, cx| {
+        self.turn_id += 1;
+        let turn_id = self.turn_id;
+        self.running_turn = Some(RunningTurn {
+            id: turn_id,
+            send_task: cx.spawn(async move |this, cx| {
                 cancel_task.await;
                 tx.send(f(this, cx).await).ok();
             }),
-        ));
+        });
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
@@ -1943,13 +1950,11 @@ impl AcpThread {
                 let is_same_turn = this
                     .running_turn
                     .as_ref()
-                    .is_some_and(|(id, _)| turn_id == *id);
+                    .is_some_and(|turn| turn_id == turn.id);
 
-                // We only take the task if the current prompt wasn't canceled.
-                //
-                // This prompt may have been canceled because another one was sent
-                // while it was still generating. In these cases, dropping `send_task`
-                // would cause the next generation to be canceled.
+                // If the user submitted a follow up message, running_turn might
+                // already point to a different turn. Therefore we only want to
+                // take the task if it's the same turn.
                 if is_same_turn {
                     this.running_turn.take();
                 }
@@ -2015,7 +2020,7 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some((_, send_task)) = self.running_turn.take() else {
+        let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
         };
         self.connection.cancel(&self.session_id, cx);
@@ -2023,7 +2028,7 @@ impl AcpThread {
         self.mark_pending_tools_as_canceled();
 
         // Wait for the send task to complete
-        cx.foreground_executor().spawn(send_task)
+        cx.foreground_executor().spawn(turn.send_task)
     }
 
     fn mark_pending_tools_as_canceled(&mut self) {
