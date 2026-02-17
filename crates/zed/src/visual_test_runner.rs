@@ -2651,9 +2651,9 @@ fn run_multi_workspace_sidebar_visual_tests(
         sidebar.update(cx, |sidebar, cx| {
             let now = Utc::now();
             let today_timestamp = now;
-            let this_week_timestamp = now - ChronoDuration::days(3);
-            let this_month_timestamp = now - ChronoDuration::days(15);
-            let a_while_ago_timestamp = now - ChronoDuration::days(60);
+            let yesterday_timestamp = now - ChronoDuration::days(1);
+            let past_week_timestamp = now - ChronoDuration::days(10);
+            let all_timestamp = now - ChronoDuration::days(60);
 
             let recent_projects = vec![
                 RecentProjectEntry {
@@ -2668,21 +2668,21 @@ fn run_multi_workspace_sidebar_visual_tests(
                     full_path: recent2_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent2_dir.clone()],
                     workspace_id: WorkspaceId::default(),
-                    timestamp: this_week_timestamp,
+                    timestamp: yesterday_timestamp,
                 },
                 RecentProjectEntry {
                     name: "ideas".into(),
                     full_path: recent3_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent3_dir.clone()],
                     workspace_id: WorkspaceId::default(),
-                    timestamp: this_month_timestamp,
+                    timestamp: past_week_timestamp,
                 },
                 RecentProjectEntry {
                     name: "tmp".into(),
                     full_path: recent4_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent4_dir.clone()],
                     workspace_id: WorkspaceId::default(),
-                    timestamp: a_while_ago_timestamp,
+                    timestamp: all_timestamp,
                 },
             ];
             sidebar.set_test_recent_projects(recent_projects, cx);
