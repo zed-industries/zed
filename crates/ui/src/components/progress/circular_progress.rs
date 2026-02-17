@@ -10,6 +10,7 @@ pub struct CircularProgress {
     value: f32,
     max_value: f32,
     size: Pixels,
+    stroke_width: Pixels,
     bg_color: Hsla,
     progress_color: Hsla,
 }
@@ -20,6 +21,7 @@ impl CircularProgress {
             value,
             max_value,
             size,
+            stroke_width: px(4.0),
             bg_color: cx.theme().colors().border_variant,
             progress_color: cx.theme().status().info,
         }
@@ -40,6 +42,12 @@ impl CircularProgress {
     /// Sets the size (diameter) of the circular progress indicator.
     pub fn size(mut self, size: Pixels) -> Self {
         self.size = size;
+        self
+    }
+
+    /// Sets the stroke width of the circular progress indicator.
+    pub fn stroke_width(mut self, stroke_width: Pixels) -> Self {
+        self.stroke_width = stroke_width;
         self
     }
 
@@ -72,7 +80,7 @@ impl RenderOnce for CircularProgress {
                 let center_x = bounds.origin.x + bounds.size.width / 2.0;
                 let center_y = bounds.origin.y + bounds.size.height / 2.0;
 
-                let stroke_width = px(4.0);
+                let stroke_width = self.stroke_width;
                 let radius = (size / 2.0) - stroke_width;
 
                 // Draw background circle (full 360 degrees)

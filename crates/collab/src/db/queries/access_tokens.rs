@@ -1,22 +1,22 @@
 use super::*;
 use anyhow::Context as _;
-use sea_orm::sea_query::Query;
 
 impl Database {
     /// Creates a new access token for the given user.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn create_access_token(
         &self,
         user_id: UserId,
-        impersonated_user_id: Option<UserId>,
         access_token_hash: &str,
         max_access_token_count: usize,
     ) -> Result<AccessTokenId> {
+        use sea_orm::sea_query::Query;
+
         self.transaction(|tx| async {
             let tx = tx;
 
             let token = access_token::ActiveModel {
                 user_id: ActiveValue::set(user_id),
-                impersonated_user_id: ActiveValue::set(impersonated_user_id),
                 hash: ActiveValue::set(access_token_hash.into()),
                 ..Default::default()
             }

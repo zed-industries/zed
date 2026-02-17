@@ -199,11 +199,6 @@ impl WindowsDisplay {
             .collect()
     }
 
-    /// Check if this monitor is still online
-    pub fn is_connected(hmonitor: HMONITOR) -> bool {
-        available_monitors().iter().contains(&hmonitor)
-    }
-
     pub fn physical_bounds(&self) -> Bounds<DevicePixels> {
         self.physical_bounds
     }

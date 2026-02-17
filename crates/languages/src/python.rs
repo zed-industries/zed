@@ -1393,7 +1393,15 @@ impl ToolchainLister for PythonToolchainProvider {
                     }
 
                     if let Some(name) = &toolchain.environment.name {
-                        activation_script.push(format!("{manager} activate {name}"));
+                        if let Some(quoted_name) = shell.try_quote(name) {
+                            activation_script.push(format!("{manager} activate {quoted_name}"));
+                        } else {
+                            log::warn!(
+                                "Could not safely quote environment name {:?}, falling back to base",
+                                name
+                            );
+                            activation_script.push(format!("{manager} activate base"));
+                        }
                     } else {
                         activation_script.push(format!("{manager} activate base"));
                     }
@@ -2629,6 +2637,76 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::python::python_module_name_from_relative_path;
+
+    #[gpui::test]
+    async fn test_conda_activation_script_injection(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let provider = PythonToolchainProvider;
+        let malicious_name = "foo; rm -rf /";
+
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": malicious_name,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            script
+                .iter()
+                .any(|s| s.contains("conda activate 'foo; rm -rf /'")),
+            "Script should contain quoted malicious name, actual: {:?}",
+            script
+        );
+    }
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {

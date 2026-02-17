@@ -1116,6 +1116,27 @@ fn test_permission_options_without_pattern() {
 }
 
 #[test]
+fn test_permission_options_symlink_target_are_flat_once_only() {
+    let permission_options =
+        ToolPermissionContext::symlink_target(EditFileTool::NAME, vec!["/outside/file.txt".into()])
+            .build_permission_options();
+
+    let PermissionOptions::Flat(options) = permission_options else {
+        panic!("Expected flat permission options for symlink target authorization");
+    };
+
+    assert_eq!(options.len(), 2);
+    assert!(options.iter().any(|option| {
+        option.option_id.0.as_ref() == "allow"
+            && option.kind == acp::PermissionOptionKind::AllowOnce
+    }));
+    assert!(options.iter().any(|option| {
+        option.option_id.0.as_ref() == "deny"
+            && option.kind == acp::PermissionOptionKind::RejectOnce
+    }));
+}
+
+#[test]
 fn test_permission_option_ids_for_terminal() {
     let permission_options = ToolPermissionContext::new(
         TerminalTool::NAME,

@@ -42,8 +42,8 @@ use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{ItemBufferKind, ItemHandle},
     searchable::{
-        CollapseDirection, Direction, FilteredSearchRange, SearchEvent, SearchToken,
-        SearchableItemHandle, WeakSearchableItemHandle,
+        Direction, FilteredSearchRange, SearchEvent, SearchToken, SearchableItemHandle,
+        WeakSearchableItemHandle,
     },
 };
 
@@ -94,7 +94,6 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
-    is_collapsed: bool,
     splittable_editor: Option<WeakEntity<SplittableEditor>>,
     _splittable_editor_subscription: Option<Subscription>,
 }
@@ -212,7 +211,14 @@ impl Render for BufferSearchBar {
         let collapse_expand_button = if self.needs_expand_collapse_option(cx) {
             let query_editor_focus = self.query_editor.focus_handle(cx);
 
-            let (icon, tooltip_label) = if self.is_collapsed {
+            let is_collapsed = self
+                .active_searchable_item
+                .as_ref()
+                .and_then(|item| item.act_as_type(TypeId::of::<Editor>(), cx))
+                .and_then(|item| item.downcast::<Editor>().ok())
+                .map(|editor: Entity<Editor>| editor.read(cx).has_any_buffer_folded(cx))
+                .unwrap_or_default();
+            let (icon, tooltip_label) = if is_collapsed {
                 (IconName::ChevronUpDown, "Expand All Files")
             } else {
                 (IconName::ChevronDownUp, "Collapse All Files")
@@ -887,7 +893,6 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
-            is_collapsed: false,
             splittable_editor: None,
             _splittable_editor_subscription: None,
         }
@@ -1053,11 +1058,11 @@ impl BufferSearchBar {
     }
 
     fn toggle_fold_all_in_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let is_collapsed = self.is_collapsed;
         if let Some(item) = &self.active_searchable_item {
             if let Some(item) = item.act_as_type(TypeId::of::<Editor>(), cx) {
                 let editor = item.downcast::<Editor>().expect("Is an editor");
                 editor.update(cx, |editor, cx| {
+                    let is_collapsed = editor.has_any_buffer_folded(cx);
                     if is_collapsed {
                         editor.unfold_all(&UnfoldAll, window, cx);
                     } else {
@@ -1434,15 +1439,6 @@ impl BufferSearchBar {
                 drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
-            SearchEvent::ResultsCollapsedChanged(collapse_direction) => {
-                if self.needs_expand_collapse_option(cx) {
-                    match collapse_direction {
-                        CollapseDirection::Collapsed => self.is_collapsed = true,
-                        CollapseDirection::Expanded => self.is_collapsed = false,
-                    }
-                }
-                cx.notify();
-            }
         }
     }
 
@@ -3395,18 +3391,79 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.fold_all(&FoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(is_collapsed);
 
         editor.update_in(cx, |editor, window, cx| {
             editor.unfold_all(&UnfoldAll, window, cx);
         });
+        cx.run_until_parked();
 
-        let is_collapsed = search_bar.read_with(cx, |search_bar, _| search_bar.is_collapsed);
-
+        let is_collapsed = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
         assert!(!is_collapsed);
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_collapse_state_syncs_after_manual_buffer_fold(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+        });
+
+        // Fold all buffers via fold_all
+        editor.update_in(cx, |editor, window, cx| {
+            editor.fold_all(&FoldAll, window, cx);
+        });
+        cx.run_until_parked();
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "All buffers should be folded after fold_all"
+        );
+
+        // Manually unfold one buffer (simulating a chevron click)
+        let first_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should still report folds when only one buffer is unfolded"
+        );
+
+        // Manually unfold the second buffer too
+        let second_buffer_id = editor.read_with(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+        });
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.unfold_buffer(second_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            !has_any_folded,
+            "No folds should remain after unfolding all buffers individually"
+        );
+
+        // Manually fold one buffer back
+        editor.update_in(cx, |editor, _window, cx| {
+            editor.fold_buffer(first_buffer_id, cx);
+        });
+
+        let has_any_folded = editor.read_with(cx, |editor, cx| editor.has_any_buffer_folded(cx));
+        assert!(
+            has_any_folded,
+            "Should report folds after manually folding one buffer"
+        );
     }
 
     #[perf]
@@ -3421,7 +3478,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3485,7 +3541,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3524,7 +3579,6 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
-                search_on_input: false,
             },
             cx,
         );
@@ -3607,91 +3661,9 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
-                        search_on_input: Some(search_settings.search_on_input),
                     });
                 });
             });
-        });
-    }
-    #[gpui::test]
-    async fn test_search_on_input_setting(cx: &mut TestAppContext) {
-        let (editor, search_bar, cx) = init_test(cx);
-
-        update_search_settings(
-            SearchSettings {
-                button: true,
-                whole_word: false,
-                case_sensitive: false,
-                include_ignored: false,
-                regex: false,
-                center_on_match: false,
-                search_on_input: false,
-            },
-            cx,
-        );
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.show(window, cx);
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(
-                        [(MultiBufferOffset(0)..MultiBufferOffset(0), "expression")],
-                        None,
-                        cx,
-                    );
-                });
-            });
-        });
-
-        cx.background_executor.run_until_parked();
-
-        editor.update_in(cx, |editor, window, cx| {
-            let highlights = editor.all_text_background_highlights(window, cx);
-            assert!(
-                highlights.is_empty(),
-                "No highlights should appear when search_on_input is false"
-            );
-        });
-
-        update_search_settings(
-            SearchSettings {
-                button: true,
-                whole_word: false,
-                case_sensitive: false,
-                include_ignored: false,
-                regex: false,
-                center_on_match: false,
-                search_on_input: true,
-            },
-            cx,
-        );
-
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.dismiss(&Dismiss, window, cx);
-            search_bar.show(window, cx);
-        });
-
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression", None, true, window, cx)
-            })
-            .await
-            .unwrap();
-
-        editor.update_in(cx, |editor, window, cx| {
-            let highlights = display_points_of(editor.all_text_background_highlights(window, cx));
-            assert_eq!(
-                highlights.len(),
-                2,
-                "Should find 2 matches for 'expression' when search_on_input is true"
-            );
-            assert_eq!(
-                highlights,
-                &[
-                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
-                    DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
-                ]
-            );
         });
     }
 }

@@ -53,8 +53,7 @@ fn channel_id(room: &Entity<Room>, cx: &mut TestAppContext) -> Option<ChannelId>
 
 mod auth_token_tests {
     use collab::auth::{
-        AccessTokenJson, MAX_ACCESS_TOKENS_TO_STORE, VerifyAccessTokenResult, create_access_token,
-        verify_access_token,
+        AccessTokenJson, VerifyAccessTokenResult, hash_access_token, verify_access_token,
     };
     use rand::prelude::*;
     use scrypt::Scrypt;
@@ -63,6 +62,22 @@ mod auth_token_tests {
 
     use collab::db::{Database, NewUserParams, UserId, access_token};
     use collab::*;
+
+    const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
+
+    async fn create_access_token(db: &db::Database, user_id: UserId) -> Result<String> {
+        const VERSION: usize = 1;
+        let access_token = ::rpc::auth::random_token();
+        let access_token_hash = hash_access_token(&access_token);
+        let id = db
+            .create_access_token(user_id, &access_token_hash, MAX_ACCESS_TOKENS_TO_STORE)
+            .await?;
+        Ok(serde_json::to_string(&AccessTokenJson {
+            version: VERSION,
+            id,
+            token: access_token,
+        })?)
+    }
 
     #[gpui::test]
     async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {
@@ -82,16 +97,13 @@ mod auth_token_tests {
             .await
             .unwrap();
 
-        let token = create_access_token(db, user.user_id, None).await.unwrap();
+        let token = create_access_token(db, user.user_id).await.unwrap();
         assert!(matches!(
             verify_access_token(&token, user.user_id, db).await.unwrap(),
-            VerifyAccessTokenResult {
-                is_valid: true,
-                impersonator_id: None,
-            }
+            VerifyAccessTokenResult { is_valid: true }
         ));
 
-        let old_token = create_previous_access_token(user.user_id, None, db)
+        let old_token = create_previous_access_token(user.user_id, db)
             .await
             .unwrap();
 
@@ -115,10 +127,7 @@ mod auth_token_tests {
             verify_access_token(&old_token, user.user_id, db)
                 .await
                 .unwrap(),
-            VerifyAccessTokenResult {
-                is_valid: true,
-                impersonator_id: None,
-            }
+            VerifyAccessTokenResult { is_valid: true }
         ));
 
         let hash = db
@@ -137,35 +146,20 @@ mod auth_token_tests {
             verify_access_token(&old_token, user.user_id, db)
                 .await
                 .unwrap(),
-            VerifyAccessTokenResult {
-                is_valid: true,
-                impersonator_id: None,
-            }
+            VerifyAccessTokenResult { is_valid: true }
         ));
 
         assert!(matches!(
             verify_access_token(&token, user.user_id, db).await.unwrap(),
-            VerifyAccessTokenResult {
-                is_valid: true,
-                impersonator_id: None,
-            }
+            VerifyAccessTokenResult { is_valid: true }
         ));
     }
 
-    async fn create_previous_access_token(
-        user_id: UserId,
-        impersonated_user_id: Option<UserId>,
-        db: &Database,
-    ) -> Result<String> {
+    async fn create_previous_access_token(user_id: UserId, db: &Database) -> Result<String> {
         let access_token = collab::auth::random_token();
         let access_token_hash = previous_hash_access_token(&access_token)?;
         let id = db
-            .create_access_token(
-                user_id,
-                impersonated_user_id,
-                &access_token_hash,
-                MAX_ACCESS_TOKENS_TO_STORE,
-            )
+            .create_access_token(user_id, &access_token_hash, MAX_ACCESS_TOKENS_TO_STORE)
             .await?;
         Ok(serde_json::to_string(&AccessTokenJson {
             version: 1,

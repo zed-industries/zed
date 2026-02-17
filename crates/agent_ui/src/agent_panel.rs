@@ -1124,22 +1124,7 @@ impl AgentPanel {
         match self.active_view {
             ActiveView::Configuration | ActiveView::History { .. } => {
                 if let Some(previous_view) = self.previous_view.take() {
-                    self.active_view = previous_view;
-                    cx.emit(AgentPanelEvent::ActiveViewChanged);
-
-                    match &self.active_view {
-                        ActiveView::AgentThread { thread_view } => {
-                            thread_view.focus_handle(cx).focus(window, cx);
-                        }
-                        ActiveView::TextThread {
-                            text_thread_editor, ..
-                        } => {
-                            text_thread_editor.focus_handle(cx).focus(window, cx);
-                        }
-                        ActiveView::Uninitialized
-                        | ActiveView::History { .. }
-                        | ActiveView::Configuration => {}
-                    }
+                    self.set_active_view(previous_view, true, window, cx);
                 }
                 cx.notify();
             }
@@ -1561,6 +1546,12 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let was_in_agent_history = matches!(
+            self.active_view,
+            ActiveView::History {
+                kind: HistoryKind::AgentThreads
+            }
+        );
         let current_is_uninitialized = matches!(self.active_view, ActiveView::Uninitialized);
         let current_is_history = matches!(self.active_view, ActiveView::History { .. });
         let new_is_history = matches!(new_view, ActiveView::History { .. });
@@ -1592,6 +1583,18 @@ impl AgentPanel {
             }
             _ => None,
         };
+
+        let is_in_agent_history = matches!(
+            self.active_view,
+            ActiveView::History {
+                kind: HistoryKind::AgentThreads
+            }
+        );
+
+        if !was_in_agent_history && is_in_agent_history {
+            self.acp_history
+                .update(cx, |history, cx| history.refresh_full_history(cx));
+        }
 
         if focus {
             self.focus_handle(cx).focus(window, cx);

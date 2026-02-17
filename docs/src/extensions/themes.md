@@ -50,4 +50,9 @@ The core components a Theme object include:
 6. Terminal Colors:
    - ANSI color definitions for the integrated terminal
 
-We recommend looking at our [existing themes](https://github.com/zed-industries/zed/tree/main/assets/themes) to get a more comprehensive idea of what can be styled.
+## Designing Your Theme
+
+You can use [Zed's Theme Builder](https://zed.dev/theme-builder) to design your own custom theme based on an existing one.
+
+This tool lets you fine-tune and preview how every surface in the Zed app will look.
+You can then export the JSON for more easily publishing it in Zed's extension store.

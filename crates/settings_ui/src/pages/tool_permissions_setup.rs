@@ -1070,7 +1070,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
     let mode_label = current_mode.to_string();
 
     h_flex()
-        .mt_4()
+        .my_4()
         .justify_between()
         .child(
             v_flex()

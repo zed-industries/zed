@@ -776,6 +776,10 @@ pub fn into_bedrock(
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
 
+    // Track whether messages contain tool content - Bedrock requires toolConfig
+    // when tool blocks are present, so we may need to add a dummy tool
+    let mut messages_contain_tool_content = false;
+
     for message in request.messages {
         if message.contents_empty() {
             continue;
@@ -829,6 +833,7 @@ pub fn into_bedrock(
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => {
+                            messages_contain_tool_content = true;
                             let input = if tool_use.input.is_null() {
                                 // Bedrock API requires valid JsonValue, not null, for tool use input
                                 value_to_aws_document(&serde_json::json!({}))
@@ -845,6 +850,7 @@ pub fn into_bedrock(
                                 .map(BedrockInnerContent::ToolUse)
                         }
                         MessageContent::ToolResult(tool_result) => {
+                            messages_contain_tool_content = true;
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
@@ -975,6 +981,23 @@ pub fn into_bedrock(
             ))
         })
         .collect();
+
+    // Bedrock requires toolConfig when messages contain tool use/result blocks.
+    // If no tools are defined but messages contain tool content (e.g., when
+    // summarising a conversation that used tools), add a dummy tool to satisfy
+    // the API requirement.
+    if tool_spec.is_empty() && messages_contain_tool_content {
+        tool_spec.push(BedrockTool::ToolSpec(
+            BedrockToolSpec::builder()
+                .name("_placeholder")
+                .description("Placeholder tool to satisfy Bedrock API requirements when conversation history contains tool usage")
+                .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                    &serde_json::json!({"type": "object", "properties": {}}),
+                )))
+                .build()
+                .context("failed to build placeholder tool spec")?,
+        ));
+    }
 
     if !tool_spec.is_empty() && supports_caching {
         tool_spec.push(BedrockTool::CachePoint(
