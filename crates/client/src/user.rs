@@ -261,6 +261,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_organizations();
                                 this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -733,6 +734,11 @@ impl UserStore {
     ) {
         self.edit_prediction_usage = Some(usage);
         cx.notify();
+    }
+
+    pub fn clear_organizations(&mut self) {
+        self.organizations.clear();
+        self.current_organization = None;
     }
 
     pub fn clear_plan_and_usage(&mut self) {
