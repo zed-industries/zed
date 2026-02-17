@@ -303,6 +303,10 @@ PROMPT_HEADER
 - **Voice**: Second person ("you"), present tense, direct and concise
 - **No hedging**: Avoid "simply", "just", "easily"
 - **Settings pattern**: Show Settings Editor UI first, then JSON as alternative
+- **Settings wording**: Prefer "settings file" over `settings.json` unless the
+  literal filename is required
+- **JSON-only settings**: If a setting has no Settings Editor control, call that
+  out and link to `([how to edit](./configuring-zed.md#settings-files))`
 - **Keybindings**: Use `{#kb action::Name}` syntax, not hardcoded keys
 - **Terminology**: "folder" not "directory", "project" not "workspace", "Settings Editor" not "settings UI"
 
@@ -383,6 +387,8 @@ Respond with ONE of these formats:
 #### 1. [docs/src/path/to/file.md]
 - **Section**: [existing section to update, or "New section"]
 - **Change**: [Add/Update/Remove]
+- **Settings guidance**: [If settings are involved: UI-first wording, JSON
+  fallback, and JSON-only "how to edit" link when applicable]
 - **Suggestion**: [Specific text or description of what to add/change]
 
 #### 2. [docs/src/another/file.md]
