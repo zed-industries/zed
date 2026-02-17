@@ -854,10 +854,6 @@ impl ActionLog {
         self.last_reject_undo.is_some()
     }
 
-    pub fn clear_pending_undo(&mut self) {
-        self.last_reject_undo = None;
-    }
-
     /// Undoes the most recent reject operation, restoring the rejected agent changes.
     /// This is a best-effort operation: if buffers have been closed or modified externally,
     /// those buffers will be skipped.
