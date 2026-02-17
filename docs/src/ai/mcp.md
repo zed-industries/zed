@@ -44,7 +44,7 @@ Popular servers available as an extension include:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
 
 ```json [settings]
 {
