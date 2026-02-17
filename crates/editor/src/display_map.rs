@@ -542,6 +542,8 @@ impl DisplayMap {
         }]);
         self.block_map.deferred_edits.set(edits);
 
+        let all_blocks: Vec<_> = self.block_map.blocks_raw().map(Clone::clone).collect();
+
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
                 let their_buffer = companion
@@ -554,11 +556,6 @@ impl DisplayMap {
                     .folded_buffers
                     .insert(*their_buffer);
             }
-            let all_blocks: Vec<_> = companion_display_map
-                .block_map
-                .blocks_raw()
-                .map(Clone::clone)
-                .collect();
             for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),
