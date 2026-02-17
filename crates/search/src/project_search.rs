@@ -25,7 +25,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, UpdateGlobal, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
-use language::{Buffer, Language, OffsetRangeExt as _};
+use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
     Project, ProjectPath, SearchResults,
@@ -266,7 +266,6 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
-    current_search_on_input: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -356,9 +355,7 @@ impl ProjectSearch {
         self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
         self.active_query = Some(query);
-        if !incremental {
-            self.match_ranges.clear();
-        }
+        self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
 
@@ -378,7 +375,7 @@ impl ProjectSearch {
             }
 
             let mut limit_reached = false;
-            let mut all_buffers_with_ranges = Vec::new();
+            let mut seen_paths = HashSet::default();
             while let Some(results) = matches.next().await {
                 let (buffers_with_ranges, has_reached_limit) = cx
                     .background_executor()
@@ -401,7 +398,38 @@ impl ProjectSearch {
                 limit_reached |= has_reached_limit;
 
                 if incremental {
-                    all_buffers_with_ranges.extend(buffers_with_ranges);
+                    let (mut chunk_ranges, chunk_paths) = project_search
+                        .update(cx, |project_search, cx| {
+                            let mut paths = Vec::new();
+                            let futures = project_search.excerpts.update(cx, |excerpts, cx| {
+                                buffers_with_ranges
+                                    .into_iter()
+                                    .map(|(buffer, ranges)| {
+                                        let path_key = PathKey::for_buffer(&buffer, cx);
+                                        paths.push(path_key.clone());
+                                        excerpts.set_anchored_excerpts_for_path(
+                                            path_key,
+                                            buffer,
+                                            ranges,
+                                            multibuffer_context_lines(cx),
+                                            cx,
+                                        )
+                                    })
+                                    .collect::<FuturesOrdered<_>>()
+                            });
+                            (futures, paths)
+                        })
+                        .ok()?;
+                    seen_paths.extend(chunk_paths);
+                    while let Some(ranges) = chunk_ranges.next().await {
+                        smol::future::yield_now().await;
+                        project_search
+                            .update(cx, |project_search, cx| {
+                                project_search.match_ranges.extend(ranges);
+                                cx.notify();
+                            })
+                            .ok()?;
+                    }
                     continue;
                 }
 
@@ -437,57 +465,9 @@ impl ProjectSearch {
             }
 
             if incremental {
-                let (path_buffers, snapshots_with_ranges, context_line_count) = project_search
-                    .update(cx, |_, cx| {
-                        let context_line_count = multibuffer_context_lines(cx);
-                        let mut path_buffers = Vec::with_capacity(all_buffers_with_ranges.len());
-                        let mut snapshots_with_ranges =
-                            Vec::with_capacity(all_buffers_with_ranges.len());
-                        for (buffer, ranges) in all_buffers_with_ranges {
-                            let path_key = PathKey::for_buffer(&buffer, cx);
-                            let snapshot = buffer.read(cx).snapshot();
-                            path_buffers.push((path_key, buffer));
-                            snapshots_with_ranges.push((snapshot, ranges));
-                        }
-                        (path_buffers, snapshots_with_ranges, context_line_count)
-                    })
-                    .ok()?;
-
-                let point_ranges_per_buffer = cx
-                    .background_executor()
-                    .spawn(async move {
-                        snapshots_with_ranges
-                            .into_iter()
-                            .map(|(snapshot, ranges)| {
-                                ranges
-                                    .into_iter()
-                                    .map(|range| range.to_point(&snapshot))
-                                    .collect::<Vec<_>>()
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .await;
-
                 project_search
                     .update(cx, |project_search, cx| {
-                        let seen_paths = path_buffers
-                            .iter()
-                            .map(|(pk, _)| pk.clone())
-                            .collect::<HashSet<_>>();
-                        let mut new_match_ranges = Vec::new();
                         project_search.excerpts.update(cx, |excerpts, cx| {
-                            for ((path_key, buffer), point_ranges) in
-                                path_buffers.into_iter().zip(point_ranges_per_buffer)
-                            {
-                                let (ranges, _) = excerpts.set_excerpts_for_path(
-                                    path_key,
-                                    buffer,
-                                    point_ranges,
-                                    context_line_count,
-                                    cx,
-                                );
-                                new_match_ranges.extend(ranges);
-                            }
                             let stale = excerpts
                                 .paths()
                                 .filter(|path| !seen_paths.contains(*path))
@@ -497,7 +477,6 @@ impl ProjectSearch {
                                 excerpts.remove_excerpts_for_path(path, cx);
                             }
                         });
-                        project_search.match_ranges = new_match_ranges;
                         project_search.no_results = Some(project_search.match_ranges.is_empty());
                         project_search.limit_reached = limit_reached;
                         project_search.pending_search.take();
@@ -1083,7 +1062,6 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
-            current_search_on_input: Task::ready(()),
             _subscriptions: subscriptions,
         };
 
