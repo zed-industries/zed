@@ -478,7 +478,6 @@ impl DisplayMap {
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
         cx: &mut Context<Self>,
     ) {
-        eprintln!("set_companion: START");
         let this = cx.weak_entity();
         // Reverting to no companion, recompute the block map to clear spacers
         // and balancing blocks.
@@ -487,15 +486,12 @@ impl DisplayMap {
                 return;
             };
             assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
-            eprintln!("set_companion (revert): calling sync_through_wrap");
             let (snapshot, _edits, _) = self.sync_through_wrap(cx);
-            eprintln!("set_companion (revert): sync_through_wrap returned");
             let edits = Patch::new(vec![text::Edit {
                 old: WrapRow(0)
                     ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
                 new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
-            eprintln!("set_companion (revert): setting deferred_edits to cover whole doc");
             self.block_map.deferred_edits.set(edits);
             self.block_map.retain_blocks_raw(|block| {
                 if companion
@@ -515,51 +511,31 @@ impl DisplayMap {
 
         // Note, throwing away the wrap edits because we defer spacer computation to the first render.
         let snapshot = {
-            eprintln!("set_companion: calling sync_through_wrap (1st time in setup block)");
             let (_wrap_snapshot, _wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
-            eprintln!(
-                "set_companion: sync_through_wrap returned, buffer_edits={}",
-                _buffer_edits.len()
-            );
             let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let tab_size = Self::tab_size(&self.buffer, cx);
             let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, vec![]);
             let (mut writer, snapshot, edits) = self.fold_map.write(snapshot, edits);
             let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-            eprintln!("set_companion: calling wrap_map.sync (2nd time, after inlay/fold/tab)");
             let (_snapshot, _edits) = self
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
-            eprintln!(
-                "set_companion: wrap_map.sync returned, edits={}",
-                _edits.clone().into_inner().len()
-            );
 
             let (snapshot, edits) =
                 writer.unfold_intersecting([Anchor::min()..Anchor::max()], true);
             let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-            eprintln!("set_companion: calling wrap_map.sync (3rd time, after unfold)");
             let (snapshot, _edits) = self
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
-            eprintln!(
-                "set_companion: wrap_map.sync returned, edits={}",
-                _edits.clone().into_inner().len()
-            );
 
             self.block_map
                 .retain_blocks_raw(|block| !matches!(block.placement, BlockPlacement::Replace(_)));
             snapshot
         };
 
-        eprintln!("set_companion: calling companion sync_through_wrap");
         let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| {
                 let (snapshot, edits, _) = dm.sync_through_wrap(cx);
-                eprintln!(
-                    "set_companion: companion sync_through_wrap returned, edits={}",
-                    edits.clone().into_inner().len()
-                );
                 (snapshot, edits)
             });
 
@@ -567,9 +543,7 @@ impl DisplayMap {
             old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
             new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
         }]);
-        eprintln!("set_companion: setting deferred_edits to cover whole doc (main path)");
         self.block_map.deferred_edits.set(edits);
-        eprintln!("set_companion: END of main setup");
 
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
@@ -655,33 +629,12 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let buffer_edits = self.buffer_subscription.consume().into_inner();
 
-        let buffer_edit_count = buffer_edits.len();
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, buffer_edits.clone());
-        let inlay_edit_count = edits.len();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let fold_edit_count = edits.len();
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let tab_edit_count = edits.len();
         let (wrap_snapshot, wrap_edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let wrap_edit_count = wrap_edits.clone().into_inner().len();
-
-        if buffer_edit_count > 100
-            || inlay_edit_count > 100
-            || fold_edit_count > 100
-            || tab_edit_count > 100
-            || wrap_edit_count > 100
-        {
-            eprintln!(
-                "sync_through_wrap pipeline: buffer={}, inlay={}, fold={}, tab={}, wrap={}",
-                buffer_edit_count,
-                inlay_edit_count,
-                fold_edit_count,
-                tab_edit_count,
-                wrap_edit_count
-            );
-        }
 
         (wrap_snapshot, wrap_edits, buffer_edits)
     }
@@ -722,7 +675,7 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
-        let (self_wrap_snapshot, self_wrap_edits, buffer_edits) = self.sync_through_wrap(cx);
+        let (self_wrap_snapshot, self_wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
         let companion_wrap_data = self.companion.as_ref().and_then(|(companion_dm, _)| {
             companion_dm
                 .update(cx, |dm, cx| {
@@ -738,19 +691,6 @@ impl DisplayMap {
             },
         );
 
-        let deferred_edits_snapshot = self.block_map.deferred_edits.take();
-        let deferred_edits_count = deferred_edits_snapshot.clone().into_inner().len();
-        self.block_map.deferred_edits.set(deferred_edits_snapshot);
-        let wrap_edits_count = self_wrap_edits.clone().into_inner().len();
-        if buffer_edits.len() > 0 || wrap_edits_count > 0 || deferred_edits_count > 0 {
-            eprintln!(
-                "snapshot: buffer_edits={}, wrap_edits={}, deferred_edits={}",
-                buffer_edits.len(),
-                wrap_edits_count,
-                deferred_edits_count
-            );
-        }
-        let start = std::time::Instant::now();
         let block_snapshot = self
             .block_map
             .read(
@@ -759,27 +699,6 @@ impl DisplayMap {
                 companion_view,
             )
             .snapshot;
-        let elapsed = start.elapsed();
-        if elapsed > std::time::Duration::from_millis(100) {
-            fn truncate_edits<T: std::fmt::Debug>(edits: Vec<T>) -> String {
-                const MAX_EDITS: usize = 10;
-                if edits.len() <= MAX_EDITS {
-                    format!("{:?}", edits)
-                } else {
-                    format!(
-                        "{:?} ... and {} more",
-                        &edits[..MAX_EDITS],
-                        edits.len() - MAX_EDITS
-                    )
-                }
-            }
-            eprintln!(
-                "display_map snapshot: block_map sync took {:?}. buffer_edits: {}, wrap_edits: {}",
-                elapsed,
-                truncate_edits(buffer_edits),
-                truncate_edits(self_wrap_edits.clone().into_inner())
-            );
-        }
 
         if let Some((companion_dm, _)) = &self.companion {
             let _ = companion_dm.update(cx, |dm, _cx| {
@@ -824,34 +743,12 @@ impl DisplayMap {
     }
 
     fn snapshot_simple(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
-        let (wrap_snapshot, wrap_edits, buffer_edits) = self.sync_through_wrap(cx);
+        let (wrap_snapshot, wrap_edits, _buffer_edits) = self.sync_through_wrap(cx);
 
-        let start = std::time::Instant::now();
         let block_snapshot = self
             .block_map
-            .read(wrap_snapshot, wrap_edits.clone(), None)
+            .read(wrap_snapshot, wrap_edits, None)
             .snapshot;
-        let elapsed = start.elapsed();
-        if elapsed > std::time::Duration::from_millis(100) {
-            fn truncate_edits<T: std::fmt::Debug>(edits: Vec<T>) -> String {
-                const MAX_EDITS: usize = 10;
-                if edits.len() <= MAX_EDITS {
-                    format!("{:?}", edits)
-                } else {
-                    format!(
-                        "{:?} ... and {} more",
-                        &edits[..MAX_EDITS],
-                        edits.len() - MAX_EDITS
-                    )
-                }
-            }
-            eprintln!(
-                "display_map snapshot_simple: block_map sync took {:?}. buffer_edits: {}, wrap_edits: {}",
-                elapsed,
-                truncate_edits(buffer_edits),
-                truncate_edits(wrap_edits.clone().into_inner())
-            );
-        }
 
         DisplaySnapshot {
             display_map_id: self.entity_id,

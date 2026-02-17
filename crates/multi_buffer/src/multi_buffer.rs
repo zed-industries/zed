@@ -2689,7 +2689,49 @@ impl MultiBuffer {
 
     pub fn set_show_deleted_hunks(&mut self, show: bool, cx: &mut Context<Self>) {
         self.snapshot.get_mut().show_deleted_hunks = show;
-        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+
+        self.sync_mut(cx);
+
+        let old_len = self.snapshot.borrow().len();
+
+        {
+            let mut snapshot = self.snapshot.get_mut();
+            let mut excerpt_edits = Vec::new();
+            let mut last_hunk_row = None;
+
+            for diff_hunk in snapshot.diff_hunks_in_range(Point::zero()..Point::MAX) {
+                if last_hunk_row.is_some_and(|row| row >= diff_hunk.row_range.start) {
+                    continue;
+                }
+                let start = Anchor::in_buffer(diff_hunk.excerpt_id, diff_hunk.buffer_range.start);
+                let end = Anchor::in_buffer(diff_hunk.excerpt_id, diff_hunk.buffer_range.end);
+                let start = snapshot.excerpt_offset_for_anchor(&start);
+                let end = snapshot.excerpt_offset_for_anchor(&end);
+                last_hunk_row = Some(diff_hunk.row_range.start);
+                excerpt_edits.push(text::Edit {
+                    old: start..end,
+                    new: start..end,
+                });
+            }
+
+            let _ = Self::sync_diff_transforms(
+                &mut snapshot,
+                excerpt_edits,
+                DiffChangeKind::ExpandOrCollapseHunks { expand: true },
+            );
+        }
+
+        let new_len = self.snapshot.borrow().len();
+
+        self.subscriptions.publish(vec![Edit {
+            old: MultiBufferOffset(0)..old_len,
+            new: MultiBufferOffset(0)..new_len,
+        }]);
+
+        cx.emit(Event::DiffHunksToggled);
+        cx.emit(Event::Edited {
+            edited_buffer: None,
+        });
     }
 
     pub fn set_use_extended_diff_range(&mut self, use_extended: bool, _cx: &mut Context<Self>) {
@@ -2780,7 +2822,6 @@ impl MultiBuffer {
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
         );
-        dbg!("EXPAND OR COLLAPSE DIFF HUNKS INNER");
         if !edits.is_empty() {
             self.subscriptions.publish(edits);
         }
