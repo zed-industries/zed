@@ -50,7 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
-    chrono::{DateTime, Duration as ChronoDuration, Utc},
+    chrono::{Duration as ChronoDuration, Utc},
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
