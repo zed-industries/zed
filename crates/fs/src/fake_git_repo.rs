@@ -916,10 +916,7 @@ mod tests {
         // List worktrees — should have one
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
-        assert_eq!(
-            worktrees[0].path,
-            PathBuf::from("/worktrees/feature-branch")
-        );
+        assert_eq!(worktrees[0].path, Path::new("/worktrees/feature-branch"));
         assert_eq!(worktrees[0].ref_name.as_ref(), "refs/heads/feature-branch");
         assert_eq!(worktrees[0].sha.as_ref(), "abc123");
 
@@ -958,13 +955,13 @@ mod tests {
         assert!(
             worktrees
                 .iter()
-                .any(|w| w.path == PathBuf::from("/worktrees/renamed-branch")),
+                .any(|w| w.path == Path::new("/worktrees/renamed-branch")),
             "renamed worktree should exist at new path"
         );
         assert!(
             worktrees
                 .iter()
-                .all(|w| w.path != PathBuf::from("/worktrees/feature-branch")),
+                .all(|w| w.path != Path::new("/worktrees/feature-branch")),
             "old path should no longer exist"
         );
 
@@ -991,7 +988,7 @@ mod tests {
 
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].path, PathBuf::from("/worktrees/bugfix-branch"));
+        assert_eq!(worktrees[0].path, Path::new("/worktrees/bugfix-branch"));
 
         // Directory should be removed from FakeFs after remove
         assert!(

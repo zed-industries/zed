@@ -3743,7 +3743,10 @@ mod tests {
         // List worktrees — should have just the main one
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].path, repo_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            worktrees[0].path.canonicalize().unwrap(),
+            repo_dir.path().canonicalize().unwrap()
+        );
 
         // Create a new worktree
         let worktree_dir = tempfile::tempdir().unwrap();
@@ -3764,7 +3767,7 @@ mod tests {
             .find(|w| w.branch() == "test-branch")
             .expect("should find worktree with test-branch");
         assert_eq!(
-            new_worktree.path,
+            new_worktree.path.canonicalize().unwrap(),
             worktree_dir
                 .path()
                 .join("test-branch")
@@ -3966,7 +3969,10 @@ mod tests {
             .iter()
             .find(|w| w.branch() == "old-name")
             .expect("should find worktree by branch name");
-        assert_eq!(moved_worktree.path, new_path.canonicalize().unwrap());
+        assert_eq!(
+            moved_worktree.path.canonicalize().unwrap(),
+            new_path.canonicalize().unwrap()
+        );
     }
 
     impl RealGitRepository {
