@@ -216,17 +216,6 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
         settings_ui::init(cx);
 
-        // Initialize agent_ui (needed for agent thread tests)
-        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
-        agent_ui::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder,
-            app_state.languages.clone(),
-            true, // is_eval - skip language model settings initialization
-            cx,
-        );
-
         // Load default keymaps so tooltips can show keybindings like "f9" for ToggleBreakpoint
         // We load a minimal set of editor keybindings needed for visual tests
         cx.bind_keys([KeyBinding::new(
@@ -466,10 +455,27 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 4: Agent Thread View tests
+    // Run Test 4: Error wrapping visual tests
+    println!("\n--- Test 4: error_message_wrapping ---");
+    match run_error_wrapping_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ error_message_wrapping: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ error_message_wrapping: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ error_message_wrapping: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
+    // Run Test 5: Agent Thread View tests
     #[cfg(feature = "visual-tests")]
     {
-        println!("\n--- Test 3: agent_thread_with_image (collapsed + expanded) ---");
+        println!("\n--- Test 5: agent_thread_with_image (collapsed + expanded) ---");
         match run_agent_thread_view_test(app_state.clone(), &mut cx, update_baseline) {
             Ok(TestResult::Passed) => {
                 println!("✓ agent_thread_with_image (collapsed + expanded): PASSED");
@@ -486,8 +492,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 5: Breakpoint Hover visual tests
-    println!("\n--- Test 5: breakpoint_hover (3 variants) ---");
+    // Run Test 6: Breakpoint Hover visual tests
+    println!("\n--- Test 6: breakpoint_hover (3 variants) ---");
     match run_breakpoint_hover_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ breakpoint_hover: PASSED");
@@ -503,8 +509,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 6: Diff Review Button visual tests
-    println!("\n--- Test 6: diff_review_button (3 variants) ---");
+    // Run Test 7: Diff Review Button visual tests
+    println!("\n--- Test 7: diff_review_button (3 variants) ---");
     match run_diff_review_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ diff_review_button: PASSED");
@@ -520,8 +526,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 7: Tool Permissions Settings UI visual test
-    println!("\n--- Test 7: tool_permissions_settings ---");
+    // Run Test 8: Tool Permissions Settings UI visual test
+    println!("\n--- Test 8: tool_permissions_settings ---");
     match run_tool_permissions_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ tool_permissions_settings: PASSED");
@@ -537,8 +543,8 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 8: Settings UI sub-page auto-open visual tests
-    println!("\n--- Test 8: settings_ui_subpage_auto_open (2 variants) ---");
+    // Run Test 9: Settings UI sub-page auto-open visual tests
+    println!("\n--- Test 9: settings_ui_subpage_auto_open (2 variants) ---");
     match run_settings_ui_subpage_visual_tests(app_state.clone(), &mut cx, update_baseline) {
         Ok(TestResult::Passed) => {
             println!("✓ settings_ui_subpage_auto_open: PASSED");
@@ -2760,6 +2766,107 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     // Close the window
     cx.update_window(multi_workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
+}
+
+#[cfg(target_os = "macos")]
+struct ErrorWrappingTestView;
+
+#[cfg(target_os = "macos")]
+impl gpui::Render for ErrorWrappingTestView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use ui::{Button, Callout, IconName, LabelSize, Severity, prelude::*, v_flex};
+
+        let long_error_message = "Rate limit reached for gpt-5.2-codex in organization \
+            org-QmYpir6k6dkULKU1XUSN6pal on tokens per min (TPM): Limit 500000, Used 442480, \
+            Requested 59724. Please try again in 264ms. Visit \
+            https://platform.openai.com/account/rate-limits to learn more.";
+
+        let retry_description = "Retrying. Next attempt in 4 seconds (Attempt 1 of 2).";
+
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().background)
+            .p_4()
+            .gap_4()
+            .child(
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(long_error_message)
+                    .description(retry_description),
+            )
+            .child(
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title("An Error Happened")
+                    .description(long_error_message)
+                    .actions_slot(Button::new("dismiss", "Dismiss").label_size(LabelSize::Small)),
+            )
+            .child(
+                Callout::new()
+                    .severity(Severity::Error)
+                    .icon(IconName::XCircle)
+                    .title(long_error_message)
+                    .actions_slot(Button::new("retry", "Retry").label_size(LabelSize::Small)),
+            )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_error_wrapping_visual_tests(
+    _app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    let window_size = size(px(500.0), px(400.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let window = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(|_| ErrorWrappingTestView),
+            )
+        })
+        .context("Failed to open error wrapping test window")?;
+
+    cx.run_until_parked();
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    let test_result =
+        run_visual_test("error_message_wrapping", window.into(), cx, update_baseline)?;
+
+    cx.update_window(window.into(), |_, window, _cx| {
         window.remove_window();
     })
     .log_err();

@@ -2360,6 +2360,7 @@ mod tests {
         use crate::multi_workspace::MultiWorkspace;
         use crate::persistence::read_multi_workspace_state;
         use feature_flags::FeatureFlagAppExt;
+        use gpui::AppContext as _;
         use project::Project;
 
         crate::tests::init_test(cx);
@@ -2376,12 +2377,18 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
         let window_id =
             multi_workspace.update_in(cx, |_, window, _cx| window.window_handle().window_id());
 
         // --- Add a second workspace ---
         let workspace2 = multi_workspace.update_in(cx, |mw, window, cx| {
-            let workspace = mw.test_add_workspace(project2.clone(), window, cx);
+            let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
+            workspace.update(cx, |ws, _cx| ws.set_random_database_id());
+            mw.activate(workspace.clone(), cx);
             workspace
         });
 

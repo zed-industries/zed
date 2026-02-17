@@ -2069,6 +2069,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_create_worktree_error = message;
+        })
+        .unwrap();
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();

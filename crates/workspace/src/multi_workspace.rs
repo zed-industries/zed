@@ -242,6 +242,7 @@ impl MultiWorkspace {
         let index = self.add_workspace(workspace, cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
+            self.serialize(cx);
             cx.notify();
         }
         self.serialize(cx);
@@ -482,6 +483,7 @@ impl MultiWorkspace {
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
