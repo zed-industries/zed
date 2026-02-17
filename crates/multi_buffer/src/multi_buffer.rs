@@ -2694,32 +2694,8 @@ impl MultiBuffer {
 
         let old_len = self.snapshot.borrow().len();
 
-        {
-            let mut snapshot = self.snapshot.get_mut();
-            let mut excerpt_edits = Vec::new();
-            let mut last_hunk_row = None;
-
-            for diff_hunk in snapshot.diff_hunks_in_range(Point::zero()..Point::MAX) {
-                if last_hunk_row.is_some_and(|row| row >= diff_hunk.row_range.start) {
-                    continue;
-                }
-                let start = Anchor::in_buffer(diff_hunk.excerpt_id, diff_hunk.buffer_range.start);
-                let end = Anchor::in_buffer(diff_hunk.excerpt_id, diff_hunk.buffer_range.end);
-                let start = snapshot.excerpt_offset_for_anchor(&start);
-                let end = snapshot.excerpt_offset_for_anchor(&end);
-                last_hunk_row = Some(diff_hunk.row_range.start);
-                excerpt_edits.push(text::Edit {
-                    old: start..end,
-                    new: start..end,
-                });
-            }
-
-            let _ = Self::sync_diff_transforms(
-                &mut snapshot,
-                excerpt_edits,
-                DiffChangeKind::ExpandOrCollapseHunks { expand: true },
-            );
-        }
+        let ranges = std::iter::once((Point::zero()..Point::MAX, ExcerptId::max()));
+        let _ = self.expand_or_collapse_diff_hunks_inner(ranges, true, cx);
 
         let new_len = self.snapshot.borrow().len();
 
@@ -2789,9 +2765,9 @@ impl MultiBuffer {
         ranges: impl IntoIterator<Item = (Range<Point>, ExcerptId)>,
         expand: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<Edit<MultiBufferOffset>> {
         if self.snapshot.borrow().all_diff_hunks_expanded && !expand {
-            return;
+            return Vec::new();
         }
         self.sync_mut(cx);
         let mut snapshot = self.snapshot.get_mut();
@@ -2817,18 +2793,11 @@ impl MultiBuffer {
             }
         }
 
-        let edits = Self::sync_diff_transforms(
+        Self::sync_diff_transforms(
             &mut snapshot,
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
-        );
-        if !edits.is_empty() {
-            self.subscriptions.publish(edits);
-        }
-        cx.emit(Event::DiffHunksToggled);
-        cx.emit(Event::Edited {
-            edited_buffer: None,
-        });
+        )
     }
 
     pub fn expand_or_collapse_diff_hunks(
@@ -2847,7 +2816,14 @@ impl MultiBuffer {
             };
             (range.start..peek_end, end_excerpt_id)
         });
-        self.expand_or_collapse_diff_hunks_inner(ranges, expand, cx);
+        let edits = self.expand_or_collapse_diff_hunks_inner(ranges, expand, cx);
+        if !edits.is_empty() {
+            self.subscriptions.publish(edits);
+        }
+        cx.emit(Event::DiffHunksToggled);
+        cx.emit(Event::Edited {
+            edited_buffer: None,
+        });
     }
 
     pub fn resize_excerpt(
@@ -3648,6 +3624,22 @@ impl MultiBuffer {
             (),
         );
         did_extend
+    }
+
+    pub fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
+        let snapshot = self.snapshot(cx);
+        let excerpt_id = range.end.excerpt_id;
+        let point_range = range.to_point(&snapshot);
+        let expand = !self.single_hunk_is_expanded(range, cx);
+        let edits =
+            self.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_id)], expand, cx);
+        if !edits.is_empty() {
+            self.subscriptions.publish(edits);
+        }
+        cx.emit(Event::DiffHunksToggled);
+        cx.emit(Event::Edited {
+            edited_buffer: None,
+        });
     }
 }
 
