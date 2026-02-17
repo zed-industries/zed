@@ -4408,4 +4408,78 @@ mod tests {
             result.err()
         );
     }
+
+    #[gpui::test]
+    async fn test_send_returns_cancelled_response_and_marks_tools_as_cancelled(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            move |_params, thread, mut cx| {
+                async move {
+                    thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.handle_session_update(
+                                acp::SessionUpdate::ToolCall(
+                                    acp::ToolCall::new(
+                                        acp::ToolCallId::new("test-tool"),
+                                        "Test Tool",
+                                    )
+                                    .kind(acp::ToolKind::Fetch)
+                                    .status(acp::ToolCallStatus::InProgress),
+                                ),
+                                cx,
+                            )
+                        })
+                        .unwrap()
+                        .unwrap();
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let response = thread
+            .update(cx, |thread, cx| thread.send_raw("test message", cx))
+            .await;
+
+        let response = response
+            .expect("send should succeed")
+            .expect("should have response");
+        assert_eq!(
+            response.stop_reason,
+            acp::StopReason::Cancelled,
+            "response should have Cancelled stop_reason"
+        );
+
+        thread.read_with(cx, |thread, _| {
+            let tool_entry = thread
+                .entries
+                .iter()
+                .find_map(|e| {
+                    if let AgentThreadEntry::ToolCall(call) = e {
+                        Some(call)
+                    } else {
+                        None
+                    }
+                })
+                .expect("should have tool call entry");
+
+            assert!(
+                matches!(tool_entry.status, ToolCallStatus::Canceled),
+                "tool should be marked as Canceled when response is Cancelled, got {:?}",
+                tool_entry.status
+            );
+        });
+    }
 }
