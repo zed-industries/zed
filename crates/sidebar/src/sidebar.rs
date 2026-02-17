@@ -35,6 +35,7 @@ pub enum AgentThreadStatus {
 struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
+    icon: IconName,
 }
 
 const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
@@ -97,6 +98,7 @@ impl WorkspaceThreadEntry {
             Some(AgentThreadInfo {
                 title: SharedString::from(title.clone()),
                 status: AgentThreadStatus::Completed,
+                icon: IconName::ZedAgent,
             })
         });
 
@@ -110,14 +112,23 @@ impl WorkspaceThreadEntry {
 
     fn thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
         let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-        let thread = agent_panel.read(cx).active_agent_thread(cx)?;
-        let thread_ref = thread.read(cx);
-        let title = thread_ref.title();
-        let status = match thread_ref.status() {
+        let agent_panel_ref = agent_panel.read(cx);
+
+        let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
+        let thread = thread_view.thread.read(cx);
+
+        let icon = thread_view.agent_icon;
+        let title = thread.title();
+
+        let status = match thread.status() {
             ThreadStatus::Generating => AgentThreadStatus::Running,
             ThreadStatus::Idle => AgentThreadStatus::Completed,
         };
-        Some(AgentThreadInfo { title, status })
+        Some(AgentThreadInfo {
+            title,
+            status,
+            icon,
+        })
     }
 }
 
@@ -535,7 +546,6 @@ impl PickerDelegate for WorkspacePickerDelegate {
                 let workspace_index = thread_entry.index;
                 let multi_workspace = self.multi_workspace.clone();
                 let workspace_count = self.multi_workspace.read(cx).workspaces().len();
-                let is_active = self.active_workspace_index == workspace_index;
                 let is_hovered = self.hovered_thread_item == Some(workspace_index);
 
                 let remove_btn = IconButton::new(
@@ -569,11 +579,11 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
-                    .icon(if is_active {
-                        IconName::FolderOpen
-                    } else {
-                        IconName::Folder
-                    })
+                    .icon(
+                        thread_info
+                            .as_ref()
+                            .map_or(IconName::ZedAgent, |info| info.icon),
+                    )
                     .running(running)
                     .generation_done(has_notification)
                     .selected(selected)
@@ -800,8 +810,14 @@ impl Sidebar {
         title: SharedString,
         status: AgentThreadStatus,
     ) {
-        self.test_thread_infos
-            .insert(index, AgentThreadInfo { title, status });
+        self.test_thread_infos.insert(
+            index,
+            AgentThreadInfo {
+                title,
+                status,
+                icon: IconName::ZedAgent,
+            },
+        );
     }
 
     #[cfg(any(test, feature = "test-support"))]
