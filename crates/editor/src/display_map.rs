@@ -473,7 +473,6 @@ impl DisplayMap {
         }
     }
 
-    // TODO(split-diff) figure out how to free the LHS from having to build a block map before this is called
     pub(crate) fn set_companion(
         &mut self,
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
@@ -540,7 +539,8 @@ impl DisplayMap {
             new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
         }]);
         self.block_map.set_needs_full_spacer_sync(true);
-        let reader = self.block_map.read(snapshot.clone(), edits, None);
+        // Leave the block map to be synced by the first caller that needs a snapshot
+        // let reader = self.block_map.read(snapshot.clone(), edits, None);
 
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
@@ -554,7 +554,12 @@ impl DisplayMap {
                     .folded_buffers
                     .insert(*their_buffer);
             }
-            for block in reader.blocks {
+            let all_blocks: Vec<_> = companion_display_map
+                .block_map
+                .blocks_raw()
+                .map(Clone::clone)
+                .collect();
+            for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),
                     snapshot.buffer(),
@@ -590,11 +595,12 @@ impl DisplayMap {
             companion_display_map
                 .block_map
                 .set_needs_full_spacer_sync(true);
-            companion_display_map.block_map.read(
-                companion_wrap_snapshot.clone(),
-                companion_edits,
-                None,
-            );
+            // Leave the companion to be synced by the first caller that needs a snapshot
+            // companion_display_map.block_map.read(
+            //     companion_wrap_snapshot.clone(),
+            //     companion_edits,
+            //     None,
+            // );
             companion_display_map.companion = Some((this, companion.clone()));
         });
 

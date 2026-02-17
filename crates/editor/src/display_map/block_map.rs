@@ -760,6 +760,11 @@ impl BlockMap {
             .retain(|id, _| !ids_to_remove.contains(id));
     }
 
+    // Warning: doesn't sync the block map, use advisedly
+    pub(crate) fn blocks_raw(&self) -> impl Iterator<Item = &Arc<CustomBlock>> {
+        self.custom_blocks.iter()
+    }
+
     #[ztracing::instrument(skip_all, fields(edits = ?edits))]
     fn sync(
         &self,
