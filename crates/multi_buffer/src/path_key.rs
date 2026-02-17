@@ -16,31 +16,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct PathExcerptInsertResult {
     pub excerpt_ids: Vec<ExcerptId>,
-    pub input_to_output: Vec<usize>,
     pub added_new_excerpt: bool,
-}
-
-impl PathExcerptInsertResult {
-    fn from_excerpt_ids_with_duplicates(
-        excerpt_ids_with_duplicates: Vec<ExcerptId>,
-        added_new_excerpt: bool,
-    ) -> Self {
-        let mut excerpt_ids = Vec::new();
-        let mut input_to_output = Vec::with_capacity(excerpt_ids_with_duplicates.len());
-
-        for id in excerpt_ids_with_duplicates {
-            if excerpt_ids.last() != Some(&id) {
-                excerpt_ids.push(id);
-            }
-            input_to_output.push(excerpt_ids.len() - 1);
-        }
-
-        Self {
-            excerpt_ids,
-            input_to_output,
-            added_new_excerpt,
-        }
-    }
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -464,23 +440,19 @@ impl MultiBuffer {
         to_remove.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
         self.remove_excerpts(to_remove, cx);
 
-        let result = PathExcerptInsertResult::from_excerpt_ids_with_duplicates(
-            excerpt_ids,
-            added_a_new_excerpt,
-        );
-
-        if result.excerpt_ids.is_empty() {
+        if excerpt_ids.is_empty() {
             self.excerpts_by_path.remove(&path);
         } else {
-            for excerpt_id in &result.excerpt_ids {
+            for excerpt_id in &excerpt_ids {
                 self.paths_by_excerpt.insert(*excerpt_id, path.clone());
             }
-            let snapshot = &*self.snapshot.get_mut();
-            let mut sorted_excerpt_ids = result.excerpt_ids.clone();
-            sorted_excerpt_ids.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
-            self.excerpts_by_path.insert(path, sorted_excerpt_ids);
+            self.excerpts_by_path
+                .insert(path, excerpt_ids.iter().dedup().cloned().collect());
         }
 
-        result
+        PathExcerptInsertResult {
+            excerpt_ids,
+            added_new_excerpt: added_a_new_excerpt,
+        }
     }
 }
