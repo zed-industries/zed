@@ -1823,7 +1823,7 @@ impl Workspace {
 
                             workspace
                         });
-                        multi_workspace.activate(workspace.clone(), window, cx);
+                        multi_workspace.activate(workspace.clone(), cx);
                         workspace
                     })?;
                     (window, workspace)
@@ -8511,7 +8511,7 @@ pub fn open_workspace_by_id(
                     workspace.centered_layout = centered_layout;
                     workspace
                 });
-                multi_workspace.add_workspace(workspace.clone(), window, cx);
+                multi_workspace.add_workspace(workspace.clone(), cx);
                 workspace
             })?;
             (window, workspace)
@@ -8646,7 +8646,7 @@ pub fn open_paths(
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(target_workspace.clone(), window, cx);
+                    multi_workspace.activate(target_workspace.clone(), cx);
                     target_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
                             abs_paths,
@@ -8952,7 +8952,7 @@ async fn open_remote_project_inner(
             workspace
         });
 
-        multi_workspace.activate(new_workspace.clone(), window, cx);
+        multi_workspace.activate(new_workspace.clone(), cx);
         new_workspace
     })?;
 
@@ -9039,8 +9039,8 @@ pub fn join_in_room_project(
             existing_window_and_workspace
         {
             existing_window
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.activate(target_workspace, window, cx);
+                .update(cx, |multi_workspace, _, cx| {
+                    multi_workspace.activate(target_workspace, cx);
                 })
                 .ok();
             existing_window

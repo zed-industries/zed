@@ -1336,7 +1336,7 @@ fn quit(_: &Quit, cx: &mut App) {
             for workspace in workspaces {
                 if let Some(should_close) = window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), window, cx);
+                        multi_workspace.activate(workspace.clone(), cx);
                         window.activate_window();
                         workspace.update(cx, |workspace, cx| {
                             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
@@ -5360,11 +5360,11 @@ mod tests {
             .unwrap();
 
         window
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace2.clone(), window, cx);
-                multi_workspace.activate(workspace3.clone(), window, cx);
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace2.clone(), cx);
+                multi_workspace.activate(workspace3.clone(), cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1, window, cx);
+                multi_workspace.activate(workspace1, cx);
                 assert_eq!(multi_workspace.active_workspace_index(), 0);
             })
             .unwrap();
@@ -5546,9 +5546,9 @@ mod tests {
             .unwrap();
 
         window1
-            .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace1_2.clone(), window, cx);
-                multi_workspace.activate(workspace1_1.clone(), window, cx);
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.activate(workspace1_2.clone(), cx);
+                multi_workspace.activate(workspace1_1.clone(), cx);
             })
             .unwrap();
 

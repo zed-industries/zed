@@ -2569,7 +2569,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, window, cx);
+                        multi_workspace.activate(workspace2, cx);
                         multi_workspace
                     })
                 },
