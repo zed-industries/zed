@@ -7951,7 +7951,7 @@ pub async fn restore_multiworkspace(
     let mut errors = Vec::new();
 
     for session_workspace in group_iter {
-        let result = if session_workspace.paths.is_empty() {
+        let error = if session_workspace.paths.is_empty() {
             cx.update(|cx| {
                 open_workspace_by_id(
                     session_workspace.workspace_id,
@@ -7961,7 +7961,7 @@ pub async fn restore_multiworkspace(
                 )
             })
             .await
-            .map(|_| ())
+            .err()
         } else {
             cx.update(|cx| {
                 Workspace::new_local(
@@ -7974,10 +7974,10 @@ pub async fn restore_multiworkspace(
                 )
             })
             .await
-            .map(|_| ())
+            .err()
         };
 
-        if let Err(error) = result {
+        if let Some(error) = error {
             errors.push(error);
         }
     }
