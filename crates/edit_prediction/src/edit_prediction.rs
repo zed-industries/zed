@@ -142,8 +142,6 @@ pub struct EditPredictionStore {
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
-    #[cfg(test)]
-    throttle_timeout_override: Option<Duration>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -704,8 +702,6 @@ impl EditPredictionStore {
             reject_predictions_tx: reject_tx,
             rated_predictions: Default::default(),
             shown_predictions: Default::default(),
-            #[cfg(test)]
-            throttle_timeout_override: None,
         };
 
         this
@@ -728,20 +724,6 @@ impl EditPredictionStore {
 
     pub fn zeta2_raw_config(&self) -> Option<&Zeta2RawConfig> {
         self.zeta2_raw_config.as_ref()
-    }
-
-    #[cfg(test)]
-    pub fn set_throttle_timeout_override(&mut self, duration: Duration) {
-        self.throttle_timeout_override = Some(duration);
-    }
-
-    fn throttle_timeout(&self) -> Duration {
-        #[cfg(test)]
-        return self
-            .throttle_timeout_override
-            .unwrap_or(Self::THROTTLE_TIMEOUT);
-        #[cfg(not(test))]
-        return Self::THROTTLE_TIMEOUT;
     }
 
     pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
@@ -1660,10 +1642,7 @@ impl EditPredictionStore {
         true
     }
 
-    #[cfg(not(test))]
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
-    #[cfg(test)]
-    pub const THROTTLE_TIMEOUT: Duration = Duration::ZERO;
 
     fn queue_prediction_refresh(
         &mut self,
@@ -1693,7 +1672,7 @@ impl EditPredictionStore {
         let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
         let drop_on_cancel = is_ollama;
         let max_pending_predictions = if is_ollama { 1 } else { 2 };
-        let throttle_timeout = self.throttle_timeout();
+        let throttle_timeout = Self::THROTTLE_TIMEOUT;
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;

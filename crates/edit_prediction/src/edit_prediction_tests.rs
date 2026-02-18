@@ -1378,9 +1378,6 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
-    ep_store.update(cx, |ep_store, _cx| {
-        ep_store.set_throttle_timeout_override(Duration::from_millis(200));
-    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -1473,7 +1470,7 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
 
     // Wait for both throttles to expire.
     cx.background_executor
-        .advance_clock(Duration::from_millis(250));
+        .advance_clock(EditPredictionStore::THROTTLE_TIMEOUT);
     cx.background_executor.run_until_parked();
     cx.run_until_parked();
 
