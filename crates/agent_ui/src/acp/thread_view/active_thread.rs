@@ -7452,6 +7452,22 @@ impl Render for AcpThreadView {
     }
 }
 
+fn show_path_outside_project_toast(
+    workspace: &mut Workspace,
+    path: &Path,
+    cx: &mut Context<Workspace>,
+) {
+    struct PathOutsideProjectToast;
+    workspace.show_toast(
+        Toast::new(
+            NotificationId::unique::<PathOutsideProjectToast>(),
+            format!("Cannot open path outside the project: {}", path.display()),
+        )
+        .autohide(),
+        cx,
+    );
+}
+
 pub(crate) fn open_link(
     url: SharedString,
     workspace: &WeakEntity<Workspace>,
@@ -7468,8 +7484,9 @@ pub(crate) fn open_link(
             MentionUri::File { abs_path } => {
                 let project = workspace.project();
                 let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
+                    project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
                 else {
+                    show_path_outside_project_toast(workspace, &abs_path, cx);
                     return;
                 };
 
@@ -7480,9 +7497,17 @@ pub(crate) fn open_link(
             MentionUri::PastedImage => {}
             MentionUri::Directory { abs_path } => {
                 let project = workspace.project();
+                let Some(project_path) =
+                    project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
+                else {
+                    show_path_outside_project_toast(workspace, &abs_path, cx);
+                    return;
+                };
+
                 let Some(entry_id) = project.update(cx, |project, cx| {
-                    let path = project.find_project_path(abs_path, cx)?;
-                    project.entry_for_path(&path, cx).map(|entry| entry.id)
+                    project
+                        .entry_for_path(&project_path, cx)
+                        .map(|entry| entry.id)
                 }) else {
                     return;
                 };
@@ -7501,13 +7526,14 @@ pub(crate) fn open_link(
                 line_range,
             } => {
                 let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(path, cx))
+                let Some(project_path) =
+                    project.update(cx, |project, cx| project.find_project_path(&path, cx))
                 else {
+                    show_path_outside_project_toast(workspace, &path, cx);
                     return;
                 };
 
-                let item = workspace.open_path(path, None, true, window, cx);
+                let item = workspace.open_path(project_path, None, true, window, cx);
                 window
                     .spawn(cx, async move |cx| {
                         let Some(editor) = item.await?.downcast::<Editor>() else {
