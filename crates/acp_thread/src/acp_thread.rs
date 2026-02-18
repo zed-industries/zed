@@ -2001,38 +2001,60 @@ impl AcpThread {
                             this.mark_pending_tools_as_canceled();
                         }
 
-                        // Handle refusal - distinguish between user prompt and tool call refusals
+                        // Handle refusal - distinguish between genuine model refusals
+                        // and "refusals" caused by the user rejecting a tool call.
                         if let acp::StopReason::Refusal = r.stop_reason {
-                            this.had_error = true;
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
-                                // Check if there's a completed tool call with results after the last user message
-                                // This indicates the refusal is in response to tool output, not the user's prompt
-                                let has_completed_tool_call_after_user_msg =
+                                // Check if there's a user-rejected tool call after the last
+                                // user message. When an agent returns Refusal after a tool
+                                // call was rejected by the user, this is not a content-policy
+                                // refusal — it's the agent acknowledging the rejection.
+                                let has_rejected_tool_call =
                                     this.entries.iter().skip(user_msg_ix + 1).any(|entry| {
-                                        if let AgentThreadEntry::ToolCall(tool_call) = entry {
-                                            // Check if the tool call has completed and has output
-                                            matches!(tool_call.status, ToolCallStatus::Completed)
-                                                && tool_call.raw_output.is_some()
-                                        } else {
-                                            false
-                                        }
+                                        matches!(
+                                            entry,
+                                            AgentThreadEntry::ToolCall(tool_call)
+                                                if matches!(tool_call.status, ToolCallStatus::Rejected)
+                                        )
                                     });
 
-                                if has_completed_tool_call_after_user_msg {
-                                    // Refusal is due to tool output - don't truncate, just notify
-                                    // The model refused based on what the tool returned
-                                    cx.emit(AcpThreadEvent::Refusal);
+                                if has_rejected_tool_call {
+                                    // The user rejected a tool call and the agent stopped.
+                                    // This is normal flow, not an error.
                                 } else {
-                                    // User prompt was refused - truncate back to before the user message
-                                    let range = user_msg_ix..this.entries.len();
-                                    if range.start < range.end {
-                                        this.entries.truncate(user_msg_ix);
-                                        cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                                    // Check if there's a completed tool call with results
+                                    // after the last user message. This indicates the refusal
+                                    // is in response to tool output, not the user's prompt.
+                                    let has_completed_tool_call_after_user_msg =
+                                        this.entries.iter().skip(user_msg_ix + 1).any(|entry| {
+                                            if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                                                matches!(
+                                                    tool_call.status,
+                                                    ToolCallStatus::Completed
+                                                ) && tool_call.raw_output.is_some()
+                                            } else {
+                                                false
+                                            }
+                                        });
+
+                                    if has_completed_tool_call_after_user_msg {
+                                        // Refusal is due to tool output - don't truncate, just notify
+                                        this.had_error = true;
+                                        cx.emit(AcpThreadEvent::Refusal);
+                                    } else {
+                                        // User prompt was refused - truncate back to before the user message
+                                        this.had_error = true;
+                                        let range = user_msg_ix..this.entries.len();
+                                        if range.start < range.end {
+                                            this.entries.truncate(user_msg_ix);
+                                            cx.emit(AcpThreadEvent::EntriesRemoved(range));
+                                        }
+                                        cx.emit(AcpThreadEvent::Refusal);
                                     }
-                                    cx.emit(AcpThreadEvent::Refusal);
                                 }
                             } else {
                                 // No user message found, treat as general refusal
+                                this.had_error = true;
                                 cx.emit(AcpThreadEvent::Refusal);
                             }
                         }
@@ -3687,6 +3709,102 @@ mod tests {
                 assert!(
                     tool_call.raw_output.is_some(),
                     "Tool call should have output"
+                );
+            } else {
+                panic!("Expected tool call at index 1");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rejected_tool_call_refusal_not_shown_as_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+
+        // Simulate an agent that issues a tool call, which the user then rejects.
+        // When the agent receives the rejection it returns StopReason::Refusal,
+        // but this should NOT be surfaced as a "Request Refused" error.
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |_request, thread, mut cx| {
+                async move {
+                    // Insert a tool call in Pending state (as it would be before
+                    // the user makes a permission decision), then transition it to
+                    // Rejected to simulate the user clicking "Reject".
+                    //
+                    // We set the status directly because the full authorization
+                    // flow (request_tool_call_authorization -> authorize_tool_call)
+                    // requires UI-layer coordination that isn't available in this
+                    // async test handler.
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::ToolCall(
+                                    acp::ToolCall::new("tool1", "Write File")
+                                        .kind(acp::ToolKind::Write)
+                                        .status(acp::ToolCallStatus::Pending),
+                                ),
+                                cx,
+                            )
+                            .unwrap();
+
+                        if let Some(AgentThreadEntry::ToolCall(tool_call)) =
+                            thread.entries.last_mut()
+                        {
+                            tool_call.status = ToolCallStatus::Rejected;
+                        }
+                    })?;
+
+                    // The agent returns Refusal because its tool call was rejected
+                    Ok(acp::PromptResponse::new(acp::StopReason::Refusal))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        let saw_refusal_event = Arc::new(std::sync::Mutex::new(false));
+        let saw_refusal_event_captured = saw_refusal_event.clone();
+        thread.update(cx, |_thread, cx| {
+            cx.subscribe(
+                &thread,
+                move |_thread, _event_thread, event: &AcpThreadEvent, _cx| {
+                    if matches!(event, AcpThreadEvent::Refusal) {
+                        *saw_refusal_event_captured.lock().unwrap() = true;
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let send_task = thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        cx.background_executor.spawn(send_task).detach();
+        cx.run_until_parked();
+
+        // The key assertion: no Refusal event should be emitted when the
+        // "refusal" was caused by the user rejecting a tool call.
+        assert!(
+            !*saw_refusal_event.lock().unwrap(),
+            "Refusal event should NOT be emitted when the user rejected a tool call"
+        );
+
+        // The user message should still be present (not truncated)
+        thread.read_with(cx, |thread, _| {
+            let entries = thread.entries();
+            assert!(
+                entries.len() >= 2,
+                "Should have user message and rejected tool call"
+            );
+            assert!(matches!(entries[0], AgentThreadEntry::UserMessage(_)));
+            if let AgentThreadEntry::ToolCall(tool_call) = &entries[1] {
+                assert!(
+                    matches!(tool_call.status, ToolCallStatus::Rejected),
+                    "Tool call should still be in Rejected status"
                 );
             } else {
                 panic!("Expected tool call at index 1");
