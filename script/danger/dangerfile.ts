@@ -12,7 +12,7 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_PATTERN = /(?:^|\n)Release Notes:\r?\n\r?\n- .+/m;
 const body = danger.github.pr.body;
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
