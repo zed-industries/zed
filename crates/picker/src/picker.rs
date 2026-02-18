@@ -506,7 +506,6 @@ impl<D: PickerDelegate> Picker<D> {
         self.delegate.set_selected_index(ix, window, cx);
         let current_index = self.delegate.selected_index();
 
-        // Track manually selected item to preserve across match updates
         if is_manual_selection {
             self.manually_selected_stable_id = self.delegate.match_stable_id(current_index);
         }
@@ -781,7 +780,9 @@ impl<D: PickerDelegate> Picker<D> {
             } else {
                 // Item no longer in results, clear manual selection and reset to first item
                 self.manually_selected_stable_id = None;
-                let ix = 0.min(match_count.saturating_sub(1));
+                let current_index = self.delegate.selected_index();
+                let ix = current_index.min(match_count.saturating_sub(1));
+
                 if match_count > 0 {
                     self.delegate.set_selected_index(ix, window, cx);
                 }
@@ -1271,5 +1272,896 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 .child(render_aside(aside, cx))
                 .child(menu)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    struct TestItem {
+        id: String,
+        text: String,
+    }
+
+    struct TestDelegate {
+        items: Vec<TestItem>,
+        matches: Vec<usize>,
+        selected_index: usize,
+    }
+
+    impl TestDelegate {
+        fn new(items: Vec<(&str, &str)>) -> Self {
+            let items: Vec<TestItem> = items
+                .into_iter()
+                .map(|(id, text)| TestItem {
+                    id: id.to_string(),
+                    text: text.to_string(),
+                })
+                .collect();
+            let matches: Vec<usize> = (0..items.len()).collect();
+            Self {
+                items,
+                matches,
+                selected_index: 0,
+            }
+        }
+    }
+
+    impl PickerDelegate for TestDelegate {
+        type ListItem = ListItem;
+
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Search...".into()
+        }
+
+        fn match_stable_id(&self, ix: usize) -> Option<String> {
+            self.matches
+                .get(ix)
+                .and_then(|&item_ix| self.items.get(item_ix))
+                .map(|item| item.id.clone())
+        }
+
+        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+            self.matches.iter().position(|&item_ix| {
+                self.items
+                    .get(item_ix)
+                    .is_some_and(|item| item.id == stable_id)
+            })
+        }
+
+        fn update_matches(
+            &mut self,
+            query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            if query.is_empty() {
+                self.matches = (0..self.items.len()).collect();
+            } else {
+                self.matches = self
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.text.to_lowercase().contains(&query.to_lowercase()))
+                    .map(|(ix, _)| ix)
+                    .collect();
+            }
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            let item_ix = self.matches.get(ix)?;
+            let item = self.items.get(*item_ix)?;
+            Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(Label::new(item.text.clone())),
+            )
+        }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_selection_preserved_when_query_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                TestDelegate::new(vec![
+                    ("a", "apple"),
+                    ("b", "box"),
+                    ("c", "cherry"),
+                    ("d", "door"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Initial state: first item selected
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.selected_index(), 0);
+                assert_eq!(picker.delegate.match_count(), 4);
+            })
+            .unwrap();
+
+        // Navigate to third item (cherry)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.select_index_sticky(2, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), 2);
+            })
+            .unwrap();
+
+        // Type a query that still includes cherry (contains "r")
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("r".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // Cherry should still be selected (it matches "r" and has stable_id "c")
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // "r" matches: cherry (c), door (d)
+                assert_eq!(picker.delegate.match_count(), 2);
+                // cherry should still be selected - find its new index
+                let cherry_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "c")
+                    .unwrap();
+                assert_eq!(picker.delegate.selected_index(), cherry_index);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_selection_reset_when_item_no_longer_matches(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                TestDelegate::new(vec![
+                    ("a", "apple"),
+                    ("b", "box"),
+                    ("c", "cherry"),
+                    ("d", "door"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Navigate to box (index 1)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.select_index_sticky(1, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), 1);
+            })
+            .unwrap();
+
+        // Type a query that excludes box
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("apple".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // Box is no longer in results, selection should reset
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // Only "apple" matches
+                assert_eq!(picker.delegate.match_count(), 1);
+                // Selection should be clamped to valid range
+                assert_eq!(picker.delegate.selected_index(), 0);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_selection_preserved_when_deleting_query_characters(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                TestDelegate::new(vec![
+                    ("a", "apple"),
+                    ("b", "box"),
+                    ("c", "cherry"),
+                    ("d", "door"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Type a query
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("o".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // "o" matches: box, door (2 items)
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 2);
+            })
+            .unwrap();
+
+        // Navigate to door (last item in filtered list)
+        picker
+            .update(cx, |picker, window, cx| {
+                let door_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "d")
+                    .unwrap();
+                picker.select_index_sticky(door_index, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), door_index);
+            })
+            .unwrap();
+
+        // Delete the query (back to empty)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // Door should still be selected
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 4);
+                let door_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "d")
+                    .unwrap();
+                assert_eq!(picker.delegate.selected_index(), door_index);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_programmatic_selection_not_sticky(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                TestDelegate::new(vec![
+                    ("a", "apple"),
+                    ("b", "box"),
+                    ("c", "cherry"),
+                    ("d", "door"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Use programmatic selection (not sticky)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.set_selected_index(2, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), 2);
+            })
+            .unwrap();
+
+        // Type a query - since selection was programmatic, it should NOT be preserved
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("o".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // Selection should be clamped but not restored to cherry
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // "o" matches: box, door (2 items)
+                assert_eq!(picker.delegate.match_count(), 2);
+                // Index 2 would be out of bounds, so it's clamped to 1
+                assert!(picker.delegate.selected_index() <= 1);
+            })
+            .unwrap();
+    }
+
+    struct BestMatchDelegate {
+        items: Vec<TestItem>,
+        matches: Vec<usize>,
+        selected_index: usize,
+    }
+
+    impl BestMatchDelegate {
+        fn new(items: Vec<(&str, &str)>) -> Self {
+            let items: Vec<TestItem> = items
+                .into_iter()
+                .map(|(id, text)| TestItem {
+                    id: id.to_string(),
+                    text: text.to_string(),
+                })
+                .collect();
+            let matches: Vec<usize> = (0..items.len()).collect();
+            Self {
+                items,
+                matches,
+                selected_index: 0,
+            }
+        }
+    }
+
+    impl PickerDelegate for BestMatchDelegate {
+        type ListItem = ListItem;
+
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Search...".into()
+        }
+
+        fn match_stable_id(&self, ix: usize) -> Option<String> {
+            self.matches
+                .get(ix)
+                .and_then(|&item_ix| self.items.get(item_ix))
+                .map(|item| item.id.clone())
+        }
+
+        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+            self.matches.iter().position(|&item_ix| {
+                self.items
+                    .get(item_ix)
+                    .is_some_and(|item| item.id == stable_id)
+            })
+        }
+
+        fn update_matches(
+            &mut self,
+            query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            if query.is_empty() {
+                self.matches = (0..self.items.len()).collect();
+            } else {
+                self.matches = self
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.text.to_lowercase().contains(&query.to_lowercase()))
+                    .map(|(ix, _)| ix)
+                    .collect();
+            }
+
+            // This mimics OutlineViewDelegate behavior: always select "best" match
+            // (in this case, just pick the first match)
+            if !self.matches.is_empty() {
+                self.selected_index = 0;
+            }
+
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            let item_ix = self.matches.get(ix)?;
+            let item = self.items.get(*item_ix)?;
+            Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(Label::new(item.text.clone())),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_selection_preserved_when_query_shortened(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                TestDelegate::new(vec![
+                    ("a", "somethingNotifier"),
+                    ("b", "anotherNotifier"),
+                    ("c", "notifyHandler"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Type initial query "otif" - matches all 3
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otif".to_string(), window, cx);
+            })
+            .unwrap();
+
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 3);
+            })
+            .unwrap();
+
+        // Narrow down to "otifier" - only matches somethingNotifier and anotherNotifier
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otifier".to_string(), window, cx);
+            })
+            .unwrap();
+
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // "otifier" matches: somethingNotifier, anotherNotifier (not "notifyHandler")
+                assert_eq!(picker.delegate.match_count(), 2);
+            })
+            .unwrap();
+
+        // Select somethingNotifier (first item)
+        picker
+            .update(cx, |picker, window, cx| {
+                let something_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "a")
+                    .unwrap();
+                picker.select_index_sticky(something_index, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), something_index);
+            })
+            .unwrap();
+
+        // Delete "ier" - query becomes "otif", now matches all 3 again
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otif".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // somethingNotifier should still be selected, NOT notifyHandler
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 3);
+                let something_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "a")
+                    .unwrap();
+                assert_eq!(
+                    picker.delegate.selected_index(),
+                    something_index,
+                    "Expected somethingNotifier to remain selected, but selection changed"
+                );
+            })
+            .unwrap();
+    }
+
+    struct ReorderingDelegate {
+        items: Vec<TestItem>,
+        matches: Vec<usize>,
+        selected_index: usize,
+    }
+
+    impl ReorderingDelegate {
+        fn new(items: Vec<(&str, &str)>) -> Self {
+            let items: Vec<TestItem> = items
+                .into_iter()
+                .map(|(id, text)| TestItem {
+                    id: id.to_string(),
+                    text: text.to_string(),
+                })
+                .collect();
+            let matches: Vec<usize> = (0..items.len()).collect();
+            Self {
+                items,
+                matches,
+                selected_index: 0,
+            }
+        }
+    }
+
+    impl PickerDelegate for ReorderingDelegate {
+        type ListItem = ListItem;
+
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Search...".into()
+        }
+
+        fn match_stable_id(&self, ix: usize) -> Option<String> {
+            self.matches
+                .get(ix)
+                .and_then(|&item_ix| self.items.get(item_ix))
+                .map(|item| item.id.clone())
+        }
+
+        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+            self.matches.iter().position(|&item_ix| {
+                self.items
+                    .get(item_ix)
+                    .is_some_and(|item| item.id == stable_id)
+            })
+        }
+
+        fn update_matches(
+            &mut self,
+            query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            if query.is_empty() {
+                self.matches = (0..self.items.len()).collect();
+            } else {
+                self.matches = self
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.text.to_lowercase().contains(&query.to_lowercase()))
+                    .map(|(ix, _)| ix)
+                    .collect();
+
+                // Simulate fuzzy matching that returns results in a different order
+                // based on "score" - reverse the order for shorter queries
+                if query.len() <= 4 {
+                    self.matches.reverse();
+                }
+            }
+
+            // Always select "best" match (first in list)
+            if !self.matches.is_empty() {
+                self.selected_index = 0;
+            }
+
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            let item_ix = self.matches.get(ix)?;
+            let item = self.items.get(*item_ix)?;
+            Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(Label::new(item.text.clone())),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_selection_preserved_when_match_order_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                ReorderingDelegate::new(vec![
+                    ("a", "somethingNotifier"),
+                    ("b", "anotherNotifier"),
+                    ("c", "notifyHandler"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Type longer query "otifier" - matches somethingNotifier, anotherNotifier
+        // With length > 4, order is normal: [0, 1] (somethingNotifier first)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otifier".to_string(), window, cx);
+            })
+            .unwrap();
+
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 2);
+                // Normal order: somethingNotifier (0), anotherNotifier (1)
+                assert_eq!(picker.delegate.matches, vec![0, 1]);
+            })
+            .unwrap();
+
+        // Select somethingNotifier (index 0 in matches)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.select_index_sticky(0, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), 0);
+            })
+            .unwrap();
+
+        // Type shorter query "otif" - matches all 3, but order is REVERSED
+        // With length <= 4, order becomes: [2, 1, 0] (notifyHandler first!)
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otif".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // somethingNotifier should still be selected even though:
+        // 1. The delegate tried to set selected_index to 0 (which is now notifyHandler)
+        // 2. The match order changed
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 3);
+                // Reversed order: notifyHandler (2), anotherNotifier (1), somethingNotifier (0)
+                assert_eq!(picker.delegate.matches, vec![2, 1, 0]);
+
+                // somethingNotifier (item 0) should still be selected, which is now at match index 2
+                let something_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "a")
+                    .unwrap();
+                assert_eq!(something_index, 2); // It's at position 2 now
+
+                assert_eq!(
+                    picker.delegate.selected_index(),
+                    something_index,
+                    "Expected somethingNotifier to remain selected at new index, but selection is at {}",
+                    picker.delegate.selected_index()
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_selection_preserved_when_query_shortened_with_best_match_delegate(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                BestMatchDelegate::new(vec![
+                    ("a", "somethingNotifier"),
+                    ("b", "anotherNotifier"),
+                    ("c", "notifyHandler"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Type initial query "otif" - matches all 3
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otif".to_string(), window, cx);
+            })
+            .unwrap();
+
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 3);
+            })
+            .unwrap();
+
+        // Narrow down to "otifier" - only matches somethingNotifier and anotherNotifier
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otifier".to_string(), window, cx);
+            })
+            .unwrap();
+
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // "otifier" matches: somethingNotifier, anotherNotifier (not "notifyHandler")
+                assert_eq!(picker.delegate.match_count(), 2);
+            })
+            .unwrap();
+
+        // Select somethingNotifier (first item)
+        picker
+            .update(cx, |picker, window, cx| {
+                let something_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "a")
+                    .unwrap();
+                picker.select_index_sticky(something_index, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), something_index);
+            })
+            .unwrap();
+
+        // Delete "ier" - query becomes "otif", now matches all 3 again
+        // The BestMatchDelegate will try to set selection to 0 (first match)
+        // but the picker should restore it to somethingNotifier via stable ID
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("otif".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // somethingNotifier should still be selected, NOT notifyHandler
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.match_count(), 3);
+                let something_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "a")
+                    .unwrap();
+                assert_eq!(
+                    picker.delegate.selected_index(),
+                    something_index,
+                    "Expected somethingNotifier to remain selected, but selection changed"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_delegate_that_sets_selection_in_update_matches(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = cx.add_window(|window, cx| {
+            Picker::uniform_list(
+                BestMatchDelegate::new(vec![
+                    ("a", "apple"),
+                    ("b", "box"),
+                    ("c", "cherry"),
+                    ("d", "door"),
+                ]),
+                window,
+                cx,
+            )
+        });
+
+        // Initial state: first item selected
+        picker
+            .update(cx, |picker, _window, _cx| {
+                assert_eq!(picker.delegate.selected_index(), 0);
+                assert_eq!(picker.delegate.match_count(), 4);
+            })
+            .unwrap();
+
+        // Navigate to cherry (index 2) using sticky selection
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.select_index_sticky(2, None, true, window, cx);
+                assert_eq!(picker.delegate.selected_index(), 2);
+            })
+            .unwrap();
+
+        // Type a query that still includes cherry
+        // The delegate will set selected_index to 0 (best match), but the picker
+        // should restore it to cherry via stable ID
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.update_matches("r".to_string(), window, cx);
+            })
+            .unwrap();
+
+        // Cherry should still be selected even though delegate tried to select first match
+        picker
+            .update(cx, |picker, _window, _cx| {
+                // "r" matches: cherry (c), door (d)
+                assert_eq!(picker.delegate.match_count(), 2);
+                // cherry should still be selected - find its new index
+                let cherry_index = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|&ix| picker.delegate.items[ix].id == "c")
+                    .unwrap();
+                assert_eq!(picker.delegate.selected_index(), cherry_index);
+            })
+            .unwrap();
     }
 }
