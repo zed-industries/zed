@@ -7,21 +7,21 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
-    Subscription, Task, WeakEntity, Window, list,
+    App, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, IsZero, ListState, ParentElement, Render,
+    RetainAllImageCache, Styled, Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{WithScrollbar, prelude::*};
+use ui::{WithScrollbar, prelude::*, right_click_menu, ContextMenu};
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
+    Copy, CopyAsPlainText, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -505,6 +505,21 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(contents) = &self.contents {
+            let text = contents.to_text();
+            let html = contents.to_html();
+            cx.write_to_clipboard(ClipboardItem::new_string(text).with_html(html));
+        }
+    }
+
+    fn copy_as_plain_text(&mut self, _: &CopyAsPlainText, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(contents) = &self.contents {
+            let text = contents.to_text();
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -537,7 +552,13 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn tab_extra_context_menu_actions(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<(SharedString, Box<dyn Action>)> {
+        vec![("Copy Rendered Text".into(), Box::new(Copy))]
+    }
 }
 
 impl Render for MarkdownPreviewView {
@@ -556,115 +577,155 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::copy))
+            .on_action(cx.listener(MarkdownPreviewView::copy_as_plain_text))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
             .text_size(buffer_size)
             .line_height(relative(buffer_line_height.value()))
-            .child(div().flex_grow().map(|this| {
-                this.child(
-                    list(
-                        self.list_state.clone(),
-                        cx.processor(|this, ix, window, cx| {
-                            let Some(contents) = &this.contents else {
-                                return div().into_any();
-                            };
+            .child(
+                right_click_menu("markdown-preview-context-menu")
+                    .menu(move |window, cx| {
+                        ContextMenu::build(window, cx, |menu, _, _| {
+                            menu.entry("Copy Rendered Text", None, move |window, cx| {
+                                window.dispatch_action(Box::new(Copy), cx)
+                            })
+                            .entry("Copy as Plaintext", None, move |window, cx| {
+                                window.dispatch_action(Box::new(CopyAsPlainText), cx)
+                            })
+                        })
+                    })
+                    .trigger(|_, _, _| {
+                        div().flex_grow().map(|this| {
+                            this.child(
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(|this, ix, window, cx| {
+                                        let Some(contents) = &this.contents else {
+                                            return div().into_any();
+                                        };
 
-                            let mut render_cx = RenderContext::new(
-                                Some(this.workspace.clone()),
-                                &this.mermaid_state,
-                                window,
-                                cx,
-                            )
-                            .with_checkbox_clicked_callback(cx.listener(
-                                move |this, e: &CheckboxClickedEvent, window, cx| {
-                                    if let Some(editor) =
-                                        this.active_editor.as_ref().map(|s| s.editor.clone())
-                                    {
-                                        editor.update(cx, |editor, cx| {
-                                            let task_marker =
-                                                if e.checked() { "[x]" } else { "[ ]" };
+                                        let mut render_cx = RenderContext::new(
+                                            Some(this.workspace.clone()),
+                                            &this.mermaid_state,
+                                            window,
+                                            cx,
+                                        )
+                                        .with_checkbox_clicked_callback(cx.listener(
+                                            move |this, e: &CheckboxClickedEvent, window, cx| {
+                                                if let Some(editor) = this
+                                                    .active_editor
+                                                    .as_ref()
+                                                    .map(|s| s.editor.clone())
+                                                {
+                                                    editor.update(cx, |editor, cx| {
+                                                        let task_marker = if e.checked() {
+                                                            "[x]"
+                                                        } else {
+                                                            "[ ]"
+                                                        };
 
-                                            editor.edit(
-                                                [(
-                                                    MultiBufferOffset(e.source_range().start)
-                                                        ..MultiBufferOffset(e.source_range().end),
-                                                    task_marker,
-                                                )],
-                                                cx,
+                                                        editor.edit(
+                                                            [(
+                                                                MultiBufferOffset(
+                                                                    e.source_range().start,
+                                                                )
+                                                                    ..MultiBufferOffset(
+                                                                        e.source_range().end,
+                                                                    ),
+                                                                task_marker,
+                                                            )],
+                                                            cx,
+                                                        );
+                                                    });
+                                                    this.parse_markdown_from_active_editor(
+                                                        false, window, cx,
+                                                    );
+                                                    cx.notify();
+                                                }
+                                            },
+                                        ));
+
+                                        let block = contents.children.get(ix).unwrap();
+                                        let rendered_block =
+                                            render_markdown_block(block, &mut render_cx);
+
+                                        let should_apply_padding =
+                                            Self::should_apply_padding_between(
+                                                block,
+                                                contents.children.get(ix + 1),
                                             );
-                                        });
-                                        this.parse_markdown_from_active_editor(false, window, cx);
-                                        cx.notify();
-                                    }
-                                },
-                            ));
 
-                            let block = contents.children.get(ix).unwrap();
-                            let rendered_block = render_markdown_block(block, &mut render_cx);
-
-                            let should_apply_padding = Self::should_apply_padding_between(
-                                block,
-                                contents.children.get(ix + 1),
-                            );
-
-                            let selected_block = this.selected_block;
-                            let scaled_rems = render_cx.scaled_rems(1.0);
-                            div()
-                                .id(ix)
-                                .when(should_apply_padding, |this| {
-                                    this.pb(render_cx.scaled_rems(0.75))
-                                })
-                                .group("markdown-block")
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        if event.click_count() == 2
-                                            && let Some(source_range) = this
-                                                .contents
-                                                .as_ref()
-                                                .and_then(|c| c.children.get(ix))
-                                                .and_then(|block: &ParsedMarkdownElement| {
-                                                    block.source_range()
-                                                })
-                                        {
-                                            this.move_cursor_to_block(
-                                                window,
-                                                cx,
-                                                MultiBufferOffset(source_range.start)
-                                                    ..MultiBufferOffset(source_range.start),
-                                            );
-                                        }
-                                    },
-                                ))
-                                .map(move |container| {
-                                    let indicator = div()
-                                        .h_full()
-                                        .w(px(4.0))
-                                        .when(ix == selected_block, |this| {
-                                            this.bg(cx.theme().colors().border)
-                                        })
-                                        .group_hover("markdown-block", |s| {
-                                            if ix == selected_block {
-                                                s
-                                            } else {
-                                                s.bg(cx.theme().colors().border_variant)
-                                            }
-                                        })
-                                        .rounded_xs();
-
-                                    container.child(
+                                        let selected_block = this.selected_block;
+                                        let scaled_rems = render_cx.scaled_rems(1.0);
                                         div()
-                                            .relative()
-                                            .child(div().pl(scaled_rems).child(rendered_block))
-                                            .child(indicator.absolute().left_0().top_0()),
-                                    )
-                                })
-                                .into_any()
-                        }),
-                    )
-                    .size_full(),
-                )
-            }))
+                                            .id(ix)
+                                            .when(should_apply_padding, |this| {
+                                                this.pb(render_cx.scaled_rems(0.75))
+                                            })
+                                            .group("markdown-block")
+                                            .on_click(cx.listener(
+                                                move |this, event: &ClickEvent, window, cx| {
+                                                    if event.click_count() == 2
+                                                        && let Some(source_range) = this
+                                                            .contents
+                                                            .as_ref()
+                                                            .and_then(|c| c.children.get(ix))
+                                                            .and_then(
+                                                                |block: &ParsedMarkdownElement| {
+                                                                    block.source_range()
+                                                                },
+                                                            )
+                                                    {
+                                                        this.move_cursor_to_block(
+                                                            window,
+                                                            cx,
+                                                            MultiBufferOffset(source_range.start)
+                                                                ..MultiBufferOffset(
+                                                                    source_range.start,
+                                                                ),
+                                                        );
+                                                    }
+                                                },
+                                            ))
+                                            .map(move |container| {
+                                                let indicator = div()
+                                                    .h_full()
+                                                    .w(px(4.0))
+                                                    .when(ix == selected_block, |this| {
+                                                        this.bg(cx.theme().colors().border)
+                                                    })
+                                                    .group_hover("markdown-block", |s| {
+                                                        if ix == selected_block {
+                                                            s
+                                                        } else {
+                                                            s.bg(cx.theme().colors().border_variant)
+                                                        }
+                                                    })
+                                                    .rounded_xs();
+
+                                                container.child(
+                                                    div()
+                                                        .relative()
+                                                        .child(
+                                                            div()
+                                                                .pl(scaled_rems)
+                                                                .child(rendered_block),
+                                                        )
+                                                        .child(
+                                                            indicator.absolute().left_0().top_0(),
+                                                        ),
+                                                )
+                                            })
+                                            .into_any()
+                                    }),
+                                )
+                                .size_full(),
+                            )
+                        }))
+                    }),
+            )
             .vertical_scrollbar_for(&self.list_state, window, cx)
     }
 }

@@ -27,7 +27,11 @@ actions!(
         /// Scrolls down by one markdown element in the markdown preview
         ScrollDownByItem,
         /// Opens a following markdown preview that syncs with the editor.
-        OpenFollowingPreview
+        OpenFollowingPreview,
+        /// Copies the rendered markdown as text.
+        Copy,
+        /// Copies the rendered markdown as plain text only.
+        CopyAsPlainText
     ]
 );
 

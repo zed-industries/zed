@@ -38,6 +38,8 @@ static CLIPBOARD_PNG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("PNG")));
 static CLIPBOARD_JPG_FORMAT: LazyLock<u32> =
     LazyLock::new(|| register_clipboard_format(windows::core::w!("JFIF")));
+static CLIPBOARD_HTML_FORMAT: LazyLock<u32> =
+    LazyLock::new(|| register_clipboard_format(windows::core::w!("HTML Format")));
 
 // Helper maps and sets
 static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::new(|| {
@@ -47,6 +49,7 @@ static FORMATS_MAP: LazyLock<FxHashMap<u32, ClipboardFormatType>> = LazyLock::ne
     formats_map.insert(*CLIPBOARD_GIF_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_JPG_FORMAT, ClipboardFormatType::Image);
     formats_map.insert(*CLIPBOARD_SVG_FORMAT, ClipboardFormatType::Image);
+    formats_map.insert(*CLIPBOARD_HTML_FORMAT, ClipboardFormatType::Html);
     formats_map.insert(CF_DIB.0 as u32, ClipboardFormatType::Image);
     formats_map.insert(CF_HDROP.0 as u32, ClipboardFormatType::Files);
     formats_map
@@ -63,6 +66,7 @@ static IMAGE_FORMATS_MAP: LazyLock<FxHashMap<u32, ImageFormat>> = LazyLock::new(
 #[derive(Debug, Clone, Copy)]
 enum ClipboardFormatType {
     Text,
+    Html,
     Image,
     Files,
 }
@@ -75,6 +79,7 @@ pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
     with_clipboard(|| {
         with_best_match_format(|item_format| match format_to_type(item_format) {
             ClipboardFormatType::Text => read_string_from_clipboard(),
+            ClipboardFormatType::Html => read_html_from_clipboard(),
             ClipboardFormatType::Image => read_image_from_clipboard(item_format),
             ClipboardFormatType::Files => read_files_from_clipboard(),
         })
@@ -149,18 +154,18 @@ fn write_to_clipboard_inner(item: ClipboardItem) -> Result<()> {
     unsafe {
         EmptyClipboard()?;
     }
-    match item.entries().first() {
-        Some(entry) => match entry {
+    for entry in item.into_entries() {
+        match entry {
             ClipboardEntry::String(string) => {
-                write_string_to_clipboard(string)?;
+                write_string_to_clipboard(&string)?;
+            }
+            ClipboardEntry::Html(html) => {
+                write_html_to_clipboard(&html)?;
             }
             ClipboardEntry::Image(image) => {
-                write_image_to_clipboard(image)?;
+                write_image_to_clipboard(&image)?;
             }
             ClipboardEntry::ExternalPaths(_) => {}
-        },
-        None => {
-            // Writing an empty list of entries just clears the clipboard.
         }
     }
     Ok(())
@@ -182,6 +187,37 @@ fn write_string_to_clipboard(item: &ClipboardString) -> Result<()> {
         let metadata_wide = metadata.encode_utf16().chain(Some(0)).collect_vec();
         set_data_to_clipboard(&metadata_wide, *CLIPBOARD_METADATA_FORMAT)?;
     }
+    Ok(())
+}
+
+fn write_html_to_clipboard(html: &str) -> Result<()> {
+    let header = "Version:0.9\r\nStartHTML:00000000\r\nEndHTML:00000000\r\nStartFragment:00000000\r\nEndFragment:00000000\r\n";
+    let start_fragment_marker = "<!--StartFragment-->";
+    let end_fragment_marker = "<!--EndFragment-->";
+
+    let mut data = String::new();
+    data.push_str(header);
+    data.push_str("<!DOCTYPE html>\r\n<html><body>");
+    data.push_str(start_fragment_marker);
+    data.push_str(html);
+    data.push_str(end_fragment_marker);
+    data.push_str("</body></html>");
+
+    let start_html = header.len();
+    let end_html = data.len();
+    let start_fragment = data.find(start_fragment_marker).unwrap() + start_fragment_marker.len();
+    let end_fragment = data.find(end_fragment_marker).unwrap();
+
+    let header_with_offsets = format!(
+        "Version:0.9\r\nStartHTML:{:08}\r\nEndHTML:{:08}\r\nStartFragment:{:08}\r\nEndFragment:{:08}\r\n",
+        start_html, end_html, start_fragment, end_fragment
+    );
+
+    let mut final_data = header_with_offsets.into_bytes();
+    final_data.extend_from_slice(&data.as_bytes()[header.len()..]);
+    final_data.push(0);
+
+    set_data_to_clipboard(&final_data, *CLIPBOARD_HTML_FORMAT)?;
     Ok(())
 }
 
@@ -249,6 +285,7 @@ where
     F: Fn(u32) -> Option<ClipboardEntry>,
 {
     let mut text = None;
+    let mut html = None;
     let mut image = None;
     let mut files = None;
     let count = unsafe { CountClipboardFormats() };
@@ -260,6 +297,7 @@ where
         };
         let bucket = match item_format {
             ClipboardFormatType::Text if text.is_none() => &mut text,
+            ClipboardFormatType::Html if html.is_none() => &mut html,
             ClipboardFormatType::Image if image.is_none() => &mut image,
             ClipboardFormatType::Files if files.is_none() => &mut files,
             _ => continue,
@@ -269,7 +307,7 @@ where
         }
     }
 
-    if let Some(entry) = [image, files, text].into_iter().flatten().next() {
+    if let Some(entry) = [image, files, html, text].into_iter().flatten().next() {
         return Some(ClipboardItem {
             entries: vec![entry],
         });
@@ -312,6 +350,14 @@ fn read_string_from_clipboard() -> Option<ClipboardEntry> {
     } else {
         Some(ClipboardEntry::String(ClipboardString::new(text)))
     }
+}
+
+fn read_html_from_clipboard() -> Option<ClipboardEntry> {
+    with_clipboard_data(*CLIPBOARD_HTML_FORMAT, |data_ptr, size| {
+        let bytes = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, size) };
+        let html = String::from_utf8_lossy(bytes).into_owned();
+        Some(ClipboardEntry::Html(html))
+    })?
 }
 
 fn read_hash_from_clipboard() -> Option<u64> {

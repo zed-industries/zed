@@ -75,8 +75,7 @@ x11rb::atom_manager! {
         // See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
         TEXT,
         TEXT_MIME_UNKNOWN: b"text/plain",
-
-        // HTML: b"text/html",
+        TEXT_HTML: b"text/html",
         // URI_LIST: b"text/uri-list",
 
         PNG__MIME: ImageFormat::mime_type(ImageFormat::Png ).as_bytes(),
@@ -989,27 +988,55 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    #[allow(unused)]
-    pub(crate) fn set_image(
-        &self,
-        image: Image,
-        selection: ClipboardKind,
-        wait: WaitConfig,
-    ) -> Result<()> {
-        let format = match image.format {
-            ImageFormat::Png => self.inner.atoms.PNG__MIME,
-            ImageFormat::Jpeg => self.inner.atoms.JPEG_MIME,
-            ImageFormat::Webp => self.inner.atoms.WEBP_MIME,
-            ImageFormat::Gif => self.inner.atoms.GIF__MIME,
-            ImageFormat::Svg => self.inner.atoms.SVG__MIME,
-            ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
-            ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
             ImageFormat::Ico => self.inner.atoms.ICO__MIME,
         };
         let data = vec![ClipboardData {
             bytes: image.bytes,
-            format: self.inner.atoms.PNG__MIME,
+            format: format,
         }];
+        self.inner.write(data, selection, wait)
+    }
+
+    pub(crate) fn write(
+        &self,
+        item: ClipboardItem,
+        selection: ClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        let mut data = Vec::new();
+        for entry in item.into_entries() {
+            match entry {
+                ClipboardEntry::String(s) => {
+                    data.push(ClipboardData {
+                        bytes: s.text.into_bytes(),
+                        format: self.inner.atoms.UTF8_STRING,
+                    });
+                }
+                ClipboardEntry::Html(html) => {
+                    data.push(ClipboardData {
+                        bytes: html.into_bytes(),
+                        format: self.inner.atoms.TEXT_HTML,
+                    });
+                }
+                ClipboardEntry::Image(image) => {
+                    let format = match image.format {
+                        ImageFormat::Png => self.inner.atoms.PNG__MIME,
+                        ImageFormat::Jpeg => self.inner.atoms.JPEG_MIME,
+                        ImageFormat::Webp => self.inner.atoms.WEBP_MIME,
+                        ImageFormat::Gif => self.inner.atoms.GIF__MIME,
+                        ImageFormat::Svg => self.inner.atoms.SVG__MIME,
+                        ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
+                        ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
+                        ImageFormat::Ico => self.inner.atoms.ICO__MIME,
+                    };
+                    data.push(ClipboardData {
+                        bytes: image.bytes,
+                        format,
+                    });
+                }
+                _ => {}
+            }
+        }
         self.inner.write(data, selection, wait)
     }
 
@@ -1034,8 +1061,9 @@ impl Clipboard {
             ImageFormat::Tiff,
         ];
 
-        const TEXT_FORMAT_COUNT: usize = 6;
+        const TEXT_FORMAT_COUNT: usize = 7;
         let text_format_atoms: [Atom; TEXT_FORMAT_COUNT] = [
+            self.inner.atoms.TEXT_HTML,
             self.inner.atoms.UTF8_STRING,
             self.inner.atoms.UTF8_MIME_0,
             self.inner.atoms.UTF8_MIME_1,
@@ -1073,6 +1101,11 @@ impl Clipboard {
                     bytes,
                 }));
             }
+        }
+
+        if result.format == self.inner.atoms.TEXT_HTML {
+            let html = String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?;
+            return Ok(ClipboardItem::new_html(html));
         }
 
         let text = if result.format == self.inner.atoms.STRING {

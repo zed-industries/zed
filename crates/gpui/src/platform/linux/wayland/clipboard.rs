@@ -15,10 +15,10 @@ use crate::{
     platform::linux::platform::read_fd,
 };
 
-/// Text mime types that we'll offer to other programs.
-pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
-    ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
+pub(crate) const TEXT_MIME_TYPES: [&str; 4] =
+    ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "text/html"];
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
+pub(crate) const TEXT_HTML_MIME_TYPE: &str = "text/html";
 
 /// Text mime types that we'll accept from other programs.
 pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
@@ -116,7 +116,11 @@ impl<T: ReceiveData> DataOffer<T> {
         // copying from eg: firefox inserts a lot of blank
         // lines, and that is super annoying.
         let result = text_content.replace("\r\n", "\n");
-        Some(ClipboardItem::new_string(result))
+        if mime_type == TEXT_HTML_MIME_TYPE {
+            Some(ClipboardItem::new_html(result))
+        } else {
+            Some(ClipboardItem::new_string(result))
+        }
     }
 
     fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {
@@ -179,13 +183,41 @@ impl Clipboard {
         self.self_mime.clone()
     }
 
-    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
+    pub fn send(&self, mime_type: String, fd: OwnedFd) {
+        if mime_type == TEXT_HTML_MIME_TYPE {
+            if let Some(html) = self.contents.as_ref().and_then(|contents| {
+                contents.entries().iter().find_map(|entry| {
+                    if let ClipboardEntry::Html(html) = entry {
+                        Some(html)
+                    } else {
+                        None
+                    }
+                })
+            }) {
+                self.send_internal(fd, html.as_bytes().to_owned());
+                return;
+            }
+        }
         if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
             self.send_internal(fd, text.as_bytes().to_owned());
         }
     }
 
-    pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
+    pub fn send_primary(&self, mime_type: String, fd: OwnedFd) {
+        if mime_type == TEXT_HTML_MIME_TYPE {
+            if let Some(html) = self.primary_contents.as_ref().and_then(|contents| {
+                contents.entries().iter().find_map(|entry| {
+                    if let ClipboardEntry::Html(html) = entry {
+                        Some(html)
+                    } else {
+                        None
+                    }
+                })
+            }) {
+                self.send_internal(fd, html.as_bytes().to_owned());
+                return;
+            }
+        }
         if let Some(text) = self
             .primary_contents
             .as_ref()
@@ -205,9 +237,19 @@ impl Clipboard {
             return self.contents.clone();
         }
 
-        let item = offer
-            .read_text(&self.connection)
-            .or_else(|| offer.read_image(&self.connection))?;
+        let item = if offer.has_mime_type(TEXT_HTML_MIME_TYPE) {
+            offer
+                .read_bytes(&self.connection, TEXT_HTML_MIME_TYPE)
+                .and_then(|bytes| {
+                    String::from_utf8(bytes)
+                        .ok()
+                        .map(|html| ClipboardItem::new_html(html.replace("\r\n", "\n")))
+                })
+        } else {
+            None
+        }
+        .or_else(|| offer.read_text(&self.connection))
+        .or_else(|| offer.read_image(&self.connection))?;
 
         self.cached_read = Some(item.clone());
         Some(item)
@@ -223,9 +265,19 @@ impl Clipboard {
             return self.primary_contents.clone();
         }
 
-        let item = offer
-            .read_text(&self.connection)
-            .or_else(|| offer.read_image(&self.connection))?;
+        let item = if offer.has_mime_type(TEXT_HTML_MIME_TYPE) {
+            offer
+                .read_bytes(&self.connection, TEXT_HTML_MIME_TYPE)
+                .and_then(|bytes| {
+                    String::from_utf8(bytes)
+                        .ok()
+                        .map(|html| ClipboardItem::new_html(html.replace("\r\n", "\n")))
+                })
+        } else {
+            None
+        }
+        .or_else(|| offer.read_text(&self.connection))
+        .or_else(|| offer.read_image(&self.connection))?;
 
         self.cached_primary_read = Some(item.clone());
         Some(item)
