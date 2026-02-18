@@ -110,3 +110,27 @@ revision = "17e3c7a5c56527a179fa6e37ce7ee934493e5047"
              }
          }
 ```
+
+
+```diff
+--- a/crates/loader/src/loader.rs
++++ b/crates/loader/src/loader.rs
+@@ -736,13 +736,13 @@
+                         if let Some(parser_dir_name) = entry.file_name().to_str() {
+                             if parser_dir_name.starts_with("tree-sitter-") {
+                                 self.find_language_configurations_at_path(
+                                     &parser_container_dir.join(parser_dir_name),
+                                     false,
+                                 )
+                                 .ok();
+                             }
+                         }
+                     }
+                 }
++                Err(e) => {
++                    
+#                    ^[CURSOR_POSITION]
++                }
+             }
+         }
+```
