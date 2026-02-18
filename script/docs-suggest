@@ -284,6 +284,10 @@ assemble_context() {
 
 You are analyzing code changes to determine if documentation updates are needed.
 
+Before analysis, read and follow these rule files:
+- `.rules`
+- `docs/.rules`
+
 ## Your Task
 
 1. Analyze the diff below for user-facing changes

@@ -144,11 +144,12 @@ def write_prompt(crash_id: str, crash_data_file: str | None = None) -> Path:
 
 Required workflow:
 {fetch_step}
-2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
-3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
-4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
-5. Run validators required by the fix prompt for the affected code paths
-6. Write PR_BODY.md with sections:
+2. Read and follow `.rules`.
+3. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
+4. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
+5. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
+6. Run validators required by the fix prompt for the affected code paths
+7. Write PR_BODY.md with sections:
    - Crash Summary
    - Root Cause
    - Fix

@@ -179,6 +179,10 @@ cat > "$APPLY_PROMPT_FILE" << 'EOF'
 
 Apply all queued documentation suggestions below directly to docs files in this repository.
 
+Before making edits, read and follow these rule files:
+- `.rules`
+- `docs/.rules`
+
 ## Required behavior
 
 1. Apply concrete documentation edits (not suggestion text) to the appropriate files.
