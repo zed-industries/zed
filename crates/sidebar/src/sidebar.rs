@@ -21,7 +21,7 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{
-    Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, ThreadItemStatus, Tooltip,
+    AgentThreadStatus, Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip,
     prelude::*,
 };
 use ui_input::ErasedEditor;
@@ -31,18 +31,11 @@ use workspace::{
     SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AgentThreadStatus {
-    Running,
-    Completed,
-}
-
 #[derive(Clone, Debug)]
 struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
-    thread_item_status: ThreadItemStatus,
 }
 
 const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
@@ -106,7 +99,6 @@ impl WorkspaceThreadEntry {
                 title: SharedString::from(title.clone()),
                 status: AgentThreadStatus::Completed,
                 icon: IconName::ZedAgent,
-                thread_item_status: ThreadItemStatus::None,
             })
         });
 
@@ -128,22 +120,20 @@ impl WorkspaceThreadEntry {
         let icon = thread_view.agent_icon;
         let title = thread.title();
 
-        let status = match thread.status() {
-            ThreadStatus::Generating => AgentThreadStatus::Running,
-            ThreadStatus::Idle => AgentThreadStatus::Completed,
-        };
-        let thread_item_status = if thread.is_waiting_for_confirmation() {
-            ThreadItemStatus::WaitingForConfirmation
+        let status = if thread.is_waiting_for_confirmation() {
+            AgentThreadStatus::WaitingForConfirmation
         } else if thread.had_error() {
-            ThreadItemStatus::Error
+            AgentThreadStatus::Error
         } else {
-            ThreadItemStatus::None
+            match thread.status() {
+                ThreadStatus::Generating => AgentThreadStatus::Running,
+                ThreadStatus::Idle => AgentThreadStatus::Completed,
+            }
         };
         Some(AgentThreadInfo {
             title,
             status,
             icon,
-            thread_item_status,
         })
     }
 }
@@ -639,16 +629,13 @@ impl PickerDelegate for WorkspacePickerDelegate {
 
                 let has_notification = self.notified_workspaces.contains(&workspace_index);
                 let thread_subtitle = thread_info.as_ref().map(|info| info.title.clone());
-                let running = matches!(
-                    thread_info,
-                    Some(AgentThreadInfo {
-                        status: AgentThreadStatus::Running,
-                        ..
-                    })
-                );
-                let thread_item_status = thread_info
+                let status = thread_info
                     .as_ref()
-                    .map_or(ThreadItemStatus::None, |info| info.thread_item_status);
+                    .map_or(AgentThreadStatus::default(), |info| info.status);
+                let running = matches!(
+                    status,
+                    AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
+                );
 
                 Some(
                     ThreadItem::new(
@@ -662,7 +649,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     )
                     .running(running)
                     .generation_done(has_notification)
-                    .status(thread_item_status)
+                    .status(status)
                     .selected(selected)
                     .worktree(worktree_label.clone())
                     .worktree_highlight_positions(positions.clone())
@@ -893,7 +880,6 @@ impl Sidebar {
                 title,
                 status,
                 icon: IconName::ZedAgent,
-                thread_item_status: ThreadItemStatus::None,
             },
         );
     }

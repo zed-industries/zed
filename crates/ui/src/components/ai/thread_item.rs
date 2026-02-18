@@ -6,9 +6,10 @@ use crate::{
 use gpui::{AnyView, ClickEvent, SharedString};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ThreadItemStatus {
+pub enum AgentThreadStatus {
     #[default]
-    None,
+    Completed,
+    Running,
     WaitingForConfirmation,
     Error,
 }
@@ -21,7 +22,7 @@ pub struct ThreadItem {
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
-    status: ThreadItemStatus,
+    status: AgentThreadStatus,
     selected: bool,
     hovered: bool,
     added: Option<usize>,
@@ -44,7 +45,7 @@ impl ThreadItem {
             timestamp: "".into(),
             running: false,
             generation_done: false,
-            status: ThreadItemStatus::None,
+            status: AgentThreadStatus::default(),
             selected: false,
             hovered: false,
             added: None,
@@ -79,7 +80,7 @@ impl ThreadItem {
         self
     }
 
-    pub fn status(mut self, status: ThreadItemStatus) -> Self {
+    pub fn status(mut self, status: AgentThreadStatus) -> Self {
         self.status = status;
         self
     }
@@ -158,7 +159,7 @@ impl RenderOnce for ThreadItem {
             .color(Color::Muted)
             .size(IconSize::Small);
 
-        let decoration = if self.status == ThreadItemStatus::WaitingForConfirmation {
+        let decoration = if self.status == AgentThreadStatus::WaitingForConfirmation {
             Some(
                 IconDecoration::new(
                     IconDecorationKind::Triangle,
@@ -171,7 +172,7 @@ impl RenderOnce for ThreadItem {
                     y: px(-2.),
                 }),
             )
-        } else if self.status == ThreadItemStatus::Error {
+        } else if self.status == AgentThreadStatus::Error {
             Some(
                 IconDecoration::new(
                     IconDecorationKind::X,
@@ -361,7 +362,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-2b", "Execute shell command in terminal")
                             .timestamp("12:15 AM")
-                            .status(ThreadItemStatus::WaitingForConfirmation),
+                            .status(AgentThreadStatus::WaitingForConfirmation),
                     )
                     .into_any_element(),
             ),
@@ -371,7 +372,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-2c", "Failed to connect to language server")
                             .timestamp("12:20 AM")
-                            .status(ThreadItemStatus::Error),
+                            .status(AgentThreadStatus::Error),
                     )
                     .into_any_element(),
             ),

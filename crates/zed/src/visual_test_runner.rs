@@ -2719,12 +2719,12 @@ fn run_multi_workspace_sidebar_visual_tests(
             sidebar.set_test_thread_info(
                 0,
                 "Refine thread view scrolling behavior".into(),
-                sidebar::AgentThreadStatus::Completed,
+                ui::AgentThreadStatus::Completed,
             );
             sidebar.set_test_thread_info(
                 1,
                 "Add line numbers option to FileEditBlock".into(),
-                sidebar::AgentThreadStatus::Running,
+                ui::AgentThreadStatus::Running,
             );
         });
     });
@@ -2912,7 +2912,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container().child(
                     ThreadItem::new("ti-waiting", "Waiting for user confirmation")
                         .timestamp("1:10 AM")
-                        .status(ui::ThreadItemStatus::WaitingForConfirmation),
+                        .status(ui::AgentThreadStatus::WaitingForConfirmation),
                 ),
             )
             .child(section_label("Red X (error)"))
@@ -2920,7 +2920,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container().child(
                     ThreadItem::new("ti-error", "Failed to connect to server")
                         .timestamp("1:15 AM")
-                        .status(ui::ThreadItemStatus::Error),
+                        .status(ui::AgentThreadStatus::Error),
                 ),
             )
             .child(section_label("Spinner (running)"))
@@ -2941,7 +2941,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("1:25 AM")
                         .running(true)
-                        .status(ui::ThreadItemStatus::WaitingForConfirmation),
+                        .status(ui::AgentThreadStatus::WaitingForConfirmation),
                 ),
             )
     }
