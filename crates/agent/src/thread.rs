@@ -871,7 +871,7 @@ pub struct Thread {
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
     /// Git worktree info if this thread is running in an agent worktree.
-    pub(crate) git_worktree_info: Option<AgentGitWorktreeInfo>,
+    git_worktree_info: Option<AgentGitWorktreeInfo>,
 }
 
 impl Thread {
