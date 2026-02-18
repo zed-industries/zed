@@ -2123,15 +2123,13 @@ impl Terminal {
                 .as_ref()
                 .map(|s| s.to_string())
                 .or_else(|| {
-                    if !self.breadcrumb_text.is_empty() {
-                        Some(if truncate {
+                    (!self.breadcrumb_text.is_empty()).then(|| {
+                        if truncate {
                             truncate_and_trailoff(&self.breadcrumb_text, MAX_CHARS)
                         } else {
                             self.breadcrumb_text.clone()
-                        })
-                    } else {
-                        None
-                    }
+                        }
+                    })
                 })
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
