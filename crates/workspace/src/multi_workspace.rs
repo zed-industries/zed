@@ -340,25 +340,18 @@ impl MultiWorkspace {
         self._serialize_task.take().unwrap_or(Task::ready(()))
     }
 
-    fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
-        let serialize_task = self._serialize_task.take();
-        let create_task = self._create_task.take();
-        let removal_tasks = std::mem::take(&mut self.pending_removal_tasks);
-
-        let task = cx.background_spawn(async move {
-            if let Some(task) = serialize_task {
-                task.await;
-            }
-            if let Some(task) = create_task {
-                task.await;
-            }
-            for task in removal_tasks {
-                task.await;
-            }
-        });
+    fn app_will_quit(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+        let mut tasks: Vec<Task<()>> = Vec::new();
+        if let Some(task) = self._serialize_task.take() {
+            tasks.push(task);
+        }
+        if let Some(task) = self._create_task.take() {
+            tasks.push(task);
+        }
+        tasks.extend(std::mem::take(&mut self.pending_removal_tasks));
 
         async move {
-            task.await;
+            futures::future::join_all(tasks).await;
         }
     }
 
