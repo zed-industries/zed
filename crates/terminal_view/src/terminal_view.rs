@@ -1080,7 +1080,11 @@ fn subscribe_for_terminal_events(
                         cx,
                     ),
                 },
-                Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
+                Event::BreadcrumbsChanged => {
+                    cx.notify();
+                    cx.emit(ItemEvent::UpdateTab);
+                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                }
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
