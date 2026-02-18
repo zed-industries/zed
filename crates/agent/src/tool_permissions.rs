@@ -1161,6 +1161,16 @@ mod tests {
     }
 
     #[test]
+    fn pipe_does_not_cause_false_negative_when_all_commands_match() {
+        // A piped command like `echo "y\ny" | git add -p file` produces two commands:
+        // "echo y\ny" and "git add -p file". Both should match their respective allow
+        // patterns, so the overall command should be auto-allowed.
+        t(r#"echo "y\ny" | git add -p crates/acp_thread/src/acp_thread.rs"#)
+            .allow(&[r"^git\s+(--no-pager\s+)?(fetch|status|diff|log|show|add|commit|push|checkout\s+-b)\b", "^echo"])
+            .is_allow();
+    }
+
+    #[test]
     fn deny_triggers_on_any_matching_command() {
         t("ls && rm file").allow(&["^ls"]).deny(&["^rm"]).is_deny();
     }
