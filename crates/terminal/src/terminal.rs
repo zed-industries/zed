@@ -2091,6 +2091,10 @@ impl Terminal {
         }
     }
 
+    pub fn is_remote_terminal(&self) -> bool {
+        self.is_remote_terminal
+    }
+
     /// Returns the working directory of the process that's connected to the PTY.
     /// That means it returns the working directory of the local shell or program
     /// that's running inside the terminal.
