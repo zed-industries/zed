@@ -351,11 +351,12 @@ impl NativeAgent {
         let session_id = thread.id().clone();
         let parent_session_id = thread.parent_thread_id();
         let title = thread.title();
+        let draft_prompt = thread.draft_prompt().map(String::from);
         let project = thread.project.clone();
         let action_log = thread.action_log.clone();
         let prompt_capabilities_rx = thread.prompt_capabilities_rx.clone();
         let acp_thread = cx.new(|cx| {
-            acp_thread::AcpThread::new(
+            let mut acp_thread = acp_thread::AcpThread::new(
                 parent_session_id,
                 title,
                 connection,
@@ -364,7 +365,9 @@ impl NativeAgent {
                 session_id.clone(),
                 prompt_capabilities_rx,
                 cx,
-            )
+            );
+            acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
@@ -844,9 +847,7 @@ impl NativeAgent {
             return;
         }
 
-        let database_future = ThreadsDatabase::connect(cx);
-        let (id, db_thread) =
-            thread.update(cx, |thread, cx| (thread.id().clone(), thread.to_db(cx)));
+        let id = thread.read(cx).id().clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
@@ -860,6 +861,12 @@ impl NativeAgent {
                 .collect::<Vec<_>>(),
         );
 
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(String::from);
+        let database_future = ThreadsDatabase::connect(cx);
+        let db_thread = thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(draft_prompt);
+            thread.to_db(cx)
+        });
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {

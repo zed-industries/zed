@@ -64,6 +64,8 @@ pub struct DbThread {
     pub thinking_enabled: bool,
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub draft_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +107,7 @@ impl SharedThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         }
     }
 
@@ -282,6 +285,7 @@ impl DbThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         })
     }
 }
@@ -632,6 +636,7 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            draft_prompt: None,
         }
     }
 
