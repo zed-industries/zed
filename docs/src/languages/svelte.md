@@ -1,3 +1,8 @@
+---
+title: Svelte
+description: "Configure Svelte language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Svelte
 
 Svelte support is available through the [Svelte extension](https://github.com/zed-extensions/svelte).

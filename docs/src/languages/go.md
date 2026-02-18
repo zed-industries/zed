@@ -1,3 +1,8 @@
+---
+title: Go
+description: "Configure Go language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Go
 
 Go support is available natively in Zed.

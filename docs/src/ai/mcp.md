@@ -7,7 +7,7 @@ description: Install and configure MCP servers in Zed to extend your AI agent wi
 
 Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to interact with context servers.
 
-> The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
+> The Model Context Protocol (MCP) is an open protocol for connecting LLM applications to external tools and data sources through a standard interface.
 
 ## Supported Features
 
@@ -44,7 +44,7 @@ Popular servers available as an extension include:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
 
 ```json [settings]
 {
