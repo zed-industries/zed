@@ -1035,6 +1035,30 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn color_management_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Color Management"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Color Space",
+                description: "The color space to use for rendering. Changing this affects how colors are displayed on your screen.",
+                field: Box::new(SettingField {
+                    json_path: Some("color_space"),
+                    pick: |settings_content| {
+                        settings_content.workspace.color_space.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.color_space = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: None,
+                    should_do_titlecase: Some(false),
+                })),
+                files: USER,
+            }),
+        ]
+    }
+
     fn cursor_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
@@ -1234,6 +1258,7 @@ fn appearance_page() -> SettingsPage {
         cursor_section(),
         highlighting_section(),
         guides_section(),
+        color_management_section(),
     );
 
     SettingsPage {

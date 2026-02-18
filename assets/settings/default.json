@@ -178,6 +178,15 @@
   //  3. Use grayscale text rendering:
   //         "text_rendering_mode": "grayscale"
   "text_rendering_mode": "platform_default",
+  // The color space to use for rendering.
+  // May take 3 values:
+  //  1. Use standard sRGB:
+  //         "color_space": "srgb"
+  //  2. Use wide gamut Display P3 color space:
+  //         "color_space": "display_p3"
+  //  3. Use untagged (device) color space
+  //         "color_space": "untagged"
+  "color_space": "srgb",
   // Whether to show padding for zoomed panels.
   // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
   // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).

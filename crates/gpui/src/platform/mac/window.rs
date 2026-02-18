@@ -1369,6 +1369,11 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().background_appearance
     }
 
+    fn set_color_space(&self, color_space: crate::ColorSpace) {
+        let this = self.0.as_ref().lock();
+        this.renderer.update_color_space(color_space);
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         false
     }

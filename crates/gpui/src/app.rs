@@ -41,7 +41,7 @@ use crate::{
     DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
     KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
     Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, ColorSpace, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
     WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
@@ -638,6 +638,7 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+    pub(crate) color_space: Rc<Cell<ColorSpace>>,
     quit_mode: QuitMode,
     quitting: bool,
     /// Per-App element arena. This isolates element allocations between different
@@ -670,6 +671,7 @@ impl App {
                 platform: platform.clone(),
                 text_system,
                 text_rendering_mode: Rc::new(Cell::new(TextRenderingMode::default())),
+                color_space: Rc::new(Cell::new(ColorSpace::default())),
                 mode: GpuiMode::Production,
                 actions: Rc::new(ActionRegistry::default()),
                 flushing_effects: false,
@@ -1135,6 +1137,22 @@ impl App {
     /// Returns the current text rendering mode for the application.
     pub fn text_rendering_mode(&self) -> TextRenderingMode {
         self.text_rendering_mode.get()
+    }
+
+    /// Sets the color space for the application.
+    pub fn set_color_space(&mut self, color_space: ColorSpace) {
+        self.color_space.set(color_space);
+        // Notify all windows to update
+        for window in self.windows.values() {
+            if let Some(window) = window.as_ref() {
+                window.set_color_space(color_space);
+            }
+        }
+    }
+
+    /// Returns the current color space for the application.
+    pub fn color_space(&self) -> ColorSpace {
+        self.color_space.get()
     }
 
     /// Writes data to the platform clipboard.

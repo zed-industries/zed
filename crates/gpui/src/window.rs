@@ -3,7 +3,7 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    ColorSpace, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -898,6 +898,7 @@ pub struct Window {
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+    color_space: Rc<Cell<ColorSpace>>,
     rem_size: Pixels,
     /// The stack of override values for the window's rem size.
     ///
@@ -1388,6 +1389,7 @@ impl Window {
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
+            color_space: cx.color_space.clone(),
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
@@ -1478,6 +1480,11 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
+    pub(crate) fn set_color_space(&self, color_space: ColorSpace) {
+        self.color_space.set(color_space);
+        self.platform_window.set_color_space(color_space);
+    }
+
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.

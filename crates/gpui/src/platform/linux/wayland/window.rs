@@ -1228,6 +1228,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().background_appearance
     }
 
+    fn set_color_space(&self, _color_space: crate::ColorSpace) {
+        // TODO: Implement color space support for Wayland/Linux
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         let client = self.borrow().client.get_client();
         let state = client.borrow();

@@ -1457,6 +1457,10 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().background_appearance
     }
 
+    fn set_color_space(&self, _color_space: crate::ColorSpace) {
+        // TODO: Implement color space support for X11/Linux
+    }
+
     fn is_subpixel_rendering_supported(&self) -> bool {
         self.0
             .state

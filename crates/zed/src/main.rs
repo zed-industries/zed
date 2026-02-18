@@ -723,6 +723,14 @@ fn main() {
                     },
                 );
 
+                cx.set_color_space(
+                    match WorkspaceSettings::get_global(cx).color_space {
+                        settings::ColorSpace::Srgb => gpui::ColorSpace::Srgb,
+                        settings::ColorSpace::DisplayP3 => gpui::ColorSpace::DisplayP3,
+                        settings::ColorSpace::Untagged => gpui::ColorSpace::Untagged,
+                    },
+                );
+
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
                     http.set_base_url(new_host);
