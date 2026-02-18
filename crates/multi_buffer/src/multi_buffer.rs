@@ -10,8 +10,8 @@ pub use anchor::{Anchor, AnchorRangeExt};
 
 use anyhow::{Result, anyhow};
 use buffer_diff::{
-    BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunk,
-    DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
+    BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunkSecondaryStatus,
+    DiffHunkStatus, DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -2409,7 +2409,7 @@ impl MultiBuffer {
         diff: Entity<BufferDiff>,
         cx: &mut Context<Self>,
     ) {
-        let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
+        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
         let diff = diff.read(cx);
         let diff = DiffStateSnapshot {
             diff: diff.snapshot(cx),
@@ -2474,7 +2474,7 @@ impl MultiBuffer {
         self.sync_mut(cx);
 
         let diff = diff.read(cx);
-        let base_text_buffer_id = diff.base_text(cx).remote_id();
+        let base_text_buffer_id = diff.base_text_buffer().read(cx).remote_id();
         let Some(buffer_state) = self.buffers.get(&base_text_buffer_id) else {
             return;
         };
@@ -2674,8 +2674,9 @@ impl MultiBuffer {
     }
 
     pub fn add_inverted_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
-        let base_text_buffer_id = diff.read(cx).base_text(cx).remote_id();
-        let diff_change_range = 0..diff.read(cx).base_text(cx).len();
+        let snapshot = diff.read(cx).base_text(cx);
+        let base_text_buffer_id = snapshot.remote_id();
+        let diff_change_range = 0..snapshot.len();
         self.snapshot.get_mut().has_inverted_diff = true;
         self.inverted_buffer_diff_changed(diff.clone(), diff_change_range, cx);
         self.diffs
@@ -3965,25 +3966,24 @@ impl MultiBufferSnapshot {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let diff = self.diffs.get(&buffer.remote_id())?;
-            let iter: Box<dyn Iterator<Item = (DiffHunk, &BufferSnapshot, bool)>> =
-                if diff.is_inverted {
-                    let buffer_start = buffer.point_to_offset(buffer_range.start);
-                    let buffer_end = buffer.point_to_offset(buffer_range.end);
-                    Box::new(
-                        diff.hunks_intersecting_base_text_range(
-                            buffer_start..buffer_end,
-                            diff.original_buffer_snapshot(),
-                        )
-                        .map(move |hunk| (hunk, buffer, true)),
+            let iter = if diff.is_inverted {
+                let buffer_start = buffer.point_to_offset(buffer_range.start);
+                let buffer_end = buffer.point_to_offset(buffer_range.end);
+                itertools::Either::Left(
+                    diff.hunks_intersecting_base_text_range(
+                        buffer_start..buffer_end,
+                        diff.original_buffer_snapshot(),
                     )
-                } else {
-                    let buffer_start = buffer.anchor_before(buffer_range.start);
-                    let buffer_end = buffer.anchor_after(buffer_range.end);
-                    Box::new(
-                        diff.hunks_intersecting_range(buffer_start..buffer_end, buffer)
-                            .map(move |hunk| (hunk, buffer, false)),
-                    )
-                };
+                    .map(move |hunk| (hunk, buffer, true)),
+                )
+            } else {
+                let buffer_start = buffer.anchor_before(buffer_range.start);
+                let buffer_end = buffer.anchor_after(buffer_range.end);
+                itertools::Either::Right(
+                    diff.hunks_intersecting_range(buffer_start..buffer_end, buffer)
+                        .map(move |hunk| (hunk, buffer, false)),
+                )
+            };
             Some(iter.filter_map(|(hunk, buffer, is_inverted)| {
                 if hunk.is_created_file() && !self.all_diff_hunks_expanded {
                     return None;
