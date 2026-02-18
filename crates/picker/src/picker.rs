@@ -76,6 +76,8 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    /// Tracks the stable ID of a manually selected item to preserve it across match updates.
+    manually_selected_stable_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -135,6 +137,20 @@ pub trait PickerDelegate: Sized + 'static {
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         Some("No matches".into())
     }
+
+    /// Returns a stable identifier for the match at the given index.
+    /// If implemented, the picker will try to preserve manual selections
+    /// across match updates by finding the same item again.
+    fn match_stable_id(&self, _ix: usize) -> Option<String> {
+        None
+    }
+
+    /// Finds the index of a match with the given stable identifier.
+    /// Used in conjunction with `match_stable_id` to restore selections.
+    fn find_match_by_stable_id(&self, _stable_id: &str) -> Option<usize> {
+        None
+    }
+
     fn update_matches(
         &mut self,
         query: String,
@@ -342,6 +358,7 @@ impl<D: PickerDelegate> Picker<D> {
             is_modal: true,
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
+            manually_selected_stable_id: None,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -411,11 +428,43 @@ impl<D: PickerDelegate> Picker<D> {
     /// view.
     ///
     /// If some effect is bound to `selected_index_changed`, it will be executed.
+    ///
+    /// This method is for programmatic selection changes. For user-driven selections
+    /// that should be preserved across match updates, use `select_index_sticky` instead.
     pub fn set_selected_index(
+        &mut self,
+        ix: usize,
+        fallback_direction: Option<Direction>,
+        scroll_to_index: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_selected_index_impl(ix, fallback_direction, scroll_to_index, false, window, cx);
+    }
+
+    /// Selects an index with "sticky" behavior - the selection will be preserved across
+    /// match updates if the selected item still matches the search query.
+    ///
+    /// Use this for user-driven selections (keyboard navigation, mouse clicks) where you want
+    /// the user's choice to be maintained as they continue typing. For programmatic selections
+    /// that should not persist, use `set_selected_index` instead.
+    pub fn select_index_sticky(
+        &mut self,
+        ix: usize,
+        fallback_direction: Option<Direction>,
+        scroll_to_index: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_selected_index_impl(ix, fallback_direction, scroll_to_index, true, window, cx);
+    }
+
+    fn set_selected_index_impl(
         &mut self,
         mut ix: usize,
         fallback_direction: Option<Direction>,
         scroll_to_index: bool,
+        is_manual_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -457,6 +506,11 @@ impl<D: PickerDelegate> Picker<D> {
         self.delegate.set_selected_index(ix, window, cx);
         let current_index = self.delegate.selected_index();
 
+        // Track manually selected item to preserve across match updates
+        if is_manual_selection {
+            self.manually_selected_stable_id = self.delegate.match_stable_id(current_index);
+        }
+
         if previous_index != current_index {
             if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
                 action(window, cx);
@@ -485,7 +539,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
+            self.select_index_sticky(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -512,7 +566,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
+            self.select_index_sticky(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -529,7 +583,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(0, Some(Direction::Down), true, window, cx);
+            self.select_index_sticky(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -537,7 +591,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
+            self.select_index_sticky(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -546,7 +600,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
+        self.select_index_sticky(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
     }
 
@@ -622,7 +676,7 @@ impl<D: PickerDelegate> Picker<D> {
         if !self.delegate.can_select(ix, window, cx) {
             return;
         }
-        self.set_selected_index(ix, None, false, window, cx);
+        self.select_index_sticky(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
 
@@ -717,7 +771,32 @@ impl<D: PickerDelegate> Picker<D> {
             state.reset(self.delegate.match_count());
         }
 
-        let index = self.delegate.selected_index();
+        // Try to restore manually selected item
+        let match_count = self.delegate.match_count();
+        let index = if let Some(stable_id) = &self.manually_selected_stable_id {
+            if let Some(ix) = self.delegate.find_match_by_stable_id(stable_id) {
+                // Found the manually selected item, restore selection
+                self.delegate.set_selected_index(ix, window, cx);
+                ix
+            } else {
+                // Item no longer in results, clear manual selection and reset to first item
+                self.manually_selected_stable_id = None;
+                let ix = 0.min(match_count.saturating_sub(1));
+                if match_count > 0 {
+                    self.delegate.set_selected_index(ix, window, cx);
+                }
+                ix
+            }
+        } else {
+            // No manual selection - clamp current index to valid range
+            let current_index = self.delegate.selected_index();
+            let ix = current_index.min(match_count.saturating_sub(1));
+            if match_count > 0 && current_index != ix {
+                self.delegate.set_selected_index(ix, window, cx);
+            }
+            ix
+        };
+
         self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
