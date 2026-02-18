@@ -423,20 +423,33 @@ impl MultiWorkspace {
         if !self.multi_workspace_enabled(cx) {
             return;
         }
+
+        // Clone app_state before spawning since we can't access self in async context
         let app_state = self.workspace().read(cx).app_state().clone();
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            project::LocalProjectFlags::default(),
-            cx,
-        );
-        let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.activate(new_workspace, cx);
-        self.focus_active_workspace(window, cx);
+
+        // Spawn async task with window context to create workspace.
+        // This avoids RefCell borrow conflict on Linux where the window's
+        // Callbacks RefCell may be borrowed during event processing.
+        cx.spawn_in(window, async move |this, cx| {
+            this.update_in(cx, |this, window, cx| {
+                let project = Project::local(
+                    app_state.client.clone(),
+                    app_state.node_runtime.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    None,
+                    project::LocalProjectFlags::default(),
+                    cx,
+                );
+                let new_workspace =
+                    cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+                this.activate(new_workspace, cx);
+                this.focus_active_workspace(window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
