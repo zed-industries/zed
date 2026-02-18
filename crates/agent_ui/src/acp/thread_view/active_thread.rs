@@ -303,6 +303,8 @@ impl AcpThreadView {
             this.update_recent_history_from_cache(&history, cx);
         });
 
+        let mut should_auto_submit = false;
+
         let message_editor = cx.new(|cx| {
             let mut editor = MessageEditor::new(
                 workspace.clone(),
@@ -326,7 +328,11 @@ impl AcpThreadView {
                     AgentInitialContent::ThreadSummary(entry) => {
                         editor.insert_thread_summary(entry, window, cx);
                     }
-                    AgentInitialContent::ContentBlock { blocks, .. } => {
+                    AgentInitialContent::ContentBlock {
+                        blocks,
+                        auto_submit,
+                    } => {
+                        should_auto_submit = auto_submit;
                         editor.set_message(blocks, window, cx);
                     }
                 }
@@ -429,7 +435,9 @@ impl AcpThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
         };
-        this.send(window, cx);
+        if should_auto_submit {
+            this.send(window, cx);
+        }
         this
     }
 
