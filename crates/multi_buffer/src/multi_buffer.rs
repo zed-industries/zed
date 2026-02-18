@@ -4109,9 +4109,10 @@ impl MultiBufferSnapshot {
         &self,
         anchors: impl IntoIterator<Item = text::Anchor>,
     ) -> Vec<Option<Anchor>> {
+        let anchors = anchors.into_iter();
+        let mut result = Vec::with_capacity(anchors.size_hint().0);
+        let mut anchors = anchors.peekable();
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>(());
-        let mut anchors = anchors.into_iter().peekable();
-        let mut result = Vec::new();
         'anchors: while let Some(anchor) = anchors.peek() {
             let Some(buffer_id) = anchor.buffer_id else {
                 anchors.next();
