@@ -21,6 +21,7 @@ use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::path::Component;
 use std::process::ExitStatus;
 use std::str::FromStr;
 use std::{
@@ -50,6 +51,102 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
+
+/// Default value for the `git.worktree_directory` setting.
+pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
+
+/// Resolves the configured worktree directory to an absolute path.
+///
+/// `worktree_directory_setting` is the raw string from the user setting
+/// (e.g. `"../worktrees"`, `".git/zed-worktrees"`, `"my-worktrees/"`).
+/// Trailing slashes are stripped. The path is resolved relative to
+/// `working_directory` (the repository's working directory root).
+pub fn resolve_worktree_directory(
+    working_directory: &Path,
+    worktree_directory_setting: &str,
+) -> PathBuf {
+    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
+    let joined = working_directory.join(trimmed);
+    normalize_path(&joined)
+}
+
+/// Validates that the resolved worktree directory is acceptable:
+/// - The setting must not be an absolute path.
+/// - The resolved path must be either a subdirectory of the working
+///   directory or a subdirectory of its parent (i.e., a sibling).
+///
+/// Returns `Ok(resolved_path)` or an error with a user-facing message.
+pub fn validate_worktree_directory(
+    working_directory: &Path,
+    worktree_directory_setting: &str,
+) -> Result<PathBuf> {
+    // Check the original setting before trimming, since a path like "///"
+    // is absolute but becomes "" after stripping trailing separators.
+    // Also check for leading `/` or `\` explicitly, because on Windows
+    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
+    // would slip through even though it's clearly not a relative path.
+    if Path::new(worktree_directory_setting).is_absolute()
+        || worktree_directory_setting.starts_with('/')
+        || worktree_directory_setting.starts_with('\\')
+    {
+        anyhow::bail!(
+            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
+        );
+    }
+
+    let resolved = resolve_worktree_directory(working_directory, worktree_directory_setting);
+
+    let parent = working_directory.parent().unwrap_or(working_directory);
+
+    if !resolved.starts_with(parent) {
+        anyhow::bail!(
+            "git.worktree_directory resolved to {resolved:?}, which is outside \
+             the project root and its parent directory. It must resolve to a \
+             subdirectory of {working_directory:?} or a sibling of it."
+        );
+    }
+
+    Ok(resolved)
+}
+
+/// Returns the full absolute path for a specific branch's worktree
+/// given the resolved worktree directory.
+pub fn worktree_path_for_branch(
+    working_directory: &Path,
+    worktree_directory_setting: &str,
+    branch: &str,
+) -> PathBuf {
+    resolve_worktree_directory(working_directory, worktree_directory_setting).join(branch)
+}
+
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
+}
 
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
@@ -634,7 +731,7 @@ pub trait GitRepository: Send + Sync {
     fn create_worktree(
         &self,
         name: String,
-        directory: PathBuf,
+        worktree_directory: String,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1576,30 +1673,35 @@ impl GitRepository for RealGitRepository {
     fn create_worktree(
         &self,
         name: String,
-        directory: PathBuf,
+        worktree_directory: String,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
-        let final_path = directory.join(&name);
-        let mut args = vec![
-            OsString::from("--no-optional-locks"),
-            OsString::from("worktree"),
-            OsString::from("add"),
-            OsString::from("-b"),
-            OsString::from(name.as_str()),
-            OsString::from("--"),
-            OsString::from(final_path.as_os_str()),
-        ];
-        if let Some(from_commit) = from_commit {
-            args.push(OsString::from(from_commit));
-        } else {
-            args.push(OsString::from("HEAD"));
-        }
+
         self.executor
             .spawn(async move {
+                let working_directory = working_directory?;
+                let directory =
+                    validate_worktree_directory(&working_directory, &worktree_directory)?;
+                let final_path = directory.join(&name);
+                let mut args = vec![
+                    OsString::from("--no-optional-locks"),
+                    OsString::from("worktree"),
+                    OsString::from("add"),
+                    OsString::from("-b"),
+                    OsString::from(name.as_str()),
+                    OsString::from("--"),
+                    OsString::from(final_path.as_os_str()),
+                ];
+                if let Some(from_commit) = from_commit {
+                    args.push(OsString::from(from_commit));
+                } else {
+                    args.push(OsString::from("HEAD"));
+                }
+                std::fs::create_dir_all(&directory)?;
                 let output = new_command(&git_binary_path)
-                    .current_dir(working_directory?)
+                    .current_dir(&working_directory)
                     .args(args)
                     .output()
                     .await?;
@@ -3707,73 +3809,79 @@ mod tests {
         assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
     }
 
+    const TEST_WORKTREE_DIRECTORIES: &[&str] =
+        &["../worktrees", ".git/zed-worktrees", "my-worktrees/"];
+
     #[gpui::test]
     async fn test_create_and_list_worktrees(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git2::Repository::init(repo_dir.path()).unwrap();
 
-        let repo = RealGitRepository::new(
-            &repo_dir.path().join(".git"),
-            None,
-            Some("git".into()),
-            cx.executor(),
-        )
-        .unwrap();
+            let repo = RealGitRepository::new(
+                &repo_dir.path().join(".git"),
+                None,
+                Some("git".into()),
+                cx.executor(),
+            )
+            .unwrap();
 
-        // Create an initial commit (required for worktrees)
-        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            // Create an initial commit (required for worktrees)
+            smol::fs::write(repo_dir.path().join("file.txt"), "content")
+                .await
+                .unwrap();
+            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+                .await
+                .unwrap();
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
             .await
             .unwrap();
-        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+
+            // List worktrees — should have just the main one
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 1);
+            assert_eq!(
+                worktrees[0].path.canonicalize().unwrap(),
+                repo_dir.path().canonicalize().unwrap()
+            );
+
+            // Create a new worktree
+            repo.create_worktree(
+                "test-branch".to_string(),
+                worktree_dir_setting.to_string(),
+                Some("HEAD".to_string()),
+            )
             .await
             .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
 
-        // List worktrees — should have just the main one
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(
-            worktrees[0].path.canonicalize().unwrap(),
-            repo_dir.path().canonicalize().unwrap()
-        );
+            // List worktrees — should have two
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 2);
 
-        // Create a new worktree
-        let worktree_dir = tempfile::tempdir().unwrap();
-        repo.create_worktree(
-            "test-branch".to_string(),
-            worktree_dir.path().to_path_buf(),
-            Some("HEAD".to_string()),
-        )
-        .await
-        .unwrap();
+            let expected_path =
+                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "test-branch");
+            let new_worktree = worktrees
+                .iter()
+                .find(|w| w.branch() == "test-branch")
+                .expect("should find worktree with test-branch");
+            assert_eq!(
+                new_worktree.path.canonicalize().unwrap(),
+                expected_path.canonicalize().unwrap(),
+                "failed for worktree_directory setting: {worktree_dir_setting:?}"
+            );
 
-        // List worktrees — should have two
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 2);
-
-        let new_worktree = worktrees
-            .iter()
-            .find(|w| w.branch() == "test-branch")
-            .expect("should find worktree with test-branch");
-        assert_eq!(
-            new_worktree.path.canonicalize().unwrap(),
-            worktree_dir
-                .path()
-                .join("test-branch")
-                .canonicalize()
-                .unwrap()
-        );
+            // Clean up so the next iteration starts fresh
+            repo.remove_worktree(expected_path, true).await.unwrap();
+        }
     }
 
     #[gpui::test]
@@ -3781,62 +3889,64 @@ mod tests {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git2::Repository::init(repo_dir.path()).unwrap();
 
-        let repo = RealGitRepository::new(
-            &repo_dir.path().join(".git"),
-            None,
-            Some("git".into()),
-            cx.executor(),
-        )
-        .unwrap();
-
-        // Create an initial commit
-        smol::fs::write(repo_dir.path().join("file.txt"), "content")
-            .await
+            let repo = RealGitRepository::new(
+                &repo_dir.path().join(".git"),
+                None,
+                Some("git".into()),
+                cx.executor(),
+            )
             .unwrap();
-        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-            .await
-            .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
 
-        // Create a worktree
-        let worktree_dir = tempfile::tempdir().unwrap();
-        repo.create_worktree(
-            "to-remove".to_string(),
-            worktree_dir.path().to_path_buf(),
-            Some("HEAD".to_string()),
-        )
-        .await
-        .unwrap();
-
-        let worktree_path = worktree_dir.path().join("to-remove");
-        assert!(worktree_path.exists());
-
-        // Remove the worktree
-        repo.remove_worktree(worktree_path.clone(), false)
+            // Create an initial commit
+            smol::fs::write(repo_dir.path().join("file.txt"), "content")
+                .await
+                .unwrap();
+            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+                .await
+                .unwrap();
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
             .await
             .unwrap();
 
-        // Verify it's gone from the list
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert!(
-            worktrees.iter().all(|w| w.branch() != "to-remove"),
-            "removed worktree should not appear in list"
-        );
+            // Create a worktree
+            repo.create_worktree(
+                "to-remove".to_string(),
+                worktree_dir_setting.to_string(),
+                Some("HEAD".to_string()),
+            )
+            .await
+            .unwrap();
 
-        // Verify the directory is removed
-        assert!(!worktree_path.exists());
+            let worktree_path =
+                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "to-remove");
+            assert!(worktree_path.exists());
+
+            // Remove the worktree
+            repo.remove_worktree(worktree_path.clone(), false)
+                .await
+                .unwrap();
+
+            // Verify it's gone from the list
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 1);
+            assert!(
+                worktrees.iter().all(|w| w.branch() != "to-remove"),
+                "removed worktree should not appear in list"
+            );
+
+            // Verify the directory is removed
+            assert!(!worktree_path.exists());
+        }
     }
 
     #[gpui::test]
@@ -3844,66 +3954,68 @@ mod tests {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git2::Repository::init(repo_dir.path()).unwrap();
 
-        let repo = RealGitRepository::new(
-            &repo_dir.path().join(".git"),
-            None,
-            Some("git".into()),
-            cx.executor(),
-        )
-        .unwrap();
-
-        // Create an initial commit
-        smol::fs::write(repo_dir.path().join("file.txt"), "content")
-            .await
+            let repo = RealGitRepository::new(
+                &repo_dir.path().join(".git"),
+                None,
+                Some("git".into()),
+                cx.executor(),
+            )
             .unwrap();
-        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-            .await
-            .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
 
-        // Create a worktree
-        let worktree_dir = tempfile::tempdir().unwrap();
-        repo.create_worktree(
-            "dirty-wt".to_string(),
-            worktree_dir.path().to_path_buf(),
-            Some("HEAD".to_string()),
-        )
-        .await
-        .unwrap();
-
-        let worktree_path = worktree_dir.path().join("dirty-wt");
-
-        // Add uncommitted changes in the worktree
-        smol::fs::write(worktree_path.join("dirty-file.txt"), "uncommitted")
+            // Create an initial commit
+            smol::fs::write(repo_dir.path().join("file.txt"), "content")
+                .await
+                .unwrap();
+            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+                .await
+                .unwrap();
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
             .await
             .unwrap();
 
-        // Non-force removal should fail with dirty worktree
-        let result = repo.remove_worktree(worktree_path.clone(), false).await;
-        assert!(
-            result.is_err(),
-            "non-force removal of dirty worktree should fail"
-        );
-
-        // Force removal should succeed
-        repo.remove_worktree(worktree_path.clone(), true)
+            // Create a worktree
+            repo.create_worktree(
+                "dirty-wt".to_string(),
+                worktree_dir_setting.to_string(),
+                Some("HEAD".to_string()),
+            )
             .await
             .unwrap();
 
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert!(!worktree_path.exists());
+            let worktree_path =
+                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "dirty-wt");
+
+            // Add uncommitted changes in the worktree
+            smol::fs::write(worktree_path.join("dirty-file.txt"), "uncommitted")
+                .await
+                .unwrap();
+
+            // Non-force removal should fail with dirty worktree
+            let result = repo.remove_worktree(worktree_path.clone(), false).await;
+            assert!(
+                result.is_err(),
+                "non-force removal of dirty worktree should fail"
+            );
+
+            // Force removal should succeed
+            repo.remove_worktree(worktree_path.clone(), true)
+                .await
+                .unwrap();
+
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 1);
+            assert!(!worktree_path.exists());
+        }
     }
 
     #[gpui::test]
@@ -3911,67 +4023,189 @@ mod tests {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        let repo_dir = tempfile::tempdir().unwrap();
-        git2::Repository::init(repo_dir.path()).unwrap();
+        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
+            let repo_dir = tempfile::tempdir().unwrap();
+            git2::Repository::init(repo_dir.path()).unwrap();
 
-        let repo = RealGitRepository::new(
-            &repo_dir.path().join(".git"),
-            None,
-            Some("git".into()),
-            cx.executor(),
-        )
-        .unwrap();
-
-        // Create an initial commit
-        smol::fs::write(repo_dir.path().join("file.txt"), "content")
-            .await
+            let repo = RealGitRepository::new(
+                &repo_dir.path().join(".git"),
+                None,
+                Some("git".into()),
+                cx.executor(),
+            )
             .unwrap();
-        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-            .await
-            .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
 
-        // Create a worktree
-        let worktree_dir = tempfile::tempdir().unwrap();
-        repo.create_worktree(
-            "old-name".to_string(),
-            worktree_dir.path().to_path_buf(),
-            Some("HEAD".to_string()),
-        )
-        .await
-        .unwrap();
-
-        let old_path = worktree_dir.path().join("old-name");
-        assert!(old_path.exists());
-
-        // Move the worktree to a new path
-        let new_path = worktree_dir.path().join("new-name");
-        repo.rename_worktree(old_path.clone(), new_path.clone())
+            // Create an initial commit
+            smol::fs::write(repo_dir.path().join("file.txt"), "content")
+                .await
+                .unwrap();
+            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+                .await
+                .unwrap();
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
             .await
             .unwrap();
 
-        // Verify the old path is gone and new path exists
-        assert!(!old_path.exists());
-        assert!(new_path.exists());
+            // Create a worktree
+            repo.create_worktree(
+                "old-name".to_string(),
+                worktree_dir_setting.to_string(),
+                Some("HEAD".to_string()),
+            )
+            .await
+            .unwrap();
 
-        // Verify it shows up in worktree list at the new path
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 2);
-        let moved_worktree = worktrees
-            .iter()
-            .find(|w| w.branch() == "old-name")
-            .expect("should find worktree by branch name");
+            let old_path =
+                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "old-name");
+            assert!(old_path.exists());
+
+            // Move the worktree to a new path
+            let new_path =
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting).join("new-name");
+            repo.rename_worktree(old_path.clone(), new_path.clone())
+                .await
+                .unwrap();
+
+            // Verify the old path is gone and new path exists
+            assert!(!old_path.exists());
+            assert!(new_path.exists());
+
+            // Verify it shows up in worktree list at the new path
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 2);
+            let moved_worktree = worktrees
+                .iter()
+                .find(|w| w.branch() == "old-name")
+                .expect("should find worktree by branch name");
+            assert_eq!(
+                moved_worktree.path.canonicalize().unwrap(),
+                new_path.canonicalize().unwrap()
+            );
+
+            // Clean up so the next iteration starts fresh
+            repo.remove_worktree(new_path, true).await.unwrap();
+        }
+    }
+
+    #[test]
+    fn test_resolve_worktree_directory() {
+        let work_dir = Path::new("/code/my-project");
+
+        // Sibling directory
         assert_eq!(
-            moved_worktree.path.canonicalize().unwrap(),
-            new_path.canonicalize().unwrap()
+            resolve_worktree_directory(work_dir, "../worktrees"),
+            PathBuf::from("/code/worktrees")
+        );
+
+        // Git subdir
+        assert_eq!(
+            resolve_worktree_directory(work_dir, ".git/zed-worktrees"),
+            PathBuf::from("/code/my-project/.git/zed-worktrees")
+        );
+
+        // Simple subdir
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "my-worktrees"),
+            PathBuf::from("/code/my-project/my-worktrees")
+        );
+
+        // Trailing slash is stripped
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "../worktrees/"),
+            PathBuf::from("/code/worktrees")
+        );
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "my-worktrees/"),
+            PathBuf::from("/code/my-project/my-worktrees")
+        );
+
+        // Multiple trailing slashes
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "foo///"),
+            PathBuf::from("/code/my-project/foo")
+        );
+
+        // Trailing backslashes (Windows-style)
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "my-worktrees\\"),
+            PathBuf::from("/code/my-project/my-worktrees")
+        );
+        assert_eq!(
+            resolve_worktree_directory(work_dir, "foo\\/\\"),
+            PathBuf::from("/code/my-project/foo")
+        );
+
+        // Empty string resolves to the working directory itself
+        assert_eq!(
+            resolve_worktree_directory(work_dir, ""),
+            PathBuf::from("/code/my-project")
+        );
+
+        // Just ".." resolves to the parent directory
+        assert_eq!(
+            resolve_worktree_directory(work_dir, ".."),
+            PathBuf::from("/code")
+        );
+    }
+
+    #[test]
+    fn test_validate_worktree_directory() {
+        let work_dir = Path::new("/code/my-project");
+
+        // Valid: sibling
+        assert!(validate_worktree_directory(work_dir, "../worktrees").is_ok());
+
+        // Valid: subdirectory
+        assert!(validate_worktree_directory(work_dir, ".git/zed-worktrees").is_ok());
+        assert!(validate_worktree_directory(work_dir, "my-worktrees").is_ok());
+
+        // Valid: just ".." resolves to parent dir itself
+        assert!(validate_worktree_directory(work_dir, "..").is_ok());
+
+        // Valid: empty string resolves to working directory (under parent)
+        assert!(validate_worktree_directory(work_dir, "").is_ok());
+
+        // Invalid: absolute path
+        let err = validate_worktree_directory(work_dir, "/tmp/worktrees").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "/" is absolute on Unix
+        let err = validate_worktree_directory(work_dir, "/").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "///" is absolute
+        let err = validate_worktree_directory(work_dir, "///").unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: escapes too far up
+        let err = validate_worktree_directory(work_dir, "../../other-project/wt").unwrap_err();
+        assert!(err.to_string().contains("outside"));
+    }
+
+    #[test]
+    fn test_worktree_path_for_branch() {
+        let work_dir = Path::new("/code/my-project");
+
+        assert_eq!(
+            worktree_path_for_branch(work_dir, "../worktrees", "feature/foo"),
+            PathBuf::from("/code/worktrees/feature/foo")
+        );
+
+        assert_eq!(
+            worktree_path_for_branch(work_dir, ".git/zed-worktrees", "my-branch"),
+            PathBuf::from("/code/my-project/.git/zed-worktrees/my-branch")
+        );
+
+        // Trailing slash on setting
+        assert_eq!(
+            worktree_path_for_branch(work_dir, "my-worktrees/", "branch"),
+            PathBuf::from("/code/my-project/my-worktrees/branch")
         );
     }
 

@@ -1467,12 +1467,23 @@ impl NativeAgentSessionList {
     }
 
     fn to_session_info(entry: DbThreadMetadata) -> AgentSessionInfo {
+        // Serialize worktree_branch into the untyped `meta` map expected by
+        // AgentSessionInfo. If a typed metadata struct is introduced, migrate.
+        let meta = entry.worktree_branch.map(|branch| {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "worktree_branch".to_string(),
+                serde_json::Value::String(branch),
+            );
+            map
+        });
+
         AgentSessionInfo {
             session_id: entry.id,
             cwd: None,
             title: Some(entry.title),
             updated_at: Some(entry.updated_at),
-            meta: None,
+            meta,
         }
     }
 

@@ -2,21 +2,21 @@ use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
-use git::repository::Worktree as GitWorktree;
+use git::repository::{Worktree as GitWorktree, worktree_path_for_branch};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
-    PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
-    actions, rems,
+    Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use project::project_settings::ProjectSettings;
 use project::{
-    DirectoryLister,
     git_store::Repository,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use remote_connection::{RemoteConnectionModal, connect};
+use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
@@ -267,40 +267,21 @@ impl WorktreeListDelegate {
             return;
         };
 
-        let worktree_path = self
-            .workspace
-            .clone()
-            .update(cx, |this, cx| {
-                this.prompt_for_open_path(
-                    PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Select directory for new worktree".into()),
-                    },
-                    DirectoryLister::Project(this.project().clone()),
-                    window,
-                    cx,
-                )
-            })
-            .log_err();
-        let Some(worktree_path) = worktree_path else {
-            return;
-        };
-
         let branch = worktree_branch.to_string();
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
-            let Some(paths) = worktree_path.await? else {
-                return anyhow::Ok(());
-            };
-            let path = paths.get(0).cloned().context("No path selected")?;
-
-            repo.update(cx, |repo, _| {
-                repo.create_worktree(branch.clone(), path.clone(), commit)
-            })
-            .await??;
-            let new_worktree_path = path.join(branch);
+            let (receiver, new_worktree_path) = repo.update(cx, |repo, cx| {
+                let worktree_directory = ProjectSettings::get_global(cx)
+                    .git
+                    .worktree_directory
+                    .clone();
+                let work_dir = repo.work_directory_abs_path.clone();
+                let receiver =
+                    repo.create_worktree(branch.clone(), worktree_directory.clone(), commit);
+                let path = worktree_path_for_branch(&work_dir, &worktree_directory, &branch);
+                anyhow::Ok((receiver, path))
+            })?;
+            receiver.await??;
 
             workspace.update(cx, |workspace, cx| {
                 if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {

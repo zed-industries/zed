@@ -1485,6 +1485,14 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Directory where git worktrees are created, relative to the repository
+    // working directory.
+    // Examples:
+    //   "../worktrees" — sibling of the project root (default)
+    //   ".git/zed-worktrees" — inside the git directory
+    //   "my-worktrees" — subdirectory of the project root
+    // Trailing slashes are ignored.
+    "worktree_directory": "../worktrees",
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
