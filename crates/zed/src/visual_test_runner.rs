@@ -2912,7 +2912,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container().child(
                     ThreadItem::new("ti-waiting", "Waiting for user confirmation")
                         .timestamp("1:10 AM")
-                        .waiting_for_confirmation(true),
+                        .status(ui::ThreadItemStatus::WaitingForConfirmation),
                 ),
             )
             .child(section_label("Red X (error)"))
@@ -2920,7 +2920,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                 container().child(
                     ThreadItem::new("ti-error", "Failed to connect to server")
                         .timestamp("1:15 AM")
-                        .error(true),
+                        .status(ui::ThreadItemStatus::Error),
                 ),
             )
             .child(section_label("Spinner (running)"))
@@ -2941,7 +2941,7 @@ impl gpui::Render for ThreadItemIconDecorationsTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("1:25 AM")
                         .running(true)
-                        .waiting_for_confirmation(true),
+                        .status(ui::ThreadItemStatus::WaitingForConfirmation),
                 ),
             )
     }

@@ -20,7 +20,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip, prelude::*};
+use ui::{
+    Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, ThreadItemStatus, Tooltip,
+    prelude::*,
+};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
@@ -39,8 +42,7 @@ struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
-    waiting_for_confirmation: bool,
-    has_error: bool,
+    thread_item_status: ThreadItemStatus,
 }
 
 const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
@@ -104,8 +106,7 @@ impl WorkspaceThreadEntry {
                 title: SharedString::from(title.clone()),
                 status: AgentThreadStatus::Completed,
                 icon: IconName::ZedAgent,
-                waiting_for_confirmation: false,
-                has_error: false,
+                thread_item_status: ThreadItemStatus::None,
             })
         });
 
@@ -131,14 +132,18 @@ impl WorkspaceThreadEntry {
             ThreadStatus::Generating => AgentThreadStatus::Running,
             ThreadStatus::Idle => AgentThreadStatus::Completed,
         };
-        let waiting_for_confirmation = thread.has_waiting_for_confirmation();
-        let has_error = thread.had_error();
+        let thread_item_status = if thread.is_waiting_for_confirmation() {
+            ThreadItemStatus::WaitingForConfirmation
+        } else if thread.had_error() {
+            ThreadItemStatus::Error
+        } else {
+            ThreadItemStatus::None
+        };
         Some(AgentThreadInfo {
             title,
             status,
             icon,
-            waiting_for_confirmation,
-            has_error,
+            thread_item_status,
         })
     }
 }
@@ -641,10 +646,9 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ..
                     })
                 );
-                let waiting_for_confirmation = thread_info
+                let thread_item_status = thread_info
                     .as_ref()
-                    .is_some_and(|info| info.waiting_for_confirmation);
-                let has_error = thread_info.as_ref().is_some_and(|info| info.has_error);
+                    .map_or(ThreadItemStatus::None, |info| info.thread_item_status);
 
                 Some(
                     ThreadItem::new(
@@ -658,8 +662,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     )
                     .running(running)
                     .generation_done(has_notification)
-                    .waiting_for_confirmation(waiting_for_confirmation)
-                    .error(has_error)
+                    .status(thread_item_status)
                     .selected(selected)
                     .worktree(worktree_label.clone())
                     .worktree_highlight_positions(positions.clone())
@@ -890,8 +893,7 @@ impl Sidebar {
                 title,
                 status,
                 icon: IconName::ZedAgent,
-                waiting_for_confirmation: false,
-                has_error: false,
+                thread_item_status: ThreadItemStatus::None,
             },
         );
     }

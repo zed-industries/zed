@@ -5,6 +5,14 @@ use crate::{
 
 use gpui::{AnyView, ClickEvent, SharedString};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThreadItemStatus {
+    #[default]
+    None,
+    WaitingForConfirmation,
+    Error,
+}
+
 #[derive(IntoElement, RegisterComponent)]
 pub struct ThreadItem {
     id: ElementId,
@@ -13,8 +21,7 @@ pub struct ThreadItem {
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
-    waiting_for_confirmation: bool,
-    error: bool,
+    status: ThreadItemStatus,
     selected: bool,
     hovered: bool,
     added: Option<usize>,
@@ -37,8 +44,7 @@ impl ThreadItem {
             timestamp: "".into(),
             running: false,
             generation_done: false,
-            waiting_for_confirmation: false,
-            error: false,
+            status: ThreadItemStatus::None,
             selected: false,
             hovered: false,
             added: None,
@@ -73,13 +79,8 @@ impl ThreadItem {
         self
     }
 
-    pub fn waiting_for_confirmation(mut self, waiting_for_confirmation: bool) -> Self {
-        self.waiting_for_confirmation = waiting_for_confirmation;
-        self
-    }
-
-    pub fn error(mut self, error: bool) -> Self {
-        self.error = error;
+    pub fn status(mut self, status: ThreadItemStatus) -> Self {
+        self.status = status;
         self
     }
 
@@ -157,7 +158,7 @@ impl RenderOnce for ThreadItem {
             .color(Color::Muted)
             .size(IconSize::Small);
 
-        let decoration = if self.waiting_for_confirmation {
+        let decoration = if self.status == ThreadItemStatus::WaitingForConfirmation {
             Some(
                 IconDecoration::new(
                     IconDecorationKind::Triangle,
@@ -170,7 +171,7 @@ impl RenderOnce for ThreadItem {
                     y: px(-2.),
                 }),
             )
-        } else if self.error {
+        } else if self.status == ThreadItemStatus::Error {
             Some(
                 IconDecoration::new(
                     IconDecorationKind::X,
@@ -360,7 +361,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-2b", "Execute shell command in terminal")
                             .timestamp("12:15 AM")
-                            .waiting_for_confirmation(true),
+                            .status(ThreadItemStatus::WaitingForConfirmation),
                     )
                     .into_any_element(),
             ),
@@ -370,7 +371,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-2c", "Failed to connect to language server")
                             .timestamp("12:20 AM")
-                            .error(true),
+                            .status(ThreadItemStatus::Error),
                     )
                     .into_any_element(),
             ),

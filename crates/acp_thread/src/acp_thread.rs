@@ -1258,7 +1258,7 @@ impl AcpThread {
         self.had_error
     }
 
-    pub fn has_waiting_for_confirmation(&self) -> bool {
+    pub fn is_waiting_for_confirmation(&self) -> bool {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
@@ -1982,7 +1982,6 @@ impl AcpThread {
                     Ok(Err(e)) => {
                         this.send_task.take();
                         this.had_error = true;
-                        cx.notify();
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
                         Err(e)
@@ -1990,7 +1989,6 @@ impl AcpThread {
                     Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
                         this.send_task.take();
                         this.had_error = true;
-                        cx.notify();
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                         Err(anyhow!("Max tokens reached"))
@@ -2020,7 +2018,6 @@ impl AcpThread {
                         })) = result
                         {
                             this.had_error = true;
-                            cx.notify();
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
