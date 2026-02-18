@@ -315,6 +315,12 @@ pub struct ThemeColors {
     pub version_control_conflict: Hsla,
     /// Represents an ignored entry in version control systems.
     pub version_control_ignored: Hsla,
+    /// Background color for line highlights of added hunks in diff views.
+    /// Defaults to `version_control.added` at reduced opacity if not set.
+    pub version_control_added_background: Hsla,
+    /// Background color for line highlights of deleted hunks in diff views.
+    /// Defaults to `version_control.deleted` at reduced opacity if not set.
+    pub version_control_deleted_background: Hsla,
     /// Represents an added word in a word diff.
     pub version_control_word_added: Hsla,
     /// Represents a deleted word in a word diff.

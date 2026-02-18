@@ -752,6 +752,14 @@ pub fn theme_colors_refinement(
             .and_then(|color| try_parse_color(color).ok())
             // Fall back to `conflict`, for backwards compatibility.
             .or(status_colors.ignored),
+        version_control_added_background: this
+            .version_control_added_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
+        version_control_deleted_background: this
+            .version_control_deleted_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         version_control_word_added: this
             .version_control_word_added
             .as_ref()

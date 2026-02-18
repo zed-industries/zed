@@ -9725,18 +9725,20 @@ impl Element for EditorElement {
                             continue;
                         };
 
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                        let (background_color, background_color_for_fill) = match diff_status.kind {
+                            DiffHunkStatusKind::Added => (
+                                cx.theme().colors().version_control_added,
+                                cx.theme().colors().version_control_added_background,
+                            ),
+                            DiffHunkStatusKind::Deleted => (
+                                cx.theme().colors().version_control_deleted,
+                                cx.theme().colors().version_control_deleted_background,
+                            ),
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
                             }
                         };
-
-                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
 
                         let hollow_highlight = LineHighlight {
                             background: (background_color.opacity(if is_light {
@@ -9755,7 +9757,7 @@ impl Element for EditorElement {
                         };
 
                         let filled_highlight = LineHighlight {
-                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            background: solid_background(background_color_for_fill),
                             border: None,
                             include_gutter: true,
                             type_id: None,
