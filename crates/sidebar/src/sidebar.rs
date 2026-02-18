@@ -2,6 +2,7 @@ use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
 use chrono::{Datelike, Local, NaiveDate, TimeDelta};
 use db::kvp::KEY_VALUE_STORE;
+
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -992,6 +993,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !multi_workspace.read(cx).multi_workspace_enabled(cx) {
+            return;
+        }
+
         cx.defer_in(window, move |this, window, cx| {
             this._project_subscriptions = this.subscribe_to_projects(window, cx);
             this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);

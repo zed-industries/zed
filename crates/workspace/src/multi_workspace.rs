@@ -144,7 +144,7 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
-    pub(crate) fn multi_workspace_enabled(&self, cx: &App) -> bool {
+    pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
         cx.has_flag::<AgentV2FeatureFlag>()
     }
 
