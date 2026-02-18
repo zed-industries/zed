@@ -307,6 +307,8 @@ actions!(
         CollapseSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Refreshes the project tree to pick up external file changes.
+        RefreshProject,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -1450,6 +1452,19 @@ impl ProjectPanel {
 
         self.update_visible_entries(Some((worktree_id, root_id)), false, false, window, cx);
         cx.notify();
+    }
+
+    fn refresh_project(
+        &mut self,
+        _: &RefreshProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+        for worktree in project.visible_worktrees(cx) {
+            worktree.read(cx).add_path_prefix_to_scan(RelPath::empty());
+        }
+        self.update_visible_entries(None, false, false, window, cx);
     }
 
     fn collapse_all_entries(
@@ -6323,6 +6338,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::refresh_project))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
