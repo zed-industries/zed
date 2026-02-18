@@ -49,7 +49,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
@@ -143,6 +143,10 @@ actions!(
         OpenPermissionDropdown,
         /// Toggles thinking mode for models that support extended thinking.
         ToggleThinkingMode,
+        /// Cycles through available thinking effort levels for the current model.
+        CycleThinkingEffort,
+        /// Toggles the thinking effort selector menu open or closed.
+        ToggleThinkingEffortMenu,
     ]
 );
 
@@ -373,12 +377,12 @@ fn update_command_palette_filter(cx: &mut App) {
             if agent_enabled {
                 filter.show_namespace("agent");
                 filter.show_namespace("agents");
+                filter.show_namespace("assistant");
             } else {
                 filter.hide_namespace("agent");
                 filter.hide_namespace("agents");
+                filter.hide_namespace("assistant");
             }
-
-            filter.show_namespace("assistant");
 
             match edit_prediction_provider {
                 EditPredictionProvider::None => {
@@ -414,9 +418,12 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
-            if !agent_v2_enabled {
-                filter.hide_action_types(&[TypeId::of::<zed_actions::agent::ToggleAgentPane>()]);
-            }
+        }
+
+        if agent_v2_enabled {
+            filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
         }
     });
 }
@@ -516,7 +523,7 @@ mod tests {
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
-        DefaultAgentView, DockPosition, DockSide, NotifyWhenAgentWaiting, Settings, SettingsStore,
+        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
     };
 
     #[gpui::test]
@@ -535,7 +542,6 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
-            agents_panel_dock: DockSide::Left,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
@@ -548,7 +554,7 @@ mod tests {
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
-            always_allow_tool_actions: false,
+
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: false,
             single_file_review: false,
@@ -578,6 +584,10 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&text_thread_editor::CopyCode),
+                "CopyCode should be visible when agent is enabled"
+            );
         });
 
         // Disable agent
@@ -596,6 +606,10 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&text_thread_editor::CopyCode),
+                "CopyCode should be hidden when agent is disabled"
             );
         });
 

@@ -7,6 +7,7 @@ on:
   workflow_dispatch: {}
 jobs:
   fetch_extension_repos:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: list-repos
@@ -39,7 +40,7 @@ jobs:
       matrix:
         repo: ${{ fromJson(needs.fetch_extension_repos.outputs.repos) }}
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 10
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -56,15 +57,15 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: 0
         path: zed
-        fetch-depth: '0'
-    - name: steps::checkout_repo_with_token
+    - name: checkout_extension_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
         token: ${{ steps.generate-token.outputs.token }}
-        repository: zed-extensions/${{ matrix.repo }}
         path: extension
+        repository: zed-extensions/${{ matrix.repo }}
     - id: prev-tag
       name: extension_workflow_rollout::rollout_workflows_to_extension::get_previous_tag_commit
       run: |
@@ -133,11 +134,11 @@ jobs:
       uses: peter-evans/create-pull-request@v7
       with:
         path: extension
-        title: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        title: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR updates the CI workflow files from the main Zed repository
           based on the commit zed-industries/zed@${{ github.sha }}
-        commit-message: Update CI workflows to `zed@${{ steps.short-sha.outputs.sha_short }}`
+        commit-message: Update CI workflows to `${{ steps.short-sha.outputs.sha_short }}`
         branch: update-workflows
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
@@ -167,12 +168,12 @@ jobs:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         permission-contents: write
-    - name: steps::checkout_repo_with_token
+    - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: 0
         token: ${{ steps.generate-token.outputs.token }}
-        fetch-depth: '0'
     - name: extension_workflow_rollout::create_rollout_tag::configure_git
       run: |
         git config user.name "zed-zippy[bot]"

@@ -120,7 +120,7 @@ impl AgentTool for ToolRequiringPermission {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::NAME, "", settings);
+        let decision = decide_permission_from_settings(Self::NAME, &[String::new()], settings);
 
         let authorize = match decision {
             ToolPermissionDecision::Allow => None,
@@ -128,10 +128,10 @@ impl AgentTool for ToolRequiringPermission {
                 return Task::ready(Err(anyhow::anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: "tool_requiring_permission".to_string(),
-                    input_value: String::new(),
-                };
+                let context = crate::ToolPermissionContext::new(
+                    "tool_requiring_permission",
+                    vec![String::new()],
+                );
                 Some(event_stream.authorize("Authorize?", context, cx))
             }
         };

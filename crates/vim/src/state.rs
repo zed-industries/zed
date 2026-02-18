@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -612,9 +612,7 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
-            let buffer_id = singleton.read(cx).remote_id();
+            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
@@ -731,12 +729,16 @@ impl VimGlobals {
                 });
                 GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(workspace) = window.downcast::<Workspace>() {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                Vim::update_globals(cx, |globals, cx| {
-                                    globals.register_workspace(workspace, cx)
-                                });
+                    if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                        multi_workspace
+                            .update(cx, |multi_workspace, _, cx| {
+                                for workspace in multi_workspace.workspaces() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Vim::update_globals(cx, |globals, cx| {
+                                            globals.register_workspace(workspace, cx)
+                                        });
+                                    });
+                                }
                             })
                             .ok();
                     }

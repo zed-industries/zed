@@ -1,4 +1,4 @@
-mod project_panel_settings;
+pub mod project_panel_settings;
 mod utils;
 
 use anyhow::{Context as _, Result};
@@ -75,7 +75,10 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
+use zed_actions::{
+    project_panel::{Toggle, ToggleFocus},
+    workspace::OpenWithSystem,
+};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -95,11 +98,19 @@ struct State {
     visible_entries: Vec<VisibleEntriesForWorktree>,
     max_width_item_index: Option<usize>,
     edit_state: Option<EditState>,
+    temporarily_unfolded_pending_state: Option<TemporaryUnfoldedPendingState>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
 }
 
 impl State {
+    fn is_unfolded(&self, entry_id: &ProjectEntryId) -> bool {
+        self.unfolded_dir_ids.contains(entry_id)
+            || self.edit_state.as_ref().map_or(false, |edit_state| {
+                edit_state.temporarily_unfolded == Some(*entry_id)
+            })
+    }
+
     fn derive(old: &Self) -> Self {
         Self {
             last_worktree_root_id: None,
@@ -107,6 +118,7 @@ impl State {
             visible_entries: Default::default(),
             max_width_item_index: None,
             edit_state: old.edit_state.clone(),
+            temporarily_unfolded_pending_state: None,
             unfolded_dir_ids: old.unfolded_dir_ids.clone(),
             expanded_dir_ids: old.expanded_dir_ids.clone(),
         }
@@ -150,6 +162,12 @@ struct UpdateVisibleEntriesTask {
     _visible_entries_task: Task<()>,
     focus_filename_editor: bool,
     autoscroll: bool,
+}
+
+#[derive(Debug)]
+struct TemporaryUnfoldedPendingState {
+    previously_focused_leaf_entry: SelectedEntry,
+    temporarily_unfolded_active_entry_id: ProjectEntryId,
 }
 
 impl Default for UpdateVisibleEntriesTask {
@@ -199,6 +217,7 @@ struct EditState {
     processing_filename: Option<Arc<RelPath>>,
     previously_focused: Option<SelectedEntry>,
     validation_state: ValidationState,
+    temporarily_unfolded: Option<ProjectEntryId>,
 }
 
 impl EditState {
@@ -401,6 +420,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
+                workspace.close_panel::<ProjectPanel>(window, cx);
+            }
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
@@ -756,7 +780,11 @@ impl ProjectPanel {
                         {
                             match project_panel.confirm_edit(false, window, cx) {
                                 Some(task) => {
-                                    task.detach_and_notify_err(window, cx);
+                                    task.detach_and_notify_err(
+                                        project_panel.workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                                 None => {
                                     project_panel.discard_edit_state(window, cx);
@@ -829,6 +857,7 @@ impl ProjectPanel {
                 state: State {
                     max_width_item_index: None,
                     edit_state: None,
+                    temporarily_unfolded_pending_state: None,
                     last_worktree_root_id: Default::default(),
                     visible_entries: Default::default(),
                     ancestors: Default::default(),
@@ -1191,10 +1220,10 @@ impl ProjectPanel {
                             .when(!is_collab && is_root, |menu| {
                                 menu.separator()
                                     .action(
-                                        "Add Folder to Project…",
+                                        "Add Project to Workspace…",
                                         Box::new(workspace::AddFolderToProject),
                                     )
-                                    .action("Remove from Project", Box::new(RemoveFromProject))
+                                    .action("Remove from Workspace", Box::new(RemoveFromProject))
                             })
                             .when(is_dir && !is_root, |menu| {
                                 menu.separator().action(
@@ -1631,7 +1660,7 @@ impl ProjectPanel {
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(task) = self.confirm_edit(true, window, cx) {
-            task.detach_and_notify_err(window, cx);
+            task.detach_and_notify_err(self.workspace.clone(), window, cx);
         }
     }
 
@@ -1930,22 +1959,31 @@ impl ProjectPanel {
     }
 
     fn discard_edit_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let previously_focused = self
-            .state
-            .edit_state
-            .take()
-            .and_then(|edit_state| edit_state.previously_focused)
-            .map(|entry| (entry.worktree_id, entry.entry_id));
-        self.marked_entries.clear();
-        cx.notify();
-        window.focus(&self.focus_handle, cx);
-        self.update_visible_entries(
-            previously_focused,
-            false,
-            previously_focused.is_some(),
-            window,
-            cx,
-        );
+        if let Some(edit_state) = self.state.edit_state.take() {
+            self.state.temporarily_unfolded_pending_state = edit_state
+                .temporarily_unfolded
+                .and_then(|temporarily_unfolded_entry_id| {
+                    let previously_focused_leaf_entry = edit_state.previously_focused?;
+                    let folded_ancestors =
+                        self.state.ancestors.get(&temporarily_unfolded_entry_id)?;
+                    Some(TemporaryUnfoldedPendingState {
+                        previously_focused_leaf_entry,
+                        temporarily_unfolded_active_entry_id: folded_ancestors
+                            .active_ancestor()
+                            .unwrap_or(temporarily_unfolded_entry_id),
+                    })
+                });
+            let previously_focused = edit_state
+                .previously_focused
+                .map(|entry| (entry.worktree_id, entry.entry_id));
+            self.update_visible_entries(
+                previously_focused,
+                false,
+                previously_focused.is_some(),
+                window,
+                cx,
+            );
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -1954,7 +1992,10 @@ impl ProjectPanel {
             self.hover_expand_task.take();
             return;
         }
+        self.marked_entries.clear();
+        cx.notify();
         self.discard_edit_state(window, cx);
+        window.focus(&self.focus_handle, cx);
     }
 
     fn open_entry(
@@ -2063,6 +2104,7 @@ impl ProjectPanel {
             previously_focused: self.selection,
             depth: 0,
             validation_state: ValidationState::None,
+            temporarily_unfolded: (new_entry_id != entry_id).then_some(new_entry_id),
         });
         self.filename_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
@@ -2120,6 +2162,7 @@ impl ProjectPanel {
                     previously_focused: None,
                     depth: 0,
                     validation_state: ValidationState::None,
+                    temporarily_unfolded: None,
                 });
                 let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
@@ -3002,20 +3045,25 @@ impl ProjectPanel {
             }
 
             let item_count = paste_tasks.len();
+            let workspace = self.workspace.clone();
 
-            cx.spawn_in(window, async move |project_panel, cx| {
+            cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
-                            if let Some(CreatedEntry::Included(entry)) =
-                                task.await.notify_async_err(cx)
+                            if let Some(CreatedEntry::Included(entry)) = task
+                                .await
+                                .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
-                            if let Some(Some(entry)) = task.await.notify_async_err(cx) {
+                            if let Some(Some(entry)) = task
+                                .await
+                                .notify_workspace_async_err(workspace.clone(), &mut cx)
+                            {
                                 last_succeed = Some(entry);
                             }
                         }
@@ -3357,7 +3405,7 @@ impl ProjectPanel {
         if let Some((file_path1, file_path2)) = selected_files {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    FileDiffView::open(file_path1, file_path2, workspace, window, cx)
+                    FileDiffView::open(file_path1, file_path2, workspace.weak_handle(), window, cx)
                         .detach_and_log_err(cx);
                 })
                 .ok();
@@ -3741,6 +3789,7 @@ impl ProjectPanel {
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
         let old_ancestors = self.state.ancestors.clone();
+        let temporary_unfolded_pending_state = self.state.temporarily_unfolded_pending_state.take();
         let mut new_state = State::derive(&self.state);
         new_state.last_worktree_root_id = project
             .visible_worktrees(cx)
@@ -3761,19 +3810,6 @@ impl ProjectPanel {
                 .background_spawn(async move {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
-
-                        let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
-                            hash_map::Entry::Occupied(e) => e.into_mut(),
-                            hash_map::Entry::Vacant(e) => {
-                                // The first time a worktree's root entry becomes available,
-                                // mark that root entry as expanded.
-                                if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
-                                } else {
-                                    &[]
-                                }
-                            }
-                        };
 
                         let mut new_entry_parent_id = None;
                         let mut new_entry_kind = EntryKind::Dir;
@@ -3809,7 +3845,7 @@ impl ProjectPanel {
                             }
                             if auto_collapse_dirs && entry.kind.is_dir() {
                                 auto_folded_ancestors.push(entry.id);
-                                if !new_state.unfolded_dir_ids.contains(&entry.id)
+                                if !new_state.is_unfolded(&entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
                                     let mut child_entries =
@@ -3824,10 +3860,27 @@ impl ProjectPanel {
                                         continue;
                                     }
                                 }
-                                let depth = old_ancestors
-                                    .get(&entry.id)
-                                    .map(|ancestor| ancestor.current_ancestor_depth)
-                                    .unwrap_or_default()
+                                let depth = temporary_unfolded_pending_state
+                                    .as_ref()
+                                    .and_then(|state| {
+                                        if state.previously_focused_leaf_entry.worktree_id
+                                            == worktree_id
+                                            && state.previously_focused_leaf_entry.entry_id
+                                                == entry.id
+                                        {
+                                            auto_folded_ancestors.iter().rev().position(|id| {
+                                                *id == state.temporarily_unfolded_active_entry_id
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or_else(|| {
+                                        old_ancestors
+                                            .get(&entry.id)
+                                            .map(|ancestor| ancestor.current_ancestor_depth)
+                                            .unwrap_or_default()
+                                    })
                                     .min(auto_folded_ancestors.len());
                                 if let Some(edit_state) = &mut new_state.edit_state
                                     && edit_state.entry_id == entry.id
@@ -3940,6 +3993,20 @@ impl ProjectPanel {
                                         Some((entry.id, worktree_snapshot.id(), width_estimate))
                                 }
                             }
+
+                            let expanded_dir_ids =
+                                match new_state.expanded_dir_ids.entry(worktree_id) {
+                                    hash_map::Entry::Occupied(e) => e.into_mut(),
+                                    hash_map::Entry::Vacant(e) => {
+                                        // The first time a worktree's root entry becomes available,
+                                        // mark that root entry as expanded.
+                                        if let Some(entry) = worktree_snapshot.root_entry() {
+                                            e.insert(vec![entry.id]).as_slice()
+                                        } else {
+                                            &[]
+                                        }
+                                    }
+                                };
 
                             if expanded_dir_ids.binary_search(&entry.id).is_err()
                                 && entry_iter.advance_to_sibling()
@@ -4412,7 +4479,7 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        mut callback: impl FnMut(
+        callback: &mut dyn FnMut(
             &Entry,
             usize,
             &HashSet<Arc<RelPath>>,
@@ -4450,7 +4517,12 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut Window, &mut Context<ProjectPanel>),
+        callback: &mut dyn FnMut(
+            ProjectEntryId,
+            EntryDetails,
+            &mut Window,
+            &mut Context<ProjectPanel>,
+        ),
     ) {
         let mut ix = 0;
         for visible in &self.state.visible_entries {
@@ -5326,7 +5398,7 @@ impl ProjectPanel {
                                 range_start..range_end,
                                 window,
                                 cx,
-                                |entry_id, details, _, _| {
+                                &mut |entry_id, details, _, _| {
                                     new_selections.push(SelectedEntry {
                                         entry_id,
                                         worktree_id: details.worktree_id,
@@ -6305,7 +6377,7 @@ impl Render for ProjectPanel {
                                         range,
                                         window,
                                         cx,
-                                        |id, details, window, cx| {
+                                        &mut |id, details, window, cx| {
                                             items.push(this.render_entry(id, details, window, cx));
                                         },
                                     );
@@ -6327,7 +6399,7 @@ impl Render for ProjectPanel {
                                                 range,
                                                 window,
                                                 cx,
-                                                |entry, _, entries, _, _| {
+                                                &mut |entry, _, entries, _, _| {
                                                     let (depth, _) =
                                                         Self::calculate_depth_and_difference(
                                                             entry, entries,
@@ -6440,7 +6512,7 @@ impl Render for ProjectPanel {
                                             range,
                                             window,
                                             cx,
-                                            |entry, index, entries, _, _| {
+                                            &mut |entry, index, entries, _, _| {
                                                 let (depth, _) =
                                                     Self::calculate_depth_and_difference(
                                                         entry, entries,

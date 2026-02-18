@@ -24,7 +24,7 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
@@ -124,6 +124,7 @@ impl ProjectDiff {
             return;
         }
         let workspace = cx.entity();
+        let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
                 let this = cx
@@ -138,7 +139,7 @@ impl ProjectDiff {
                     .ok();
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(workspace_weak, window, cx);
     }
 
     pub fn deploy_at(
@@ -450,7 +451,7 @@ impl ProjectDiff {
     }
 
     pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
-        let editor = self.editor.read(cx).last_selected_editor().read(cx);
+        let editor = self.editor.read(cx).focused_editor().read(cx);
         let position = editor.selections.newest_anchor().head();
         let multi_buffer = editor.buffer().read(cx);
         let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
@@ -608,7 +609,7 @@ impl ProjectDiff {
         diff: Entity<BufferDiff>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<BufferId> {
         let subscription = cx.subscribe_in(&diff, window, move |this, _, _, window, cx| {
             this._task = window.spawn(cx, {
                 let this = cx.weak_entity();
@@ -653,6 +654,8 @@ impl ProjectDiff {
             }
         };
 
+        let mut needs_fold = None;
+
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
             let (_, is_newly_added) = editor.set_excerpts_for_path(
@@ -685,7 +688,7 @@ impl ProjectDiff {
                         || (file_status.is_untracked()
                             && GitPanelSettings::get_global(cx).collapse_untracked_diff))
                 {
-                    editor.fold_buffer(snapshot.text.remote_id(), cx)
+                    needs_fold = Some(snapshot.text.remote_id());
                 }
             })
         });
@@ -706,6 +709,8 @@ impl ProjectDiff {
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.move_to_path(path_key, window, cx);
         }
+
+        needs_fold
     }
 
     #[instrument(skip_all)]
@@ -761,6 +766,8 @@ impl ProjectDiff {
             buffers_to_load
         })?;
 
+        let mut buffers_to_fold = Vec::new();
+
         for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
@@ -780,14 +787,16 @@ impl ProjectDiff {
                                 RefreshReason::StatusesChanged => false,
                             };
                         if !skip {
-                            this.register_buffer(
+                            if let Some(buffer_id) = this.register_buffer(
                                 path_key,
                                 entry.file_status,
                                 buffer,
                                 diff,
                                 window,
                                 cx,
-                            )
+                            ) {
+                                buffers_to_fold.push(buffer_id);
+                            }
                         }
                     })
                     .ok();
@@ -795,6 +804,13 @@ impl ProjectDiff {
             }
         }
         this.update(cx, |this, cx| {
+            if !buffers_to_fold.is_empty() {
+                this.editor.update(cx, |editor, cx| {
+                    editor
+                        .rhs_editor()
+                        .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
+                });
+            }
             this.pending_scroll.take();
             cx.notify();
         })?;
@@ -845,7 +861,7 @@ impl Item for ProjectDiff {
         Some(Icon::new(IconName::GitBranch).color(Color::Muted))
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -1670,9 +1686,12 @@ impl RenderOnce for ProjectDiffEmptyState {
             v_flex()
                 .gap_1()
                 .when(self.no_repo, |this| {
-                    // TODO: add git init
                     this.text_center()
                         .child(Label::new("No Repository").color(Color::Muted))
+                        .child(
+                            Button::new("initialize-repo", "Initialize Repository")
+                                .on_click(move |_, _, cx| cx.dispatch_action(&git::Init)),
+                        )
                 })
                 .map(|this| {
                     if not_ahead_or_behind && self.current_branch.is_some() {
@@ -1843,13 +1862,15 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
     use unindent::Unindent as _;
     use util::{
         path,
         rel_path::{RelPath, rel_path},
     };
+
+    use workspace::MultiWorkspace;
 
     use super::*;
 
@@ -1862,6 +1883,11 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
@@ -1893,8 +1919,9 @@ mod tests {
             &[("foo.txt", "foo\n".into())],
         );
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -1941,8 +1968,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2011,8 +2039,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("foo", "original\n".into())],
@@ -2141,8 +2170,9 @@ mod tests {
         );
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
 
@@ -2255,8 +2285,9 @@ mod tests {
         );
 
         let project = Project::test(fs, [Path::new(path!("/a"))], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.run_until_parked();
 
@@ -2310,8 +2341,9 @@ mod tests {
             )],
         );
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2390,8 +2422,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
             ProjectDiff::new(project.clone(), workspace, window, cx)
         });
@@ -2506,8 +2539,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx
             .update(|window, cx| {
                 ProjectDiff::new_with_default_branch(project.clone(), workspace, window, cx)
@@ -2603,8 +2637,9 @@ mod tests {
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
         let _editor = workspace
@@ -2688,8 +2723,9 @@ mod tests {
             (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
         });
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
         // Select project A via the dropdown override and open the diff.

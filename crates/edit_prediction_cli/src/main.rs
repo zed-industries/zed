@@ -22,6 +22,7 @@ mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
+mod sync_deployments;
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
@@ -209,6 +210,8 @@ enum Command {
     Repair(repair::RepairArgs),
     /// Print all valid zeta formats (lowercase, one per line)
     PrintZetaFormats,
+    /// Sync baseten deployment metadata to Snowflake for linking predictions to experiments
+    SyncDeployments(SyncDeploymentsArgs),
 }
 
 impl Display for Command {
@@ -254,8 +257,18 @@ impl Display for Command {
             Command::PrintZetaFormats => {
                 write!(f, "print-zeta-formats")
             }
+            Command::SyncDeployments(_) => {
+                write!(f, "sync-deployments")
+            }
         }
     }
+}
+
+#[derive(Debug, Args, Clone)]
+struct SyncDeploymentsArgs {
+    /// BaseTen model name (default: "zeta-2")
+    #[arg(long)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -465,6 +478,14 @@ impl EpArgs {
     }
 }
 
+/// Minimum Zed version required for Snowflake queries.
+/// This version introduced the current request schema with predicted edits in the edit
+/// history, and open source repos distinguished.
+const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    minor: 224,
+    patch: 1,
+};
+
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
@@ -501,6 +522,20 @@ async fn load_examples(
 
     let mut examples = read_example_files(&file_inputs);
 
+    // Apply offset to file examples first, then pass remaining offset to Snowflake.
+    let file_example_count = examples.len();
+    let remaining_offset = if let Some(offset) = args.offset {
+        if offset >= file_example_count {
+            examples.clear();
+            offset - file_example_count
+        } else {
+            examples.splice(0..offset, []);
+            0
+        }
+    } else {
+        0
+    };
+
     Progress::global().set_total_examples(examples.len());
 
     let remaining_limit_for_snowflake =
@@ -520,7 +555,9 @@ async fn load_examples(
                 http_client.clone(),
                 &captured_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut captured_examples);
@@ -533,7 +570,9 @@ async fn load_examples(
                 http_client.clone(),
                 &rejected_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rejected_examples);
@@ -546,7 +585,9 @@ async fn load_examples(
                 http_client.clone(),
                 &requested_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut requested_examples);
@@ -559,7 +600,9 @@ async fn load_examples(
                 http_client,
                 &rated_after_inputs,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor,
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rated_examples);
@@ -583,10 +626,6 @@ async fn load_examples(
         {
             resume_from_output(path, &mut examples, command);
         }
-    }
-
-    if let Some(offset) = args.offset {
-        examples.splice(0..offset, []);
     }
 
     if let Some(limit) = args.limit {
@@ -729,6 +768,19 @@ fn main() {
             for format in ZetaFormat::iter() {
                 println!("{}", format.to_string().to_lowercase());
             }
+            return;
+        }
+        Command::SyncDeployments(sync_args) => {
+            let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
+            smol::block_on(async {
+                if let Err(e) =
+                    sync_deployments::run_sync_deployments(http_client, sync_args.model.clone())
+                        .await
+                {
+                    eprintln!("Error: {:?}", e);
+                    std::process::exit(1);
+                }
+            });
             return;
         }
         Command::Synthesize(synth_args) => {
@@ -966,7 +1018,8 @@ fn main() {
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::PrintZetaFormats => {
+                                        | Command::PrintZetaFormats
+                                        | Command::SyncDeployments(_) => {
                                             unreachable!()
                                         }
                                     }
@@ -1014,11 +1067,9 @@ fn main() {
                                 }
                             }
 
-                            let repo_url = &repo_examples.first().unwrap().spec.repository_url;
                             let project = repo_examples
                                 .iter()
-                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()))
-                                .or_else(|| app_state.project_cache.get(repo_url));
+                                .find_map(|e| e.state.as_ref().map(|s| s.project.clone()));
 
                             if let Some(project) = project {
                                 let mut cx = cx.clone();
@@ -1042,7 +1093,6 @@ fn main() {
                                 }
                             }
 
-                            app_state.project_cache.remove(repo_url);
                             for example in &mut repo_examples {
                                 example.state.take();
                             }

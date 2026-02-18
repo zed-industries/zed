@@ -78,9 +78,8 @@ pub fn init(cx: &mut App) {
                 return;
             }
 
-            cx.defer_in(window, |editor, window, cx| {
-                let workspace = Workspace::for_window(window, cx);
-                let project = workspace.map(|workspace| workspace.read(cx).project().clone());
+            cx.defer_in(window, |editor, _window, cx| {
+                let project = editor.project().cloned();
 
                 let is_local_project = project
                     .as_ref()
@@ -191,7 +190,7 @@ impl Item for ReplSessionsPage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }

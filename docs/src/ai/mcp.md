@@ -1,8 +1,13 @@
+---
+title: Model Context Protocol (MCP) in Zed
+description: Install and configure MCP servers in Zed to extend your AI agent with external tools, data sources, and integrations.
+---
+
 # Model Context Protocol
 
 Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to interact with context servers.
 
-> The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
+> The Model Context Protocol (MCP) is an open protocol for connecting LLM applications to external tools and data sources through a standard interface.
 
 ## Supported Features
 
@@ -24,7 +29,7 @@ Many MCP servers are available as extensions. Find them via:
 2. in the app, open the Command Palette and run the `zed: extensions` action
 3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
-Popular servers:
+Popular servers available as an extension include:
 
 - [Context7](https://zed.dev/extensions/context7-mcp-server)
 - [GitHub](https://zed.dev/extensions/github-mcp-server)
@@ -39,7 +44,7 @@ Popular servers:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
 
 ```json [settings]
 {
@@ -79,9 +84,10 @@ If not, other colors and tooltip messages will indicate what is happening.
 
 Once installation is complete, you can return to the Agent Panel and start prompting.
 
-Model support for MCP tools varies. Mentioning your server by name in prompts helps the model select the right tools.
+How reliably MCP tools get called can vary from model to model.
+Mentioning the MCP server by name can help the model pick tools from that server.
 
-However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+If you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
@@ -128,15 +134,26 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
 }
 ```
 
-### Tool Approval
+### Tool Permissions
 
-Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
+> **Note:** In Zed v0.224.0 and above, tool approval is controlled by `agent.tool_permissions.default`.
+> In earlier versions, it was controlled by the `agent.always_allow_tool_actions` boolean (default `false`).
 
-You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
+Zed's Agent Panel provides the `agent.tool_permissions.default` setting to control tool approval behavior for the native Zed agent:
+
+- `"confirm"` (default) — Prompts for approval before running any tool action, including MCP tool calls
+- `"allow"` — Auto-approves tool actions without prompting
+- `"deny"` — Blocks all tool actions
+
+For granular control over specific MCP tools, you can configure per-tool permission rules.
+MCP tools use the key format `mcp:<server>:<tool_name>` — for example, `mcp:github:create_issue`.
+The `default` key on a per-tool entry is the primary mechanism for MCP tools, since pattern-based rules match against an empty string for MCP tools and most patterns won't match.
+
+Learn more about [how tool permissions work](./tool-permissions.md), how to further customize them, and other details.
 
 ### External Agents
 
 Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
 
-Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
+Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
 In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).

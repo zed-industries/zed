@@ -1,11 +1,7 @@
 mod native_kernel;
 use std::{fmt::Debug, future::Future, path::PathBuf};
 
-use futures::{
-    channel::mpsc::{self, Receiver},
-    future::Shared,
-    stream,
-};
+use futures::{channel::mpsc, future::Shared};
 use gpui::{App, Entity, Task, Window};
 use language::LanguageName;
 pub use native_kernel::*;
@@ -26,13 +22,39 @@ pub trait KernelSession: Sized {
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
 }
 
-pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
+#[derive(Debug, Clone)]
+pub struct PythonEnvKernelSpecification {
+    pub name: String,
+    pub path: PathBuf,
+    pub kernelspec: JupyterKernelspec,
+    pub has_ipykernel: bool,
+    /// Display label for the environment type: "venv", "Conda", "Pyenv", etc.
+    pub environment_kind: Option<String>,
+}
+
+impl PartialEq for PythonEnvKernelSpecification {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.path == other.path
+    }
+}
+
+impl Eq for PythonEnvKernelSpecification {}
+
+impl PythonEnvKernelSpecification {
+    pub fn as_local_spec(&self) -> LocalKernelSpecification {
+        LocalKernelSpecification {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            kernelspec: self.kernelspec.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelSpecification {
     Remote(RemoteKernelSpecification),
     Jupyter(LocalKernelSpecification),
-    PythonEnv(LocalKernelSpecification),
+    PythonEnv(PythonEnvKernelSpecification),
 }
 
 impl KernelSpecification {
@@ -47,7 +69,11 @@ impl KernelSpecification {
     pub fn type_name(&self) -> SharedString {
         match self {
             Self::Jupyter(_) => "Jupyter".into(),
-            Self::PythonEnv(_) => "Python Environment".into(),
+            Self::PythonEnv(spec) => SharedString::from(
+                spec.environment_kind
+                    .clone()
+                    .unwrap_or_else(|| "Python Environment".to_string()),
+            ),
             Self::Remote(_) => "Remote".into(),
         }
     }
@@ -68,6 +94,24 @@ impl KernelSpecification {
         })
     }
 
+    pub fn has_ipykernel(&self) -> bool {
+        match self {
+            Self::Jupyter(_) | Self::Remote(_) => true,
+            Self::PythonEnv(spec) => spec.has_ipykernel,
+        }
+    }
+
+    pub fn environment_kind_label(&self) -> Option<SharedString> {
+        match self {
+            Self::PythonEnv(spec) => spec
+                .environment_kind
+                .as_ref()
+                .map(|kind| SharedString::from(kind.clone())),
+            Self::Jupyter(_) => Some("Jupyter".into()),
+            Self::Remote(_) => Some("Remote".into()),
+        }
+    }
+
     pub fn icon(&self, cx: &App) -> Icon {
         let lang_name = match self {
             Self::Jupyter(spec) => spec.kernelspec.language.clone(),
@@ -80,6 +124,33 @@ impl KernelSpecification {
             .map(Icon::from_path)
             .unwrap_or(Icon::new(IconName::ReplNeutral))
     }
+}
+
+fn extract_environment_kind(toolchain_json: &serde_json::Value) -> Option<String> {
+    let kind_str = toolchain_json.get("kind")?.as_str()?;
+    let label = match kind_str {
+        "Conda" => "Conda",
+        "Pixi" => "pixi",
+        "Homebrew" => "Homebrew",
+        "Pyenv" => "global (Pyenv)",
+        "GlobalPaths" => "global",
+        "PyenvVirtualEnv" => "Pyenv",
+        "Pipenv" => "Pipenv",
+        "Poetry" => "Poetry",
+        "MacPythonOrg" => "global (Python.org)",
+        "MacCommandLineTools" => "global (Command Line Tools for Xcode)",
+        "LinuxGlobal" => "global",
+        "MacXCode" => "global (Xcode)",
+        "Venv" => "venv",
+        "VirtualEnv" => "virtualenv",
+        "VirtualEnvWrapper" => "virtualenvwrapper",
+        "WindowsStore" => "global (Windows Store)",
+        "WindowsRegistry" => "global (Windows Registry)",
+        "Uv" => "uv",
+        "UvWorkspace" => "uv (Workspace)",
+        _ => kind_str,
+    };
+    Some(label.to_string())
 }
 
 pub fn python_env_kernel_specifications(
@@ -117,46 +188,41 @@ pub fn python_env_kernel_specifications(
             .map(|toolchain| {
                 background_executor.spawn(async move {
                     let python_path = toolchain.path.to_string();
+                    let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    // Check if ipykernel is installed
-                    let ipykernel_check = util::command::new_smol_command(&python_path)
+                    let has_ipykernel = util::command::new_command(&python_path)
                         .args(&["-c", "import ipykernel"])
                         .output()
-                        .await;
+                        .await
+                        .map(|output| output.status.success())
+                        .unwrap_or(false);
 
-                    if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
-                        // Create a default kernelspec for this environment
-                        let default_kernelspec = JupyterKernelspec {
-                            argv: vec![
-                                python_path.clone(),
-                                "-m".to_string(),
-                                "ipykernel_launcher".to_string(),
-                                "-f".to_string(),
-                                "{connection_file}".to_string(),
-                            ],
-                            display_name: toolchain.name.to_string(),
-                            language: "python".to_string(),
-                            interrupt_mode: None,
-                            metadata: None,
-                            env: None,
-                        };
+                    let kernelspec = JupyterKernelspec {
+                        argv: vec![
+                            python_path.clone(),
+                            "-m".to_string(),
+                            "ipykernel_launcher".to_string(),
+                            "-f".to_string(),
+                            "{connection_file}".to_string(),
+                        ],
+                        display_name: toolchain.name.to_string(),
+                        language: "python".to_string(),
+                        interrupt_mode: None,
+                        metadata: None,
+                        env: None,
+                    };
 
-                        Some(KernelSpecification::PythonEnv(LocalKernelSpecification {
-                            name: toolchain.name.to_string(),
-                            path: PathBuf::from(&python_path),
-                            kernelspec: default_kernelspec,
-                        }))
-                    } else {
-                        None
-                    }
+                    KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
+                        name: toolchain.name.to_string(),
+                        path: PathBuf::from(&python_path),
+                        kernelspec,
+                        has_ipykernel,
+                        environment_kind,
+                    })
                 })
             });
 
-        let kernel_specs = futures::future::join_all(kernelspecs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let kernel_specs = futures::future::join_all(kernelspecs).await;
 
         anyhow::Ok(kernel_specs)
     }
@@ -164,12 +230,14 @@ pub fn python_env_kernel_specifications(
 
 pub trait RunningKernel: Send + Debug {
     fn request_tx(&self) -> mpsc::Sender<JupyterMessage>;
+    fn stdin_tx(&self) -> mpsc::Sender<JupyterMessage>;
     fn working_directory(&self) -> &PathBuf;
     fn execution_state(&self) -> &ExecutionState;
     fn set_execution_state(&mut self, state: ExecutionState);
     fn kernel_info(&self) -> Option<&KernelInfoReply>;
     fn set_kernel_info(&mut self, info: KernelInfoReply);
     fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>>;
+    fn kill(&mut self);
 }
 
 #[derive(Debug, Clone)]
