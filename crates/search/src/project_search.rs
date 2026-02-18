@@ -5149,6 +5149,15 @@ pub mod tests {
     async fn test_incremental_search_narrows_and_widens(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Two matches 5 lines apart: with context_line_count=2, contexts
+        // [3..7] and [8..12] are adjacent and merge into a single excerpt
+        // [3..12]. Narrowing to "targeted" produces context [3..7] ⊂ [3..12]
+        // — the expand_new_ranges_to_existing fix ensures zero excerpt events.
+        let mut lines: Vec<String> = (0..20).map(|i| format!("line {i}: filler")).collect();
+        lines[5] = "line 5: targeted item".into();
+        lines[10] = "line 10: target item".into();
+        let big_file = lines.join("\n");
+
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/dir"),
@@ -5158,6 +5167,7 @@ pub mod tests {
                 "three.rs": "const THREE: usize = one::ONE + two::TWO;",
                 "four.rs": "const FOUR: usize = one::ONE + three::THREE;",
                 "only_one.rs": "const ONLY_ONE: usize = 1;",
+                "big.txt": big_file,
             }),
         )
         .await;
@@ -5183,7 +5193,7 @@ pub mod tests {
             "one", "ONE", "ONE", "ONE", "ONE", "one", "ONE", "one", "ONE", "one", "ONE",
         ];
 
-        // Initial non-incremental search for "ONE" — clears then inserts one excerpt per file
+        // Initial non-incremental search for "ONE" — clears then inserts one excerpt per file.
         perform_search(search_view, "ONE", cx);
         assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
         assert_all_highlights_match_query(search_view, "ONE", cx);
@@ -5199,10 +5209,11 @@ pub mod tests {
             ]
         );
 
-        // Narrow to "ONEROUS" — one.rs excerpt kept (same range), 4 other files removed
-        perform_incremental_search(search_view, "ONEROUS", cx);
-        assert_eq!(read_match_texts(search_view, cx), vec!["ONEROUS"]);
-        assert_all_highlights_match_query(search_view, "ONEROUS", cx);
+        // Natural narrowing: typing "R" after "ONE" -> "ONER".
+        // Only one.rs has ONEROUS, 4 other files removed.
+        perform_incremental_search(search_view, "ONER", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["ONER"]);
+        assert_all_highlights_match_query(search_view, "ONER", cx);
         assert_eq!(
             take_excerpt_changes(),
             vec![
@@ -5213,7 +5224,19 @@ pub mod tests {
             ]
         );
 
-        // Widen back to "ONE" — re-adds the 4 removed files
+        // Continue typing "OUS" -> "ONEROUS". Still one.rs only, zero excerpt churn.
+        perform_incremental_search(search_view, "ONEROUS", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["ONEROUS"]);
+        assert_all_highlights_match_query(search_view, "ONEROUS", cx);
+        assert_eq!(take_excerpt_changes(), Vec::new());
+
+        // Backspace to "ONER" — still one.rs only, zero events.
+        perform_incremental_search(search_view, "ONER", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["ONER"]);
+        assert_all_highlights_match_query(search_view, "ONER", cx);
+        assert_eq!(take_excerpt_changes(), Vec::new());
+
+        // Backspace to "ONE" — 4 files re-added.
         perform_incremental_search(search_view, "ONE", cx);
         assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
         assert_all_highlights_match_query(search_view, "ONE", cx);
@@ -5227,13 +5250,13 @@ pub mod tests {
             ]
         );
 
-        // Repeat the same "ONE" query — excerpts already match, zero events emitted
+        // Repeat the same "ONE" query — excerpts already match, zero events emitted.
         perform_incremental_search(search_view, "ONE", cx);
         assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
         assert_all_highlights_match_query(search_view, "ONE", cx);
         assert_eq!(events.borrow().len(), 0);
 
-        // Narrow to "ONLY_ONE" — single match in only_one.rs, 4 files removed
+        // Narrow to "ONLY_ONE" — single match in only_one.rs, 4 files removed.
         perform_incremental_search(search_view, "ONLY_ONE", cx);
         assert_eq!(read_match_texts(search_view, cx), vec!["ONLY_ONE"]);
         assert_all_highlights_match_query(search_view, "ONLY_ONE", cx);
@@ -5247,7 +5270,7 @@ pub mod tests {
             ]
         );
 
-        // Widen back to "ONE" one more time — full cycle, re-adds 4 files
+        // Widen back to "ONE" — 4 files re-added.
         perform_incremental_search(search_view, "ONE", cx);
         assert_eq!(read_match_texts(search_view, cx), expected_one_matches);
         assert_all_highlights_match_query(search_view, "ONE", cx);
@@ -5261,66 +5284,24 @@ pub mod tests {
             ]
         );
 
-        // Narrowing a query while all files still match must not emit any excerpt events.
-        // "usize" matches all 5 files; "usize =" is strictly narrower but still in every file.
+        // Narrowing when all files still match — zero excerpt events.
+        // "usize" matches all 5 .rs files; "usize =" is narrower but still in every file.
         perform_search(search_view, "usize", cx);
         assert_eq!(read_match_count(search_view, cx), 6);
         events.borrow_mut().clear();
         perform_incremental_search(search_view, "usize =", cx);
         assert_eq!(read_match_count(search_view, cx), 6);
         assert_eq!(events.borrow().len(), 0);
-    }
 
-    #[gpui::test]
-    async fn test_incremental_search_produces_no_edits_on_narrowing(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Two matches 5 lines apart: with context_line_count=2, contexts
-        // [3..7] and [8..12] are adjacent and merge into a single excerpt
-        // [3..12]. When narrowing to "targeted", only line 5 matches,
-        // producing context [3..7] — a strict subset of [3..12].
-        let mut lines: Vec<String> = (0..20).map(|i| format!("line {i}: filler")).collect();
-        lines[5] = "line 5: targeted item".into();
-        lines[10] = "line 10: target item".into();
-        let big_file = lines.join("\n");
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "big.txt": big_file,
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
-        let search_view = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
-        });
-        let (events, _subscription) = subscribe_to_excerpt_events(&search, cx);
-        let take_excerpt_changes = || -> Vec<ExcerptEvent> {
-            events
-                .borrow_mut()
-                .drain(..)
-                .filter(|e| !matches!(e, ExcerptEvent::Edited))
-                .collect()
-        };
-
-        // Broad query "target" — matches lines 5 and 10 in big.txt,
-        // merged into a single excerpt.
+        // Merged-excerpt narrowing: "target" matches lines 5 and 10 in big.txt,
+        // whose context lines merge into one excerpt [3..12]. Narrowing to
+        // "targeted" shrinks context to [3..7] ⊂ [3..12] — the existing excerpt
+        // must be kept with zero events.
         perform_search(search_view, "target", cx);
         assert_all_highlights_match_query(search_view, "target", cx);
         assert_eq!(read_match_count(search_view, cx), 2);
-        take_excerpt_changes(); // consume initial events
+        take_excerpt_changes();
 
-        // Narrow to "targeted" — only line 5 matches. The excerpt context
-        // shrinks from [3..12] to [3..7], but [3..7] ⊂ [3..12] so the
-        // existing excerpt must be kept in place with zero events.
         perform_incremental_search(search_view, "targeted", cx);
         assert_all_highlights_match_query(search_view, "targeted", cx);
         assert_eq!(read_match_count(search_view, cx), 1);
