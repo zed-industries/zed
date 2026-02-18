@@ -1,6 +1,7 @@
 use super::*;
 use acp_thread::{
-    AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, UserMessageId,
+    AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, ThreadStatus,
+    UserMessageId,
 };
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -160,15 +161,6 @@ struct FakeSubagentHandle {
     wait_for_summary_task: Shared<Task<String>>,
 }
 
-impl FakeSubagentHandle {
-    fn new_never_completes(cx: &App) -> Self {
-        Self {
-            session_id: acp::SessionId::new("subagent-id"),
-            wait_for_summary_task: cx.background_spawn(std::future::pending()).shared(),
-        }
-    }
-}
-
 impl SubagentHandle for FakeSubagentHandle {
     fn id(&self) -> acp::SessionId {
         self.session_id.clone()
@@ -190,13 +182,6 @@ impl FakeThreadEnvironment {
     pub fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
         Self {
             terminal_handle: Some(terminal_handle.into()),
-            ..self
-        }
-    }
-
-    pub fn with_subagent(self, subagent_handle: FakeSubagentHandle) -> Self {
-        Self {
-            subagent_handle: Some(subagent_handle.into()),
             ..self
         }
     }
@@ -4191,6 +4176,457 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    // Ensure empty threads are not saved, even if they get mutated.
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SubagentToolInput {
+        label: "label".to_string(),
+        task_prompt: "subagent task prompt".to_string(),
+        summary_prompt: "subagent summary prompt".to_string(),
+        timeout_ms: None,
+        allowed_tools: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SubagentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    let subagent_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .clone()
+    });
+
+    model.send_last_completion_stream_text_chunk("subagent task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    model.send_last_completion_stream_text_chunk("subagent summary response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    assert_eq!(
+        subagent_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        indoc! {"
+            ## User
+
+            subagent task prompt
+
+            ## Assistant
+
+            subagent task response
+
+            ## User
+
+            subagent summary prompt
+
+            ## Assistant
+
+            subagent summary response
+
+        "}
+    );
+
+    model.send_last_completion_stream_text_chunk("Response");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    assert_eq!(
+        acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        format!(
+            indoc! {r#"
+                ## User
+
+                Prompt
+
+                ## Assistant
+
+                spawning subagent
+
+                **Tool Call: label**
+                Status: Completed
+
+                ```json
+                {{
+                  "subagent_session_id": "{}",
+                  "summary": "subagent summary response\n"
+                }}
+                ```
+
+                ## Assistant
+
+                Response
+
+            "#},
+            subagent_session_id
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    // Ensure empty threads are not saved, even if they get mutated.
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SubagentToolInput {
+        label: "label".to_string(),
+        task_prompt: "subagent task prompt".to_string(),
+        summary_prompt: "subagent summary prompt".to_string(),
+        timeout_ms: None,
+        allowed_tools: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SubagentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+    let subagent_acp_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .clone()
+    });
+
+    // model.send_last_completion_stream_text_chunk("subagent task response");
+    // model.end_last_completion_stream();
+
+    // cx.run_until_parked();
+
+    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+
+    cx.run_until_parked();
+
+    send.await.unwrap();
+
+    acp_thread.read_with(cx, |thread, cx| {
+        assert_eq!(thread.status(), ThreadStatus::Idle);
+        assert_eq!(
+            thread.to_markdown(cx),
+            indoc! {"
+                ## User
+
+                Prompt
+
+                ## Assistant
+
+                spawning subagent
+
+                **Tool Call: label**
+                Status: Canceled
+
+            "}
+        );
+    });
+    subagent_acp_thread.read_with(cx, |thread, cx| {
+        assert_eq!(thread.status(), ThreadStatus::Idle);
+        assert_eq!(
+            thread.to_markdown(cx),
+            indoc! {"
+                ## User
+
+                subagent task prompt
+
+            "}
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subagent_tool_call_cancellation_during_summary_prompt(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    // Ensure empty threads are not saved, even if they get mutated.
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SubagentToolInput {
+        label: "label".to_string(),
+        task_prompt: "subagent task prompt".to_string(),
+        summary_prompt: "subagent summary prompt".to_string(),
+        timeout_ms: None,
+        allowed_tools: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SubagentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+    let subagent_acp_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .clone()
+    });
+
+    model.send_last_completion_stream_text_chunk("subagent task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+
+    cx.run_until_parked();
+
+    send.await.unwrap();
+
+    acp_thread.read_with(cx, |thread, cx| {
+        assert_eq!(thread.status(), ThreadStatus::Idle);
+        assert_eq!(
+            thread.to_markdown(cx),
+            indoc! {"
+                ## User
+
+                Prompt
+
+                ## Assistant
+
+                spawning subagent
+
+                **Tool Call: label**
+                Status: Canceled
+
+            "}
+        );
+    });
+    subagent_acp_thread.read_with(cx, |thread, cx| {
+        assert_eq!(thread.status(), ThreadStatus::Idle);
+        assert_eq!(
+            thread.to_markdown(cx),
+            indoc! {"
+                ## User
+
+                subagent task prompt
+
+                ## Assistant
+
+                subagent task response
+
+                ## User
+
+                subagent summary prompt
+
+            "}
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -4380,84 +4816,6 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
             "subagent should be cancelled when parent cancels"
         );
     });
-}
-
-#[gpui::test]
-async fn test_subagent_tool_cancellation(cx: &mut TestAppContext) {
-    // This test verifies that the subagent tool properly handles user cancellation
-    // via `event_stream.cancelled_by_user()` and stops all running subagents.
-    init_test(cx);
-    always_allow_tools(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-    let environment = Rc::new(cx.update(|cx| {
-        FakeThreadEnvironment::default().with_subagent(FakeSubagentHandle::new_never_completes(cx))
-    }));
-
-    let parent = cx.new(|cx| {
-        Thread::new(
-            project.clone(),
-            project_context.clone(),
-            context_server_registry.clone(),
-            Templates::new(),
-            Some(model.clone()),
-            cx,
-        )
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(SubagentTool::new(parent.downgrade(), environment));
-
-    let (event_stream, _rx, mut cancellation_tx) =
-        crate::ToolCallEventStream::test_with_cancellation();
-
-    // Start the subagent tool
-    let task = cx.update(|cx| {
-        tool.run(
-            SubagentToolInput {
-                label: "Long running task".to_string(),
-                task_prompt: "Do a very long task that takes forever".to_string(),
-                summary_prompt: "Summarize".to_string(),
-                timeout_ms: None,
-                allowed_tools: None,
-            },
-            event_stream.clone(),
-            cx,
-        )
-    });
-
-    cx.run_until_parked();
-
-    // Signal cancellation via the event stream
-    crate::ToolCallEventStream::signal_cancellation_with_sender(&mut cancellation_tx);
-
-    // The task should complete promptly with a cancellation error
-    let timeout = cx.background_executor.timer(Duration::from_secs(5));
-    let result = futures::select! {
-        result = task.fuse() => result,
-        _ = timeout.fuse() => {
-            panic!("subagent tool did not respond to cancellation within timeout");
-        }
-    };
-
-    // Verify we got a cancellation error
-    let err = result.unwrap_err();
-    assert!(
-        err.to_string().contains("cancelled by user"),
-        "expected cancellation error, got: {}",
-        err
-    );
 }
 
 #[gpui::test]

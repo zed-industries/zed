@@ -2031,7 +2031,7 @@ impl AcpThread {
         self.mark_pending_tools_as_canceled();
 
         // Wait for the send task to complete
-        cx.foreground_executor().spawn(turn.send_task)
+        cx.background_spawn(turn.send_task)
     }
 
     fn mark_pending_tools_as_canceled(&mut self) {

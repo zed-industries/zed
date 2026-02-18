@@ -2582,6 +2582,7 @@ impl Thread {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn running_subagent_ids(&self, cx: &App) -> Vec<acp::SessionId> {
         self.running_subagents
             .iter()
