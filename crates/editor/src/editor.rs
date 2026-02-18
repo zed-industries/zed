@@ -2000,7 +2000,6 @@ impl Editor {
             return;
         };
         let buffer = buffer.clone();
-        let &excerpt_id = excerpt_id;
 
         let buffer_visible_start = scroll_anchor.text_anchor.to_point(&buffer);
         let max_row = buffer.max_point().row;
@@ -24624,7 +24623,7 @@ impl Editor {
                             };
                             let nav_history = editor.nav_history.take();
                             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                            let Some((&excerpt_id, _, buffer_snapshot)) =
+                            let Some((excerpt_id, _, buffer_snapshot)) =
                                 multibuffer_snapshot.as_singleton()
                             else {
                                 return;

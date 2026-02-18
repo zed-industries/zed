@@ -5634,12 +5634,17 @@ impl AcpThreadView {
                 };
 
                 active_editor.update_in(cx, |editor, window, cx| {
-                    let multibuffer = editor.buffer().read(cx);
-                    let buffer = multibuffer.as_singleton();
-                    if agent_location.buffer.upgrade() == buffer {
-                        let excerpt_id = multibuffer.excerpt_ids().first().cloned();
-                        let anchor =
-                            editor::Anchor::in_buffer(excerpt_id.unwrap(), agent_location.position);
+                    let singleton = editor
+                        .buffer()
+                        .read(cx)
+                        .read(cx)
+                        .as_singleton()
+                        .map(|(a, b, _)| (a, b));
+                    if let Some((excerpt_id, buffer_id)) = singleton
+                        && let Some(agent_buffer) = agent_location.buffer.upgrade()
+                        && agent_buffer.read(cx).remote_id() == buffer_id
+                    {
+                        let anchor = editor::Anchor::in_buffer(excerpt_id, agent_location.position);
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })

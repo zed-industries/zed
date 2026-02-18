@@ -1421,7 +1421,7 @@ impl ProjectItem for Editor {
             }
             let (top_row, offset) = restoration_data.scroll_position;
             let anchor =
-                Anchor::in_buffer(*excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
+                Anchor::in_buffer(excerpt_id, snapshot.anchor_before(Point::new(top_row, 0)));
             editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
         }
 

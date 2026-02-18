@@ -4688,12 +4688,12 @@ impl MultiBufferSnapshot {
         self.singleton
     }
 
-    pub fn as_singleton(&self) -> Option<(&ExcerptId, BufferId, &BufferSnapshot)> {
+    pub fn as_singleton(&self) -> Option<(ExcerptId, BufferId, &BufferSnapshot)> {
         if self.singleton {
             self.excerpts
                 .iter()
                 .next()
-                .map(|e| (&e.id, e.buffer_id, &*e.buffer))
+                .map(|e| (e.id, e.buffer_id, &*e.buffer))
         } else {
             None
         }
@@ -5822,7 +5822,7 @@ impl MultiBufferSnapshot {
     pub fn as_singleton_anchor(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         let (excerpt, buffer, _) = self.as_singleton()?;
         if text_anchor.buffer_id.is_none_or(|id| id == buffer) {
-            Some(Anchor::in_buffer(*excerpt, text_anchor))
+            Some(Anchor::in_buffer(excerpt, text_anchor))
         } else {
             None
         }
@@ -6750,17 +6750,17 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_range_in_excerpt(*excerpt_id, item.range)?,
+                        range: self.anchor_range_in_excerpt(excerpt_id, item.range)?,
                         source_range_for_text: self
-                            .anchor_range_in_excerpt(*excerpt_id, item.source_range_for_text)?,
+                            .anchor_range_in_excerpt(excerpt_id, item.source_range_for_text)?,
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
                         body_range: item.body_range.and_then(|body_range| {
-                            self.anchor_range_in_excerpt(*excerpt_id, body_range)
+                            self.anchor_range_in_excerpt(excerpt_id, body_range)
                         }),
                         annotation_range: item.annotation_range.and_then(|annotation_range| {
-                            self.anchor_range_in_excerpt(*excerpt_id, annotation_range)
+                            self.anchor_range_in_excerpt(excerpt_id, annotation_range)
                         }),
                     })
                 })
