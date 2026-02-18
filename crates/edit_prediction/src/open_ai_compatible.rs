@@ -4,7 +4,6 @@ use crate::{
         clean_fim_completion, clean_zeta_completion, format_fim_prompt, get_fim_stop_tokens,
         get_zeta_stop_tokens, is_zeta_model,
     },
-    open_ai_response::text_from_response,
     prediction::EditPredictionResult,
     zeta1::{
         self, MAX_CONTEXT_TOKENS as ZETA_MAX_CONTEXT_TOKENS,
@@ -18,8 +17,33 @@ use language::{
     Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
 };
+use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{ZetaPromptInput, zeta1::format_zeta1_prompt};
+
+#[derive(Serialize)]
+struct CompletionRequest {
+    model: String,
+    prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    stop: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    stream: bool,
+}
+
+#[derive(Deserialize)]
+struct CompletionResponse {
+    id: String,
+    choices: Vec<CompletionChoice>,
+}
+
+#[derive(Deserialize)]
+struct CompletionChoice {
+    text: String,
+}
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
@@ -35,12 +59,12 @@ struct RequestOutput {
     buffer_snapshotted_at: Instant,
 }
 
-fn chat_completions_url(api_url: &str) -> String {
+fn completions_url(api_url: &str) -> String {
     let trimmed = api_url.trim_end_matches('/');
     if trimmed.ends_with("/v1") {
-        format!("{}/chat/completions", trimmed)
+        format!("{}/completions", trimmed)
     } else {
-        format!("{}/v1/chat/completions", trimmed)
+        format!("{}/v1/completions", trimmed)
     }
 }
 
@@ -179,26 +203,19 @@ impl OpenAiCompatibleEditPrediction {
                 (prompt, stop_tokens, None, inputs)
             };
 
-            let request_body = open_ai::Request {
+            let request_body = CompletionRequest {
                 model: model.clone(),
-                messages: vec![open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::Plain(prompt),
-                }],
-                stream: false,
-                max_completion_tokens: Some(max_output_tokens as u64),
+                prompt,
+                max_tokens: Some(max_output_tokens as u64),
                 stop: stop_tokens,
                 temperature: Some(0.2),
-                tool_choice: None,
-                parallel_tool_calls: None,
-                tools: vec![],
-                prompt_cache_key: None,
-                reasoning_effort: None,
+                stream: false,
             };
 
             let buf = serde_json::to_vec(&request_body)?;
             let body: http_client::AsyncBody = buf.into();
 
-            let url = chat_completions_url(&api_url);
+            let url = completions_url(&api_url);
 
             let mut request_builder = http_client::Request::builder()
                 .method(http_client::Method::POST)
@@ -241,11 +258,16 @@ impl OpenAiCompatibleEditPrediction {
                 (response_received_at - buffer_snapshotted_at).as_secs_f64()
             );
 
-            let mut open_ai_response: open_ai::Response =
-                serde_json::from_slice(&body_bytes).context("Failed to parse OpenAI response")?;
+            let completion_response: CompletionResponse = serde_json::from_slice(&body_bytes)
+                .context("Failed to parse completions response")?;
 
-            let id = std::mem::take(&mut open_ai_response.id);
-            let response_str = text_from_response(open_ai_response).unwrap_or_default();
+            let id = completion_response.id;
+            let response_str = completion_response
+                .choices
+                .into_iter()
+                .next()
+                .map(|c| c.text)
+                .unwrap_or_default();
 
             log::trace!("open_ai_compatible response: {}", response_str);
 
@@ -307,44 +329,44 @@ impl OpenAiCompatibleEditPrediction {
 
 #[cfg(test)]
 mod tests {
-    use super::chat_completions_url;
+    use super::{CompletionRequest, completions_url};
     use crate::ollama::{
         format_fim_prompt, get_fim_stop_tokens, get_zeta_stop_tokens, is_zeta_model,
     };
 
     #[test]
-    fn chat_completions_url_appends_v1_when_missing() {
+    fn completions_url_appends_v1_when_missing() {
         assert_eq!(
-            chat_completions_url("http://localhost:8000"),
-            "http://localhost:8000/v1/chat/completions"
+            completions_url("http://localhost:8000"),
+            "http://localhost:8000/v1/completions"
         );
         assert_eq!(
-            chat_completions_url("http://localhost:8000/"),
-            "http://localhost:8000/v1/chat/completions"
-        );
-    }
-
-    #[test]
-    fn chat_completions_url_does_not_duplicate_v1() {
-        assert_eq!(
-            chat_completions_url("http://localhost:8000/v1"),
-            "http://localhost:8000/v1/chat/completions"
-        );
-        assert_eq!(
-            chat_completions_url("http://localhost:8000/v1/"),
-            "http://localhost:8000/v1/chat/completions"
+            completions_url("http://localhost:8000/"),
+            "http://localhost:8000/v1/completions"
         );
     }
 
     #[test]
-    fn chat_completions_url_with_custom_path_prefix() {
+    fn completions_url_does_not_duplicate_v1() {
         assert_eq!(
-            chat_completions_url("http://localhost:8000/api/v1"),
-            "http://localhost:8000/api/v1/chat/completions"
+            completions_url("http://localhost:8000/v1"),
+            "http://localhost:8000/v1/completions"
         );
         assert_eq!(
-            chat_completions_url("http://my-server.example.com/v1"),
-            "http://my-server.example.com/v1/chat/completions"
+            completions_url("http://localhost:8000/v1/"),
+            "http://localhost:8000/v1/completions"
+        );
+    }
+
+    #[test]
+    fn completions_url_with_custom_path_prefix() {
+        assert_eq!(
+            completions_url("http://localhost:8000/api/v1"),
+            "http://localhost:8000/api/v1/completions"
+        );
+        assert_eq!(
+            completions_url("http://my-server.example.com/v1"),
+            "http://my-server.example.com/v1/completions"
         );
     }
 
@@ -362,34 +384,25 @@ mod tests {
     #[test]
     fn zeta_request_body_structure() {
         let stop_tokens = get_zeta_stop_tokens();
-        let request = open_ai::Request {
+        let request = CompletionRequest {
             model: "zeta".into(),
-            messages: vec![open_ai::RequestMessage::User {
-                content: open_ai::MessageContent::Plain("test prompt".into()),
-            }],
+            prompt: "test prompt".into(),
             stream: false,
-            max_completion_tokens: Some(1024),
+            max_tokens: Some(1024),
             stop: stop_tokens.clone(),
             temperature: Some(0.2),
-            tool_choice: None,
-            parallel_tool_calls: None,
-            tools: vec![],
-            prompt_cache_key: None,
-            reasoning_effort: None,
         };
 
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["model"], "zeta");
         assert_eq!(json["stream"], false);
-        assert_eq!(json["max_completion_tokens"], 1024);
+        assert_eq!(json["max_tokens"], 1024);
         let temperature = json["temperature"].as_f64().unwrap();
         assert!(
             (temperature - 0.2).abs() < 0.001,
             "temperature should be ~0.2, got {temperature}"
         );
-        assert_eq!(json["messages"].as_array().unwrap().len(), 1);
-        assert_eq!(json["messages"][0]["role"], "user");
-        assert_eq!(json["messages"][0]["content"], "test prompt");
+        assert_eq!(json["prompt"], "test prompt");
 
         let stop_arr = json["stop"].as_array().unwrap();
         assert!(stop_arr.len() >= 2);
@@ -408,27 +421,20 @@ mod tests {
         let prompt = format_fim_prompt("qwen2.5-coder", prefix, suffix);
         let stop_tokens = get_fim_stop_tokens();
 
-        let request = open_ai::Request {
+        let request = CompletionRequest {
             model: "qwen2.5-coder".into(),
-            messages: vec![open_ai::RequestMessage::User {
-                content: open_ai::MessageContent::Plain(prompt.clone()),
-            }],
+            prompt: prompt.clone(),
             stream: false,
-            max_completion_tokens: Some(256),
+            max_tokens: Some(256),
             stop: stop_tokens,
             temperature: Some(0.2),
-            tool_choice: None,
-            parallel_tool_calls: None,
-            tools: vec![],
-            prompt_cache_key: None,
-            reasoning_effort: None,
         };
 
         let json = serde_json::to_value(&request).unwrap();
         assert_eq!(json["model"], "qwen2.5-coder");
-        assert_eq!(json["max_completion_tokens"], 256);
+        assert_eq!(json["max_tokens"], 256);
 
-        let content = json["messages"][0]["content"].as_str().unwrap();
+        let content = json["prompt"].as_str().unwrap();
         assert!(
             content.contains(prefix),
             "FIM prompt should contain the prefix"
@@ -443,7 +449,7 @@ mod tests {
     fn authorization_header_only_when_key_present() {
         let mut builder = gpui::http_client::Request::builder()
             .method(gpui::http_client::Method::POST)
-            .uri("http://localhost:8000/v1/chat/completions")
+            .uri("http://localhost:8000/v1/completions")
             .header("Content-Type", "application/json");
 
         let api_key: Option<String> = None;
@@ -455,7 +461,7 @@ mod tests {
 
         let mut builder = gpui::http_client::Request::builder()
             .method(gpui::http_client::Method::POST)
-            .uri("http://localhost:8000/v1/chat/completions")
+            .uri("http://localhost:8000/v1/completions")
             .header("Content-Type", "application/json");
 
         let api_key = Some("sk-test-key".to_string());
