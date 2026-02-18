@@ -188,7 +188,7 @@ jobs:
              - Validation
              - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
              - Reviewer Checklist
-             - Release Notes
+             - Release Notes (final section; format exactly as "Release Notes:", then a blank line, then one bullet like "- N/A")
 
           Constraints:
           - Do not merge or auto-approve.
@@ -257,11 +257,17 @@ jobs:
 
             path = sys.argv[1]
             body = open(path, encoding="utf-8").read()
-            pattern = re.compile(r"(^|\n)Release Notes:\r?\n(?:\s*-\s+.*(?:\r?\n|$))+", re.MULTILINE)
+            pattern = re.compile(r"(^|\n)Release Notes:\r?\n(?:\r?\n)*(?P<bullets>(?:\s*-\s+.*(?:\r?\n|$))+)", re.MULTILINE)
             match = pattern.search(body)
 
             if match:
-                section = match.group(0).lstrip("\n").rstrip()
+                bullets = [
+                    re.sub(r"^\s*", "", bullet)
+                    for bullet in re.findall(r"^\s*-\s+.*$", match.group("bullets"), re.MULTILINE)
+                ]
+                if not bullets:
+                    bullets = ["- N/A"]
+                section = "Release Notes:\n\n" + "\n".join(bullets)
                 body_without_release_notes = (body[: match.start()] + body[match.end() :]).rstrip()
                 if body_without_release_notes:
                     normalized_body = f"{body_without_release_notes}\n\n{section}\n"
