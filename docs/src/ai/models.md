@@ -60,7 +60,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 
 ## Recent Model Retirements
 
-Zed Pro now serves newer model versions in place of the retired models below:
+As of February 19, 2026, Zed Pro serves newer model versions in place of the retired models below:
 
 - Claude Opus 4.1 → Claude Opus 4.5 or Claude Opus 4.6
 - Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6

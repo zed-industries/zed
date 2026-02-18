@@ -508,7 +508,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-5.2, GPT-5 mini, o4-mini, GPT-4.1, and others).
+The Zed agent comes pre-configured to use the latest version for common OpenAI models (GPT-5.2, GPT-5 mini, GPT-5.2 Codex, and others).
 To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -524,9 +524,9 @@ To use alternate models, perhaps a preview release, or if you wish to control th
           "max_completion_tokens": 20000
         },
         {
-          "name": "gpt-4o-2024-08-06",
-          "display_name": "GPT 4o Summer 2024",
-          "max_tokens": 128000
+          "name": "gpt-5-nano",
+          "display_name": "GPT-5 Nano",
+          "max_tokens": 400000
         },
         {
           "name": "gpt-5.2-codex",
@@ -544,7 +544,7 @@ To use alternate models, perhaps a preview release, or if you wish to control th
 
 You must provide the model's context window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
 
-OpenAI `o1` and `o`-class models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+For reasoning-focused models, set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 
 If a model does not support the `/chat/completions` endpoint (for example `gpt-5.2-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
 
