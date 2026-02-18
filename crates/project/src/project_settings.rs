@@ -456,7 +456,9 @@ pub struct GitSettings {
     /// Default: file_name_first
     pub path_style: GitPathStyle,
     /// Directory where git worktrees are created, relative to the repository
-    /// working directory.
+    /// working directory. When the resolved directory is outside the project
+    /// root, the project's directory name is automatically appended so that
+    /// sibling repos don't collide.
     ///
     /// Default: ../worktrees
     pub worktree_directory: String,

@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
-use git::repository::{Worktree as GitWorktree, worktree_path_for_branch};
+use git::repository::{Worktree as GitWorktree, validate_worktree_directory};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
@@ -271,15 +271,16 @@ impl WorktreeListDelegate {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
             let (receiver, new_worktree_path) = repo.update(cx, |repo, cx| {
-                let worktree_directory = ProjectSettings::get_global(cx)
+                let worktree_directory_setting = ProjectSettings::get_global(cx)
                     .git
                     .worktree_directory
                     .clone();
                 let work_dir = repo.work_directory_abs_path.clone();
-                let receiver =
-                    repo.create_worktree(branch.clone(), worktree_directory.clone(), commit);
-                let path = worktree_path_for_branch(&work_dir, &worktree_directory, &branch);
-                anyhow::Ok((receiver, path))
+                let directory =
+                    validate_worktree_directory(&work_dir, &worktree_directory_setting)?;
+                let new_worktree_path = directory.join(&branch);
+                let receiver = repo.create_worktree(branch.clone(), directory, commit);
+                anyhow::Ok((receiver, new_worktree_path))
             })?;
             receiver.await??;
 

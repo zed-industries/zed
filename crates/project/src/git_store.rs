@@ -2285,13 +2285,13 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let directory = PathBuf::from(envelope.payload.directory);
         let name = envelope.payload.name;
-        let worktree_directory = envelope.payload.directory;
         let commit = envelope.payload.commit;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_worktree(name, worktree_directory, commit)
+                repository_handle.create_worktree(name, directory, commit)
             })
             .await??;
 
@@ -5532,7 +5532,7 @@ impl Repository {
     pub fn create_worktree(
         &mut self,
         name: String,
-        worktree_directory: String,
+        directory: PathBuf,
         commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -5541,9 +5541,7 @@ impl Repository {
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend
-                            .create_worktree(name, worktree_directory.clone(), commit)
-                            .await
+                        backend.create_worktree(name, directory, commit).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -5551,7 +5549,7 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 name,
-                                directory: worktree_directory,
+                                directory: directory.to_string_lossy().to_string(),
                                 commit,
                             })
                             .await?;

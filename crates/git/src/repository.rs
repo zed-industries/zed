@@ -61,13 +61,31 @@ pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
 /// (e.g. `"../worktrees"`, `".git/zed-worktrees"`, `"my-worktrees/"`).
 /// Trailing slashes are stripped. The path is resolved relative to
 /// `working_directory` (the repository's working directory root).
+///
+/// When the resolved directory falls outside the working directory
+/// (e.g. `"../worktrees"`), the repository's directory name is
+/// automatically appended so that sibling repos don't collide.
+/// For example, with working directory `~/src/zed` and setting
+/// `"../worktrees"`, this returns `~/src/worktrees/zed`.
+///
+/// When the resolved directory is inside the working directory
+/// (e.g. `".git/zed-worktrees"`), no extra component is added
+/// because the path is already project-scoped.
 pub fn resolve_worktree_directory(
     working_directory: &Path,
     worktree_directory_setting: &str,
 ) -> PathBuf {
     let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
     let joined = working_directory.join(trimmed);
-    normalize_path(&joined)
+    let resolved = normalize_path(&joined);
+
+    if resolved.starts_with(working_directory) {
+        resolved
+    } else if let Some(repo_dir_name) = working_directory.file_name() {
+        resolved.join(repo_dir_name)
+    } else {
+        resolved
+    }
 }
 
 /// Validates that the resolved worktree directory is acceptable:
@@ -731,7 +749,7 @@ pub trait GitRepository: Send + Sync {
     fn create_worktree(
         &self,
         name: String,
-        worktree_directory: String,
+        directory: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1673,35 +1691,32 @@ impl GitRepository for RealGitRepository {
     fn create_worktree(
         &self,
         name: String,
-        worktree_directory: String,
+        directory: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
+        let final_path = directory.join(&name);
+        let mut args = vec![
+            OsString::from("--no-optional-locks"),
+            OsString::from("worktree"),
+            OsString::from("add"),
+            OsString::from("-b"),
+            OsString::from(name.as_str()),
+            OsString::from("--"),
+            OsString::from(final_path.as_os_str()),
+        ];
+        if let Some(from_commit) = from_commit {
+            args.push(OsString::from(from_commit));
+        } else {
+            args.push(OsString::from("HEAD"));
+        }
 
         self.executor
             .spawn(async move {
-                let working_directory = working_directory?;
-                let directory =
-                    validate_worktree_directory(&working_directory, &worktree_directory)?;
-                let final_path = directory.join(&name);
-                let mut args = vec![
-                    OsString::from("--no-optional-locks"),
-                    OsString::from("worktree"),
-                    OsString::from("add"),
-                    OsString::from("-b"),
-                    OsString::from(name.as_str()),
-                    OsString::from("--"),
-                    OsString::from(final_path.as_os_str()),
-                ];
-                if let Some(from_commit) = from_commit {
-                    args.push(OsString::from(from_commit));
-                } else {
-                    args.push(OsString::from("HEAD"));
-                }
                 std::fs::create_dir_all(&directory)?;
                 let output = new_command(&git_binary_path)
-                    .current_dir(&working_directory)
+                    .current_dir(working_directory?)
                     .args(args)
                     .output()
                     .await?;
@@ -3857,7 +3872,7 @@ mod tests {
             // Create a new worktree
             repo.create_worktree(
                 "test-branch".to_string(),
-                worktree_dir_setting.to_string(),
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
                 Some("HEAD".to_string()),
             )
             .await
@@ -3921,7 +3936,7 @@ mod tests {
             // Create a worktree
             repo.create_worktree(
                 "to-remove".to_string(),
-                worktree_dir_setting.to_string(),
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
                 Some("HEAD".to_string()),
             )
             .await
@@ -3986,7 +4001,7 @@ mod tests {
             // Create a worktree
             repo.create_worktree(
                 "dirty-wt".to_string(),
-                worktree_dir_setting.to_string(),
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
                 Some("HEAD".to_string()),
             )
             .await
@@ -4055,7 +4070,7 @@ mod tests {
             // Create a worktree
             repo.create_worktree(
                 "old-name".to_string(),
-                worktree_dir_setting.to_string(),
+                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
                 Some("HEAD".to_string()),
             )
             .await
@@ -4097,19 +4112,19 @@ mod tests {
     fn test_resolve_worktree_directory() {
         let work_dir = Path::new("/code/my-project");
 
-        // Sibling directory
+        // Sibling directory — outside project, so repo dir name is appended
         assert_eq!(
             resolve_worktree_directory(work_dir, "../worktrees"),
-            PathBuf::from("/code/worktrees")
+            PathBuf::from("/code/worktrees/my-project")
         );
 
-        // Git subdir
+        // Git subdir — inside project, no repo name appended
         assert_eq!(
             resolve_worktree_directory(work_dir, ".git/zed-worktrees"),
             PathBuf::from("/code/my-project/.git/zed-worktrees")
         );
 
-        // Simple subdir
+        // Simple subdir — inside project, no repo name appended
         assert_eq!(
             resolve_worktree_directory(work_dir, "my-worktrees"),
             PathBuf::from("/code/my-project/my-worktrees")
@@ -4118,7 +4133,7 @@ mod tests {
         // Trailing slash is stripped
         assert_eq!(
             resolve_worktree_directory(work_dir, "../worktrees/"),
-            PathBuf::from("/code/worktrees")
+            PathBuf::from("/code/worktrees/my-project")
         );
         assert_eq!(
             resolve_worktree_directory(work_dir, "my-worktrees/"),
@@ -4141,16 +4156,16 @@ mod tests {
             PathBuf::from("/code/my-project/foo")
         );
 
-        // Empty string resolves to the working directory itself
+        // Empty string resolves to the working directory itself (inside)
         assert_eq!(
             resolve_worktree_directory(work_dir, ""),
             PathBuf::from("/code/my-project")
         );
 
-        // Just ".." resolves to the parent directory
+        // Just ".." — outside project, repo dir name appended
         assert_eq!(
             resolve_worktree_directory(work_dir, ".."),
-            PathBuf::from("/code")
+            PathBuf::from("/code/my-project")
         );
     }
 
@@ -4192,17 +4207,19 @@ mod tests {
     fn test_worktree_path_for_branch() {
         let work_dir = Path::new("/code/my-project");
 
+        // Outside project — repo dir name is part of the resolved directory
         assert_eq!(
             worktree_path_for_branch(work_dir, "../worktrees", "feature/foo"),
-            PathBuf::from("/code/worktrees/feature/foo")
+            PathBuf::from("/code/worktrees/my-project/feature/foo")
         );
 
+        // Inside project — no repo dir name inserted
         assert_eq!(
             worktree_path_for_branch(work_dir, ".git/zed-worktrees", "my-branch"),
             PathBuf::from("/code/my-project/.git/zed-worktrees/my-branch")
         );
 
-        // Trailing slash on setting
+        // Trailing slash on setting (inside project)
         assert_eq!(
             worktree_path_for_branch(work_dir, "my-worktrees/", "branch"),
             PathBuf::from("/code/my-project/my-worktrees/branch")

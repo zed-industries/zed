@@ -8,7 +8,7 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
         GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree, validate_worktree_directory,
+        LogSource, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -412,20 +412,13 @@ impl GitRepository for FakeGitRepository {
     fn create_worktree(
         &self,
         name: String,
-        worktree_directory: String,
+        directory: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
         let dot_git_path = self.dot_git_path.clone();
-        let working_directory = self
-            .dot_git_path
-            .parent()
-            .unwrap_or(&self.dot_git_path)
-            .to_path_buf();
-        let directory = validate_worktree_directory(&working_directory, &worktree_directory);
         async move {
-            let directory = directory?;
             let path = directory.join(&name);
             executor.simulate_random_delay().await;
             // Check for simulated error before any side effects
@@ -914,19 +907,19 @@ mod tests {
             let worktrees = repo.worktrees().await.unwrap();
             assert!(worktrees.is_empty());
 
-            // Create a worktree
-            repo.create_worktree(
-                "feature-branch".to_string(),
-                worktree_dir_setting.to_string(),
-                Some("abc123".to_string()),
-            )
-            .await
-            .unwrap();
-
             let expected_dir = git::repository::resolve_worktree_directory(
                 Path::new("/project"),
                 worktree_dir_setting,
             );
+
+            // Create a worktree
+            repo.create_worktree(
+                "feature-branch".to_string(),
+                expected_dir.clone(),
+                Some("abc123".to_string()),
+            )
+            .await
+            .unwrap();
 
             // List worktrees — should have one
             let worktrees = repo.worktrees().await.unwrap();
@@ -946,13 +939,9 @@ mod tests {
             );
 
             // Create a second worktree (without explicit commit)
-            repo.create_worktree(
-                "bugfix-branch".to_string(),
-                worktree_dir_setting.to_string(),
-                None,
-            )
-            .await
-            .unwrap();
+            repo.create_worktree("bugfix-branch".to_string(), expected_dir.clone(), None)
+                .await
+                .unwrap();
 
             let worktrees = repo.worktrees().await.unwrap();
             assert_eq!(worktrees.len(), 2);

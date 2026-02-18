@@ -476,10 +476,19 @@ pub struct GitSettings {
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
+    /// When the resolved directory is outside the project root, the
+    /// project's directory name is automatically appended so that
+    /// sibling repos don't collide. For example, with the default
+    /// `"../worktrees"` and a project at `~/src/zed`, worktrees are
+    /// created under `~/src/worktrees/zed/`.
+    ///
+    /// When the resolved directory is inside the project root, no
+    /// extra component is added (it's already project-scoped).
+    ///
     /// Examples:
-    /// - `"../worktrees"` — sibling of the project root (default)
-    /// - `".git/zed-worktrees"` — inside the git directory
-    /// - `"my-worktrees"` — subdirectory of the project root
+    /// - `"../worktrees"` — `~/src/worktrees/<project>/` (default)
+    /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+    /// - `"my-worktrees"` — `<project>/my-worktrees/`
     ///
     /// Trailing slashes are ignored.
     ///
