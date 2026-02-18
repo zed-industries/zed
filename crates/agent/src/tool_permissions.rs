@@ -1151,13 +1151,19 @@ mod tests {
     }
 
     #[test]
-    fn redirect_does_not_cause_false_negative() {
-        // Redirects like `2>/dev/null` get extracted as separate "commands" (e.g. "2> /dev/null")
-        // by the shell parser. These should not prevent an otherwise-matching command from being
-        // auto-allowed, because redirects are not executable commands.
+    fn dev_null_redirect_does_not_cause_false_negative() {
+        // Redirects to /dev/null are known-safe and should be skipped during
+        // command extraction, so they don't prevent auto-allow from matching.
         t(r#"git log --oneline -20 2>/dev/null || echo "not a git repo or no commits""#)
             .allow(&[r"^git\s+(status|diff|log|show)\b", "^echo"])
             .is_allow();
+    }
+
+    #[test]
+    fn redirect_to_real_file_still_causes_confirm() {
+        // Redirects to real files (not /dev/null) should still be included in
+        // the extracted commands, so they prevent auto-allow when unmatched.
+        t("echo hello > /etc/passwd").allow(&["^echo"]).is_confirm();
     }
 
     #[test]

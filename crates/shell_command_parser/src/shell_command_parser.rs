@@ -66,8 +66,21 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
             extract_commands_from_simple_command(simple_command, commands)?;
         }
         ast::Command::Compound(compound_command, redirect_list) => {
-            extract_commands_from_compound_command(compound_command, commands)?;
+            let body_start = extract_commands_from_compound_command(compound_command, commands)?;
             if let Some(redirect_list) = redirect_list {
+                let mut normalized_redirects = Vec::new();
+                for redirect in &redirect_list.0 {
+                    match normalize_io_redirect(redirect)? {
+                        RedirectNormalization::Normalized(s) => normalized_redirects.push(s),
+                        RedirectNormalization::Skip => {}
+                    }
+                }
+                if !normalized_redirects.is_empty() {
+                    if body_start >= commands.len() {
+                        return None;
+                    }
+                    commands.extend(normalized_redirects);
+                }
                 for redirect in &redirect_list.0 {
                     extract_commands_from_io_redirect(redirect, commands)?;
                 }
@@ -83,6 +96,11 @@ fn extract_commands_from_command(command: &ast::Command, commands: &mut Vec<Stri
     Some(())
 }
 
+enum RedirectNormalization {
+    Normalized(String),
+    Skip,
+}
+
 fn extract_commands_from_simple_command(
     simple_command: &ast::SimpleCommand,
     commands: &mut Vec<String>,
@@ -94,28 +112,50 @@ fn extract_commands_from_simple_command(
     // If any word fails to normalize, we return None so that `extract_commands`
     // returns None — the same as a shell parse failure. The caller then falls
     // back to raw-input matching with always_allow disabled.
-    //
-    // File redirects (e.g. `2>/dev/null`, `> output.txt`) are I/O routing, not
-    // commands, so they are excluded from the normalized output. Nested commands
-    // within redirect targets (e.g. process substitutions) are still extracted
-    // in the second pass below via `extract_commands_from_io_redirect`.
     let mut words = Vec::new();
+    let mut redirects = Vec::new();
 
+    if let Some(prefix) = &simple_command.prefix {
+        for item in &prefix.0 {
+            if let ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
+                match normalize_io_redirect(redirect) {
+                    Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
+                    Some(RedirectNormalization::Skip) => {}
+                    None => return None,
+                }
+            }
+        }
+    }
     if let Some(word) = &simple_command.word_or_name {
         words.push(normalize_word(word)?);
     }
     if let Some(suffix) = &simple_command.suffix {
         for item in &suffix.0 {
-            if let ast::CommandPrefixOrSuffixItem::Word(word) = item {
-                words.push(normalize_word(word)?);
+            match item {
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    words.push(normalize_word(word)?);
+                }
+                ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
+                    match normalize_io_redirect(redirect) {
+                        Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
+                        Some(RedirectNormalization::Skip) => {}
+                        None => return None,
+                    }
+                }
+                _ => {}
             }
         }
+    }
+
+    if words.is_empty() && !redirects.is_empty() {
+        return None;
     }
 
     let command_str = words.join(" ");
     if !command_str.is_empty() {
         commands.push(command_str);
     }
+    commands.extend(redirects);
 
     // Extract nested commands from command substitutions, process substitutions, etc.
     if let Some(prefix) = &simple_command.prefix {
@@ -190,6 +230,60 @@ fn normalize_word_piece_into(
         }
     }
     Some(())
+}
+
+fn is_known_safe_redirect_target(normalized_target: &str) -> bool {
+    normalized_target == "/dev/null"
+}
+
+fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormalization> {
+    match redirect {
+        ast::IoRedirect::File(fd, kind, target) => {
+            let target_word = match target {
+                ast::IoFileRedirectTarget::Filename(word) => word,
+                _ => return Some(RedirectNormalization::Skip),
+            };
+            let operator = match kind {
+                ast::IoFileRedirectKind::Read => "<",
+                ast::IoFileRedirectKind::Write => ">",
+                ast::IoFileRedirectKind::Append => ">>",
+                ast::IoFileRedirectKind::ReadAndWrite => "<>",
+                ast::IoFileRedirectKind::Clobber => ">|",
+                // The parser pairs DuplicateInput/DuplicateOutput with
+                // IoFileRedirectTarget::Duplicate (not Filename), so the
+                // target match above will return Skip before we reach here.
+                // These arms are kept for defensiveness.
+                ast::IoFileRedirectKind::DuplicateInput => "<&",
+                ast::IoFileRedirectKind::DuplicateOutput => ">&",
+            };
+            let fd_prefix = match fd {
+                Some(fd) => fd.to_string(),
+                None => String::new(),
+            };
+            let normalized = normalize_word(target_word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
+            Some(RedirectNormalization::Normalized(format!(
+                "{}{} {}",
+                fd_prefix, operator, normalized
+            )))
+        }
+        ast::IoRedirect::OutputAndError(word, append) => {
+            let operator = if *append { "&>>" } else { "&>" };
+            let normalized = normalize_word(word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
+            Some(RedirectNormalization::Normalized(format!(
+                "{} {}",
+                operator, normalized
+            )))
+        }
+        ast::IoRedirect::HereDocument(_, _) | ast::IoRedirect::HereString(_, _) => {
+            Some(RedirectNormalization::Skip)
+        }
+    }
 }
 
 fn extract_commands_from_command_prefix(
@@ -318,15 +412,17 @@ fn extract_commands_from_word_piece(piece: &WordPiece, commands: &mut Vec<String
 fn extract_commands_from_compound_command(
     compound_command: &ast::CompoundCommand,
     commands: &mut Vec<String>,
-) -> Option<()> {
+) -> Option<usize> {
     match compound_command {
         ast::CompoundCommand::BraceGroup(brace_group) => {
+            let body_start = commands.len();
             extract_commands_from_compound_list(&brace_group.list, commands)?;
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::Subshell(subshell) => {
+            let body_start = commands.len();
             extract_commands_from_compound_list(&subshell.list, commands)?;
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::ForClause(for_clause) => {
             if let Some(words) = &for_clause.values {
@@ -334,20 +430,23 @@ fn extract_commands_from_compound_command(
                     extract_commands_from_word(word, commands)?;
                 }
             }
+            let body_start = commands.len();
             extract_commands_from_do_group(&for_clause.body, commands)?;
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::CaseClause(case_clause) => {
             extract_commands_from_word(&case_clause.value, commands)?;
+            let body_start = commands.len();
             for item in &case_clause.cases {
                 if let Some(body) = &item.cmd {
                     extract_commands_from_compound_list(body, commands)?;
                 }
             }
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::IfClause(if_clause) => {
             extract_commands_from_compound_list(&if_clause.condition, commands)?;
+            let body_start = commands.len();
             extract_commands_from_compound_list(&if_clause.then, commands)?;
             if let Some(elses) = &if_clause.elses {
                 for else_item in elses {
@@ -357,19 +456,21 @@ fn extract_commands_from_compound_command(
                     extract_commands_from_compound_list(&else_item.body, commands)?;
                 }
             }
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::WhileClause(while_clause)
         | ast::CompoundCommand::UntilClause(while_clause) => {
             extract_commands_from_compound_list(&while_clause.0, commands)?;
+            let body_start = commands.len();
             extract_commands_from_do_group(&while_clause.1, commands)?;
-            Some(())
+            Some(body_start)
         }
         ast::CompoundCommand::ArithmeticForClause(arith_for) => {
+            let body_start = commands.len();
             extract_commands_from_do_group(&arith_for.body, commands)?;
-            Some(())
+            Some(body_start)
         }
-        ast::CompoundCommand::Arithmetic(_arith_cmd) => Some(()),
+        ast::CompoundCommand::Arithmetic(_arith_cmd) => Some(commands.len()),
     }
 }
 
@@ -384,8 +485,21 @@ fn extract_commands_from_function_body(
     func_body: &ast::FunctionBody,
     commands: &mut Vec<String>,
 ) -> Option<()> {
-    extract_commands_from_compound_command(&func_body.0, commands)?;
+    let body_start = extract_commands_from_compound_command(&func_body.0, commands)?;
     if let Some(redirect_list) = &func_body.1 {
+        let mut normalized_redirects = Vec::new();
+        for redirect in &redirect_list.0 {
+            match normalize_io_redirect(redirect)? {
+                RedirectNormalization::Normalized(s) => normalized_redirects.push(s),
+                RedirectNormalization::Skip => {}
+            }
+        }
+        if !normalized_redirects.is_empty() {
+            if body_start >= commands.len() {
+                return None;
+            }
+            commands.extend(normalized_redirects);
+        }
         for redirect in &redirect_list.0 {
             extract_commands_from_io_redirect(redirect, commands)?;
         }
@@ -629,15 +743,15 @@ mod tests {
     }
 
     #[test]
-    fn test_redirect_write_excluded_from_commands() {
+    fn test_redirect_write_includes_target_path() {
         let commands = extract_commands("echo hello > /etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello"]);
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_redirect_append_excluded_from_commands() {
+    fn test_redirect_append_includes_target_path() {
         let commands = extract_commands("cat file >> /tmp/log").expect("parse failed");
-        assert_eq!(commands, vec!["cat file"]);
+        assert_eq!(commands, vec!["cat file", ">> /tmp/log"]);
     }
 
     #[test]
@@ -647,46 +761,46 @@ mod tests {
     }
 
     #[test]
-    fn test_input_redirect_excluded_from_commands() {
+    fn test_input_redirect() {
         let commands = extract_commands("sort < /tmp/input").expect("parse failed");
-        assert_eq!(commands, vec!["sort"]);
+        assert_eq!(commands, vec!["sort", "< /tmp/input"]);
     }
 
     #[test]
-    fn test_multiple_redirects_excluded_from_commands() {
+    fn test_multiple_redirects() {
         let commands = extract_commands("cmd > /tmp/out 2> /tmp/err").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "> /tmp/out", "2> /tmp/err"]);
     }
 
     #[test]
-    fn test_prefix_position_redirect_excluded_from_commands() {
+    fn test_prefix_position_redirect() {
         let commands = extract_commands("> /tmp/out echo hello").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello"]);
+        assert_eq!(commands, vec!["echo hello", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_redirect_with_variable_expansion_excluded_from_commands() {
+    fn test_redirect_with_variable_expansion() {
         let commands = extract_commands("echo > $HOME/file").expect("parse failed");
-        assert_eq!(commands, vec!["echo"]);
+        assert_eq!(commands, vec!["echo", "> $HOME/file"]);
     }
 
     #[test]
-    fn test_output_and_error_redirect_excluded_from_commands() {
+    fn test_output_and_error_redirect() {
         let commands = extract_commands("cmd &> /tmp/all").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "&> /tmp/all"]);
     }
 
     #[test]
-    fn test_append_output_and_error_redirect_excluded_from_commands() {
+    fn test_append_output_and_error_redirect() {
         let commands = extract_commands("cmd &>> /tmp/all").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "&>> /tmp/all"]);
     }
 
     #[test]
-    fn test_redirect_in_chained_command_excluded_from_commands() {
+    fn test_redirect_in_chained_command() {
         let commands =
             extract_commands("echo hello > /tmp/out && cat /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello", "cat /tmp/out"]);
+        assert_eq!(commands, vec!["echo hello", "> /tmp/out", "cat /tmp/out"]);
     }
 
     #[test]
@@ -696,47 +810,47 @@ mod tests {
     }
 
     #[test]
-    fn test_brace_group_redirect_excluded_from_commands() {
+    fn test_brace_group_redirect() {
         let commands = extract_commands("{ echo hello; } > /etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello"]);
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_subshell_redirect_excluded_from_commands() {
+    fn test_subshell_redirect() {
         let commands = extract_commands("(cmd) > /etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_for_loop_redirect_excluded_from_commands() {
+    fn test_for_loop_redirect() {
         let commands =
             extract_commands("for f in *; do cat \"$f\"; done > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["cat $f"]);
+        assert_eq!(commands, vec!["cat $f", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_brace_group_multi_command_redirect_excluded_from_commands() {
+    fn test_brace_group_multi_command_redirect() {
         let commands =
             extract_commands("{ echo hello; cat; } > /etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello", "cat"]);
+        assert_eq!(commands, vec!["echo hello", "cat", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_quoted_redirect_target_excluded_from_commands() {
+    fn test_quoted_redirect_target_is_normalized() {
         let commands = extract_commands("echo hello > '/etc/passwd'").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello"]);
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_redirect_without_space_excluded_from_commands() {
+    fn test_redirect_without_space() {
         let commands = extract_commands("echo hello >/etc/passwd").expect("parse failed");
-        assert_eq!(commands, vec!["echo hello"]);
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
     }
 
     #[test]
-    fn test_clobber_redirect_excluded_from_commands() {
+    fn test_clobber_redirect() {
         let commands = extract_commands("cmd >| /tmp/file").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", ">| /tmp/file"]);
     }
 
     #[test]
@@ -746,104 +860,104 @@ mod tests {
     }
 
     #[test]
-    fn test_bare_redirect_returns_empty() {
-        let commands = extract_commands("> /etc/passwd").expect("parse failed");
-        assert!(commands.is_empty());
+    fn test_bare_redirect_returns_none() {
+        let result = extract_commands("> /etc/passwd");
+        assert!(result.is_none());
     }
 
     #[test]
-    fn test_arithmetic_with_redirect() {
-        let commands = extract_commands("(( x = 1 )) > /tmp/file").expect("parse failed");
-        assert!(commands.is_empty());
+    fn test_arithmetic_with_redirect_returns_none() {
+        let result = extract_commands("(( x = 1 )) > /tmp/file");
+        assert!(result.is_none());
     }
 
     #[test]
     fn test_redirect_target_with_command_substitution() {
         let commands = extract_commands("echo > $(mktemp)").expect("parse failed");
-        assert_eq!(commands, vec!["echo", "mktemp"]);
+        assert_eq!(commands, vec!["echo", "> $(mktemp)", "mktemp"]);
     }
 
     #[test]
-    fn test_nested_compound_redirects_excluded_from_commands() {
+    fn test_nested_compound_redirects() {
         let commands = extract_commands("{ echo > /tmp/a; } > /tmp/b").expect("parse failed");
-        assert_eq!(commands, vec!["echo"]);
+        assert_eq!(commands, vec!["echo", "> /tmp/a", "> /tmp/b"]);
     }
 
     #[test]
-    fn test_while_loop_redirect_excluded_from_commands() {
+    fn test_while_loop_redirect() {
         let commands =
             extract_commands("while true; do echo line; done > /tmp/log").expect("parse failed");
-        assert_eq!(commands, vec!["true", "echo line"]);
+        assert_eq!(commands, vec!["true", "echo line", "> /tmp/log"]);
     }
 
     #[test]
-    fn test_if_clause_redirect_excluded_from_commands() {
+    fn test_if_clause_redirect() {
         let commands =
             extract_commands("if true; then echo yes; fi > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["true", "echo yes"]);
+        assert_eq!(commands, vec!["true", "echo yes", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_pipe_with_redirect_on_last_command_excluded() {
+    fn test_pipe_with_redirect_on_last_command() {
         let commands = extract_commands("ls | grep foo > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["ls", "grep foo"]);
+        assert_eq!(commands, vec!["ls", "grep foo", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_pipe_with_stderr_redirect_on_first_command_excluded() {
+    fn test_pipe_with_stderr_redirect_on_first_command() {
         let commands = extract_commands("ls 2>/dev/null | grep foo").expect("parse failed");
         assert_eq!(commands, vec!["ls", "grep foo"]);
     }
 
     #[test]
-    fn test_function_definition_redirect_excluded_from_commands() {
+    fn test_function_definition_redirect() {
         let commands = extract_commands("f() { echo hi; } > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["echo hi"]);
+        assert_eq!(commands, vec!["echo hi", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_read_and_write_redirect_excluded_from_commands() {
+    fn test_read_and_write_redirect() {
         let commands = extract_commands("cmd <> /dev/tty").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "<> /dev/tty"]);
     }
 
     #[test]
-    fn test_case_clause_with_redirect_excluded_from_commands() {
+    fn test_case_clause_with_redirect() {
         let commands =
             extract_commands("case $x in a) echo hi;; esac > /tmp/out").expect("parse failed");
-        assert_eq!(commands, vec!["echo hi"]);
+        assert_eq!(commands, vec!["echo hi", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_until_loop_with_redirect_excluded_from_commands() {
+    fn test_until_loop_with_redirect() {
         let commands =
             extract_commands("until false; do echo line; done > /tmp/log").expect("parse failed");
-        assert_eq!(commands, vec!["false", "echo line"]);
+        assert_eq!(commands, vec!["false", "echo line", "> /tmp/log"]);
     }
 
     #[test]
-    fn test_arithmetic_for_clause_with_redirect_excluded_from_commands() {
+    fn test_arithmetic_for_clause_with_redirect() {
         let commands = extract_commands("for ((i=0; i<10; i++)); do echo $i; done > /tmp/out")
             .expect("parse failed");
-        assert_eq!(commands, vec!["echo $i"]);
+        assert_eq!(commands, vec!["echo $i", "> /tmp/out"]);
     }
 
     #[test]
-    fn test_if_elif_else_with_redirect_excluded_from_commands() {
+    fn test_if_elif_else_with_redirect() {
         let commands = extract_commands(
             "if true; then echo a; elif false; then echo b; else echo c; fi > /tmp/out",
         )
         .expect("parse failed");
         assert_eq!(
             commands,
-            vec!["true", "echo a", "false", "echo b", "echo c"]
+            vec!["true", "echo a", "false", "echo b", "echo c", "> /tmp/out"]
         );
     }
 
     #[test]
-    fn test_multiple_redirects_on_compound_command_excluded() {
+    fn test_multiple_redirects_on_compound_command() {
         let commands = extract_commands("{ cmd; } > /tmp/out 2> /tmp/err").expect("parse failed");
-        assert_eq!(commands, vec!["cmd"]);
+        assert_eq!(commands, vec!["cmd", "> /tmp/out", "2> /tmp/err"]);
     }
 
     #[test]
@@ -867,14 +981,14 @@ mod tests {
     }
 
     #[test]
-    fn test_brace_group_redirect_still_extracts_nested_commands() {
+    fn test_brace_group_redirect_with_command_substitution() {
         let commands = extract_commands("{ echo hello; } > $(mktemp)").expect("parse failed");
         assert!(commands.contains(&"echo hello".to_string()));
         assert!(commands.contains(&"mktemp".to_string()));
     }
 
     #[test]
-    fn test_function_definition_redirect_still_extracts_nested_commands() {
+    fn test_function_definition_redirect_with_command_substitution() {
         let commands = extract_commands("f() { echo hi; } > $(mktemp)").expect("parse failed");
         assert!(commands.contains(&"echo hi".to_string()));
         assert!(commands.contains(&"mktemp".to_string()));
@@ -885,5 +999,66 @@ mod tests {
         let commands = extract_commands("{ cat; } > >(tee /tmp/log)").expect("parse failed");
         assert!(commands.contains(&"cat".to_string()));
         assert!(commands.contains(&"tee /tmp/log".to_string()));
+    }
+
+    #[test]
+    fn test_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd > /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_with_space_skipped() {
+        let commands = extract_commands("cmd 2> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd >> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_quoted_dev_null_redirect_skipped() {
+        let commands = extract_commands("cmd 2>'/dev/null'").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_redirect_to_real_file_still_included() {
+        let commands = extract_commands("echo hello > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_dev_null_redirect_in_chained_command() {
+        let commands =
+            extract_commands("git log 2>/dev/null || echo fallback").expect("parse failed");
+        assert_eq!(commands, vec!["git log", "echo fallback"]);
+    }
+
+    #[test]
+    fn test_mixed_safe_and_unsafe_redirects() {
+        let commands = extract_commands("cmd > /tmp/out 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd", "> /tmp/out"]);
     }
 }
