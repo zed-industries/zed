@@ -6,6 +6,7 @@ use gpui::{
     actions, deferred, px,
 };
 use project::Project;
+use std::future::Future;
 use std::path::PathBuf;
 use ui::prelude::*;
 use util::ResultExt;
@@ -104,7 +105,7 @@ pub struct MultiWorkspace {
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _create_task: Option<Task<()>>,
-    _release_subscription: Option<Subscription>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl MultiWorkspace {
@@ -120,6 +121,7 @@ impl MultiWorkspace {
                 task.detach();
             }
         });
+        let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
@@ -130,7 +132,7 @@ impl MultiWorkspace {
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _create_task: None,
-            _release_subscription: Some(release_subscription),
+            _subscriptions: vec![release_subscription, quit_subscription],
         }
     }
 
@@ -336,6 +338,28 @@ impl MultiWorkspace {
 
     pub fn flush_serialization(&mut self) -> Task<()> {
         self._serialize_task.take().unwrap_or(Task::ready(()))
+    }
+
+    fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
+        let serialize_task = self._serialize_task.take();
+        let create_task = self._create_task.take();
+        let removal_tasks = std::mem::take(&mut self.pending_removal_tasks);
+
+        let task = cx.background_spawn(async move {
+            if let Some(task) = serialize_task {
+                task.await;
+            }
+            if let Some(task) = create_task {
+                task.await;
+            }
+            for task in removal_tasks {
+                task.await;
+            }
+        });
+
+        async move {
+            task.await;
+        }
     }
 
     fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
