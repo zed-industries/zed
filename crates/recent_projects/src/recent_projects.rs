@@ -694,6 +694,7 @@ impl RecentProjectsDelegate {
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()

@@ -91,6 +91,7 @@ impl ExtensionVersionSelectorDelegate {
 
 impl PickerDelegate for ExtensionVersionSelectorDelegate {
     type ListItem = ui::ListItem;
+    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select extension version...".into()

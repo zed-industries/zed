@@ -334,6 +334,7 @@ fn retain_original_opposing_theme(
 
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
+    type StableId = SharedString;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Theme...".into()
@@ -441,16 +442,16 @@ impl PickerDelegate for ThemeSelectorDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<String> {
+    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
         self.matches
             .get(ix)
-            .map(|m| self.themes[m.candidate_id].name.to_string())
+            .map(|m| self.themes[m.candidate_id].name.to_string().into())
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
         self.matches
             .iter()
-            .position(|m| self.themes[m.candidate_id].name == stable_id)
+            .position(|m| self.themes[m.candidate_id].name == stable_id.as_ref())
     }
 
     fn render_match(

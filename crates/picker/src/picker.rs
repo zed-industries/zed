@@ -1,8 +1,10 @@
 mod head;
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
+pub mod stable_id;
 
 use anyhow::Result;
+use stable_id::StableId;
 
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
@@ -77,7 +79,7 @@ pub struct Picker<D: PickerDelegate> {
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
     /// Tracks the stable ID of a manually selected item to preserve it across match updates.
-    manually_selected_stable_id: Option<String>,
+    manually_selected_stable_id: Option<D::StableId>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -91,6 +93,7 @@ pub enum PickerEditorPosition {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
+    type StableId: StableId;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -141,13 +144,13 @@ pub trait PickerDelegate: Sized + 'static {
     /// Returns a stable identifier for the match at the given index.
     /// If implemented, the picker will try to preserve manual selections
     /// across match updates by finding the same item again.
-    fn match_stable_id(&self, _ix: usize) -> Option<String> {
+    fn match_stable_id(&self, _ix: usize) -> Option<Self::StableId> {
         None
     }
 
     /// Finds the index of a match with the given stable identifier.
     /// Used in conjunction with `match_stable_id` to restore selections.
-    fn find_match_by_stable_id(&self, _stable_id: &str) -> Option<usize> {
+    fn find_match_by_stable_id(&self, _stable_id: &Self::StableId) -> Option<usize> {
         None
     }
 
@@ -1139,6 +1142,7 @@ mod tests {
 
     impl PickerDelegate for TestDelegate {
         type ListItem = ListItem;
+        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1161,18 +1165,18 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<String> {
+        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| item.id.clone())
+                .map(|item| item.id.clone().into())
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)
-                    .is_some_and(|item| item.id == stable_id)
+                    .is_some_and(|item| item.id == stable_id.as_ref())
             })
         }
 
@@ -1470,6 +1474,7 @@ mod tests {
 
     impl PickerDelegate for BestMatchDelegate {
         type ListItem = ListItem;
+        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1492,18 +1497,18 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<String> {
+        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| item.id.clone())
+                .map(|item| item.id.clone().into())
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)
-                    .is_some_and(|item| item.id == stable_id)
+                    .is_some_and(|item| item.id == stable_id.as_ref())
             })
         }
 
@@ -1672,6 +1677,7 @@ mod tests {
 
     impl PickerDelegate for ReorderingDelegate {
         type ListItem = ListItem;
+        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1694,18 +1700,18 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<String> {
+        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| item.id.clone())
+                .map(|item| item.id.clone().into())
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)
-                    .is_some_and(|item| item.id == stable_id)
+                    .is_some_and(|item| item.id == stable_id.as_ref())
             })
         }
 

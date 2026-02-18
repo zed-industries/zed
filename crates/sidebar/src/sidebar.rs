@@ -368,6 +368,7 @@ fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
 
 impl PickerDelegate for WorkspacePickerDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()

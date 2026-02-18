@@ -158,6 +158,7 @@ impl RepositorySelectorDelegate {
 
 impl PickerDelegate for RepositorySelectorDelegate {
     type ListItem = ListItem;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_repositories.len()
