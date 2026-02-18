@@ -478,6 +478,14 @@ impl EpArgs {
     }
 }
 
+/// Minimum Zed version required for Snowflake queries.
+/// This version introduced the current request schema with predicted edits in the edit
+/// history, and open source repos distinguished.
+const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    minor: 224,
+    patch: 1,
+};
+
 async fn load_examples(
     http_client: Arc<dyn http_client::HttpClient>,
     args: &EpArgs,
@@ -514,6 +522,20 @@ async fn load_examples(
 
     let mut examples = read_example_files(&file_inputs);
 
+    // Apply offset to file examples first, then pass remaining offset to Snowflake.
+    let file_example_count = examples.len();
+    let remaining_offset = if let Some(offset) = args.offset {
+        if offset >= file_example_count {
+            examples.clear();
+            offset - file_example_count
+        } else {
+            examples.splice(0..offset, []);
+            0
+        }
+    } else {
+        0
+    };
+
     Progress::global().set_total_examples(examples.len());
 
     let remaining_limit_for_snowflake =
@@ -533,7 +555,9 @@ async fn load_examples(
                 http_client.clone(),
                 &captured_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut captured_examples);
@@ -546,7 +570,9 @@ async fn load_examples(
                 http_client.clone(),
                 &rejected_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rejected_examples);
@@ -559,7 +585,9 @@ async fn load_examples(
                 http_client.clone(),
                 &requested_after_timestamps,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut requested_examples);
@@ -572,7 +600,9 @@ async fn load_examples(
                 http_client,
                 &rated_after_inputs,
                 max_rows_per_timestamp,
+                remaining_offset,
                 background_executor,
+                Some(MIN_CAPTURE_VERSION),
             )
             .await?;
             examples.append(&mut rated_examples);
@@ -596,10 +626,6 @@ async fn load_examples(
         {
             resume_from_output(path, &mut examples, command);
         }
-    }
-
-    if let Some(offset) = args.offset {
-        examples.splice(0..offset, []);
     }
 
     if let Some(limit) = args.limit {
