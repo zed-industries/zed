@@ -58,7 +58,6 @@ pub mod example_spec;
 mod license_detection;
 pub mod mercury;
 pub mod ollama;
-mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
@@ -76,7 +75,6 @@ mod edit_prediction_tests;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::ollama::Ollama;
-use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
@@ -2457,18 +2455,6 @@ pub fn should_show_upsell_modal() -> bool {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(
-            move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
-                ZedPredictModal::toggle(
-                    workspace,
-                    workspace.user_store().clone(),
-                    workspace.client().clone(),
-                    window,
-                    cx,
-                )
-            },
-        );
-
         workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
             update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {
                 settings

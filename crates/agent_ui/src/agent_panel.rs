@@ -24,7 +24,7 @@ use crate::{
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
-    ui::{AgentOnboardingModal, EndTrialUpsell},
+    ui::EndTrialUpsell,
 };
 use crate::{
     ExpandMessageEditor,
@@ -72,9 +72,7 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{
-        OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding,
-    },
+    agent::{OpenAcpOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding},
     assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
@@ -231,9 +229,6 @@ pub fn init(cx: &mut App) {
                             panel.toggle_new_thread_menu(&ToggleNewThreadMenu, window, cx);
                         });
                     }
-                })
-                .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
-                    AgentOnboardingModal::toggle(workspace, window, cx)
                 })
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)

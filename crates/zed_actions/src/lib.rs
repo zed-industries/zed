@@ -500,20 +500,6 @@ pub mod assistant {
     }
 }
 
-pub mod debugger {
-    use gpui::actions;
-
-    actions!(
-        debugger,
-        [
-            /// Opens the debugger onboarding modal.
-            OpenOnboardingModal,
-            /// Resets the debugger onboarding state.
-            ResetOnboarding
-        ]
-    );
-}
-
 /// Opens the recent projects interface.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = projects)]
