@@ -1366,6 +1366,7 @@ fn quit(_: &Quit, cx: &mut App) {
                         })
                         .collect();
                     tasks.append(&mut multi_workspace.take_pending_removal_tasks());
+                    tasks.push(multi_workspace.flush_serialization());
                     tasks
                 })
                 .log_err()

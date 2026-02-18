@@ -7899,11 +7899,16 @@ pub async fn last_session_workspace_locations(
         .log_err()
 }
 
+pub struct MultiWorkspaceRestoreResult {
+    pub window_handle: WindowHandle<MultiWorkspace>,
+    pub errors: Vec<anyhow::Error>,
+}
+
 pub async fn restore_multiworkspace(
     multi_workspace: SerializedMultiWorkspace,
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
+) -> anyhow::Result<MultiWorkspaceRestoreResult> {
     let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
     let mut group_iter = workspaces.into_iter();
     let first = group_iter
@@ -7929,7 +7934,10 @@ pub async fn restore_multiworkspace(
         window
     };
 
+    let mut errors = Vec::new();
+
     for session_workspace in group_iter {
+        let workspace_id = session_workspace.workspace_id;
         let result = if session_workspace.paths.is_empty() {
             cx.update(|cx| {
                 open_workspace_by_id(
@@ -7957,7 +7965,8 @@ pub async fn restore_multiworkspace(
         };
 
         if let Err(error) = result {
-            log::error!("Failed to restore workspace in window group: {error:#}");
+            log::error!("Failed to restore workspace {workspace_id:?} in window group: {error:#}",);
+            errors.push(error);
         }
     }
 
@@ -7999,7 +8008,10 @@ pub async fn restore_multiworkspace(
         })
         .ok();
 
-    Ok(window_handle)
+    Ok(MultiWorkspaceRestoreResult {
+        window_handle,
+        errors,
+    })
 }
 
 actions!(

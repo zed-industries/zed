@@ -4307,11 +4307,10 @@ mod tests {
                 })
                 .collect();
             let mut removal_tasks = mw.take_pending_removal_tasks();
-            assert!(
-                !removal_tasks.is_empty(),
-                "pending_removal_tasks should contain the deletion task"
-            );
+            // Note: removal_tasks may be empty if the background task already
+            // completed (take_pending_removal_tasks filters out ready tasks).
             tasks.append(&mut removal_tasks);
+            tasks.push(mw.flush_serialization());
             tasks
         });
         futures::future::join_all(all_tasks).await;
