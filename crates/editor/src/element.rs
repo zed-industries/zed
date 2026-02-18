@@ -9556,13 +9556,8 @@ impl Element for EditorElement {
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
                     let glyph_grid_cell = size(em_advance, line_height);
 
-                    let mut gutter_dimensions =
+                    let gutter_dimensions =
                         snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
-                    // Reduce flickering and rewraps when new excerpts are added and removed.
-                    if !is_singleton {
-                        let prev_width = self.editor.read(cx).gutter_dimensions.width;
-                        gutter_dimensions.width = gutter_dimensions.width.max(prev_width);
-                    }
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
