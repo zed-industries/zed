@@ -290,7 +290,7 @@ impl AcpThreadView {
         thread_store: Option<Entity<ThreadStore>>,
         history: Entity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -323,15 +323,11 @@ impl AcpThreadView {
             );
             if let Some(content) = initial_content {
                 match content {
-                    ExternalAgentInitialContent::ThreadSummary(entry) => {
+                    AgentInitialContent::ThreadSummary(entry) => {
                         editor.insert_thread_summary(entry, window, cx);
                     }
-                    ExternalAgentInitialContent::Text(prompt) => {
-                        editor.set_message(
-                            vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
-                            window,
-                            cx,
-                        );
+                    AgentInitialContent::ContentBlock { blocks, .. } => {
+                        editor.set_message(blocks, window, cx);
                     }
                 }
             }
@@ -368,7 +364,7 @@ impl AcpThreadView {
 
         let recent_history_entries = history.read(cx).get_recent_sessions(3);
 
-        Self {
+        let mut this = Self {
             id,
             parent_id,
             focus_handle: cx.focus_handle(),
@@ -432,7 +428,9 @@ impl AcpThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
-        }
+        };
+        this.send(window, cx);
+        this
     }
 
     pub fn handle_message_editor_event(
@@ -7567,6 +7565,7 @@ pub(crate) fn open_link(
             }
             MentionUri::Diagnostics { .. } => {}
             MentionUri::TerminalSelection { .. } => {}
+            MentionUri::GitDiff { .. } => {}
         })
     } else {
         cx.open_url(&url);

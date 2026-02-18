@@ -2661,6 +2661,15 @@ impl GitStore {
         let diff_type = match envelope.payload.diff_type() {
             proto::git_diff::DiffType::HeadToIndex => DiffType::HeadToIndex,
             proto::git_diff::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
+            proto::git_diff::DiffType::MergeBase => {
+                let base_ref = envelope
+                    .payload
+                    .merge_base_ref
+                    .ok_or_else(|| anyhow!("merge_base_ref is required for MergeBase diff type"))?;
+                DiffType::MergeBase {
+                    base_ref: base_ref.into(),
+                }
+            }
         };
 
         let mut diff = repository_handle
@@ -5653,18 +5662,24 @@ impl Repository {
                     backend.diff(diff_type).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (proto_diff_type, merge_base_ref) = match &diff_type {
+                        DiffType::HeadToIndex => {
+                            (proto::git_diff::DiffType::HeadToIndex.into(), None)
+                        }
+                        DiffType::HeadToWorktree => {
+                            (proto::git_diff::DiffType::HeadToWorktree.into(), None)
+                        }
+                        DiffType::MergeBase { base_ref } => (
+                            proto::git_diff::DiffType::MergeBase.into(),
+                            Some(base_ref.to_string()),
+                        ),
+                    };
                     let response = client
                         .request(proto::GitDiff {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            diff_type: match diff_type {
-                                DiffType::HeadToIndex => {
-                                    proto::git_diff::DiffType::HeadToIndex.into()
-                                }
-                                DiffType::HeadToWorktree => {
-                                    proto::git_diff::DiffType::HeadToWorktree.into()
-                                }
-                            },
+                            diff_type: proto_diff_type,
+                            merge_base_ref,
                         })
                         .await?;
 

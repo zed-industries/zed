@@ -320,6 +320,18 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::GitDiff { base_ref } => {
+                            write!(
+                                &mut selection_context,
+                                "\nBranch diff against {}:\n{}",
+                                base_ref,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())

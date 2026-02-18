@@ -226,9 +226,12 @@ impl ExternalAgent {
 }
 
 /// Content to initialize new external agent with.
-pub enum ExternalAgentInitialContent {
+pub enum AgentInitialContent {
     ThreadSummary(acp_thread::AgentSessionInfo),
-    Text(String),
+    ContentBlock {
+        blocks: Vec<agent_client_protocol::ContentBlock>,
+        auto_submit: bool,
+    },
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.

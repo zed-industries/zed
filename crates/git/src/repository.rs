@@ -813,6 +813,7 @@ pub trait GitRepository: Send + Sync {
 pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
+    MergeBase { base_ref: SharedString },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -1819,17 +1820,30 @@ impl GitRepository for RealGitRepository {
         let git_binary_path = self.any_git_binary_path.clone();
         self.executor
             .spawn(async move {
-                let args = match diff {
-                    DiffType::HeadToIndex => Some("--staged"),
-                    DiffType::HeadToWorktree => None,
+                let working_directory = working_directory?;
+                let output = match diff {
+                    DiffType::HeadToIndex => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["diff", "--staged"])
+                            .output()
+                            .await?
+                    }
+                    DiffType::HeadToWorktree => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["diff"])
+                            .output()
+                            .await?
+                    }
+                    DiffType::MergeBase { base_ref } => {
+                        new_command(&git_binary_path)
+                            .current_dir(&working_directory)
+                            .args(["diff", "--merge-base", base_ref.as_ref(), "HEAD"])
+                            .output()
+                            .await?
+                    }
                 };
-
-                let output = new_command(&git_binary_path)
-                    .current_dir(&working_directory?)
-                    .args(["diff"])
-                    .args(args)
-                    .output()
-                    .await?;
 
                 anyhow::ensure!(
                     output.status.success(),

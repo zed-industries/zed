@@ -149,7 +149,8 @@ impl MentionSet {
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
             MentionUri::PastedImage
             | MentionUri::Selection { .. }
-            | MentionUri::TerminalSelection { .. } => {
+            | MentionUri::TerminalSelection { .. }
+            | MentionUri::GitDiff { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -289,6 +290,10 @@ impl MentionSet {
             MentionUri::TerminalSelection { .. } => {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
+            }
+            MentionUri::GitDiff { .. } => {
+                debug_panic!("unexpected git diff URI");
+                Task::ready(Err(anyhow!("unexpected git diff URI")))
             }
         };
         let task = cx
