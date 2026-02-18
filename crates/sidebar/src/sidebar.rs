@@ -216,7 +216,7 @@ impl WorkspacePickerDelegate {
                 SidebarEntry::WorkspaceThread(thread) => thread
                     .thread_info
                     .as_ref()
-                    .map(|info| (thread.index, info.status.clone())),
+                    .map(|info| (thread.index, info.status)),
                 _ => None,
             })
             .collect();
@@ -1181,7 +1181,7 @@ mod tests {
         cx: &mut gpui::VisualTestContext,
     ) {
         sidebar.update_in(cx, |s, _window, _cx| {
-            s.set_test_thread_info(index, SharedString::from(title.to_string()), status.clone());
+            s.set_test_thread_info(index, SharedString::from(title.to_string()), status);
         });
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
