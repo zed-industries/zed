@@ -148,8 +148,6 @@ jobs:
               continue
             fi
 
-            git config --local http.https://github.com/.extraheader "AUTHORIZATION: bearer ${GH_TOKEN}"
-
             if ! git fetch origin main; then
               echo "WARNING: Failed to fetch origin/main for $CRASH_ID — skipping"
               continue
