@@ -387,28 +387,61 @@ struct SettingsFieldMetadata {
     should_do_titlecase: Option<bool>,
 }
 
+#[cfg(target_os = "macos")]
+fn open_settings_on_next_frame(window: &mut Window) {
+    // We open the settings window on the next frame when
+    // the window has been activated to avoid the settings window
+    // from being shown before the workspace window.
+    window.on_next_frame(|window, cx| {
+        let window_handle = window
+            .window_handle()
+            .downcast::<MultiWorkspace>()
+            .expect("Workspaces are root Windows");
+        open_settings_editor(None, None, window_handle, cx);
+    });
+}
+
 pub fn init(cx: &mut App) {
     init_renderers(cx);
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
 
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &OpenSettings, cx| {
+        let Some(app_state) = AppState::global(cx).upgrade() else {
+            return;
+        };
+
+        cx.spawn(async move |cx| {
+            let workspace_window =
+                workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+            cx.update(|cx| {
+                workspace_window
+                    .update(cx, |_, window, _| {
+                        open_settings_on_next_frame(window);
+                    })
+                    .log_err();
+            });
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    });
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
-            .register_action(
-                |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
-                    let window_handle = window
-                        .window_handle()
-                        .downcast::<MultiWorkspace>()
-                        .expect("Workspaces are root Windows");
-                    open_settings_editor(workspace, Some(&path), None, window_handle, cx);
-                },
-            )
-            .register_action(|workspace, _: &OpenSettings, window, cx| {
+            .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
                 let window_handle = window
                     .window_handle()
                     .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, None, None, window_handle, cx);
+                open_settings_editor(Some(&path), None, window_handle, cx);
+            })
+            .register_action(|_, _: &OpenSettings, window, cx| {
+                let window_handle = window
+                    .window_handle()
+                    .downcast::<MultiWorkspace>()
+                    .expect("Workspaces are root Windows");
+                open_settings_editor(None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
@@ -425,7 +458,7 @@ pub fn init(cx: &mut App) {
                             .is_dir()
                             .then_some(tree.read(cx).id())
                     });
-                open_settings_editor(workspace, None, target_worktree_id, window_handle, cx);
+                open_settings_editor(None, target_worktree_id, window_handle, cx);
             });
     })
     .detach();
@@ -562,7 +595,6 @@ fn init_renderers(cx: &mut App) {
 }
 
 pub fn open_settings_editor(
-    _workspace: &mut Workspace,
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
     workspace_handle: WindowHandle<MultiWorkspace>,
