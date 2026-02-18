@@ -17403,12 +17403,12 @@ impl Editor {
         };
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut excerpt_ids = selections
+        let excerpt_ids = selections
             .iter()
             .flat_map(|selection| snapshot.excerpt_ids_for_range(selection.range()))
+            .unique()
+            .sorted()
             .collect::<Vec<_>>();
-        excerpt_ids.sort();
-        excerpt_ids.dedup();
 
         if self.delegate_expand_excerpts {
             cx.emit(EditorEvent::ExpandExcerptsRequested {

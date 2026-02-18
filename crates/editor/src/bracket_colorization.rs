@@ -24,20 +24,11 @@ impl Editor {
 
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let all_excerpts = self.buffer().read(cx).excerpt_ids();
         let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
                                        text_anchors: [text::Anchor; 4]|
          -> Option<[Option<_>; 4]> {
             multi_buffer_snapshot
-                .anchors_in_excerpt(current_excerpt, text_anchors)
-                .or_else(|| {
-                    all_excerpts
-                        .iter()
-                        .filter(|&&excerpt_id| excerpt_id != current_excerpt)
-                        .find_map(|&excerpt_id| {
-                            multi_buffer_snapshot.anchors_in_excerpt(excerpt_id, text_anchors)
-                        })
-                })?
+                .anchors_in_excerpt(current_excerpt, text_anchors)?
                 .collect_array()
         };
 
