@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use crate::{
     Mode, Vim,
     motion::{Motion, MotionKind},
 };
 use editor::{Editor, SelectionEffects, movement};
 use gpui::{Context, Window, actions};
+use language::Point;
 
 actions!(
     vim,
@@ -92,7 +95,14 @@ impl Vim {
                     MotionKind::Exclusive
                 };
                 vim.copy_selections_content(editor, kind, window, cx);
-                editor.delete_selections_with_linked_edits(window, cx);
+                let linked_edits = editor.linked_edits_for_selections(Arc::from(""), cx);
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter();
+                let edits = selections.map(|selection| (selection.start..selection.end, ""));
+                editor.edit(edits, cx);
+                linked_edits.apply(cx);
             });
         });
         self.switch_mode(Mode::Insert, true, window, cx);

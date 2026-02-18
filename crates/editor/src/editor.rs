@@ -72,6 +72,7 @@ pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
+pub use linked_editing_ranges::LinkedEdits;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
 pub use multi_buffer::{
@@ -140,7 +141,7 @@ use language::{
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
-use linked_editing_ranges::{LinkedEdits, refresh_linked_ranges};
+use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
     LanguageServerId,
@@ -5440,17 +5441,11 @@ impl Editor {
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
-            let mut linked_edits = LinkedEdits::new();
-
-            if apply_linked_edits && !this.linked_edit_ranges.is_empty() {
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-                for selection in &old_selections {
-                    let start_anchor = snapshot.anchor_before(selection.start);
-                    let end_anchor = snapshot.anchor_after(selection.end);
-                    let anchor_range = start_anchor.text_anchor..end_anchor.text_anchor;
-                    linked_edits.push(this, anchor_range, text.clone(), cx);
-                }
-            }
+            let linked_edits = if apply_linked_edits {
+                this.linked_edits_for_selections(text.clone(), cx)
+            } else {
+                LinkedEdits::new()
+            };
 
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
@@ -5487,6 +5482,22 @@ impl Editor {
         });
     }
 
+    /// Collects linked edits for the current selections, pairing each linked
+    /// range with `text`.
+    pub fn linked_edits_for_selections(&self, text: Arc<str>, cx: &App) -> LinkedEdits {
+        let mut linked_edits = LinkedEdits::new();
+        if !self.linked_edit_ranges.is_empty() {
+            for selection in self.selections.disjoint_anchors() {
+                let start = selection.start.text_anchor;
+                let end = selection.end.text_anchor;
+                linked_edits.push(self, start..end, text.clone(), cx);
+            }
+        }
+        linked_edits
+    }
+
+    /// Deletes the content covered by the current selections and applies
+    /// linked edits.
     pub fn delete_selections_with_linked_edits(
         &mut self,
         window: &mut Window,

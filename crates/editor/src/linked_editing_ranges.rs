@@ -179,10 +179,10 @@ pub(super) fn refresh_linked_ranges(
 /// HTML/JSX tags, across one or more buffers. Edits are stored as anchor ranges
 /// so they track buffer changes and are only resolved to concrete points at
 /// apply time.
-pub(crate) struct LinkedEdits(HashMap<Entity<Buffer>, Vec<(Range<Anchor>, Arc<str>)>>);
+pub struct LinkedEdits(HashMap<Entity<Buffer>, Vec<(Range<Anchor>, Arc<str>)>>);
 
 impl LinkedEdits {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(HashMap::default())
     }
 
@@ -207,7 +207,7 @@ impl LinkedEdits {
 
     /// Resolves all stored anchor ranges to points using the current buffer snapshot,
     /// sorts them, and applies the edits.
-    pub(crate) fn apply(self, cx: &mut Context<Editor>) {
+    pub fn apply(self, cx: &mut Context<Editor>) {
         self.apply_inner(false, cx);
     }
 
@@ -215,7 +215,7 @@ impl LinkedEdits {
     /// expanded one character to the left before applying. For context, this
     /// was introduced in order to be available to `backspace` so as to delete a
     /// character in each linked range even when the selection was a cursor.
-    pub(crate) fn apply_with_left_expansion(self, cx: &mut Context<Editor>) {
+    pub fn apply_with_left_expansion(self, cx: &mut Context<Editor>) {
         self.apply_inner(true, cx);
     }
 
