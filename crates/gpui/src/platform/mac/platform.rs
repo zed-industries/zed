@@ -5,8 +5,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, WindowAppearance,
-    WindowParams, platform::mac::pasteboard::Pasteboard,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams, platform::mac::pasteboard::Pasteboard,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -54,7 +54,7 @@ use std::{
 };
 use util::{
     ResultExt,
-    command::{new_smol_command, new_std_command},
+    command::{new_command, new_std_command},
 };
 
 #[allow(non_upper_case_globals)]
@@ -144,6 +144,11 @@ unsafe fn build_classes() {
                 on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(onThermalStateChange:),
+                on_thermal_state_change as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -161,6 +166,7 @@ pub(crate) struct MacPlatformState {
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    on_thermal_state_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -204,6 +210,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
         }))
@@ -841,7 +848,7 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                if let Some(mut child) = new_smol_command("open")
+                if let Some(mut child) = new_command("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -875,6 +882,24 @@ impl Platform for MacPlatform {
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.0.lock().validate_menu_command = Some(callback);
+    }
+
+    fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_thermal_state_change = Some(callback);
+    }
+
+    fn thermal_state(&self) -> ThermalState {
+        unsafe {
+            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+            let state: NSInteger = msg_send![process_info, thermalState];
+            match state {
+                0 => ThermalState::Nominal,
+                1 => ThermalState::Fair,
+                2 => ThermalState::Serious,
+                3 => ThermalState::Critical,
+                _ => ThermalState::Nominal,
+            }
+        }
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
@@ -1178,6 +1203,14 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
+        let thermal_name = ns_string("NSProcessInfoThermalStateDidChangeNotification");
+        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onThermalStateChange:)
+            name: thermal_name
+            object: process_info
+        ];
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
@@ -1221,6 +1254,37 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
             .lock()
             .on_keyboard_layout_change
             .get_or_insert(callback);
+    }
+}
+
+extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
+    // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
+    // as NSNotificationCenter delivers this notification synchronously and it may fire while
+    // the App is already borrowed (same pattern as quit() above).
+    use super::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
+
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        dispatch_async_f(
+            dispatch_get_main_queue(),
+            platform_ptr,
+            Some(on_thermal_state_change),
+        );
+    }
+
+    unsafe extern "C" fn on_thermal_state_change(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_thermal_state_change.take() {
+            drop(lock);
+            callback();
+            platform
+                .0
+                .lock()
+                .on_thermal_state_change
+                .get_or_insert(callback);
+        }
     }
 }
 

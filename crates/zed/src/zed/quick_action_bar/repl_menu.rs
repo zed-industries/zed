@@ -283,6 +283,21 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        let store = repl::ReplStore::global(cx);
+        if !store.read(cx).has_python_kernelspecs(worktree_id) {
+            if let Some(project) = editor
+                .read(cx)
+                .workspace()
+                .map(|workspace| workspace.read(cx).project().clone())
+            {
+                store
+                    .update(cx, |store, cx| {
+                        store.refresh_python_kernelspecs(worktree_id, &project, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
+
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
@@ -301,7 +316,17 @@ impl QuickActionBar {
         KernelSelector::new(
             {
                 Box::new(move |kernelspec, window, cx| {
-                    repl::assign_kernelspec(kernelspec, editor.downgrade(), window, cx).ok();
+                    if kernelspec.has_ipykernel() {
+                        repl::assign_kernelspec(kernelspec, editor.downgrade(), window, cx).ok();
+                    } else {
+                        repl::install_ipykernel_and_assign(
+                            kernelspec,
+                            editor.downgrade(),
+                            window,
+                            cx,
+                        )
+                        .ok();
+                    }
                 })
             },
             worktree_id,

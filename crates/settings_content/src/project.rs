@@ -10,7 +10,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
 };
 
 #[with_fallible_options]
@@ -79,6 +79,11 @@ pub struct ProjectSettingsContent {
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Whether to disable all AI features in Zed.
+    ///
+    /// Default: false
+    pub disable_ai: Option<SaturatingBool>,
 }
 
 #[with_fallible_options]
@@ -200,6 +205,11 @@ pub struct GlobalLspSettingsContent {
     ///
     /// Default: `true`
     pub button: Option<bool>,
+    /// The maximum amount of time to wait for responses from language servers, in seconds.
+    /// A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed).
+    ///
+    /// Default: `120`
+    pub request_timeout: Option<u64>,
     /// Settings for language server notifications
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.

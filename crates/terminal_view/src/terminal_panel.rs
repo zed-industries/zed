@@ -17,7 +17,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
-use search::{BufferSearchBar, buffer_search::DivRegistrar};
+
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
@@ -1238,12 +1238,13 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = cx.new(|cx| {
-            search::BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx)
-        });
+        let toolbar = pane.toolbar().clone();
+        if let Some(callbacks) = cx.try_global::<workspace::PaneSearchBarCallbacks>() {
+            let languages = Some(project.read(cx).languages().clone());
+            (callbacks.setup_search_bar)(languages, &toolbar, window, cx);
+        }
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
-        pane.toolbar().update(cx, |toolbar, cx| {
-            toolbar.add_item(buffer_search_bar, window, cx);
+        toolbar.update(cx, |toolbar, cx| {
             toolbar.add_item(breadcrumbs, window, cx);
         });
 
@@ -1483,19 +1484,12 @@ impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut registrar = DivRegistrar::new(
-            |panel, _, cx| {
-                panel
-                    .active_pane
-                    .read(cx)
-                    .toolbar()
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-            },
-            cx,
-        );
-        BufferSearchBar::register(&mut registrar);
-        let registrar = registrar.into_div();
+        let registrar = cx
+            .try_global::<workspace::PaneSearchBarCallbacks>()
+            .map(|callbacks| {
+                (callbacks.wrap_div_with_search_actions)(div(), self.active_pane.clone())
+            })
+            .unwrap_or_else(div);
         self.workspace
             .update(cx, |workspace, cx| {
                 registrar.size_full().child(self.center.render(
@@ -1853,6 +1847,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
+    use workspace::MultiWorkspace;
 
     #[test]
     fn test_prepare_empty_task() {
@@ -1884,13 +1879,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -1969,13 +1965,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 
@@ -2012,13 +2009,14 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
-        let (window_handle, terminal_panel) = workspace
-            .update(cx, |workspace, window, cx| {
-                let window_handle = window.window_handle();
-                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
-                (window_handle, terminal_panel)
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+                })
             })
             .unwrap();
 

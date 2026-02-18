@@ -181,7 +181,6 @@ impl VsCodeSettings {
             collaboration_panel: None,
             debugger: None,
             diagnostics: None,
-            disable_ai: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
             file_finder: None,
@@ -307,6 +306,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            diff_view_style: None,
         }
     }
 
@@ -509,6 +509,7 @@ impl VsCodeSettings {
             load_direnv: None,
             slash_commands: None,
             git_hosting_providers: None,
+            disable_ai: None,
         }
     }
 
@@ -561,6 +562,8 @@ impl VsCodeSettings {
                         SemanticTokens::Off
                     }
                 }),
+            document_folding_ranges: None,
+            document_symbols: None,
             linked_edits: self.read_bool("editor.linkedEditing"),
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,
@@ -949,6 +952,7 @@ impl VsCodeSettings {
             bottom_dock_layout: None,
             centered_layout: None,
             close_on_file_delete: None,
+            close_panel_on_toggle: None,
             command_aliases: Default::default(),
             confirm_quit: self.read_enum("window.confirmBeforeClose", |s| match s {
                 "always" | "keyboardOnly" => Some(true),

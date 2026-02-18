@@ -1,11 +1,13 @@
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
+use super::tool_permissions::{
+    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
+    collect_symlink_escapes, sensitive_settings_kind,
 };
+use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_paths};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,9 +59,7 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "move_path"
-    }
+    const NAME: &'static str = "move_path";
 
     fn kind() -> ToolKind {
         ToolKind::Move
@@ -98,57 +98,89 @@ impl AgentTool for MovePathTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let settings = AgentSettings::get_global(cx);
-
-        let source_decision =
-            decide_permission_from_settings(Self::name(), &input.source_path, settings);
-        if let ToolPermissionDecision::Deny(reason) = source_decision {
+        let paths = vec![input.source_path.clone(), input.destination_path.clone()];
+        let decision = decide_permission_for_paths(Self::NAME, &paths, settings);
+        if let ToolPermissionDecision::Deny(reason) = decision {
             return Task::ready(Err(anyhow!("{}", reason)));
         }
 
-        let dest_decision =
-            decide_permission_from_settings(Self::name(), &input.destination_path, settings);
-        if let ToolPermissionDecision::Deny(reason) = dest_decision {
-            return Task::ready(Err(anyhow!("{}", reason)));
-        }
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-        let needs_confirmation = matches!(source_decision, ToolPermissionDecision::Confirm)
-            || matches!(dest_decision, ToolPermissionDecision::Confirm);
+            let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
+                project.read_with(cx, |project, cx| {
+                    collect_symlink_escapes(
+                        project,
+                        &input.source_path,
+                        &input.destination_path,
+                        &canonical_roots,
+                        cx,
+                    )
+                });
 
-        let authorize = if needs_confirmation {
-            let src = MarkdownInlineCode(&input.source_path);
-            let dest = MarkdownInlineCode(&input.destination_path);
-            let context = crate::ToolPermissionContext {
-                tool_name: "move_path".to_string(),
-                input_value: input.source_path.clone(),
+            let sensitive_kind =
+                sensitive_settings_kind(Path::new(&input.source_path), fs.as_ref())
+                    .await
+                    .or(
+                        sensitive_settings_kind(Path::new(&input.destination_path), fs.as_ref())
+                            .await,
+                    );
+
+            let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
+                || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
+
+            let authorize = if !symlink_escapes.is_empty() {
+                // Symlink escape authorization replaces (rather than supplements)
+                // the normal tool-permission prompt. The symlink prompt already
+                // requires explicit user approval with the canonical target shown,
+                // which is strictly more security-relevant than a generic confirm.
+                Some(cx.update(|cx| {
+                    authorize_symlink_escapes(Self::NAME, &symlink_escapes, &event_stream, cx)
+                }))
+            } else if needs_confirmation {
+                Some(cx.update(|cx| {
+                    let src = MarkdownInlineCode(&input.source_path);
+                    let dest = MarkdownInlineCode(&input.destination_path);
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.source_path.clone(), input.destination_path.clone()],
+                    );
+                    let title = format!("Move {src} to {dest}");
+                    let title = match sensitive_kind {
+                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
+                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
+                        None => title,
+                    };
+                    event_stream.authorize(title, context, cx)
+                }))
+            } else {
+                None
             };
-            Some(event_stream.authorize(format!("Move {src} to {dest}"), context, cx))
-        } else {
-            None
-        };
 
-        let rename_task = self.project.update(cx, |project, cx| {
-            match project
-                .find_project_path(&input.source_path, cx)
-                .and_then(|project_path| project.entry_for_path(&project_path, cx))
-            {
-                Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.rename_entry(entity.id, project_path, cx),
-                    None => Task::ready(Err(anyhow!(
-                        "Destination path {} was outside the project.",
-                        input.destination_path
-                    ))),
-                },
-                None => Task::ready(Err(anyhow!(
-                    "Source path {} was not found in the project.",
-                    input.source_path
-                ))),
-            }
-        });
-
-        cx.background_spawn(async move {
             if let Some(authorize) = authorize {
                 authorize.await?;
             }
+
+            let rename_task = project.update(cx, |project, cx| {
+                match project
+                    .find_project_path(&input.source_path, cx)
+                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
+                {
+                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
+                        Some(project_path) => Ok(project.rename_entry(entity.id, project_path, cx)),
+                        None => Err(anyhow!(
+                            "Destination path {} was outside the project.",
+                            input.destination_path
+                        )),
+                    },
+                    None => Err(anyhow!(
+                        "Source path {} was not found in the project.",
+                        input.source_path
+                    )),
+                }
+            })?;
 
             let result = futures::select! {
                 result = rename_task.fuse() => result,
@@ -156,7 +188,7 @@ impl AgentTool for MovePathTool {
                     anyhow::bail!("Move cancelled by user");
                 }
             };
-            let _ = result.with_context(|| {
+            result.with_context(|| {
                 format!("Moving {} to {}", input.source_path, input.destination_path)
             })?;
             Ok(format!(
@@ -164,5 +196,260 @@ impl AgentTool for MovePathTool {
                 input.source_path, input.destination_path
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_client_protocol as acp;
+    use fs::Fs as _;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::PathBuf;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            AgentSettings::override_global(settings, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_move_path_symlink_escape_source_requests_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "file.txt": "content" }
+                },
+                "external": {
+                    "secret.txt": "SECRET"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link_to_external").as_ref(),
+            PathBuf::from("../external"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let input = MovePathToolInput {
+            source_path: "project/link_to_external".into(),
+            destination_path: "project/external_moved".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project")
+                || title.contains("symlinks outside project"),
+            "Authorization title should mention symlink escape, got: {title}",
+        );
+
+        auth.response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "should succeed after approval: {result:?}");
+    }
+
+    #[gpui::test]
+    async fn test_move_path_symlink_escape_denied(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "file.txt": "content" }
+                },
+                "external": {
+                    "secret.txt": "SECRET"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link_to_external").as_ref(),
+            PathBuf::from("../external"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let input = MovePathToolInput {
+            source_path: "project/link_to_external".into(),
+            destination_path: "project/external_moved".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        drop(auth);
+
+        let result = task.await;
+        assert!(result.is_err(), "should fail when denied");
+    }
+
+    #[gpui::test]
+    async fn test_move_path_symlink_escape_confirm_requires_single_approval(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "file.txt": "content" }
+                },
+                "external": {
+                    "secret.txt": "SECRET"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link_to_external").as_ref(),
+            PathBuf::from("../external"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let input = MovePathToolInput {
+            source_path: "project/link_to_external".into(),
+            destination_path: "project/external_moved".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project")
+                || title.contains("symlinks outside project"),
+            "Authorization title should mention symlink escape, got: {title}",
+        );
+
+        auth.response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+
+        assert!(
+            !matches!(
+                event_rx.try_next(),
+                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+            ),
+            "Expected a single authorization prompt",
+        );
+
+        let result = task.await;
+        assert!(
+            result.is_ok(),
+            "Tool should succeed after one authorization: {result:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_path_symlink_escape_honors_deny_policy(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "move_path".into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    ..Default::default()
+                },
+            );
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "src": { "file.txt": "content" }
+                },
+                "external": {
+                    "secret.txt": "SECRET"
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            path!("/root/project/link_to_external").as_ref(),
+            PathBuf::from("../external"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let input = MovePathToolInput {
+            source_path: "project/link_to_external".into(),
+            destination_path: "project/external_moved".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+
+        assert!(result.is_err(), "Tool should fail when policy denies");
+        assert!(
+            !matches!(
+                event_rx.try_next(),
+                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+            ),
+            "Deny policy should not emit symlink authorization prompt",
+        );
     }
 }

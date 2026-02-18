@@ -47,6 +47,7 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
     if !editor.mode().is_full()
         || (!editor.buffer().read(cx).is_singleton()
             && !editor.buffer().read(cx).all_diff_hunks_expanded())
+        || editor.read_only(cx)
     {
         return;
     }

@@ -1,3 +1,8 @@
+---
+title: Configuring Zed - Settings and Preferences
+description: Configure Zed with the Settings Editor, JSON files, and project-specific overrides. Covers all settings options.
+---
+
 # Configuring Zed
 
 This guide explains how Zed's settings system works, including the Settings Editor, JSON configuration files, and project-specific settings.
@@ -133,4 +138,5 @@ These are useful for sharing configuration tips or linking from documentation.
 
 - [Appearance](./appearance.md) — Themes, fonts, and visual customization
 - [Key bindings](./key-bindings.md) — Customize keyboard shortcuts
+- [AI Configuration](./ai/configuration.md) — Set up AI providers, models, and agent settings
 - [All Settings](./reference/all-settings.md) — Complete settings reference

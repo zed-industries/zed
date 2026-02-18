@@ -9,7 +9,7 @@ use std::{
     ffi::OsString,
     fs::File,
     io::Read as _,
-    os::fd::{AsFd, AsRawFd, FromRawFd},
+    os::fd::{AsFd, FromRawFd, IntoRawFd},
     time::Duration,
 };
 
@@ -17,17 +17,19 @@ use anyhow::{Context as _, anyhow};
 use calloop::LoopSignal;
 use futures::channel::oneshot;
 use util::ResultExt as _;
-use util::command::{new_smol_command, new_std_command};
+use util::command::{new_command, new_std_command};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Point, PriorityQueueCalloopReceiver, Result,
-    RunnableVariant, Task, WindowAppearance, WindowParams, px,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, PriorityQueueCalloopReceiver, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use crate::{Pixels, Point, px};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -36,6 +38,7 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
@@ -201,6 +204,12 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+    }
+
+    fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn thermal_state(&self) -> ThermalState {
+        ThermalState::Nominal
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -466,7 +475,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = new_smol_command("xdg-open")
+                let _ = new_command("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
@@ -702,7 +711,7 @@ pub(super) fn reveal_path_internal(
         .detach();
 }
 
-#[allow(unused)]
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
@@ -731,8 +740,8 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
+pub(super) unsafe fn read_fd(fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
+    let mut file = unsafe { File::from_raw_fd(fd.into_raw_fd()) };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
     Ok(buffer)

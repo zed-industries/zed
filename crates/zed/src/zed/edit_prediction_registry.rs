@@ -1,5 +1,5 @@
 use client::{Client, UserStore};
-use codestral::CodestralEditPredictionDelegate;
+use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
 use edit_prediction::{ZedEditPredictionDelegate, Zeta2FeatureFlag};
@@ -7,7 +7,7 @@ use editor::Editor;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use language_models::MistralLanguageModelProvider;
+
 use settings::{EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
@@ -111,8 +111,7 @@ fn assign_edit_prediction_providers(
     cx: &mut App,
 ) {
     if provider == EditPredictionProvider::Codestral {
-        let mistral = MistralLanguageModelProvider::global(client.http_client(), cx);
-        mistral.load_codestral_api_key(cx).detach();
+        load_codestral_api_key(cx).detach();
     }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
@@ -196,10 +195,7 @@ fn assign_edit_prediction_provider(
         | EditPredictionProvider::Mercury) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
-            if let Some(project) = editor.project()
-                && let Some(buffer) = &singleton_buffer
-                && buffer.read(cx).file().is_some()
-            {
+            if let Some(project) = editor.project() {
                 let has_model = ep_store.update(cx, |ep_store, cx| {
                     let model = match value {
                         EditPredictionProvider::Sweep => {
@@ -218,9 +214,7 @@ fn assign_edit_prediction_provider(
                             if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
                                 && cx.has_flag::<Zeta2FeatureFlag>() =>
                         {
-                            edit_prediction::EditPredictionModel::Zeta2 {
-                                version: Default::default(),
-                            }
+                            edit_prediction::EditPredictionModel::Zeta2
                         }
                         EditPredictionProvider::Zed
                             if user_store.read(cx).current_user().is_some() =>
@@ -231,7 +225,9 @@ fn assign_edit_prediction_provider(
                     };
 
                     ep_store.set_edit_prediction_model(model);
-                    ep_store.register_buffer(buffer, project, cx);
+                    if let Some(buffer) = &singleton_buffer {
+                        ep_store.register_buffer(buffer, project, cx);
+                    }
                     true
                 });
 

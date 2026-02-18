@@ -7,7 +7,6 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
@@ -365,7 +364,7 @@ impl AgentConnection for AcpConnection {
         self.telemetry_id.clone()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -558,6 +557,7 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     self.server_name.clone(),
                     self.clone(),
                     project,
@@ -584,17 +584,15 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn supports_load_session(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
+    fn supports_load_session(&self) -> bool {
+        self.agent_capabilities.load_session
     }
 
-    fn supports_resume_session(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>()
-            && self
-                .agent_capabilities
-                .session_capabilities
-                .resume
-                .is_some()
+    fn supports_resume_session(&self) -> bool {
+        self.agent_capabilities
+            .session_capabilities
+            .resume
+            .is_some()
     }
 
     fn load_session(
@@ -604,7 +602,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() || !self.agent_capabilities.load_session {
+        if !self.agent_capabilities.load_session {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Loading sessions is not supported by this agent.".into()
             ))));
@@ -615,6 +613,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,
@@ -671,12 +670,11 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>()
-            || self
-                .agent_capabilities
-                .session_capabilities
-                .resume
-                .is_none()
+        if self
+            .agent_capabilities
+            .session_capabilities
+            .resume
+            .is_none()
         {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Resuming sessions is not supported by this agent.".into()
@@ -688,6 +686,7 @@ impl AgentConnection for AcpConnection {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
+                None,
                 self.server_name.clone(),
                 self.clone(),
                 project,
@@ -884,12 +883,8 @@ impl AgentConnection for AcpConnection {
         }) as _)
     }
 
-    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-        if cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.session_list.clone().map(|s| s as _)
-        } else {
-            None
-        }
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        self.session_list.clone().map(|s| s as _)
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1144,14 +1139,12 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let respect_always_allow_setting;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            respect_always_allow_setting = session.session_modes.is_none();
             thread = session.thread.clone();
         }
 
@@ -1161,7 +1154,6 @@ impl acp::Client for ClientDelegate {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
                 acp_thread::PermissionOptions::Flat(arguments.options),
-                respect_always_allow_setting,
                 cx,
             )
         })??;

@@ -1,3 +1,8 @@
+---
+title: Ruby
+description: "Configure Ruby language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Ruby
 
 Ruby support is available through the [Ruby extension](https://github.com/zed-extensions/ruby).
@@ -27,7 +32,7 @@ In addition to these two language servers, Zed also supports:
 
 - [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 - [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
-- [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that leverages Ruby Signature (RBS).
+- [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that uses Ruby Signature (RBS).
 - [Herb](https://herb-tools.dev) which is a language server for ERB files.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
@@ -64,7 +69,7 @@ You can skip step 1 and force using the system executable by setting `use_bundle
 
 ### Using `ruby-lsp`
 
-To switch to `ruby-lsp`, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Ruby, or add to your settings file:
 
 ```json [settings]
 {
@@ -88,13 +93,13 @@ To switch to `ruby-lsp`, add the following to your `settings.json`:
 }
 ```
 
-That disables `solargraph` and `rubocop` and enables `ruby-lsp`.
+That disables `solargraph` and `rubocop` and uses `ruby-lsp`.
 
 ### Using `rubocop`
 
 The Ruby extension also provides support for `rubocop` language server for offense detection and autocorrection.
 
-To enable it, add the following to your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Ruby, or add to your settings file:
 
 ```json [settings]
 {
@@ -106,7 +111,7 @@ To enable it, add the following to your `settings.json`:
 }
 ```
 
-Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop` by adding the following to your `settings.json`:
+Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop`:
 
 ```json [settings]
 {
@@ -162,6 +167,8 @@ You can pass Ruby LSP configuration to `initialization_options`, e.g.
 }
 ```
 
+For full configuration options, see the [Ruby LSP website](https://shopify.github.io/ruby-lsp/editors.html).
+
 LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
 
 ```json [settings]
@@ -210,7 +217,9 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 
 [Sorbet](https://sorbet.org/) is a popular static type checker for Ruby that includes a language server.
 
-To enable Sorbet, add `\"sorbet\"` to the `language_servers` list for Ruby in your `settings.json`. You may want to disable other language servers if Sorbet is intended to be your primary LSP, or if you plan to use it alongside another LSP for specific features like type checking.
+To enable Sorbet, add `\"sorbet\"` to the `language_servers` list for Ruby. You may want to disable other language servers if Sorbet is intended to be your primary LSP, or if you plan to use it alongside another LSP for specific features like type checking.
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Ruby, or add to your settings file:
 
 ```json [settings]
 {
@@ -234,7 +243,9 @@ For all aspects of installing Sorbet, setting it up in your project, and configu
 
 [Steep](https://github.com/soutaro/steep) is a static type checker for Ruby that uses RBS files to define types.
 
-To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your `settings.json`. You may need to adjust the order or disable other LSPs depending on your desired setup.
+To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby. You may need to adjust the order or disable other LSPs depending on your desired setup.
+
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Ruby, or add to your settings file:
 
 ```json [settings]
 {
@@ -394,6 +405,8 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
 ### `erb-formatter`
 
 To format ERB templates, you can use the `erb-formatter` formatter. This formatter uses the [`erb-formatter`](https://rubygems.org/gems/erb-formatter) gem to format ERB templates.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > HTML+ERB, or add to your settings file:
 
 ```json [settings]
 {

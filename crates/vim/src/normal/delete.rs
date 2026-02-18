@@ -31,7 +31,7 @@ impl Vim {
                 let mut motion_kind = None;
                 let mut ranges_to_copy = Vec::new();
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
                         let kind = motion.expand_selection(
@@ -73,7 +73,7 @@ impl Vim {
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head();
                         if kind.linewise()
                             && let Some(column) = original_columns.get(&selection.id)
@@ -112,7 +112,7 @@ impl Vim {
                 let target_mode = object.target_visual_mode(vim.mode, around);
 
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let cursor_point = selection.head().to_point(map);
                         if target_mode == Mode::VisualLine {
                             column_before_move.insert(selection.id, cursor_point.column);
@@ -174,7 +174,7 @@ impl Vim {
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
                             *cursor.column_mut() = 0;

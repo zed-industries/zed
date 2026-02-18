@@ -362,9 +362,7 @@ impl CommitView {
                 });
                 if !binary_buffer_ids.is_empty() {
                     this.editor.update(cx, |editor, cx| {
-                        for buffer_id in binary_buffer_ids {
-                            editor.fold_buffer(buffer_id, cx);
-                        }
+                        editor.fold_buffers(binary_buffer_ids, cx);
                     });
                 }
             })?;
@@ -774,7 +772,7 @@ impl CommitView {
                 callback(repo, &sha, stash, commit_view_entity, workspace_weak, cx).await?;
                 anyhow::Ok(())
             })
-            .detach_and_notify_err(window, cx);
+            .detach_and_notify_err(workspace.weak_handle(), window, cx);
     }
 
     async fn close_commit_view(
@@ -960,7 +958,7 @@ impl Item for CommitView {
         }))))
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 

@@ -1,3 +1,8 @@
+---
+title: All Settings
+description: "Complete reference for all Zed settings."
+---
+
 # All Settings
 
 This is the complete reference for all Zed settings.
@@ -6,7 +11,7 @@ You may also want to change your [theme](../themes.md), configure your [key bind
 
 # Settings
 
-Find below an extensive run-through of many supported settings by Zed.
+The sections below document supported Zed settings.
 
 ## Active Pane Modifiers
 
@@ -35,7 +40,7 @@ Non-negative `float` values
 
 ### Inactive Opacity
 
-- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Description: Opacity of inactive panels. When set to 1.0, inactive panes have the same opacity as the active pane. If set to 0, inactive pane content is not visible. Values are clamped to the [0.0, 1.0] range.
 - Setting: `inactive_opacity`
 - Default: `1.0`
 
@@ -129,7 +134,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
+- Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
 - Setting: `auto_indent`
 - Default: `true`
 
@@ -149,7 +154,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Install extensions
 
-- Description: Define extensions to be autoinstalled or never be installed.
+- Description: Define extensions to install automatically or never install.
 - Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
@@ -239,7 +244,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 ## Auto Signature Help
 
-- Description: Show method signatures in the editor, when inside parentheses
+- Description: Show method signatures in the editor when inside parentheses.
 - Setting: `auto_signature_help`
 - Default: `false`
 
@@ -1599,6 +1604,7 @@ While other options may be changed at a runtime and should be placed under `sett
 {
   "global_lsp_settings": {
     "button": true,
+    "request_timeout": 120,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1611,6 +1617,7 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 - `button`: Whether to show the LSP status button in the status bar
+- `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -3268,6 +3275,18 @@ Non-negative `integer` values
 - Setting: `regex`
 - Default: `false`
 
+### Search On Input
+
+- Description: Whether to search on input in project search.
+- Setting: `search_on_input`
+- Default: `false`
+
+### Search On Input Debounce Ms
+
+- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
+- Setting: `search_on_input_debounce_ms`
+- Default: `200`
+
 ### Center On Match
 
 - Description: Whether to center the cursor on each search match when navigating.
@@ -3279,12 +3298,6 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
-
-## Center on Match
-
-- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
-- Setting: `center_on_match`
-- Default: `false`
 
 ## Seed Search Query From Cursor
 
@@ -3331,6 +3344,68 @@ To enable semantic tokens for a specific language:
 ```
 
 May require language server restart to properly apply.
+
+## LSP Folding Ranges
+
+- Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
+- Setting: `document_folding_ranges`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter and indent-based folding.
+2. `on`: Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+
+To enable LSP folding ranges globally:
+
+```json [settings]
+{
+  "document_folding_ranges": "on"
+}
+```
+
+To enable LSP folding ranges for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_folding_ranges": "on"
+    }
+  }
+}
+```
+
+## LSP Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+1. `off`: Use tree-sitter queries to compute document symbols.
+2. `on`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+
+To enable LSP document symbols globally:
+
+```json [settings]
+{
+  "document_symbols": "on"
+}
+```
+
+To enable LSP document symbols for a specific language:
+
+```json [settings]
+{
+  "languages": {
+    "Rust": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
 
 ## Use Smartcase Search
 

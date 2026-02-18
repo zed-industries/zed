@@ -228,12 +228,18 @@ impl Vim {
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details)
-                })
+                vim.visual_block_motion(
+                    is_up_or_down,
+                    editor,
+                    window,
+                    cx,
+                    &mut |map, point, goal| {
+                        motion.move_point(map, point, goal, times, &text_layout_details)
+                    },
+                )
             } else {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let was_reversed = selection.reversed;
                         let mut current_head = selection.head();
 
@@ -296,7 +302,7 @@ impl Vim {
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
-        mut move_selection: impl FnMut(
+        move_selection: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
@@ -436,7 +442,7 @@ impl Vim {
 
             self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut mut_selection = selection.clone();
 
                         // all our motions assume that the current character is
@@ -552,7 +558,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
@@ -570,7 +576,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| {
+                s.move_cursors_with(&mut |map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
                         SelectionGoal::None,
@@ -593,7 +599,7 @@ impl Vim {
     pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|_, selection| {
+                s.move_with(&mut |_, selection| {
                     selection.reversed = !selection.reversed;
                 });
             })
@@ -609,7 +615,7 @@ impl Vim {
         let mode = self.mode;
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|_, selection| {
+                s.move_with(&mut |_, selection| {
                     selection.reversed = !selection.reversed;
                 });
                 if mode == Mode::VisualBlock {
@@ -628,7 +634,7 @@ impl Vim {
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         if line_mode {
                             let mut position = selection.head();
                             if !selection.reversed {
@@ -665,7 +671,7 @@ impl Vim {
 
                 if line_mode && vim.mode != Mode::VisualBlock {
                     editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
+                        s.move_with(&mut |map, selection| {
                             let end = selection.end.to_point(map);
                             let start = selection.start.to_point(map);
                             if end.row < map.buffer_snapshot().max_point().row {
@@ -686,7 +692,7 @@ impl Vim {
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head().to_point(map);
 
                         if let Some(column) = original_columns.get(&selection.id) {
@@ -712,7 +718,7 @@ impl Vim {
             // For visual line mode, adjust selections to avoid yanking the next line when on \n
             if line_mode && vim.mode != Mode::VisualBlock {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let start = selection.start.to_point(map);
                         let end = selection.end.to_point(map);
                         if end.column == 0 && end > start {
@@ -735,7 +741,7 @@ impl Vim {
             };
             vim.yank_selections_content(editor, kind, window, cx);
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.move_with(|map, selection| {
+                s.move_with(&mut |map, selection| {
                     if line_mode {
                         selection.start = start_of_line(map, false, selection.start);
                     };

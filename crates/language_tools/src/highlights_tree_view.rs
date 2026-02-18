@@ -302,7 +302,7 @@ impl HighlightsTreeView {
                         .buffer(*buffer_id)
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
-                        let range: Range<Anchor> = token.range.start.into()..token.range.end.into();
+                        let range = token.range.start..token.range.end;
                         let excerpt_id = range.start.excerpt_id;
                         let (range_display, sort_key) = format_anchor_range(
                             &range,
@@ -428,7 +428,7 @@ impl HighlightsTreeView {
         entry_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
+        f: &mut dyn FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let entry = self.cached_entries.get(entry_ix)?;
@@ -443,7 +443,7 @@ impl HighlightsTreeView {
 
     fn render_entry(&self, entry: &HighlightEntry, selected: bool, cx: &App) -> Div {
         let colors = cx.theme().colors();
-        let style_preview = render_style_preview(entry.style, cx);
+        let style_preview = render_style_preview(entry.style, selected, cx);
 
         h_flex()
             .gap_1()
@@ -510,7 +510,7 @@ impl HighlightsTreeView {
                                     entry_ix,
                                     window,
                                     cx,
-                                    |editor, mut range, _, window, cx| {
+                                    &mut |editor, mut range, _, window, cx| {
                                         mem::swap(&mut range.start, &mut range.end);
                                         editor.change_selections(
                                             SelectionEffects::scroll(Autoscroll::newest()),
@@ -533,7 +533,7 @@ impl HighlightsTreeView {
                                         entry_ix,
                                         window,
                                         cx,
-                                        |editor, range, key, _, cx| {
+                                        &mut |editor, range, key, _, cx| {
                                             Self::set_editor_highlights(editor, key, &[range], cx);
                                         },
                                     );
@@ -623,7 +623,7 @@ impl HighlightsTreeView {
                 entry_ix,
                 window,
                 cx,
-                |editor, mut range, _, window, cx| {
+                &mut |editor, mut range, _, window, cx| {
                     mem::swap(&mut range.start, &mut range.end);
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::newest()),
@@ -730,7 +730,7 @@ impl Focusable for HighlightsTreeView {
 impl Item for HighlightsTreeView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Highlights".into()
@@ -979,7 +979,7 @@ fn format_anchor_range(
     }
 }
 
-fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
+fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {
     let colors = cx.theme().colors();
 
     let display_color = style.color.or(style.background_color);
@@ -987,7 +987,11 @@ fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
     let mut preview = div().px_1().rounded_sm();
 
     if let Some(color) = display_color {
-        preview = preview.bg(color);
+        if selected {
+            preview = preview.border_1().border_color(color).text_color(color);
+        } else {
+            preview = preview.bg(color);
+        }
     } else {
         preview = preview.bg(colors.element_background);
     }
@@ -1016,7 +1020,10 @@ fn render_style_preview(style: HighlightStyle, cx: &App) -> Div {
         parts.join(" ")
     };
 
-    preview.child(Label::new(label_text).size(LabelSize::Small))
+    preview.child(Label::new(label_text).size(LabelSize::Small).when_some(
+        display_color.filter(|_| selected),
+        |label, display_color| label.color(Color::Custom(display_color)),
+    ))
 }
 
 fn format_hsla_as_hex(color: Hsla) -> String {

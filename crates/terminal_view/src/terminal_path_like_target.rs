@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, PathWithPosition},
+    paths::{PathStyle, PathWithPosition, normalize_lexically},
     rel_path::RelPath,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -222,17 +222,33 @@ fn possible_open_target(
                 }
             };
 
-            if let Ok(relative_path_to_check) =
-                RelPath::new(&path_to_check.path, PathStyle::local())
-                && !worktree.read(cx).is_single_file()
-                && let Some(entry) = relative_cwd
-                    .clone()
-                    .and_then(|relative_cwd| {
-                        worktree
-                            .read(cx)
-                            .entry_for_path(&relative_cwd.join(&relative_path_to_check))
+            // Normalize the path by joining with cwd if available (handles `.` and `..` segments)
+            let normalized_path = if path_to_check.path.is_relative() {
+                relative_cwd.as_ref().and_then(|relative_cwd| {
+                    let joined = relative_cwd
+                        .as_ref()
+                        .as_std_path()
+                        .join(&path_to_check.path);
+                    normalize_lexically(&joined).ok().and_then(|p| {
+                        RelPath::new(&p, PathStyle::local())
+                            .ok()
+                            .map(std::borrow::Cow::into_owned)
                     })
-                    .or_else(|| worktree.read(cx).entry_for_path(&relative_path_to_check))
+                })
+            } else {
+                None
+            };
+            let original_path = RelPath::new(&path_to_check.path, PathStyle::local()).ok();
+
+            if !worktree.read(cx).is_single_file()
+                && let Some(entry) = normalized_path
+                    .as_ref()
+                    .and_then(|p| worktree.read(cx).entry_for_path(p))
+                    .or_else(|| {
+                        original_path
+                            .as_ref()
+                            .and_then(|p| worktree.read(cx).entry_for_path(p.as_ref()))
+                    })
             {
                 open_target = Some(OpenTarget::Worktree(
                     PathWithPosition {
@@ -523,7 +539,7 @@ mod tests {
         terminal_settings::{AlternateScroll, CursorShape},
     };
     use util::path;
-    use workspace::AppState;
+    use workspace::{AppState, MultiWorkspace};
 
     async fn init_test(
         app_cx: &mut TestAppContext,
@@ -552,8 +568,9 @@ mod tests {
         )
         .await;
 
-        let (workspace, _cx) =
-            app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) = app_cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let terminal = app_cx.new(|cx| {
             TerminalBuilder::new_display_only(
@@ -998,8 +1015,6 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
         async fn issue_28339(cx: &mut TestAppContext) {
             test_path_likes!(
@@ -1050,17 +1065,14 @@ mod tests {
                         "../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339/foo",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                 }
             )
         }
 
         // https://github.com/zed-industries/zed/issues/28339
-        // Note: These could all be found by WorktreeExact if we used
-        // `fs::normalize_path(&maybe_path)`
         #[gpui::test]
-        #[should_panic(expected = "Hover target should not be `None`")]
         async fn issue_28339_remote(cx: &mut TestAppContext) {
             test_path_likes!(
                 cx,

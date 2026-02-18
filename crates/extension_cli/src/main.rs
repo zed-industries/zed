@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,6 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
-use rpc::ExtensionProvides;
 use snippet_provider::file_to_snippets;
 use snippet_provider::format::VsSnippetsFile;
 use tokio::process::Command;
@@ -78,7 +77,7 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
-    let extension_provides = extension_provides(&manifest);
+    let extension_provides = manifest.provides();
 
     if extension_provides.is_empty() {
         bail!("extension does not provide any features");
@@ -108,7 +107,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
+    let manifest_json = serde_json::to_string(&cloud_api_types::ExtensionApiManifest {
         name: manifest.name,
         version: manifest.version,
         description: manifest.description,
@@ -124,48 +123,6 @@ async fn main() -> Result<()> {
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
 
     Ok(())
-}
-
-/// Returns the set of features provided by the extension.
-fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvides> {
-    let mut provides = BTreeSet::default();
-    if !manifest.themes.is_empty() {
-        provides.insert(ExtensionProvides::Themes);
-    }
-
-    if !manifest.icon_themes.is_empty() {
-        provides.insert(ExtensionProvides::IconThemes);
-    }
-
-    if !manifest.languages.is_empty() {
-        provides.insert(ExtensionProvides::Languages);
-    }
-
-    if !manifest.grammars.is_empty() {
-        provides.insert(ExtensionProvides::Grammars);
-    }
-
-    if !manifest.language_servers.is_empty() {
-        provides.insert(ExtensionProvides::LanguageServers);
-    }
-
-    if !manifest.context_servers.is_empty() {
-        provides.insert(ExtensionProvides::ContextServers);
-    }
-
-    if !manifest.agent_servers.is_empty() {
-        provides.insert(ExtensionProvides::AgentServers);
-    }
-
-    if manifest.snippets.is_some() {
-        provides.insert(ExtensionProvides::Snippets);
-    }
-
-    if !manifest.debug_adapters.is_empty() {
-        provides.insert(ExtensionProvides::DebugAdapters);
-    }
-
-    provides
 }
 
 async fn copy_extension_resources(
