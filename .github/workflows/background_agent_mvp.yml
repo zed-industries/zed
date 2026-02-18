@@ -188,7 +188,7 @@ jobs:
              - Validation
              - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
              - Reviewer Checklist
-             - Release Notes (final section; format exactly as "Release Notes:", then a blank line, then one bullet like "- N/A")
+             - Release Notes (final section; format as Release Notes:, then a blank line, then one bullet like - N/A)
 
           Constraints:
           - Do not merge or auto-approve.
