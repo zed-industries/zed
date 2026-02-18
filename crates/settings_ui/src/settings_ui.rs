@@ -2189,35 +2189,37 @@ impl SettingsWindow {
 
         let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(self.original_window.as_ref(), cx)
-            .flat_map(|project| project.read(cx).visible_worktrees(cx))
-            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
-        {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            let Some(directory_name) = worktree.root_dir().and_then(|file| {
-                file.file_name()
-                    .map(|os_string| os_string.to_string_lossy().to_string())
-            }) else {
-                continue;
-            };
+        if self.original_window.is_some() {
+            for worktree in all_projects(self.original_window.as_ref(), cx)
+                .flat_map(|project| project.read(cx).visible_worktrees(cx))
+                .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+            {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                    file.file_name()
+                        .map(|os_string| os_string.to_string_lossy().to_string())
+                }) else {
+                    continue;
+                };
 
-            missing_worktrees.push((worktree_id, directory_name.clone()));
-            let path = RelPath::empty().to_owned().into_arc();
+                missing_worktrees.push((worktree_id, directory_name.clone()));
+                let path = RelPath::empty().to_owned().into_arc();
 
-            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+                let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
 
-            let focus_handle = prev_files
-                .iter()
-                .find_map(|(prev_file, handle)| {
-                    (prev_file == &settings_ui_file).then(|| handle.clone())
-                })
-                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+                let focus_handle = prev_files
+                    .iter()
+                    .find_map(|(prev_file, handle)| {
+                        (prev_file == &settings_ui_file).then(|| handle.clone())
+                    })
+                    .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
 
-            ui_files.push((settings_ui_file, focus_handle));
+                ui_files.push((settings_ui_file, focus_handle));
+            }
+
+            self.worktree_root_dirs.extend(missing_worktrees);
         }
-
-        self.worktree_root_dirs.extend(missing_worktrees);
 
         self.files = ui_files;
         let current_file_still_exists = self
