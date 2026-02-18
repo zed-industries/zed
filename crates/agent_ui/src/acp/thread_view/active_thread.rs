@@ -1,4 +1,4 @@
-use cloud_api_types::SubmitAgentThreadFeedbackBody;
+use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use gpui::{Corner, List};
 use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
@@ -84,18 +84,28 @@ impl ThreadFeedbackState {
 
         self.comments_editor.take();
 
+        let project = thread.read(cx).project().read(cx);
+        let client = project.client();
+        let user_store = project.user_store();
+        let organization = user_store.read(cx).current_organization();
+
         let session_id = thread.read(cx).session_id().clone();
         let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
         let task = telemetry.thread_data(&session_id, cx);
         cx.background_spawn(async move {
             let thread = task.await?;
-            telemetry::event!(
-                "Agent Thread Feedback Comments",
-                agent = agent_telemetry_id,
-                session_id = session_id,
-                comments = comments,
-                thread = thread
-            );
+
+            client
+                .cloud_client()
+                .submit_agent_feedback_comments(SubmitAgentThreadFeedbackCommentsBody {
+                    organization_id: organization.map(|organization| organization.id.clone()),
+                    agent: agent_telemetry_id.to_string(),
+                    session_id: session_id.to_string(),
+                    comments,
+                    thread,
+                })
+                .await?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
