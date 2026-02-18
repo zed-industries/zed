@@ -39,6 +39,8 @@ struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
     icon: IconName,
+    waiting_for_confirmation: bool,
+    has_error: bool,
 }
 
 const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
@@ -102,6 +104,8 @@ impl WorkspaceThreadEntry {
                 title: SharedString::from(title.clone()),
                 status: AgentThreadStatus::Completed,
                 icon: IconName::ZedAgent,
+                waiting_for_confirmation: false,
+                has_error: false,
             })
         });
 
@@ -127,10 +131,14 @@ impl WorkspaceThreadEntry {
             ThreadStatus::Generating => AgentThreadStatus::Running,
             ThreadStatus::Idle => AgentThreadStatus::Completed,
         };
+        let waiting_for_confirmation = thread.has_waiting_for_confirmation();
+        let has_error = thread.had_error();
         Some(AgentThreadInfo {
             title,
             status,
             icon,
+            waiting_for_confirmation,
+            has_error,
         })
     }
 }
@@ -633,6 +641,10 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ..
                     })
                 );
+                let waiting_for_confirmation = thread_info
+                    .as_ref()
+                    .is_some_and(|info| info.waiting_for_confirmation);
+                let has_error = thread_info.as_ref().is_some_and(|info| info.has_error);
 
                 Some(
                     ThreadItem::new(
@@ -646,6 +658,8 @@ impl PickerDelegate for WorkspacePickerDelegate {
                     )
                     .running(running)
                     .generation_done(has_notification)
+                    .waiting_for_confirmation(waiting_for_confirmation)
+                    .error(has_error)
                     .selected(selected)
                     .worktree(worktree_label.clone())
                     .worktree_highlight_positions(positions.clone())
@@ -876,6 +890,8 @@ impl Sidebar {
                 title,
                 status,
                 icon: IconName::ZedAgent,
+                waiting_for_confirmation: false,
+                has_error: false,
             },
         );
     }

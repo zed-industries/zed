@@ -13,6 +13,8 @@ pub struct ThreadItem {
     timestamp: SharedString,
     running: bool,
     generation_done: bool,
+    waiting_for_confirmation: bool,
+    error: bool,
     selected: bool,
     hovered: bool,
     added: Option<usize>,
@@ -35,6 +37,8 @@ impl ThreadItem {
             timestamp: "".into(),
             running: false,
             generation_done: false,
+            waiting_for_confirmation: false,
+            error: false,
             selected: false,
             hovered: false,
             added: None,
@@ -66,6 +70,16 @@ impl ThreadItem {
 
     pub fn generation_done(mut self, generation_done: bool) -> Self {
         self.generation_done = generation_done;
+        self
+    }
+
+    pub fn waiting_for_confirmation(mut self, waiting_for_confirmation: bool) -> Self {
+        self.waiting_for_confirmation = waiting_for_confirmation;
+        self
+    }
+
+    pub fn error(mut self, error: bool) -> Self {
+        self.error = error;
         self
     }
 
@@ -143,22 +157,51 @@ impl RenderOnce for ThreadItem {
             .color(Color::Muted)
             .size(IconSize::Small);
 
-        let icon = if self.generation_done {
-            icon_container().child(DecoratedIcon::new(
-                agent_icon,
-                Some(
-                    IconDecoration::new(
-                        IconDecorationKind::Dot,
-                        cx.theme().colors().surface_background,
-                        cx,
-                    )
-                    .color(cx.theme().colors().text_accent)
-                    .position(gpui::Point {
-                        x: px(-2.),
-                        y: px(-2.),
-                    }),
-                ),
-            ))
+        let decoration = if self.waiting_for_confirmation {
+            Some(
+                IconDecoration::new(
+                    IconDecorationKind::Triangle,
+                    cx.theme().colors().surface_background,
+                    cx,
+                )
+                .color(cx.theme().status().warning)
+                .position(gpui::Point {
+                    x: px(-2.),
+                    y: px(-2.),
+                }),
+            )
+        } else if self.error {
+            Some(
+                IconDecoration::new(
+                    IconDecorationKind::X,
+                    cx.theme().colors().surface_background,
+                    cx,
+                )
+                .color(cx.theme().status().error)
+                .position(gpui::Point {
+                    x: px(-2.),
+                    y: px(-2.),
+                }),
+            )
+        } else if self.generation_done {
+            Some(
+                IconDecoration::new(
+                    IconDecorationKind::Dot,
+                    cx.theme().colors().surface_background,
+                    cx,
+                )
+                .color(cx.theme().colors().text_accent)
+                .position(gpui::Point {
+                    x: px(-2.),
+                    y: px(-2.),
+                }),
+            )
+        } else {
+            None
+        };
+
+        let icon = if let Some(decoration) = decoration {
+            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
         } else {
             icon_container().child(agent_icon)
         };
@@ -308,6 +351,26 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-2", "Refine thread view scrolling behavior")
                             .timestamp("12:12 AM")
                             .generation_done(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Waiting for Confirmation",
+                container()
+                    .child(
+                        ThreadItem::new("ti-2b", "Execute shell command in terminal")
+                            .timestamp("12:15 AM")
+                            .waiting_for_confirmation(true),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Error",
+                container()
+                    .child(
+                        ThreadItem::new("ti-2c", "Failed to connect to language server")
+                            .timestamp("12:20 AM")
+                            .error(true),
                     )
                     .into_any_element(),
             ),

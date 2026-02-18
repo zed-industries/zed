@@ -955,6 +955,7 @@ pub struct AcpThread {
     // subagent cancellation fields
     user_stopped: Arc<std::sync::atomic::AtomicBool>,
     user_stop_tx: watch::Sender<bool>,
+    had_error: bool,
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1193,6 +1194,7 @@ impl AcpThread {
             pending_terminal_exit: HashMap::default(),
             user_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             user_stop_tx,
+            had_error: false,
         }
     }
 
@@ -1250,6 +1252,24 @@ impl AcpThread {
         } else {
             ThreadStatus::Idle
         }
+    }
+
+    pub fn had_error(&self) -> bool {
+        self.had_error
+    }
+
+    pub fn has_waiting_for_confirmation(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::WaitingForConfirmation { .. },
+                    ..
+                }) => return true,
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+        false
     }
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
@@ -1939,6 +1959,7 @@ impl AcpThread {
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
     ) -> BoxFuture<'static, Result<()>> {
         self.clear_completed_plan_entries(cx);
+        self.had_error = false;
 
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
@@ -1960,12 +1981,16 @@ impl AcpThread {
                 match response {
                     Ok(Err(e)) => {
                         this.send_task.take();
+                        this.had_error = true;
+                        cx.notify();
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
                         Err(e)
                     }
                     Ok(Ok(r)) if r.stop_reason == acp::StopReason::MaxTokens => {
                         this.send_task.take();
+                        this.had_error = true;
+                        cx.notify();
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                         Err(anyhow!("Max tokens reached"))
@@ -1994,6 +2019,8 @@ impl AcpThread {
                             ..
                         })) = result
                         {
+                            this.had_error = true;
+                            cx.notify();
                             if let Some((user_msg_ix, _)) = this.last_user_message() {
                                 // Check if there's a completed tool call with results after the last user message
                                 // This indicates the refusal is in response to tool output, not the user's prompt
