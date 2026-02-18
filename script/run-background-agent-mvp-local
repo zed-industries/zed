@@ -90,7 +90,7 @@ def resolve_crashes(args) -> list[dict[str, str]]:
         output_path = file.name
 
     try:
-        selection_result = run(
+        run(
             [
                 "python3",
                 "script/select-sentry-crash-candidates",
@@ -103,19 +103,8 @@ def resolve_crashes(args) -> list[dict[str, str]]:
                 "--output",
                 output_path,
             ],
-            check=False,
             capture_output=True,
         )
-        if selection_result.returncode != 0:
-            stderr_text = (selection_result.stderr or "").strip()
-            stdout_text = (selection_result.stdout or "").strip()
-            detail = stderr_text or stdout_text or "No output from selector"
-            print(
-                "Error selecting crash candidates: "
-                f"script/select-sentry-crash-candidates exited {selection_result.returncode}: {detail}",
-                file=sys.stderr,
-            )
-            return []
         with open(output_path, "r", encoding="utf-8") as file:
             payload = json.load(file)
         crashes = []
