@@ -1083,10 +1083,11 @@ impl Render for Sidebar {
                     .mt_px()
                     .pb_px()
                     .pr_1()
-                    .when(cfg!(target_os = "macos"), |this| {
-                        this.pl(px(TRAFFIC_LIGHT_PADDING))
-                    })
-                    .when(cfg!(not(target_os = "macos")), |this| this.pl_2())
+                    .when_else(
+                        cfg!(target_os = "macos") && !window.is_fullscreen(),
+                        |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
+                        |this| this.pl_2(),
+                    )
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
