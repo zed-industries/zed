@@ -2027,9 +2027,16 @@ impl LhsEditor {
         let main_buffer = rhs_multibuffer_snapshot
             .buffer_for_excerpt(excerpt_id)
             .unwrap();
-        let base_text_buffer = diff.read(lhs_cx).base_text_buffer();
-        let diff_snapshot = diff.read(lhs_cx).snapshot(lhs_cx);
-        let base_text_buffer_snapshot = base_text_buffer.read(lhs_cx).snapshot();
+        let diff_snapshot;
+        let base_text_buffer_snapshot;
+        let remote_id;
+        {
+            let diff = diff.read(lhs_cx);
+            let base_text_buffer = diff.base_text_buffer().read(lhs_cx);
+            diff_snapshot = diff.snapshot(lhs_cx);
+            base_text_buffer_snapshot = base_text_buffer.snapshot();
+            remote_id = base_text_buffer.remote_id();
+        }
         let excerpt_ranges = rhs_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), lhs_cx)
             .into_iter()
@@ -2069,7 +2076,7 @@ impl LhsEditor {
             .collect::<Vec<_>>();
         let lhs_result = lhs_multibuffer.set_merged_excerpt_ranges_for_path(
             path_key,
-            base_text_buffer.clone(),
+            diff.read(lhs_cx).base_text_buffer().clone(),
             excerpt_ranges,
             &base_text_buffer_snapshot,
             new,
@@ -2078,7 +2085,7 @@ impl LhsEditor {
         );
         if !lhs_result.excerpt_ids.is_empty()
             && lhs_multibuffer
-                .diff_for(base_text_buffer.read(lhs_cx).remote_id())
+                .diff_for(remote_id)
                 .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
         {
             lhs_multibuffer.add_inverted_diff(diff, lhs_cx);
