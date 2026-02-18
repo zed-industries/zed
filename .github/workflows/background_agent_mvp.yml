@@ -176,7 +176,7 @@ jobs:
 
           Required workflow:
           1. Read the crash report from {data_file}
-          2. Read and follow `.rules`.
+          2. Read and follow .rules.
           3. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
           4. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
           5. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
