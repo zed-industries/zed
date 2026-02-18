@@ -26,7 +26,7 @@ your password again the next time something changes in the binary.
 This quickly becomes annoying and impedes development speed.
 
 That is why, by default, when running a development build of Zed an alternative
-credential provider is used in order to bypass the system keychain.
+credential provider is used to bypass the system keychain.
 
 > **Note:** This is **only** the case for development builds. For all non-development
 > release channels the system keychain is always used.
@@ -63,12 +63,10 @@ Here's a typical workflow for comparing frame rendering performance between diff
    ```
 
 2. **Test the first version:**
-
    - Checkout the commit you want to measure
    - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-a`
 
 3. **Test the second version:**
-
    - Checkout another commit you want to compare
    - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-b`
 

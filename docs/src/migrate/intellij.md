@@ -1,6 +1,6 @@
 ---
 title: How to Migrate from IntelliJ IDEA to Zed
-description: "Guide for migrating from How to Migrate from IntelliJ IDEA to Zed to Zed, including settings and keybindings."
+description: "Guide for migrating from IntelliJ IDEA to Zed, including settings and keybindings."
 ---
 
 # How to Migrate from IntelliJ IDEA to Zed
@@ -211,7 +211,7 @@ IntelliJ's value for enterprise Java development comes largely from its framewor
 
 Zed has none of this. The language server sees Java code as Java code, so it doesn't understand that `@Autowired` means something special or that this class is a REST controller.
 
-Similarly for other ecosystems: no Rails integration, no Django awareness, no Angular/React-specific tooling beyond what the TypeScript language server provides.
+Similarly for other stacks: no Rails integration, no Django awareness, no Angular/React-specific tooling beyond what the TypeScript language server provides.
 
 **How to adapt:**
 
@@ -255,9 +255,9 @@ The Debug Panel (`Cmd+5`) shows variables, call stack, and breakpoints—similar
 
 ### Extensions vs. Plugins
 
-IntelliJ has a massive plugin ecosystem covering everything from language support to database tools to deployment integrations.
+IntelliJ has a large plugin catalog covering everything from language support to database tools to deployment integrations.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes

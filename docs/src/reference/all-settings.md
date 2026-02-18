@@ -1,6 +1,6 @@
 ---
 title: All Settings
-description: "This is the complete reference for all Zed settings."
+description: "Complete reference for all Zed settings."
 ---
 
 # All Settings
@@ -11,7 +11,7 @@ You may also want to change your [theme](../themes.md), configure your [key bind
 
 # Settings
 
-Find below an extensive run-through of many supported settings by Zed.
+The sections below document supported Zed settings.
 
 ## Active Pane Modifiers
 
@@ -40,7 +40,7 @@ Non-negative `float` values
 
 ### Inactive Opacity
 
-- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Description: Opacity of inactive panels. When set to 1.0, inactive panes have the same opacity as the active pane. If set to 0, inactive pane content is not visible. Values are clamped to the [0.0, 1.0] range.
 - Setting: `inactive_opacity`
 - Default: `1.0`
 
@@ -134,7 +134,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
+- Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
 - Setting: `auto_indent`
 - Default: `true`
 
@@ -154,7 +154,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Install extensions
 
-- Description: Define extensions to be autoinstalled or never be installed.
+- Description: Define extensions to install automatically or never install.
 - Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
@@ -244,7 +244,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 ## Auto Signature Help
 
-- Description: Show method signatures in the editor, when inside parentheses
+- Description: Show method signatures in the editor when inside parentheses.
 - Setting: `auto_signature_help`
 - Default: `false`
 
@@ -2844,7 +2844,6 @@ Configuration object for defining settings profiles. Example:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action

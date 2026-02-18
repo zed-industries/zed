@@ -1,6 +1,6 @@
 ---
 title: Default Key Bindings
-description: "Documentation for Default Key Bindings in Zed."
+description: "Reference for Zed's default key bindings."
 ---
 
 # Default Key Bindings

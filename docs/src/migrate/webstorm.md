@@ -1,6 +1,6 @@
 ---
 title: How to Migrate from WebStorm to Zed
-description: "Guide for migrating from How to Migrate from WebStorm to Zed to Zed, including settings and keybindings."
+description: "Guide for migrating from WebStorm to Zed, including settings and keybindings."
 ---
 
 # How to Migrate from WebStorm to Zed
@@ -159,7 +159,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For JavaScrip
 - **ESLint** — Linting integration
 - **Prettier** — Code formatting (built-in)
 
-The TypeScript LSP experience is mature and robust. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
+The TypeScript LSP experience is well-supported. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
 
 Where you might notice differences:
 
@@ -312,9 +312,9 @@ The test output appears in the terminal panel. For Jest, use `--verbose` for det
 
 ### Extensions vs. Plugins
 
-WebStorm has a plugin ecosystem covering additional language support, themes, and tool integrations.
+WebStorm has a plugin catalog covering additional language support, themes, and tool integrations.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes

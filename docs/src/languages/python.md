@@ -123,7 +123,7 @@ Examples of both kinds of configuration are provided below. Refer to the basedpy
 
 Language server settings for basedpyright in Zed can be set in the `lsp` section of your `settings.json`.
 
-For example, in order to:
+For example, to:
 
 - diagnose all files in the workspace instead of the only open files default
 - disable inlay hints on function arguments

@@ -32,7 +32,7 @@ In addition to these two language servers, Zed also supports:
 
 - [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 - [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
-- [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that leverages Ruby Signature (RBS).
+- [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that uses Ruby Signature (RBS).
 - [Herb](https://herb-tools.dev) which is a language server for ERB files.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
@@ -93,7 +93,7 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 }
 ```
 
-That disables `solargraph` and `rubocop` and enables `ruby-lsp`.
+That disables `solargraph` and `rubocop` and uses `ruby-lsp`.
 
 ### Using `rubocop`
 

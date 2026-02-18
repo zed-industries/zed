@@ -28,7 +28,7 @@ When developing an extension, you can use it in Zed without needing to publish i
 
 From the extensions page, click the `Install Dev Extension` button (or the {#action zed::InstallDevExtension} action) and select the directory containing your extension.
 
-If you need to troubleshoot, you can check the Zed.log ({#action zed::OpenLog}) for additional output. For debug output, close and relaunch zed with the `zed --foreground` from the command line which show more verbose INFO level logging.
+If you need to troubleshoot, check Zed.log ({#action zed::OpenLog}) for additional output. For debug output, close and relaunch Zed from the command line with `zed --foreground`, which shows more verbose INFO-level logs.
 
 If you already have the published version of the extension installed, the published version will be uninstalled prior to the installation of the dev extension. After successful installation, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
 
@@ -43,11 +43,11 @@ name = "My extension"
 version = "0.0.1"
 schema_version = 1
 authors = ["Your Name <you@example.com>"]
-description = "My cool extension"
+description = "Example extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
-> **Note:** If you are working on a theme extension with the intend of publishing it later, is is recommended that you suffix your theme's extension ID with `-theme`. This might otherwise be raised during the process of [releasing your extension](#publishing-your-extension).
+> **Note:** If you are working on a theme extension with the intent to publish it later, suffix your theme extension ID with `-theme`. Otherwise, this may be raised during [extension publishing](#publishing-your-extension).
 
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 

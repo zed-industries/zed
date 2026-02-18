@@ -72,7 +72,7 @@ A locator locates the debug target and figures out how to spawn a debug session 
 
 > Your extension can define its own debug locators even if it does not expose a debug adapter. We strongly recommend doing so when your extension already exposes language tasks, as it allows users to spawn a debug session without having to manually configure the debug adapter.
 
-Locators can (but don't have to) be agnostic to the debug adapter they are used with. They are simply responsible for locating the debug target and figuring out how to spawn a debug session for it. This allows for a more flexible and extensible debugging experience.
+Locators can (but don't have to) be agnostic to the debug adapter they are used with. They are responsible for locating the debug target and figuring out how to spawn a debug session for it. This lets extensions share locator logic across adapters.
 
 Your extension can define one or more debug locators. Each debug locator must be registered in the `extension.toml`:
 
@@ -113,9 +113,9 @@ Note however that you do _not_ need to go through a 2-phase resolution; if you c
 
 ## Available Extensions
 
-Check out all the DAP servers that have already been exposed as extensions [on Zed's site](https://zed.dev/extensions?filter=debug-adapters).
+See DAP servers published as extensions [on Zed's site](https://zed.dev/extensions?filter=debug-adapters).
 
-We recommend taking a look at their repositories as a way to understand how they are generally created and structured.
+Review their repositories to see common implementation patterns and structure.
 
 ## Testing
 

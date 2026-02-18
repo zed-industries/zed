@@ -12,7 +12,7 @@ Rust support is available natively in Zed.
 - Debug Adapter: [CodeLLDB](https://github.com/vadimcn/codelldb) (primary), [GDB](https://sourceware.org/gdb/) (secondary, not available on Apple silicon)
 
 <!--
-TBD: Polish Rust Docs. Zed is a good rust editor, good Rust docs make it look like we care about Rust (we do!)
+TBD: Polish Rust docs. Zed has strong Rust support, and the docs should reflect that clearly.
 TBD: Users may not know what inlayHints, don't start there.
 TBD: Provide explicit examples not just `....`
 -->

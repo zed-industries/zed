@@ -12,7 +12,7 @@ OpenTofu support is available through the [OpenTofu extension](https://github.co
 
 ## Configuration
 
-In order to automatically use the OpenTofu extension and language server when editing .tf and .tfvars files,
+To automatically use the OpenTofu extension and language server when editing `.tf` and `.tfvars` files,
 either uninstall the Terraform extension or add this to your settings.json:
 
 ```json

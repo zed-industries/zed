@@ -1,6 +1,6 @@
 ---
 title: How to Migrate from RustRover to Zed
-description: "Guide for migrating from How to Migrate from RustRover to Zed to Zed, including settings and keybindings."
+description: "Guide for migrating from RustRover to Zed, including settings and keybindings."
 ---
 
 # How to Migrate from RustRover to Zed
@@ -328,9 +328,9 @@ The test output appears in the terminal panel. For more detailed output, use:
 
 ### Extensions vs. Plugins
 
-RustRover has a plugin ecosystem, though it's more limited than other JetBrains IDEs since Rust support is built-in.
+RustRover has a plugin catalog, though it's more limited than other JetBrains IDEs since Rust support is built-in.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes

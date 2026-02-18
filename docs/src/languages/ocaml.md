@@ -38,4 +38,4 @@ Once you have the cli, simply from a terminal, navigate to your project and run
 zed .
 ```
 
-Voilà! You should have Zed running with OCaml support, no additional setup required.
+You should now have Zed running with OCaml support, with no additional setup required.
