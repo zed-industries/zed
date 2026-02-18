@@ -134,13 +134,9 @@ pub fn init(cx: &mut App) {
     });
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace
-            .register_action(|workspace, _: &OpenKeymap, window, cx| {
-                open_keymap_editor(None, workspace, window, cx);
-            })
-            .register_action(|workspace, action: &ChangeKeybinding, window, cx| {
-                open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
-            });
+        workspace.register_action(|workspace, action: &ChangeKeybinding, window, cx| {
+            open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
+        });
     })
     .detach();
 
