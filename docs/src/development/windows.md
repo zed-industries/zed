@@ -1,22 +1,27 @@
+---
+title: Building Zed for Windows
+description: "Guide to building zed for windows for Zed development."
+---
+
 # Building Zed for Windows
 
 > The following commands may be executed in any shell.
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
-- Install either [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is year when your VS was released. Pay attention to the architecture and change it to yours if needed.)
-- Or, if you prefer to have a slimmer installer of only the MSVC compiler tools, you can install the [build tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (+libs as above) and the "Desktop development with C++" workload.
-  But beware this installation is not automatically picked up by rustup. You must initialize your environment variables by first launching the "developer" shell (cmd/powershell) this installation places in the start menu or in Windows Terminal and then compile.
-- Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
+- Install either [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is the release year. Adjust architecture as needed).
+- Or, if you prefer a slimmer installation, install only the [Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (plus the libs above) and the "Desktop development with C++" workload.
+  This setup is not picked up automatically by rustup. Before compiling, initialize environment variables by launching the developer shell (cmd/PowerShell) installed in the Start menu or Windows Terminal.
+- Install the Windows 11 or 10 SDK for your system, and make sure at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/).
 - Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/)). Or you can install it through Visual Studio Installer, then manually add the `bin` directory to your `PATH`, for example: `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
 
-If you can't compile Zed, make sure that you have at least the following components installed in case of a Visual Studio installation:
+If you cannot compile Zed, make sure a Visual Studio installation includes at least the following components:
 
 ```json [settings]
 {
@@ -34,7 +39,7 @@ If you can't compile Zed, make sure that you have at least the following compone
 }
 ```
 
-Or if in case of just Build Tools, the following components:
+If you are using Build Tools only, make sure these components are installed:
 
 ```json [settings]
 {
@@ -60,7 +65,7 @@ Or if in case of just Build Tools, the following components:
 }
 ```
 
-The list can be obtained as follows:
+You can export this component list as follows:
 
 - Open the Visual Studio Installer
 - Click on `More` in the `Installed` tab
@@ -68,7 +73,7 @@ The list can be obtained as follows:
 
 ### Notes
 
-You should modify the `pg_hba.conf` file in the `data` directory to use `trust` instead of `scram-sha-256` for the `host` method. Otherwise, the connection will fail with the error `password authentication failed`. The `pg_hba.conf` file typically locates at `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`. After the modification, the file should look like this:
+Update `pg_hba.conf` in the `data` directory to use `trust` instead of `scram-sha-256` for the `host` method. Otherwise, the connection fails with `password authentication failed`. The file is typically at `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`. After the change, it should look like this:
 
 ```conf
 # IPv4 local connections:
@@ -77,14 +82,14 @@ host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
 ```
 
-Also, if you are using a non-latin Windows version, you must modify the`lc_messages` parameter in the `postgresql.conf` file in the `data` directory to `English_United States.1252` (or whatever UTF8-compatible encoding you have). Otherwise, the database will panic. The `postgresql.conf` file should look like this:
+If you are using a non-Latin Windows locale, set the `lc_messages` parameter in `postgresql.conf` (in the `data` directory) to `English_United States.1252` (or another UTF-8-compatible encoding available on your system). Otherwise, the database may panic. The file should look like this:
 
 ```conf
 # lc_messages = 'Chinese (Simplified)_China.936' # locale for system error message strings
 lc_messages = 'English_United States.1252'
 ```
 
-After this, you should restart the `postgresql` service. Press the `win` key + `R` to launch the `Run` window. Type the `services.msc` and hit the `OK` button to open the Services Manager. Then, find the `postgresql-x64-XX` service, right-click on it, and select `Restart`.
+After this, restart the `postgresql` service. Press `Win`+`R` to open the Run dialog, enter `services.msc`, and select **OK**. In Services Manager, find `postgresql-x64-XX`, right-click it, and select **Restart**.
 
 ## Building from source
 
@@ -122,9 +127,9 @@ Please refer to [MSYS2 documentation](https://www.msys2.org/docs/ides-editors/#z
 
 If you set the `RUSTFLAGS` env var, it will override the `rustflags` settings in `.cargo/config.toml` which is required to properly build Zed.
 
-Since these settings can vary from time to time, the build errors you receive may vary from linker errors, to other stranger errors.
+Because these settings change over time, the resulting build errors may vary from linker failures to other hard-to-diagnose errors.
 
-If you'd like to add extra rust flags, you may do 1 of the following in `.cargo/config.toml`:
+If you need extra Rust flags, use one of the following approaches in `.cargo/config.toml`:
 
 Add your flags in the build section
 
@@ -145,7 +150,7 @@ rustflags = [
 ]
 ```
 
-Or, you can create a new `.cargo/config.toml` in the same folder as the Zed repo (see below). This is particularly useful if you are doing CI builds since you don't have to edit the original `.cargo/config.toml`.
+Or, create a new `.cargo/config.toml` in the parent directory of the Zed repo (see below). This is useful in CI because you do not need to edit the repo's original `.cargo/config.toml`.
 
 ```
 upper_dir
@@ -200,7 +205,7 @@ Caused by:
 warning: build failed, waiting for other jobs to finish...
 ```
 
-In order to fix this issue, you can manually set the `ZED_RC_TOOLKIT_PATH` environment variable to the RC toolkit path. Usually, you can set it to:
+To fix this issue, manually set the `ZED_RC_TOOLKIT_PATH` environment variable to the RC toolkit path. Usually this is:
 `C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64`.
 
 See this [issue](https://github.com/zed-industries/zed/issues/18393) for more information.
@@ -222,7 +227,7 @@ Caused by:
   path too long: 'C:/Users/runneradmin/.cargo/git/checkouts/python-environment-tools-903993894b37a7d2/ffcbf3f/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/conda-meta/python-fastjsonschema-2.16.2-py310hca03da5_0.json'; class=Filesystem (30)
 ```
 
-In order to solve this, you can enable longpath support for git and Windows.
+To fix this, enable long-path support for both Git and Windows.
 
 For git: `git config --system core.longpaths true`
 
@@ -234,13 +239,13 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 
 For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
-(note that you will need to restart your system after enabling longpath support)
+(You need to restart your system after enabling long-path support.)
 
 ### Graphics issues
 
 #### Zed fails to launch
 
-Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
+Zed currently uses Vulkan as its graphics API on Windows. If Zed fails to launch, Vulkan is a common cause.
 
 You can check the Zed log at:
 `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
@@ -252,6 +257,6 @@ If you see messages like:
 - `GPU Crashed`
 - `ERROR_SURFACE_LOST_KHR`
 
-Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
+Vulkan may not be working correctly on your system. Updating GPU drivers often resolves this.
 
 If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.

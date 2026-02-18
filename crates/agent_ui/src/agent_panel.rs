@@ -14,7 +14,6 @@ use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
 use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent};
 
-use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
     AddContextServer, AgentDiffPane, CopyThreadToClipboard, Follow, InlineAssistant,
@@ -36,6 +35,7 @@ use crate::{
     ExternalAgent, ExternalAgentInitialContent, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
 };
+use crate::{ManageProfiles, acp::thread_view::AcpThreadView};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
@@ -75,7 +75,7 @@ use zed_actions::{
     agent::{
         OpenAcpOnboardingModal, OpenOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding,
     },
-    assistant::{OpenRulesLibrary, ToggleFocus},
+    assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -289,7 +289,7 @@ enum HistoryKind {
 enum ActiveView {
     Uninitialized,
     AgentThread {
-        thread_view: Entity<AcpServerView>,
+        server_view: Entity<AcpServerView>,
     },
     TextThread {
         text_thread_editor: Entity<TextThreadEditor>,
@@ -789,6 +789,22 @@ impl AgentPanel {
         }
     }
 
+    pub fn toggle(
+        workspace: &mut Workspace,
+        _: &Toggle,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            if !workspace.toggle_panel_focus::<Self>(window, cx) {
+                workspace.close_panel::<Self>(window, cx);
+            }
+        }
+    }
+
     pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
         &self.prompt_store
     }
@@ -839,7 +855,7 @@ impl AgentPanel {
 
     pub(crate) fn active_thread_view(&self) -> Option<&Entity<AcpServerView>> {
         match &self.active_view {
-            ActiveView::AgentThread { thread_view, .. } => Some(thread_view),
+            ActiveView::AgentThread { server_view, .. } => Some(server_view),
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
             | ActiveView::History { .. }
@@ -1513,9 +1529,21 @@ impl AgentPanel {
         }
     }
 
+    pub fn as_active_server_view(&self) -> Option<&Entity<AcpServerView>> {
+        match &self.active_view {
+            ActiveView::AgentThread { server_view } => Some(server_view),
+            _ => None,
+        }
+    }
+
+    pub fn as_active_thread_view(&self, cx: &App) -> Option<Entity<AcpThreadView>> {
+        let server_view = self.as_active_server_view()?;
+        server_view.read(cx).active_thread().cloned()
+    }
+
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.active_view {
-            ActiveView::AgentThread { thread_view, .. } => thread_view
+            ActiveView::AgentThread { server_view, .. } => server_view
                 .read(cx)
                 .active_thread()
                 .map(|r| r.read(cx).thread.clone()),
@@ -1525,8 +1553,8 @@ impl AgentPanel {
 
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         match &self.active_view {
-            ActiveView::AgentThread { thread_view, .. } => {
-                thread_view.read(cx).as_native_thread(cx)
+            ActiveView::AgentThread { server_view, .. } => {
+                server_view.read(cx).as_native_thread(cx)
             }
             _ => None,
         }
@@ -1576,8 +1604,8 @@ impl AgentPanel {
         }
 
         self._active_view_observation = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                Some(cx.observe(thread_view, |this, _, cx| {
+            ActiveView::AgentThread { server_view } => {
+                Some(cx.observe(server_view, |this, _, cx| {
                     cx.emit(AgentPanelEvent::ActiveViewChanged);
                     this.serialize(cx);
                     cx.notify();
@@ -1828,7 +1856,7 @@ impl AgentPanel {
             .is_some()
             .then(|| self.thread_store.clone());
 
-        let thread_view = cx.new(|cx| {
+        let server_view = cx.new(|cx| {
             crate::acp::AcpServerView::new(
                 server,
                 resume_thread,
@@ -1843,7 +1871,7 @@ impl AgentPanel {
             )
         });
 
-        self.set_active_view(ActiveView::AgentThread { thread_view }, true, window, cx);
+        self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
     }
 }
 
@@ -1851,7 +1879,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Uninitialized => self.focus_handle.clone(),
-            ActiveView::AgentThread { thread_view, .. } => thread_view.focus_handle(cx),
+            ActiveView::AgentThread { server_view, .. } => server_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
                 HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
@@ -1972,13 +2000,13 @@ impl AgentPanel {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
         let content = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                let is_generating_title = thread_view
+            ActiveView::AgentThread { server_view } => {
+                let is_generating_title = server_view
                     .read(cx)
                     .as_native_thread(cx)
                     .map_or(false, |t| t.read(cx).is_generating_title());
 
-                if let Some(title_editor) = thread_view
+                if let Some(title_editor) = server_view
                     .read(cx)
                     .parent_thread(cx)
                     .map(|r| r.read(cx).title_editor.clone())
@@ -1986,7 +2014,7 @@ impl AgentPanel {
                     let container = div()
                         .w_full()
                         .on_action({
-                            let thread_view = thread_view.downgrade();
+                            let thread_view = server_view.downgrade();
                             move |_: &menu::Confirm, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
                                     thread_view.focus_handle(cx).focus(window, cx);
@@ -1994,7 +2022,7 @@ impl AgentPanel {
                             }
                         })
                         .on_action({
-                            let thread_view = thread_view.downgrade();
+                            let thread_view = server_view.downgrade();
                             move |_: &editor::actions::Cancel, window, cx| {
                                 if let Some(thread_view) = thread_view.upgrade() {
                                     thread_view.focus_handle(cx).focus(window, cx);
@@ -2017,7 +2045,7 @@ impl AgentPanel {
                         container.into_any_element()
                     }
                 } else {
-                    Label::new(thread_view.read(cx).title(cx))
+                    Label::new(server_view.read(cx).title(cx))
                         .color(Color::Muted)
                         .truncate()
                         .into_any_element()
@@ -2155,12 +2183,12 @@ impl AgentPanel {
         };
 
         let thread_view = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => Some(thread_view.clone()),
+            ActiveView::AgentThread { server_view } => Some(server_view.clone()),
             _ => None,
         };
         let thread_with_messages = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                thread_view.read(cx).has_user_submitted_prompt(cx)
+            ActiveView::AgentThread { server_view } => {
+                server_view.read(cx).has_user_submitted_prompt(cx)
             }
             _ => false,
         };
@@ -2323,7 +2351,7 @@ impl AgentPanel {
             };
 
         let active_thread = match &self.active_view {
-            ActiveView::AgentThread { thread_view } => thread_view.read(cx).as_native_thread(cx),
+            ActiveView::AgentThread { server_view } => server_view.read(cx).as_native_thread(cx),
             ActiveView::Uninitialized
             | ActiveView::TextThread { .. }
             | ActiveView::History { .. }
@@ -2757,8 +2785,8 @@ impl AgentPanel {
             ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
                 false
             }
-            ActiveView::AgentThread { thread_view, .. }
-                if thread_view.read(cx).as_native_thread(cx).is_none() =>
+            ActiveView::AgentThread { server_view, .. }
+                if server_view.read(cx).as_native_thread(cx).is_none() =>
             {
                 false
             }
@@ -3030,8 +3058,8 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         match &self.active_view {
-            ActiveView::AgentThread { thread_view } => {
-                thread_view.update(cx, |thread_view, cx| {
+            ActiveView::AgentThread { server_view } => {
+                server_view.update(cx, |thread_view, cx| {
                     thread_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
             }
@@ -3149,8 +3177,8 @@ impl Render for AgentPanel {
 
                 match &self.active_view {
                     ActiveView::Uninitialized => parent,
-                    ActiveView::AgentThread { thread_view, .. } => parent
-                        .child(thread_view.clone())
+                    ActiveView::AgentThread { server_view, .. } => parent
+                        .child(server_view.clone())
                         .child(self.render_drag_target(cx)),
                     ActiveView::History { kind } => match kind {
                         HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),

@@ -56,3 +56,22 @@ pub struct LlmToken(pub String);
 pub struct CreateLlmTokenResponse {
     pub token: LlmToken,
 }
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAgentThreadFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub agent: String,
+    pub session_id: String,
+    pub rating: String,
+    pub thread: serde_json::Value,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub request_id: String,
+    pub rating: String,
+    pub inputs: serde_json::Value,
+    pub output: Option<String>,
+    pub feedback: String,
+}

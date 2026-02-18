@@ -1053,7 +1053,47 @@ fn test_permission_options_terminal_with_pattern() {
         .map(|choice| choice.allow.name.as_ref())
         .collect();
     assert!(labels.contains(&"Always for terminal"));
-    assert!(labels.contains(&"Always for `cargo` commands"));
+    assert!(labels.contains(&"Always for `cargo build` commands"));
+    assert!(labels.contains(&"Only this time"));
+}
+
+#[test]
+fn test_permission_options_terminal_command_with_flag_second_token() {
+    let permission_options =
+        ToolPermissionContext::new(TerminalTool::NAME, vec!["ls -la".to_string()])
+            .build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 3);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Always for `ls` commands"));
+    assert!(labels.contains(&"Only this time"));
+}
+
+#[test]
+fn test_permission_options_terminal_single_word_command() {
+    let permission_options =
+        ToolPermissionContext::new(TerminalTool::NAME, vec!["whoami".to_string()])
+            .build_permission_options();
+
+    let PermissionOptions::Dropdown(choices) = permission_options else {
+        panic!("Expected dropdown permission options");
+    };
+
+    assert_eq!(choices.len(), 3);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Always for `whoami` commands"));
     assert!(labels.contains(&"Only this time"));
 }
 

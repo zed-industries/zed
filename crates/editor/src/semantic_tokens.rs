@@ -5,6 +5,7 @@ use futures::future::join_all;
 use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
+use itertools::Itertools;
 use language::language_settings::language_settings;
 use project::{
     lsp_store::{
@@ -236,7 +237,6 @@ impl Editor {
                     return;
                 }
                 let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let all_excerpts = editor.buffer().read(cx).excerpt_ids();
 
                 for (buffer_id, query_version, tokens) in all_semantic_tokens {
                     let tokens = match tokens {
@@ -290,7 +290,6 @@ impl Editor {
                                 token_highlights.extend(buffer_into_editor_highlights(
                                     &server_tokens,
                                     stylizer,
-                                    &all_excerpts,
                                     &multi_buffer_snapshot,
                                     &mut interner,
                                     cx,
@@ -316,34 +315,36 @@ impl Editor {
 fn buffer_into_editor_highlights<'a, 'b>(
     buffer_tokens: &'a [BufferSemanticToken],
     stylizer: &'a SemanticTokenStylizer,
-    all_excerpts: &'a [multi_buffer::ExcerptId],
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
     cx: &'a App,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
-    buffer_tokens.iter().filter_map(|token| {
-        let multi_buffer_start = all_excerpts.iter().find_map(|&excerpt_id| {
-            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.start)
-        })?;
-        let multi_buffer_end = all_excerpts.iter().find_map(|&excerpt_id| {
-            multi_buffer_snapshot.anchor_in_excerpt(excerpt_id, token.range.end)
-        })?;
-
-        let style = convert_token(
-            stylizer,
-            cx.theme().syntax(),
-            token.token_type,
-            token.token_modifiers,
-        )?;
-        let style = interner.intern(style);
-        Some(SemanticTokenHighlight {
-            range: multi_buffer_start..multi_buffer_end,
-            style,
-            token_type: token.token_type,
-            token_modifiers: token.token_modifiers,
-            server_id: stylizer.server_id(),
+    multi_buffer_snapshot
+        .text_anchors_to_visible_anchors(
+            buffer_tokens
+                .iter()
+                .flat_map(|token| [token.range.start, token.range.end]),
+        )
+        .into_iter()
+        .tuples::<(_, _)>()
+        .zip(buffer_tokens)
+        .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
+            let range = multi_buffer_start?..multi_buffer_end?;
+            let style = convert_token(
+                stylizer,
+                cx.theme().syntax(),
+                token.token_type,
+                token.token_modifiers,
+            )?;
+            let style = interner.intern(style);
+            Some(SemanticTokenHighlight {
+                range,
+                style,
+                token_type: token.token_type,
+                token_modifiers: token.token_modifiers,
+                server_id: stylizer.server_id(),
+            })
         })
-    })
 }
 
 fn convert_token(

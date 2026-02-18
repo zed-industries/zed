@@ -1,3 +1,4 @@
+use cloud_api_types::SubmitAgentThreadFeedbackBody;
 use gpui::{Corner, List};
 use language_model::LanguageModelEffortLevel;
 use settings::update_settings_file;
@@ -23,6 +24,11 @@ impl ThreadFeedbackState {
             return;
         };
 
+        let project = thread.read(cx).project().read(cx);
+        let client = project.client();
+        let user_store = project.user_store();
+        let organization = user_store.read(cx).current_organization();
+
         if self.feedback == Some(feedback) {
             return;
         }
@@ -45,13 +51,18 @@ impl ThreadFeedbackState {
         };
         cx.background_spawn(async move {
             let thread = task.await?;
-            telemetry::event!(
-                "Agent Thread Rated",
-                agent = agent_telemetry_id,
-                session_id = session_id,
-                rating = rating,
-                thread = thread
-            );
+
+            client
+                .cloud_client()
+                .submit_agent_feedback(SubmitAgentThreadFeedbackBody {
+                    organization_id: organization.map(|organization| organization.id.clone()),
+                    agent: agent_telemetry_id.to_string(),
+                    session_id: session_id.to_string(),
+                    rating: rating.to_string(),
+                    thread,
+                })
+                .await?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);

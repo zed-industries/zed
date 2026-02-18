@@ -172,6 +172,7 @@ impl Ollama {
                     excerpt_ranges: None,
                     preferred_model: None,
                     in_open_source_repo: false,
+                    can_collect_data: false,
                 };
 
                 (prompt, stop_tokens, Some(editable_offset_range), inputs)
@@ -201,6 +202,7 @@ impl Ollama {
                     excerpt_ranges: None,
                     preferred_model: None,
                     in_open_source_repo: false,
+                    can_collect_data: false,
                 };
 
                 let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();

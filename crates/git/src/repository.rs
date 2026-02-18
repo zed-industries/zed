@@ -203,18 +203,27 @@ impl Worktree {
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
-    let entries = raw_worktrees.as_ref().split("\n\n");
+    let normalized = raw_worktrees.as_ref().replace("\r\n", "\n");
+    let entries = normalized.split("\n\n");
     for entry in entries {
-        let mut parts = entry.splitn(3, '\n');
-        let path = parts
-            .next()
-            .and_then(|p| p.split_once(' ').map(|(_, path)| path.to_string()));
-        let sha = parts
-            .next()
-            .and_then(|p| p.split_once(' ').map(|(_, sha)| sha.to_string()));
-        let ref_name = parts
-            .next()
-            .and_then(|p| p.split_once(' ').map(|(_, ref_name)| ref_name.to_string()));
+        let mut path = None;
+        let mut sha = None;
+        let mut ref_name = None;
+
+        for line in entry.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("worktree ") {
+                path = Some(rest.to_string());
+            } else if let Some(rest) = line.strip_prefix("HEAD ") {
+                sha = Some(rest.to_string());
+            } else if let Some(rest) = line.strip_prefix("branch ") {
+                ref_name = Some(rest.to_string());
+            }
+            // Ignore other lines: detached, bare, locked, prunable, etc.
+        }
 
         if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
             worktrees.push(Worktree {
@@ -628,6 +637,10 @@ pub trait GitRepository: Send + Sync {
         directory: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
+
+    fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1573,14 +1586,15 @@ impl GitRepository for RealGitRepository {
             OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
             OsString::from("add"),
+            OsString::from("-b"),
+            OsString::from(name.as_str()),
+            OsString::from("--"),
             OsString::from(final_path.as_os_str()),
         ];
         if let Some(from_commit) = from_commit {
-            args.extend([
-                OsString::from("-b"),
-                OsString::from(name.as_str()),
-                OsString::from(from_commit),
-            ]);
+            args.push(OsString::from(from_commit));
+        } else {
+            args.push(OsString::from("HEAD"));
         }
         self.executor
             .spawn(async move {
@@ -1593,8 +1607,56 @@ impl GitRepository for RealGitRepository {
                     Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("git worktree list failed: {stderr}");
+                    anyhow::bail!("git worktree add failed: {stderr}");
                 }
+            })
+            .boxed()
+    }
+
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                let mut args: Vec<OsString> = vec![
+                    "--no-optional-locks".into(),
+                    "worktree".into(),
+                    "remove".into(),
+                ];
+                if force {
+                    args.push("--force".into());
+                }
+                args.push("--".into());
+                args.push(path.as_os_str().into());
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(args)
+                    .await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec![
+                    "--no-optional-locks".into(),
+                    "worktree".into(),
+                    "move".into(),
+                    "--".into(),
+                    old_path.as_os_str().into(),
+                    new_path.as_os_str().into(),
+                ];
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(args)
+                    .await?;
+                anyhow::Ok(())
             })
             .boxed()
     }
@@ -3574,6 +3636,343 @@ mod tests {
             }),
         };
         assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
+    }
+
+    #[test]
+    fn test_parse_worktrees_from_str() {
+        // Empty input
+        let result = parse_worktrees_from_str("");
+        assert!(result.is_empty());
+
+        // Single worktree (main)
+        let input = "worktree /home/user/project\nHEAD abc123def\nbranch refs/heads/main\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].sha.as_ref(), "abc123def");
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+
+        // Multiple worktrees
+        let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
+                      worktree /home/user/project-wt\nHEAD def456\nbranch refs/heads/feature\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
+        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/feature");
+
+        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
+                      worktree /home/user/detached\nHEAD def456\ndetached\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+
+        // Bare repo entry (should be skipped)
+        let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
+                      worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+
+        // Extra porcelain lines (locked, prunable) should be ignored
+        let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
+                      worktree /home/user/locked-wt\nHEAD def456\nbranch refs/heads/locked-branch\nlocked\n\n\
+                      worktree /home/user/prunable-wt\nHEAD 789aaa\nbranch refs/heads/prunable-branch\nprunable\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
+        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/locked-branch");
+        assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
+        assert_eq!(result[2].ref_name.as_ref(), "refs/heads/prunable-branch");
+
+        // Leading/trailing whitespace on lines should be tolerated
+        let input =
+            "  worktree /home/user/project  \n  HEAD abc123  \n  branch refs/heads/main  \n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].sha.as_ref(), "abc123");
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+
+        // Windows-style line endings should be handled
+        let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].sha.as_ref(), "abc123");
+        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+    }
+
+    #[gpui::test]
+    async fn test_create_and_list_worktrees(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit (required for worktrees)
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // List worktrees — should have just the main one
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(
+            worktrees[0].path.canonicalize().unwrap(),
+            repo_dir.path().canonicalize().unwrap()
+        );
+
+        // Create a new worktree
+        let worktree_dir = tempfile::tempdir().unwrap();
+        repo.create_worktree(
+            "test-branch".to_string(),
+            worktree_dir.path().to_path_buf(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        // List worktrees — should have two
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 2);
+
+        let new_worktree = worktrees
+            .iter()
+            .find(|w| w.branch() == "test-branch")
+            .expect("should find worktree with test-branch");
+        assert_eq!(
+            new_worktree.path.canonicalize().unwrap(),
+            worktree_dir
+                .path()
+                .join("test-branch")
+                .canonicalize()
+                .unwrap()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Create a worktree
+        let worktree_dir = tempfile::tempdir().unwrap();
+        repo.create_worktree(
+            "to-remove".to_string(),
+            worktree_dir.path().to_path_buf(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = worktree_dir.path().join("to-remove");
+        assert!(worktree_path.exists());
+
+        // Remove the worktree
+        repo.remove_worktree(worktree_path.clone(), false)
+            .await
+            .unwrap();
+
+        // Verify it's gone from the list
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(
+            worktrees.iter().all(|w| w.branch() != "to-remove"),
+            "removed worktree should not appear in list"
+        );
+
+        // Verify the directory is removed
+        assert!(!worktree_path.exists());
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_force(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Create a worktree
+        let worktree_dir = tempfile::tempdir().unwrap();
+        repo.create_worktree(
+            "dirty-wt".to_string(),
+            worktree_dir.path().to_path_buf(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = worktree_dir.path().join("dirty-wt");
+
+        // Add uncommitted changes in the worktree
+        smol::fs::write(worktree_path.join("dirty-file.txt"), "uncommitted")
+            .await
+            .unwrap();
+
+        // Non-force removal should fail with dirty worktree
+        let result = repo.remove_worktree(worktree_path.clone(), false).await;
+        assert!(
+            result.is_err(),
+            "non-force removal of dirty worktree should fail"
+        );
+
+        // Force removal should succeed
+        repo.remove_worktree(worktree_path.clone(), true)
+            .await
+            .unwrap();
+
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(!worktree_path.exists());
+    }
+
+    #[gpui::test]
+    async fn test_rename_worktree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Create a worktree
+        let worktree_dir = tempfile::tempdir().unwrap();
+        repo.create_worktree(
+            "old-name".to_string(),
+            worktree_dir.path().to_path_buf(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let old_path = worktree_dir.path().join("old-name");
+        assert!(old_path.exists());
+
+        // Move the worktree to a new path
+        let new_path = worktree_dir.path().join("new-name");
+        repo.rename_worktree(old_path.clone(), new_path.clone())
+            .await
+            .unwrap();
+
+        // Verify the old path is gone and new path exists
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
+
+        // Verify it shows up in worktree list at the new path
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 2);
+        let moved_worktree = worktrees
+            .iter()
+            .find(|w| w.branch() == "old-name")
+            .expect("should find worktree by branch name");
+        assert_eq!(
+            moved_worktree.path.canonicalize().unwrap(),
+            new_path.canonicalize().unwrap()
+        );
     }
 
     impl RealGitRepository {

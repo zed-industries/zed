@@ -1,3 +1,8 @@
+---
+title: Astro
+description: "Configure Astro language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Astro
 
 Astro support is available through the [Astro extension](https://github.com/zed-extensions/astro).

@@ -2,8 +2,8 @@ use anyhow::Result;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, actions,
-    deferred, px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
+    actions, deferred, px,
 };
 use project::Project;
 use std::path::PathBuf;
@@ -93,6 +93,7 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 }
 
 pub struct MultiWorkspace {
+    window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
@@ -101,8 +102,9 @@ pub struct MultiWorkspace {
 }
 
 impl MultiWorkspace {
-    pub fn new(workspace: Entity<Workspace>, _cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: Entity<Workspace>, window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
+            window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
             active_workspace_index: 0,
             sidebar: None,
@@ -154,7 +156,7 @@ impl MultiWorkspace {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
         } else {
-            self.open_sidebar(window, cx);
+            self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
                 sidebar.focus(window, cx);
             }
@@ -180,21 +182,21 @@ impl MultiWorkspace {
                 sidebar.focus(window, cx);
             }
         } else {
-            self.open_sidebar(window, cx);
+            self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
                 sidebar.focus(window, cx);
             }
         }
     }
 
-    pub fn open_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
                 workspace.set_workspace_sidebar_open(true, cx);
             });
         }
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
@@ -208,7 +210,7 @@ impl MultiWorkspace {
         let pane = self.workspace().read(cx).active_pane().clone();
         let pane_focus = pane.read(cx).focus_handle(cx);
         window.focus(&pane_focus, cx);
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
@@ -239,6 +241,7 @@ impl MultiWorkspace {
         let index = self.add_workspace(workspace, cx);
         if self.active_workspace_index != index {
             self.active_workspace_index = index;
+            self.serialize(cx);
             cx.notify();
         }
     }
@@ -266,7 +269,7 @@ impl MultiWorkspace {
             "workspace index out of bounds"
         );
         self.active_workspace_index = index;
-        self.serialize(window, cx);
+        self.serialize(cx);
         self.focus_active_workspace(window, cx);
         cx.notify();
     }
@@ -289,8 +292,8 @@ impl MultiWorkspace {
         }
     }
 
-    fn serialize(&self, window: &mut Window, cx: &mut App) {
-        let window_id = window.window_handle().window_id();
+    fn serialize(&self, cx: &mut App) {
+        let window_id = self.window_id;
         let state = crate::persistence::model::MultiWorkspaceState {
             active_workspace_id: self.workspace().read(cx).database_id(),
             sidebar_open: self.sidebar_open,
@@ -404,7 +407,7 @@ impl MultiWorkspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        Self::new(workspace, cx)
+        Self::new(workspace, window, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -453,6 +456,7 @@ impl MultiWorkspace {
         }
 
         self.focus_active_workspace(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 

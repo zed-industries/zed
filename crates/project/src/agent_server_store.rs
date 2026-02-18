@@ -1455,10 +1455,10 @@ impl ExternalAgentServer for LocalClaudeCode {
                 (custom_command, None)
             } else {
                 let mut command = get_or_npm_install_builtin_agent(
-                    "claude-code-acp".into(),
-                    "@zed-industries/claude-code-acp".into(),
-                    "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.5.2".parse().unwrap()),
+                    "claude-agent-acp".into(),
+                    "@zed-industries/claude-agent-acp".into(),
+                    "node_modules/@zed-industries/claude-agent-acp/dist/index.js".into(),
+                    Some("0.17.0".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,

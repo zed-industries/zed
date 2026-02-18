@@ -473,7 +473,6 @@ impl DisplayMap {
         }
     }
 
-    // TODO(split-diff) figure out how to free the LHS from having to build a block map before this is called
     pub(crate) fn set_companion(
         &mut self,
         companion: Option<(Entity<DisplayMap>, Entity<Companion>)>,
@@ -486,26 +485,31 @@ impl DisplayMap {
             let Some((_, companion)) = self.companion.take() else {
                 return;
             };
-            let (snapshot, edits) = self.sync_through_wrap(cx);
-            let edits = edits.compose([text::Edit {
-                old: WrapRow(0)..snapshot.max_point().row(),
-                new: WrapRow(0)..snapshot.max_point().row(),
+            assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
+            let (snapshot, _edits) = self.sync_through_wrap(cx);
+            let edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+                new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
-            self.block_map.write(snapshot, edits, None).remove(
-                companion
+            self.block_map.deferred_edits.set(edits);
+            self.block_map.retain_blocks_raw(|block| {
+                if companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
                     .borrow()
                     .values()
-                    .copied()
-                    .collect(),
-            );
+                    .any(|id| *id == block.id)
+                {
+                    return false;
+                }
+                true
+            });
             return;
         };
         assert_eq!(self.entity_id, companion.read(cx).rhs_display_map_id);
 
-        // Note, throwing away the wrap edits because we're going to recompute the maximal range for the block map regardless
-        let old_max_row = self.block_map.wrap_snapshot.borrow().max_point().row();
+        // Note, throwing away the wrap edits because we defer spacer computation to the first render.
         let snapshot = {
             let edits = self.buffer_subscription.consume();
             let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -529,28 +533,16 @@ impl DisplayMap {
             snapshot
         };
 
-        let (companion_wrap_snapshot, companion_wrap_edits) =
+        let (companion_wrap_snapshot, _companion_wrap_edits) =
             companion_display_map.update(cx, |dm, cx| dm.sync_through_wrap(cx));
 
-        let edits = Patch::new(
-            [text::Edit {
-                old: WrapRow(0)..old_max_row,
-                new: WrapRow(0)..snapshot.max_point().row(),
-            }]
-            .into_iter()
-            .collect(),
-        );
+        let edits = Patch::new(vec![text::Edit {
+            old: WrapRow(0)..self.block_map.wrap_snapshot.borrow().max_point().row() + WrapRow(1),
+            new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
+        }]);
+        self.block_map.deferred_edits.set(edits);
 
-        let reader = self.block_map.read(
-            snapshot.clone(),
-            edits.clone(),
-            Some(CompanionView::new(
-                self.entity_id,
-                &companion_wrap_snapshot,
-                &companion_wrap_edits,
-                companion.read(cx),
-            )),
-        );
+        let all_blocks: Vec<_> = self.block_map.blocks_raw().map(Clone::clone).collect();
 
         companion_display_map.update(cx, |companion_display_map, cx| {
             for my_buffer in self.folded_buffers() {
@@ -564,7 +556,7 @@ impl DisplayMap {
                     .folded_buffers
                     .insert(*their_buffer);
             }
-            for block in reader.blocks {
+            for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),
                     snapshot.buffer(),
@@ -584,16 +576,21 @@ impl DisplayMap {
                         .insert(block.id, their_id);
                 });
             }
-            companion_display_map.block_map.read(
-                companion_wrap_snapshot,
-                companion_wrap_edits,
-                Some(CompanionView::new(
-                    companion_display_map.entity_id,
-                    &snapshot,
-                    &edits,
-                    companion.read(cx),
-                )),
-            );
+            let companion_edits = Patch::new(vec![text::Edit {
+                old: WrapRow(0)
+                    ..companion_display_map
+                        .block_map
+                        .wrap_snapshot
+                        .borrow()
+                        .max_point()
+                        .row()
+                        + WrapRow(1),
+                new: WrapRow(0)..companion_wrap_snapshot.max_point().row() + WrapRow(1),
+            }]);
+            companion_display_map
+                .block_map
+                .deferred_edits
+                .set(companion_edits);
             companion_display_map.companion = Some((this, companion.clone()));
         });
 
