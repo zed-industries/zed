@@ -1417,7 +1417,7 @@ impl AcpThreadView {
         let action_log = thread.read(cx).action_log().clone();
         action_log
             .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-            .detach_and_log_err(cx)
+            .detach()
     }
 
     pub fn open_edited_buffer(

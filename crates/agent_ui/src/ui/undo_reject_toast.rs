@@ -16,9 +16,10 @@ pub fn show_undo_reject_toast(
                 if let Some(action_log) = action_log_weak.upgrade() {
                     action_log
                         .update(cx, |action_log, cx| action_log.undo_last_reject(cx))
-                        .detach_and_log_err(cx);
+                        .detach();
                 }
             })
+            .dismiss_button(true)
     });
     workspace.toggle_status_toast(status_toast, cx);
 }

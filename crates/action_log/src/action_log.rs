@@ -624,8 +624,6 @@ impl ActionLog {
                 let task = if let Some(existing_file_content) = existing_file_content {
                     // Capture the agent's content before restoring existing file content
                     let agent_content = buffer.read(cx).text();
-                    let anchor_range = buffer.read(cx).anchor_before(0)
-                        ..buffer.read(cx).anchor_after(buffer.read(cx).len());
 
                     buffer.update(cx, |buffer, cx| {
                         buffer.start_transaction();
@@ -638,7 +636,7 @@ impl ActionLog {
 
                     undo_info = Some(PerBufferUndo {
                         buffer: buffer.downgrade(),
-                        edits_to_restore: vec![(anchor_range, agent_content)],
+                        edits_to_restore: vec![(Anchor::MIN..Anchor::MAX, agent_content)],
                         status: UndoBufferStatus::Created {
                             had_existing_content: true,
                         },
@@ -861,12 +859,12 @@ impl ActionLog {
     /// Undoes the most recent reject operation, restoring the rejected agent changes.
     /// This is a best-effort operation: if buffers have been closed or modified externally,
     /// those buffers will be skipped.
-    pub fn undo_last_reject(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn undo_last_reject(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some(undo) = self.last_reject_undo.take() else {
-            return Task::ready(Ok(()));
+            return Task::ready(());
         };
 
-        let mut save_futures = Vec::new();
+        let mut save_tasks = Vec::with_capacity(undo.buffers.len());
 
         for per_buffer_undo in undo.buffers {
             // Skip if the buffer entity has been deallocated
@@ -897,16 +895,13 @@ impl ActionLog {
             let save = self
                 .project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx));
-            save_futures.push(save);
+            save_tasks.push(save);
         }
 
         cx.notify();
 
-        cx.spawn(async move |_this, _cx| {
-            for save in save_futures {
-                save.await.log_err();
-            }
-            Ok(())
+        cx.background_spawn(async move {
+            futures::future::join_all(save_tasks).await;
         })
     }
 
@@ -2625,8 +2620,8 @@ mod tests {
         // Undo the reject
         action_log
             .update(cx, |log, cx| log.undo_last_reject(cx))
-            .await
-            .unwrap();
+            .await;
+
         cx.run_until_parked();
 
         // Verify the agent edit is restored
