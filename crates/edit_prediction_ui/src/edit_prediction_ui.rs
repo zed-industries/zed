@@ -3,7 +3,7 @@ mod edit_prediction_context_view;
 mod rate_prediction_modal;
 
 use command_palette_hooks::CommandPaletteFilter;
-use edit_prediction::{EditPredictionStore, Zeta2FeatureFlag, capture_example};
+use edit_prediction::{EditPredictionStore, ResetOnboarding, Zeta2FeatureFlag, capture_example};
 use edit_prediction_context_view::EditPredictionContextView;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
@@ -83,9 +83,11 @@ pub fn init(cx: &mut App) {
 
 fn feature_gate_predict_edits_actions(cx: &mut App) {
     let rate_completion_action_types = [TypeId::of::<RatePredictions>()];
+    let reset_onboarding_action_types = [TypeId::of::<ResetOnboarding>()];
     let all_action_types = [
         TypeId::of::<RatePredictions>(),
         TypeId::of::<CaptureExample>(),
+        TypeId::of::<edit_prediction::ResetOnboarding>(),
         zed_actions::OpenZedPredictOnboarding.type_id(),
         TypeId::of::<edit_prediction::ClearHistory>(),
         TypeId::of::<rate_prediction_modal::ThumbsUpActivePrediction>(),
@@ -96,6 +98,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_action_types(&rate_completion_action_types);
+        filter.hide_action_types(&reset_onboarding_action_types);
         filter.hide_action_types(&[zed_actions::OpenZedPredictOnboarding.type_id()]);
     });
 

@@ -58,6 +58,7 @@ pub mod example_spec;
 mod license_detection;
 pub mod mercury;
 pub mod ollama;
+mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
 pub mod sweep_ai;
@@ -75,6 +76,7 @@ mod edit_prediction_tests;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::ollama::Ollama;
+use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
@@ -87,6 +89,8 @@ pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
 actions!(
     edit_prediction,
     [
+        /// Resets the edit prediction onboarding state.
+        ResetOnboarding,
         /// Clears the edit prediction history.
         ClearHistory,
     ]
@@ -2453,6 +2457,28 @@ pub fn should_show_upsell_modal() -> bool {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(
+            move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
+                ZedPredictModal::toggle(
+                    workspace,
+                    workspace.user_store().clone(),
+                    workspace.client().clone(),
+                    window,
+                    cx,
+                )
+            },
+        );
+
+        workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
+            update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {
+                settings
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .get_or_insert_default()
+                    .provider = Some(EditPredictionProvider::None)
+            });
+        });
         fn copilot_for_project(project: &Entity<Project>, cx: &mut App) -> Option<Entity<Copilot>> {
             EditPredictionStore::try_global(cx).and_then(|store| {
                 store.update(cx, |this, cx| this.start_copilot_for_project(project, cx))
