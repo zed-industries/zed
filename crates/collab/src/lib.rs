@@ -210,7 +210,7 @@ impl ServiceMode {
 
 pub struct AppState {
     pub db: Arc<Database>,
-    pub http_client: reqwest::Client,
+    pub http_client: Option<reqwest::Client>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub executor: Executor,
@@ -249,7 +249,7 @@ impl AppState {
         let db = Arc::new(db);
         let this = Self {
             db: db.clone(),
-            http_client,
+            http_client: Some(http_client),
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,
