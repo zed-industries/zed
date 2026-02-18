@@ -265,8 +265,6 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
-    /// Like `Flex` but doesn't use the gutter
-    FlexClipped,
     Sticky,
 }
 
@@ -274,7 +272,6 @@ pub enum BlockStyle {
 pub struct EditorMargins {
     pub gutter: GutterDimensions,
     pub right: Pixels,
-    pub extended_right: Pixels,
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
@@ -396,8 +393,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => BlockStyle::Sticky,
-            Block::Spacer { .. } => BlockStyle::FlexClipped,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => BlockStyle::Sticky,
         }
     }
 
@@ -1710,7 +1707,7 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::FlexClipped,
+        style: BlockStyle::Sticky,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
