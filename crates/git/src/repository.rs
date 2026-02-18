@@ -1714,7 +1714,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                std::fs::create_dir_all(&directory)?;
+                std::fs::create_dir_all(final_path.parent().unwrap_or(&final_path))?;
                 let output = new_command(&git_binary_path)
                     .current_dir(working_directory?)
                     .args(args)
