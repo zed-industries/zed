@@ -706,10 +706,10 @@ These routing controls let you fine‑tune cost, capability, and reliability tra
 
 ### Vercel v0 {#vercel-v0}
 
-[Vercel v0](https://v0.app/docs/api/model) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
+[Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
-The v0 models are [OpenAI-compatible models](/#openai-api-compatible), but Vercel is listed as first-class provider in the panel's settings view.
+The v0 models are [OpenAI-compatible models](/#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
 
 To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
@@ -718,7 +718,7 @@ You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ### xAI {#xai}
 
-Zed has first-class support for [xAI](https://x.ai/) models. You can use your own API key to access Grok models.
+Zed includes a dedicated [xAI](https://x.ai/) provider. You can use your own API key to access Grok models.
 
 1. [Create an API key in the xAI Console](https://console.x.ai/team/default/api-keys)
 2. Open the settings view (`agent: open settings`) and go to the **xAI** section
@@ -726,7 +726,7 @@ Zed has first-class support for [xAI](https://x.ai/) models. You can use your ow
 
 The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_KEY` environment variable if it's defined.
 
-> **Note:** While the xAI API is OpenAI-compatible, Zed has first-class support for it as a dedicated provider. For the best experience, we recommend using the dedicated `x_ai` provider configuration instead of the [OpenAI API Compatible](#openai-api-compatible) method.
+> **Note:** The xAI API is OpenAI-compatible, and Zed also includes a dedicated xAI provider. We recommend using the dedicated `x_ai` provider configuration instead of the [OpenAI API Compatible](#openai-api-compatible) method.
 
 #### Custom Models {#xai-custom-models}
 
