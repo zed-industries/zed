@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fmt::Debug, path::Path, process::Output, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    path::{Path, PathBuf},
+    process::Output,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
@@ -52,7 +58,7 @@ pub(crate) struct DevContainer {
     cap_add: Option<Vec<String>>,
     security_opt: Option<Vec<String>>,
     mounts: Option<Vec<MountDefinition>>,
-    features: Option<HashMap<String, FeaturePlaceholder>>, // TODO more complex object probably needed here
+    features: Option<HashMap<String, FeatureOptions>>,
     override_feature_install_order: Option<Vec<String>>,
     // TODO customizations
     build: Option<ContainerBuild>,
@@ -154,9 +160,57 @@ pub(crate) struct MountDefinition {
     mount_type: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FeaturePlaceholder {} // Putting this here for now, but we should probably use DevContainerFeature
+/// Represents the value associated with a feature ID in the `features` map of devcontainer.json.
+///
+/// Per the spec, the value can be:
+/// - A boolean (`true` to enable with defaults)
+/// - A string (shorthand for `{"version": "<value>"}`)
+/// - An object mapping option names to string or boolean values
+///
+/// See: https://containers.dev/implementors/features/#devcontainerjson-properties
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
+#[serde(untagged)]
+pub(crate) enum FeatureOptions {
+    Bool(bool),
+    String(String),
+    Options(HashMap<String, FeatureOptionValue>),
+}
+
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
+#[serde(untagged)]
+pub(crate) enum FeatureOptionValue {
+    Bool(bool),
+    String(String),
+}
+
+impl std::fmt::Display for FeatureOptionValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FeatureOptionValue::Bool(b) => write!(f, "{}", b),
+            FeatureOptionValue::String(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// Holds all the information needed to construct a `docker buildx build` command
+/// that extends a base image with dev container features.
+///
+/// This mirrors the `ImageBuildOptions` interface in the CLI reference implementation
+/// (cli/src/spec-node/containerFeatures.ts).
+pub(crate) struct FeaturesBuildInfo {
+    /// Path to the generated Dockerfile.extended
+    pub dockerfile_path: PathBuf,
+    /// Path to the features content directory (used as a BuildKit build context)
+    pub features_content_dir: PathBuf,
+    /// Path to an empty directory used as the Docker build context
+    pub empty_context_dir: PathBuf,
+    /// The base image name (e.g. "mcr.microsoft.com/devcontainers/rust:2-1-bookworm")
+    pub base_image: String,
+    /// The user from the base image (e.g. "root")
+    pub image_user: String,
+    /// The tag to apply to the built image (e.g. "vsc-myproject-features")
+    pub image_tag: String,
+}
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -592,6 +646,63 @@ async fn inspect_image(devcontainer: &DevContainer) -> Result<DockerInspect, Ren
     Ok(docker_inspect)
 }
 
+/// Generates a tag for the features-extended image.
+///
+/// Mirrors the CLI's `getFolderImageName` + `-features` suffix convention.
+/// The tag is derived from the base image name so rebuilds produce the same tag.
+fn generate_features_image_tag(base_image: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    base_image.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("vsc-{:x}-features", hash)
+}
+
+/// Prepares a `FeaturesBuildInfo` for an image-based dev container that has features.
+///
+/// This creates the temp directories and Dockerfile.extended needed by `create_docker_build`.
+/// The actual feature content (install scripts, env files) must be staged into the returned
+/// `features_content_dir` before executing the build command.
+fn prepare_features_build_info(
+    dev_container: &DevContainer,
+    image_user: &str,
+) -> Result<FeaturesBuildInfo, RenameMeError> {
+    let Some(image) = &dev_container.image else {
+        return Err(RenameMeError::UnmappedError);
+    };
+
+    let temp_base = std::env::temp_dir().join("devcontainer-zed");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let features_content_dir = temp_base.join(format!("container-features-{}", timestamp));
+    let empty_context_dir = temp_base.join("empty-folder");
+
+    std::fs::create_dir_all(&features_content_dir).map_err(|e| {
+        log::error!("Failed to create features content dir: {e}");
+        RenameMeError::UnmappedError
+    })?;
+    std::fs::create_dir_all(&empty_context_dir).map_err(|e| {
+        log::error!("Failed to create empty context dir: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    let dockerfile_path = features_content_dir.join("Dockerfile.extended");
+    let image_tag = generate_features_image_tag(image);
+
+    Ok(FeaturesBuildInfo {
+        dockerfile_path,
+        features_content_dir,
+        empty_context_dir,
+        base_image: image.clone(),
+        image_user: image_user.to_string(),
+        image_tag,
+    })
+}
+
 async fn build_image(
     dev_container: &DevContainer,
     base_image: &DockerInspect,
@@ -606,17 +717,46 @@ async fn build_image(
                 log::info!("No features to add. Using base image");
                 return Ok(base_image.clone());
             }
-            let mut command = create_docker_build(&dev_container)?;
+
+            // The CLI determines the image user from `imageDetails.Config.User || 'root'`.
+            // Our DockerInspect doesn't yet carry the User field, so we default to "root".
+            let image_user = "root";
+
+            let build_info = prepare_features_build_info(dev_container, image_user)?;
+
+            // TODO: Stage feature content (download OCI features, write env files,
+            // generate install wrapper scripts) into build_info.features_content_dir
+            // before building. This is the equivalent of the CLI's `generateFeaturesConfig`
+            // + `fetchFeatures` + `getFeaturesBuildOptions` pipeline.
+
+            // TODO: Write the Dockerfile.extended into build_info.dockerfile_path.
+            // This is generated by the CLI's `getContainerFeaturesBaseDockerFile` +
+            // `getFeatureLayers` and contains the feature installation layers.
+
+            let mut command = create_docker_build(&build_info)?;
 
             let output = command.output().await.map_err(|e| {
                 log::error!("Error building docker image: {e}");
                 RenameMeError::UnmappedError
             })?;
 
-            // TODO this is probably not the actual thing to return here
-            let Some(docker_inspect): Option<DockerInspect> = deserialize_json_output(output)?
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::error!("docker buildx build failed: {stderr}");
+                return Err(RenameMeError::UnmappedError);
+            }
+
+            // After a successful build, inspect the newly tagged image to get its metadata
+            let mut inspect_command = create_docker_inspect(&build_info.image_tag)?;
+            let inspect_output = inspect_command.output().await.map_err(|e| {
+                log::error!("Error inspecting built image: {e}");
+                RenameMeError::UnmappedError
+            })?;
+
+            let Some(docker_inspect): Option<DockerInspect> =
+                deserialize_json_output(inspect_output)?
             else {
-                log::error!("Could not deserialize docker labels");
+                log::error!("Could not inspect the newly built features image");
                 return Err(RenameMeError::UnmappedError);
             };
             Ok(docker_inspect)
@@ -695,17 +835,68 @@ fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, RenameMeErr
     }
 }
 
-fn create_docker_build(devcontainer: &DevContainer) -> Result<Command, RenameMeError> {
-    match devcontainer.build_type() {
-        DevContainerBuildType::Image => {
-            // let's work here
-            let command = smol::process::Command::new(docker_cli());
-            Ok(command)
-        }
-        DevContainerBuildType::Dockerfile => todo!(),
-        DevContainerBuildType::DockerCompose => todo!(),
-        DevContainerBuildType::None => todo!(),
-    }
+/// Constructs a `docker buildx build` command that extends a base image with dev container
+/// features, matching the behavior of the CLI reference implementation's `extendImage` function
+/// in `cli/src/spec-node/containerFeatures.ts`.
+///
+/// The resulting command looks like:
+/// ```text
+/// docker buildx build --load \
+///   --build-context dev_containers_feature_content_source=<features_content_dir> \
+///   --build-arg _DEV_CONTAINERS_BASE_IMAGE=<base_image> \
+///   --build-arg _DEV_CONTAINERS_IMAGE_USER=<image_user> \
+///   --build-arg _DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp \
+///   --target dev_containers_target_stage \
+///   -f <dockerfile_path> \
+///   -t <image_tag> \
+///   <empty_context_dir>
+/// ```
+fn create_docker_build(build_info: &FeaturesBuildInfo) -> Result<Command, RenameMeError> {
+    let mut command = smol::process::Command::new(docker_cli());
+
+    command.args(["buildx", "build"]);
+
+    // --load is short for --output=docker, loading the built image into the local docker images
+    command.arg("--load");
+
+    // BuildKit build context: provides the features content directory as a named context
+    // that the Dockerfile.extended can COPY from via `--from=dev_containers_feature_content_source`
+    command.args([
+        "--build-context",
+        &format!(
+            "dev_containers_feature_content_source={}",
+            build_info.features_content_dir.display()
+        ),
+    ]);
+
+    // Build args matching the CLI reference implementation's `getFeaturesBuildOptions`
+    command.args([
+        "--build-arg",
+        &format!("_DEV_CONTAINERS_BASE_IMAGE={}", build_info.base_image),
+    ]);
+    command.args([
+        "--build-arg",
+        &format!("_DEV_CONTAINERS_IMAGE_USER={}", build_info.image_user),
+    ]);
+    command.args([
+        "--build-arg",
+        "_DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp",
+    ]);
+
+    // Target the final stage in the generated Dockerfile
+    command.args(["--target", "dev_containers_target_stage"]);
+
+    // Point to the generated extended Dockerfile
+    command.args(["-f", &build_info.dockerfile_path.display().to_string()]);
+
+    // Tag the resulting image
+    command.args(["-t", &build_info.image_tag]);
+
+    // Use an empty folder as the build context to avoid pulling in unneeded files.
+    // The actual feature content is supplied via the BuildKit build context above.
+    command.arg(build_info.empty_context_dir.display().to_string());
+
+    Ok(command)
 }
 
 fn create_docker_inspect(id: &str) -> Result<Command, RenameMeError> {
@@ -844,7 +1035,7 @@ mod test {
     use std::{
         collections::HashMap,
         ffi::OsStr,
-        path::Path,
+        path::{Path, PathBuf},
         process::{ExitStatus, Output},
         sync::Arc,
     };
@@ -853,11 +1044,12 @@ mod test {
 
     use crate::model::{
         ContainerBuild, DevContainer, DevContainerBuildType, DockerConfigLabels, DockerInspect,
-        DockerInspectConfig, DockerPs, FeaturePlaceholder, ForwardPort, HostRequirements,
-        LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward, PortAttributeProtocol,
-        PortAttributes, RenameMeError, ShutdownAction, UserEnvProbe, create_docker_build,
-        create_docker_inspect, create_docker_run_command, deserialize_devcontainer_json,
-        deserialize_json_output, get_remote_dir_from_config, get_remote_user_from_config,
+        DockerInspectConfig, DockerPs, FeatureOptions, FeaturesBuildInfo, ForwardPort,
+        HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
+        PortAttributeProtocol, PortAttributes, RenameMeError, ShutdownAction, UserEnvProbe,
+        create_docker_build, create_docker_inspect, create_docker_run_command,
+        deserialize_devcontainer_json, deserialize_json_output, get_remote_dir_from_config,
+        get_remote_user_from_config,
     };
 
     // Tests needed as I come across them
@@ -1134,11 +1326,11 @@ mod test {
                 features: Some(HashMap::from([
                     (
                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     ),
                     (
                         "ghcr.io/devcontainers/features/anaconda:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     )
                 ])),
                 override_feature_install_order: Some(vec![
@@ -1340,11 +1532,11 @@ mod test {
                 features: Some(HashMap::from([
                     (
                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     ),
                     (
                         "ghcr.io/devcontainers/features/anaconda:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     )
                 ])),
                 override_feature_install_order: Some(vec![
@@ -1568,11 +1760,11 @@ mod test {
                 features: Some(HashMap::from([
                     (
                         "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     ),
                     (
                         "ghcr.io/devcontainers/features/anaconda:1".to_string(),
-                        FeaturePlaceholder {}
+                        FeatureOptions::Options(HashMap::new())
                     )
                 ])),
                 override_feature_install_order: Some(vec![
@@ -1682,21 +1874,53 @@ mod test {
 
     #[test]
     fn should_create_correct_docker_build_command() {
-        let given_devcontainer = DevContainer {
-            image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
-            name: Some("DevContainerName".to_string()),
-            remote_user: None,
-            ..Default::default()
+        let features_content_dir =
+            PathBuf::from("/tmp/devcontainercli/container-features/0.82.0-1234567890");
+        let dockerfile_path = features_content_dir.join("Dockerfile.extended");
+        let empty_context_dir = PathBuf::from("/tmp/devcontainercli/empty-folder");
+
+        let build_info = FeaturesBuildInfo {
+            dockerfile_path: dockerfile_path.clone(),
+            features_content_dir: features_content_dir.clone(),
+            empty_context_dir: empty_context_dir.clone(),
+            base_image: "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+            image_user: "root".to_string(),
+            image_tag: "vsc-cli-abc123-features".to_string(),
         };
 
-        let docker_build_command = create_docker_build(&given_devcontainer).unwrap();
+        let docker_build_command = create_docker_build(&build_info).unwrap();
 
         assert_eq!(docker_build_command.get_program(), "docker");
-        // So actually this shouldn't create a build command, because there are no features listed here.
         assert_eq!(
             docker_build_command.get_args().collect::<Vec<&OsStr>>(),
-            vec![OsStr::new("buildx"), OsStr::new("build"),]
-        )
+            vec![
+                OsStr::new("buildx"),
+                OsStr::new("build"),
+                OsStr::new("--load"),
+                OsStr::new("--build-context"),
+                OsStr::new(&format!(
+                    "dev_containers_feature_content_source={}",
+                    features_content_dir.display()
+                )),
+                OsStr::new("--build-arg"),
+                OsStr::new(
+                    "_DEV_CONTAINERS_BASE_IMAGE=mcr.microsoft.com/devcontainers/rust:2-1-bookworm"
+                ),
+                OsStr::new("--build-arg"),
+                OsStr::new("_DEV_CONTAINERS_IMAGE_USER=root"),
+                OsStr::new("--build-arg"),
+                OsStr::new(
+                    "_DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp"
+                ),
+                OsStr::new("--target"),
+                OsStr::new("dev_containers_target_stage"),
+                OsStr::new("-f"),
+                OsStr::new(&dockerfile_path.display().to_string()),
+                OsStr::new("-t"),
+                OsStr::new("vsc-cli-abc123-features"),
+                OsStr::new(&empty_context_dir.display().to_string()),
+            ]
+        );
     }
 
     #[test]
