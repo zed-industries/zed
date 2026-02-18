@@ -993,11 +993,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !multi_workspace.read(cx).multi_workspace_enabled(cx) {
-            return;
-        }
-
         cx.defer_in(window, move |this, window, cx| {
+            if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
+                return;
+            }
+
             this._project_subscriptions = this.subscribe_to_projects(window, cx);
             this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
             this._thread_subscriptions = this.subscribe_to_threads(window, cx);
