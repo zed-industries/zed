@@ -55,6 +55,7 @@ use workspace::{
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
     register_serializable_item,
     searchable::{
         Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
@@ -193,6 +194,8 @@ struct HoverTarget {
 impl EventEmitter<Event> for TerminalView {}
 impl EventEmitter<ItemEvent> for TerminalView {}
 impl EventEmitter<SearchEvent> for TerminalView {}
+
+struct RemoteTerminalBellNotification;
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
@@ -999,6 +1002,37 @@ fn subscribe_for_terminal_events(
 
                 Event::Bell => {
                     terminal_view.has_bell = true;
+                    if terminal.read(cx).is_remote_terminal()
+                        && !terminal_view.focus_handle.is_focused(window)
+                    {
+                        let terminal_title = terminal.read(cx).title(true);
+                        let notification_id =
+                            NotificationId::composite::<RemoteTerminalBellNotification>(
+                                terminal.entity_id().as_u64().to_string(),
+                            );
+                        let terminal_focus_handle = terminal_view.focus_handle.clone();
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.show_notification(notification_id, cx, move |cx| {
+                                        let terminal_focus_handle = terminal_focus_handle.clone();
+                                        let terminal_title = terminal_title.clone();
+                                        cx.new(move |cx| {
+                                            MessageNotification::new(
+                                                format!("Remote terminal alert: {terminal_title}"),
+                                                cx,
+                                            )
+                                            .primary_message("Focus Terminal")
+                                            .primary_on_click(move |window, cx| {
+                                                terminal_focus_handle.focus(window, cx);
+                                            })
+                                            .show_suppress_button(false)
+                                        })
+                                    });
+                                })
+                                .ok();
+                        }
+                    }
                     cx.emit(Event::Wakeup);
                 }
 
