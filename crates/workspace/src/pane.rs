@@ -4528,7 +4528,7 @@ impl NavHistory {
     pub fn for_each_entry(
         &self,
         cx: &App,
-        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
+        f: &mut dyn FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
         let borrowed_history = self.0.lock();
         borrowed_history

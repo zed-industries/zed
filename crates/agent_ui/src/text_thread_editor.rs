@@ -2712,7 +2712,7 @@ impl Item for TextThreadEditor {
         util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into()
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(item::ItemEvent)) {
         match event {
             EditorEvent::Edited { .. } => {
                 f(item::ItemEvent::Edit);

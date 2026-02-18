@@ -2563,7 +2563,7 @@ impl MultiBuffer {
         language_settings(language.map(|l| l.name()), file, cx)
     }
 
-    pub fn for_each_buffer(&self, mut f: impl FnMut(&Entity<Buffer>)) {
+    pub fn for_each_buffer(&self, f: &mut dyn FnMut(&Entity<Buffer>)) {
         self.buffers.values().for_each(|state| f(&state.buffer))
     }
 
@@ -4978,7 +4978,7 @@ impl MultiBufferSnapshot {
         let mut result = BTreeMap::new();
         self.suggested_indents_callback(
             rows,
-            |row, indent| {
+            &mut |row, indent| {
                 result.insert(row, indent);
                 ControlFlow::Continue(())
             },
@@ -4991,7 +4991,7 @@ impl MultiBufferSnapshot {
     pub fn suggested_indents_callback(
         &self,
         rows: impl IntoIterator<Item = u32>,
-        mut cb: impl FnMut(MultiBufferRow, IndentSize) -> ControlFlow<()>,
+        cb: &mut dyn FnMut(MultiBufferRow, IndentSize) -> ControlFlow<()>,
         cx: &App,
     ) {
         let mut rows_for_excerpt = Vec::new();

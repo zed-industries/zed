@@ -736,7 +736,7 @@ impl BlockMap {
     }
 
     // Warning: doesn't sync the block map, use advisedly
-    pub(crate) fn retain_blocks_raw(&mut self, mut pred: impl FnMut(&Arc<CustomBlock>) -> bool) {
+    pub(crate) fn retain_blocks_raw(&mut self, pred: &mut dyn FnMut(&Arc<CustomBlock>) -> bool) {
         let mut ids_to_remove = HashSet::default();
         self.custom_blocks.retain(|block| {
             let keep = pred(block);
@@ -1275,8 +1275,8 @@ impl BlockMap {
                 .row()
         };
         fn determine_spacer(
-            our_wrapper: &mut impl FnMut(Point, Bias) -> WrapRow,
-            companion_wrapper: &mut impl FnMut(Point, Bias) -> WrapRow,
+            our_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
+            companion_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
             our_point: Point,
             their_point: Point,
             delta: i32,

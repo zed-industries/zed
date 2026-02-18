@@ -124,7 +124,10 @@ impl Editor {
         );
 
         if invalidate {
-            self.clear_highlights_with(|key| matches!(key, HighlightKey::ColorizeBracket(_)), cx);
+            self.clear_highlights_with(
+                &mut |key| matches!(key, HighlightKey::ColorizeBracket(_)),
+                cx,
+            );
         }
 
         let editor_background = cx.theme().colors().editor_background;

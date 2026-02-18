@@ -493,7 +493,7 @@ impl DisplayMap {
                 new: WrapRow(0)..snapshot.max_point().row() + WrapRow(1),
             }]);
             self.block_map.deferred_edits.set(edits);
-            self.block_map.retain_blocks_raw(|block| {
+            self.block_map.retain_blocks_raw(&mut |block| {
                 if companion
                     .read(cx)
                     .lhs_custom_block_to_balancing_block
@@ -528,8 +528,9 @@ impl DisplayMap {
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
-            self.block_map
-                .retain_blocks_raw(|block| !matches!(block.placement, BlockPlacement::Replace(_)));
+            self.block_map.retain_blocks_raw(&mut |block| {
+                !matches!(block.placement, BlockPlacement::Replace(_))
+            });
             snapshot
         };
 
@@ -1268,7 +1269,7 @@ impl DisplayMap {
         cleared
     }
 
-    pub fn clear_highlights_with(&mut self, mut f: impl FnMut(&HighlightKey) -> bool) -> bool {
+    pub fn clear_highlights_with(&mut self, f: &mut dyn FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
         self.text_highlights.retain(|k, _| {
             let b = !f(k);

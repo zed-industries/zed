@@ -86,7 +86,7 @@ impl ThemePreview {}
 impl Item for ThemePreview {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(crate::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let name = cx.theme().name.clone();

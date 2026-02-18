@@ -2100,7 +2100,7 @@ impl Workspace {
             let pane = pane.read(cx);
 
             pane.nav_history()
-                .for_each_entry(cx, |entry, (project_path, fs_path)| {
+                .for_each_entry(cx, &mut |entry, (project_path, fs_path)| {
                     if let Some(fs_path) = &fs_path {
                         abs_paths_opened
                             .entry(fs_path.clone())
@@ -2179,7 +2179,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        self.navigate_history_impl(pane, mode, window, |history, cx| history.pop(mode, cx), cx)
+        self.navigate_history_impl(
+            pane,
+            mode,
+            window,
+            &mut |history, cx| history.pop(mode, cx),
+            cx,
+        )
     }
 
     fn navigate_tag_history(
@@ -2193,7 +2199,7 @@ impl Workspace {
             pane,
             NavigationMode::Normal,
             window,
-            |history, _cx| history.pop_tag(mode),
+            &mut |history, _cx| history.pop_tag(mode),
             cx,
         )
     }
@@ -2203,7 +2209,7 @@ impl Workspace {
         pane: WeakEntity<Pane>,
         mode: NavigationMode,
         window: &mut Window,
-        mut cb: impl FnMut(&mut NavHistory, &mut App) -> Option<NavigationEntry>,
+        cb: &mut dyn FnMut(&mut NavHistory, &mut App) -> Option<NavigationEntry>,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
@@ -3624,7 +3630,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<T>> {
-        let panel = self.focus_or_unfocus_panel::<T>(window, cx, |_, _, _| true)?;
+        let panel = self.focus_or_unfocus_panel::<T>(window, cx, &mut |_, _, _| true)?;
         panel.to_any().downcast().ok()
     }
 
@@ -3638,7 +3644,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> bool {
         let mut did_focus_panel = false;
-        self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
+        self.focus_or_unfocus_panel::<T>(window, cx, &mut |panel, window, cx| {
             did_focus_panel = !panel.panel_focus_handle(cx).contains_focused(window, cx);
             did_focus_panel
         });
@@ -3687,7 +3693,7 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut should_focus: impl FnMut(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
+        should_focus: &mut dyn FnMut(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
@@ -12059,7 +12065,7 @@ mod tests {
         // Check navigation history after close
         let has_item = pane.read_with(cx, |pane, cx| {
             let mut has_item = false;
-            pane.nav_history().for_each_entry(cx, |entry, _| {
+            pane.nav_history().for_each_entry(cx, &mut |entry, _| {
                 if entry.item.id() == item1_id {
                     has_item = true;
                 }

@@ -465,7 +465,7 @@ impl Item for WelcomePage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(crate::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(crate::item::ItemEvent)) {
         f(*event)
     }
 }

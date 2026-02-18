@@ -757,7 +757,7 @@ impl Item for Editor {
     ) {
         self.buffer
             .read(cx)
-            .for_each_buffer(|buffer| f(buffer.entity_id(), buffer.read(cx)));
+            .for_each_buffer(&mut |buffer| f(buffer.entity_id(), buffer.read(cx)));
     }
 
     fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
@@ -1004,7 +1004,7 @@ impl Item for Editor {
         }
     }
 
-    fn to_item_events(event: &EditorEvent, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         match event {
             EditorEvent::Saved | EditorEvent::TitleChanged => {
                 f(ItemEvent::UpdateTab);

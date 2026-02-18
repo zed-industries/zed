@@ -83,7 +83,7 @@ impl Editor {
 
         let mut supports = false;
         self.buffer().update(cx, |this, cx| {
-            this.for_each_buffer(|buffer| {
+            this.for_each_buffer(&mut |buffer| {
                 supports |= provider.supports_semantic_tokens(buffer, cx);
             });
         });

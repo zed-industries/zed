@@ -815,15 +815,17 @@ fn in_word(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let mut end =
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-            classifier.kind(left) != classifier.kind(right)
-        });
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
+    );
 
-    let is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
+    let mut is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
 
     for _ in 1..times {
         let kind_at_end = map
@@ -834,10 +836,15 @@ fn in_word(
         // Skip whitespace but not punctuation (punctuation is its own word unit).
         let next_end = if kind_at_end == Some(CharKind::Whitespace) {
             let after_whitespace =
-                movement::find_boundary(map, end, FindRange::MultiLine, is_boundary);
-            movement::find_boundary(map, after_whitespace, FindRange::MultiLine, is_boundary)
+                movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary);
+            movement::find_boundary(
+                map,
+                after_whitespace,
+                FindRange::MultiLine,
+                &mut is_boundary,
+            )
         } else {
-            movement::find_boundary(map, end, FindRange::MultiLine, is_boundary)
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary)
         };
         if next_end == end {
             break;
@@ -873,22 +880,32 @@ fn in_subword(
             map,
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
-            |left, right| {
+            &mut |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
                 is_word_start || is_subword_start(left, right, "._-")
             },
         )
     } else {
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            is_word_start || is_subword_start(left, right, "._-")
-        })
+        movement::find_boundary(
+            map,
+            relative_to,
+            FindRange::SingleLine,
+            &mut |left, right| {
+                let is_word_start = classifier.kind(left) != classifier.kind(right);
+                is_word_start || is_subword_start(left, right, "._-")
+            },
+        )
     };
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        is_word_end || is_subword_end(left, right, "._-")
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_word_end = classifier.kind(left) != classifier.kind(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end)
 }
@@ -1027,7 +1044,7 @@ fn around_subword(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
+        &mut |left, right| {
             let is_separator = |c: char| "._-".contains(c);
             let is_word_start =
                 classifier.kind(left) != classifier.kind(right) && !is_separator(left);
@@ -1035,11 +1052,17 @@ fn around_subword(
         },
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_separator = |c: char| "._-".contains(c);
-        let is_word_end = classifier.kind(left) != classifier.kind(right) && !is_separator(right);
-        is_word_end || is_subword_end(left, right, "._-")
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_end =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
 }
@@ -1088,31 +1111,37 @@ fn around_next_word(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
-    let mut end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = classifier.kind(left);
-        let right_kind = classifier.kind(right);
-
-        let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
-
-        if right_kind != CharKind::Whitespace {
-            word_found = true;
-        }
-
-        found
-    });
-
-    for _ in 1..times {
-        let next_end = movement::find_boundary(map, end, FindRange::MultiLine, |left, right| {
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::MultiLine,
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
 
-            let in_word_unit = left_kind != CharKind::Whitespace;
-            (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
-        });
+            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
+
+            if right_kind != CharKind::Whitespace {
+                word_found = true;
+            }
+
+            found
+        },
+    );
+
+    for _ in 1..times {
+        let next_end =
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+
+                let in_word_unit = left_kind != CharKind::Whitespace;
+                (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
+            });
         if next_end == end {
             break;
         }

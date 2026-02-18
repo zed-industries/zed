@@ -552,7 +552,7 @@ impl Render for FileHistoryView {
 impl Item for FileHistoryView {
     type Event = ItemEvent;
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 

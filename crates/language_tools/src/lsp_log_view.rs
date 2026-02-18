@@ -739,7 +739,7 @@ impl Focusable for LspLogView {
 impl Item for LspLogView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
