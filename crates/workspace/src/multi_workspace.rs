@@ -103,10 +103,23 @@ pub struct MultiWorkspace {
     _sidebar_subscription: Option<Subscription>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
+    _create_task: Option<Task<()>>,
+    _release_subscription: Option<Subscription>,
 }
 
 impl MultiWorkspace {
-    pub fn new(workspace: Entity<Workspace>, window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
+            if let Some(task) = this._serialize_task.take() {
+                task.detach();
+            }
+            if let Some(task) = this._create_task.take() {
+                task.detach();
+            }
+            for task in std::mem::take(&mut this.pending_removal_tasks) {
+                task.detach();
+            }
+        });
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
@@ -116,6 +129,8 @@ impl MultiWorkspace {
             _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
+            _create_task: None,
+            _release_subscription: Some(release_subscription),
         }
     }
 
@@ -244,12 +259,22 @@ impl MultiWorkspace {
             return;
         }
 
-        let index = self.add_workspace(workspace, cx);
-        if self.active_workspace_index != index {
-            self.active_workspace_index = index;
+        let old_index = self.active_workspace_index;
+        let new_index = self.set_active_workspace(workspace, cx);
+        if old_index != new_index {
             self.serialize(cx);
-            cx.notify();
         }
+    }
+
+    fn set_active_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> usize {
+        let index = self.add_workspace(workspace, cx);
+        self.active_workspace_index = index;
+        cx.notify();
+        index
     }
 
     /// Adds a workspace to this window without changing which workspace is active.
@@ -407,10 +432,16 @@ impl MultiWorkspace {
     }
 
     pub fn take_pending_removal_tasks(&mut self) -> Vec<Task<()>> {
-        std::mem::take(&mut self.pending_removal_tasks)
+        let mut tasks: Vec<Task<()>> = std::mem::take(&mut self.pending_removal_tasks)
             .into_iter()
             .filter(|task| !task.is_ready())
-            .collect()
+            .collect();
+        if let Some(task) = self._create_task.take() {
+            if !task.is_ready() {
+                tasks.push(task);
+            }
+        }
+        tasks
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -454,21 +485,35 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        let index = self.add_workspace(new_workspace.clone(), cx);
-        self.active_workspace_index = index;
-        cx.notify();
+        self.set_active_workspace(new_workspace.clone(), cx);
         self.focus_active_workspace(window, cx);
 
         let weak_workspace = new_workspace.downgrade();
-        cx.spawn_in(window, async move |this, cx| {
+        self._create_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = crate::persistence::DB.next_id().await;
             this.update_in(cx, |this, window, cx| match result {
                 Ok(workspace_id) => {
                     if let Some(workspace) = weak_workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
+                        let session_id = workspace.read(cx).session_id();
+                        let window_id = window.window_handle().window_id().as_u64();
+                        workspace.update(cx, |workspace, _cx| {
                             workspace.set_database_id(workspace_id);
-                            workspace.flush_serialization(window, cx).detach();
                         });
+                        cx.background_spawn(async move {
+                            crate::persistence::DB
+                                .set_session_binding(workspace_id, session_id, Some(window_id))
+                                .await
+                                .log_err();
+                        })
+                        .detach();
+                    } else {
+                        cx.background_spawn(async move {
+                            crate::persistence::DB
+                                .delete_workspace_by_id(workspace_id)
+                                .await
+                                .log_err();
+                        })
+                        .detach();
                     }
                     this.serialize(cx);
                 }
@@ -490,8 +535,7 @@ impl MultiWorkspace {
                 }
             })
             .log_err();
-        })
-        .detach();
+        }));
     }
 
     pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {

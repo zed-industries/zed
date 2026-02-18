@@ -1244,6 +1244,7 @@ pub struct Workspace {
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
+    _serialize_workspace_task: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
@@ -1667,6 +1668,7 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
+            _serialize_workspace_task: None,
             _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
@@ -5827,6 +5829,7 @@ impl Workspace {
 
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self._schedule_serialize_workspace.take();
+        self._serialize_workspace_task.take();
         self.serialize_workspace_internal(window, cx)
     }
 
@@ -5886,7 +5889,8 @@ impl Workspace {
                         .timer(SERIALIZATION_THROTTLE_TIME)
                         .await;
                     this.update_in(cx, |this, window, cx| {
-                        this.serialize_workspace_internal(window, cx).detach();
+                        this._serialize_workspace_task =
+                            Some(this.serialize_workspace_internal(window, cx));
                         this._schedule_serialize_workspace.take();
                     })
                     .log_err();
@@ -7947,7 +7951,6 @@ pub async fn restore_multiworkspace(
     let mut errors = Vec::new();
 
     for session_workspace in group_iter {
-        let workspace_id = session_workspace.workspace_id;
         let result = if session_workspace.paths.is_empty() {
             cx.update(|cx| {
                 open_workspace_by_id(
@@ -7975,7 +7978,6 @@ pub async fn restore_multiworkspace(
         };
 
         if let Err(error) = result {
-            log::error!("Failed to restore workspace {workspace_id:?} in window group: {error:#}",);
             errors.push(error);
         }
     }

@@ -2153,6 +2153,14 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub(crate) async fn set_session_binding(workspace_id: WorkspaceId, session_id: Option<String>, window_id: Option<u64>) -> Result<()> {
+            UPDATE workspaces
+            SET session_id = ?2, window_id = ?3
+            WHERE workspace_id = ?1
+        }
+    }
+
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
