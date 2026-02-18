@@ -216,6 +216,7 @@ impl UserMessage {
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
+        const OPEN_DIFFS_TAG: &str = "<diffs>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -225,6 +226,7 @@ impl UserMessage {
         let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
+        let mut diffs_context = OPEN_DIFFS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -322,7 +324,7 @@ impl UserMessage {
                         }
                         MentionUri::GitDiff { base_ref } => {
                             write!(
-                                &mut selection_context,
+                                &mut diffs_context,
                                 "\nBranch diff against {}:\n{}",
                                 base_ref,
                                 MarkdownCodeBlock {
@@ -369,6 +371,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(selection_context));
+        }
+
+        if diffs_context.len() > OPEN_DIFFS_TAG.len() {
+            diffs_context.push_str("</diffs>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(diffs_context));
         }
 
         if thread_context.len() > OPEN_THREADS_TAG.len() {
