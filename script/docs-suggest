@@ -321,6 +321,31 @@ PROMPT_HEADER
 - **Marketing links**: For main feature pages, include a relevant `zed.dev`
   marketing link alongside docs links
 
+### Brand Voice Rubric (Required)
+
+For suggested doc text, apply the brand rubric scoring exactly and only pass text
+that scores 4+ on every criterion:
+
+| Criterion            |
+| -------------------- |
+| Technical Grounding  |
+| Natural Syntax       |
+| Quiet Confidence     |
+| Developer Respect    |
+| Information Priority |
+| Specificity          |
+| Voice Consistency    |
+| Earned Claims        |
+
+Pass threshold: all criteria 4+ (minimum 32/40 total).
+
+Also reject suggestions containing obvious taboo phrasing (hype, emotional
+manipulation, or marketing-style superlatives).
+
+For every docs file you suggest changing, treat the entire file as in scope for
+brand review (not only the edited section). Include any additional full-file
+voice fixes needed to reach passing rubric scores.
+
 ### What Requires Documentation
 
 - New user-facing features or commands
@@ -426,6 +451,23 @@ Respond with ONE of these formats:
 - **Links**: [List at least 3 internal docs links for non-reference pages; if
   this is a main feature page, include one relevant `zed.dev` marketing link]
 - **Suggestion**: [Specific text or description of what to add/change]
+- **Full-file brand pass**: [Required: yes. Note any additional voice edits
+  elsewhere in the same file needed to pass rubric across the entire file.]
+- **Brand voice scorecard**:
+
+  | Criterion            | Score | Notes |
+  | -------------------- | ----- | ----- |
+  | Technical Grounding  | /5    |       |
+  | Natural Syntax       | /5    |       |
+  | Quiet Confidence     | /5    |       |
+  | Developer Respect    | /5    |       |
+  | Information Priority | /5    |       |
+  | Specificity          | /5    |       |
+  | Voice Consistency    | /5    |       |
+  | Earned Claims        | /5    |       |
+  | **TOTAL**            | /40   |       |
+
+  Pass threshold: all criteria 4+.
 
 #### 2. [docs/src/another/file.md]
 ...
