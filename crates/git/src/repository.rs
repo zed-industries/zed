@@ -65,8 +65,8 @@ pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
 /// When the resolved directory falls outside the working directory
 /// (e.g. `"../worktrees"`), the repository's directory name is
 /// automatically appended so that sibling repos don't collide.
-/// For example, with working directory `~/src/zed` and setting
-/// `"../worktrees"`, this returns `~/src/worktrees/zed`.
+/// For example, with working directory `~/code/zed` and setting
+/// `"../worktrees"`, this returns `~/code/worktrees/zed`.
 ///
 /// When the resolved directory is inside the working directory
 /// (e.g. `".git/zed-worktrees"`), no extra component is added

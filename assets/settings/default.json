@@ -1491,14 +1491,14 @@
     // When the resolved directory is outside the project root, the
     // project's directory name is automatically appended so that
     // sibling repos don't collide. For example, with the default
-    // "../worktrees" and a project at ~/src/zed, worktrees are
-    // created under ~/src/worktrees/zed/.
+    // "../worktrees" and a project at ~/code/zed, worktrees are
+    // created under ~/code/worktrees/zed/.
     //
     // When the resolved directory is inside the project root, no
     // extra component is added (it's already project-scoped).
     //
     // Examples:
-    //   "../worktrees" — ~/src/worktrees/<project>/ (default)
+    //   "../worktrees" — ~/code/worktrees/<project>/ (default)
     //   ".git/zed-worktrees" — <project>/.git/zed-worktrees/
     //   "my-worktrees" — <project>/my-worktrees/
     //
