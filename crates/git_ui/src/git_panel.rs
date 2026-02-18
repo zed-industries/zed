@@ -66,8 +66,8 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
-    PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
+    ButtonLike, Checkbox, ContextMenu, ElevationIndex, IndentGuideColors, PopoverMenu,
+    RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, TintColor, Tooltip, WithScrollbar,
     prelude::*,
 };
 use util::paths::PathStyle;
@@ -3957,10 +3957,16 @@ impl GitPanel {
                 h_flex()
                     .gap_1()
                     .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Info)
-                            .with_rotate_animation(2),
+                        IconButton::new("cancel-generate-commit-message", IconName::Stop)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Tinted(TintColor::Error))
+                            .tooltip(Tooltip::text("Cancel commit message generation"))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.generate_commit_message_task.take();
+                                cx.notify();
+                            })),
                     )
                     .child(
                         Label::new("Generating Commit…")
