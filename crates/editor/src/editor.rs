@@ -20821,11 +20821,7 @@ impl Editor {
 
     fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
-            let excerpt_id = range.end.excerpt_id;
-            let point_range = range.to_point(&snapshot);
-            let expand = !buffer.single_hunk_is_expanded(range, cx);
-            buffer.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_id)], expand, cx);
+            buffer.toggle_single_diff_hunk(range, cx);
         })
     }
 

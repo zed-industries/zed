@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use chrono::{DateTime, NaiveDateTime, Utc};
 use fs::Fs;
 
 use anyhow::{Context as _, Result, bail};
@@ -56,6 +57,12 @@ use self::model::{DockStructure, SerializedWorkspaceLocation, SessionWorkspace};
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
 // > which defaults to <..> 32766 for SQLite versions after 3.32.0.
 const MAX_QUERY_PLACEHOLDERS: usize = 32000;
+
+fn parse_timestamp(text: &str) -> DateTime<Utc> {
+    NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+        .map(|naive| naive.and_utc())
+        .unwrap_or_else(|_| Utc::now())
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -1600,23 +1607,31 @@ impl WorkspaceDb {
 
     fn recent_workspaces(
         &self,
-    ) -> Result<Vec<(WorkspaceId, PathList, Option<RemoteConnectionId>)>> {
+    ) -> Result<
+        Vec<(
+            WorkspaceId,
+            PathList,
+            Option<RemoteConnectionId>,
+            DateTime<Utc>,
+        )>,
+    > {
         Ok(self
             .recent_workspaces_query()?
             .into_iter()
-            .map(|(id, paths, order, remote_connection_id)| {
+            .map(|(id, paths, order, remote_connection_id, timestamp)| {
                 (
                     id,
                     PathList::deserialize(&SerializedPathList { paths, order }),
                     remote_connection_id.map(RemoteConnectionId),
+                    parse_timestamp(&timestamp),
                 )
             })
             .collect())
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>)>> {
-            SELECT workspace_id, paths, paths_order, remote_connection_id
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, String)>> {
+            SELECT workspace_id, paths, paths_order, remote_connection_id, timestamp
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
@@ -1788,18 +1803,26 @@ impl WorkspaceDb {
     pub async fn recent_workspaces_on_disk(
         &self,
         fs: &dyn Fs,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+    ) -> Result<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    > {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let remote_connections = self.remote_connections()?;
 
-        for (id, paths, remote_connection_id) in self.recent_workspaces()? {
+        for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
                     result.push((
                         id,
                         SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths,
+                        timestamp,
                     ));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
@@ -1821,7 +1844,7 @@ impl WorkspaceDb {
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
             if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                result.push((id, SerializedWorkspaceLocation::Local, paths));
+                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1834,7 +1857,14 @@ impl WorkspaceDb {
     pub async fn last_workspace(
         &self,
         fs: &dyn Fs,
-    ) -> Result<Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+    ) -> Result<
+        Option<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    > {
         Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
     }
 

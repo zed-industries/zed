@@ -66,6 +66,8 @@ pub fn request_prediction_with_zeta2(
         && events.iter().all(|event| event.in_open_source_repo())
         && related_files.iter().all(|file| file.in_open_source_repo);
 
+    let can_collect_data = is_open_source && store.is_data_collection_enabled(cx);
+
     let request_task = cx.background_spawn({
         async move {
             let zeta_version = raw_config
@@ -83,6 +85,7 @@ pub fn request_prediction_with_zeta2(
                 zeta_version,
                 preferred_model,
                 is_open_source,
+                can_collect_data,
             );
 
             if prompt_input_contains_special_tokens(&prompt_input, zeta_version) {
@@ -265,6 +268,7 @@ pub fn zeta2_prompt_input(
     zeta_format: ZetaFormat,
     preferred_model: Option<EditPredictionModelKind>,
     is_open_source: bool,
+    can_collect_data: bool,
 ) -> (std::ops::Range<usize>, zeta_prompt::ZetaPromptInput) {
     let cursor_point = cursor_offset.to_point(snapshot);
 
@@ -309,6 +313,7 @@ pub fn zeta2_prompt_input(
         excerpt_ranges: Some(excerpt_ranges),
         preferred_model,
         in_open_source_repo: is_open_source,
+        can_collect_data,
     };
     (editable_offset_range, prompt_input)
 }

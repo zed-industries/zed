@@ -78,6 +78,7 @@ auto_update_ui.workspace = true
 bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
+chrono.workspace = true
 channel.workspace = true
 clap.workspace = true
 cli.workspace = true
@@ -226,11 +227,9 @@ zed_actions.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

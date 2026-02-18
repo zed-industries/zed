@@ -148,8 +148,17 @@ jobs:
               continue
             fi
 
-            git fetch origin main
-            git checkout -B "$BRANCH" origin/main
+            git config --local http.https://github.com/.extraheader "AUTHORIZATION: bearer ${GH_TOKEN}"
+
+            if ! git fetch origin main; then
+              echo "WARNING: Failed to fetch origin/main for $CRASH_ID — skipping"
+              continue
+            fi
+
+            if ! git checkout -B "$BRANCH" origin/main; then
+              echo "WARNING: Failed to create checkout branch $BRANCH for $CRASH_ID — skipping"
+              continue
+            fi
 
             CRASH_DATA_FILE="/tmp/crash-data/crash-${CRASH_ID}.md"
             if [ ! -f "$CRASH_DATA_FILE" ]; then
@@ -170,7 +179,7 @@ jobs:
           2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
           3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
           4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
-          5. Run validators required by the fix prompt for the affected crate(s)
+          5. Run validators required by the fix prompt for the affected code paths
           6. Write PR_BODY.md with sections:
              - Crash Summary
              - Root Cause

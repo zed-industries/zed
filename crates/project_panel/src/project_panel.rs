@@ -75,7 +75,10 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
-use zed_actions::{project_panel::ToggleFocus, workspace::OpenWithSystem};
+use zed_actions::{
+    project_panel::{Toggle, ToggleFocus},
+    workspace::OpenWithSystem,
+};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -417,6 +420,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
+                workspace.close_panel::<ProjectPanel>(window, cx);
+            }
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {

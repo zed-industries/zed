@@ -1,5 +1,4 @@
 use client::{Client, ProxySettings, UserStore};
-use collections::HashMap;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
@@ -8,12 +7,12 @@ use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use project::{Project, project_settings::ProjectSettings};
+use project::project_settings::ProjectSettings;
 use release_channel::{AppCommitSha, AppVersion};
 use reqwest_client::ReqwestClient;
 use settings::{Settings, SettingsStore};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use util::ResultExt as _;
 
 /// Headless subset of `workspace::AppState`.
@@ -23,24 +22,6 @@ pub struct EpAppState {
     pub user_store: Entity<UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
-    pub project_cache: ProjectCache,
-}
-
-#[derive(Default)]
-pub struct ProjectCache(Mutex<HashMap<String, Entity<Project>>>);
-
-impl ProjectCache {
-    pub fn insert(&self, repository_url: String, project: Entity<Project>) {
-        self.0.lock().unwrap().insert(repository_url, project);
-    }
-
-    pub fn get(&self, repository_url: &String) -> Option<Entity<Project>> {
-        self.0.lock().unwrap().get(repository_url).cloned()
-    }
-
-    pub fn remove(&self, repository_url: &String) {
-        self.0.lock().unwrap().remove(repository_url);
-    }
 }
 
 pub fn init(cx: &mut App) -> EpAppState {
@@ -130,14 +111,11 @@ pub fn init(cx: &mut App) -> EpAppState {
     prompt_store::init(cx);
     terminal_view::init(cx);
 
-    let project_cache = ProjectCache::default();
-
     EpAppState {
         languages,
         client,
         user_store,
         fs,
         node_runtime,
-        project_cache,
     }
 }

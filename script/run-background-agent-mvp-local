@@ -147,7 +147,7 @@ Required workflow:
 2. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
 3. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
 4. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
-5. Run validators required by the fix prompt for the affected crate(s)
+5. Run validators required by the fix prompt for the affected code paths
 6. Write PR_BODY.md with sections:
    - Crash Summary
    - Root Cause

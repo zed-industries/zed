@@ -68,6 +68,8 @@ pub struct CapturedPromptInput {
     pub related_files: Vec<CapturedRelatedFile>,
     #[serde(default)]
     pub in_open_source_repo: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zed_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
