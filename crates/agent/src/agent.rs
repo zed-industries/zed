@@ -1369,8 +1369,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
-            if let Some(agent) = agent.sessions.get(session_id) {
-                agent
+            if let Some(session) = agent.sessions.get(session_id) {
+                session
                     .thread
                     .update(cx, |thread, cx| thread.cancel(cx))
                     .detach();
@@ -1655,26 +1655,26 @@ impl NativeThreadEnvironment {
                 if let Some(timer) = timeout_timer {
                     futures::select! {
                         _ = timer.fuse() => SubagentInitialPromptResult::Timeout,
-                        _ = task.fuse() => SubagentInitialPromptResult::Completed,
+                        response = task.fuse() => {
+                            let response = response.log_err().flatten();
+                            if response.is_some_and(|response| {
+                                response.stop_reason == acp::StopReason::Cancelled
+                            })
+                            {
+                                SubagentInitialPromptResult::Cancelled
+                            } else {
+                                SubagentInitialPromptResult::Completed
+                            }
+                        },
                     }
                 } else {
-                    task.await.log_err();
-                    SubagentInitialPromptResult::Completed
-                }
-            })
-            .shared();
-
-        let mut user_stop_rx: watch::Receiver<bool> =
-            acp_thread.update(cx, |thread, _| thread.user_stop_receiver());
-
-        let user_cancelled = cx
-            .background_spawn(async move {
-                loop {
-                    if *user_stop_rx.borrow() {
-                        return;
-                    }
-                    if user_stop_rx.changed().await.is_err() {
-                        std::future::pending::<()>().await;
+                    let response = task.await.log_err().flatten();
+                    if response
+                        .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
+                    {
+                        SubagentInitialPromptResult::Cancelled
+                    } else {
+                        SubagentInitialPromptResult::Completed
                     }
                 }
             })
@@ -1686,7 +1686,6 @@ impl NativeThreadEnvironment {
             parent_thread: parent_thread_entity.downgrade(),
             acp_thread,
             wait_for_prompt_to_complete,
-            user_cancelled,
         }) as _)
     }
 }
@@ -1750,6 +1749,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 enum SubagentInitialPromptResult {
     Completed,
     Timeout,
+    Cancelled,
 }
 
 pub struct NativeSubagentHandle {
@@ -1758,7 +1758,6 @@ pub struct NativeSubagentHandle {
     subagent_thread: Entity<Thread>,
     acp_thread: Entity<AcpThread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
-    user_cancelled: Shared<Task<()>>,
 }
 
 impl SubagentHandle for NativeSubagentHandle {
@@ -1775,6 +1774,7 @@ impl SubagentHandle for NativeSubagentHandle {
             let timed_out = match wait_for_prompt.await {
                 SubagentInitialPromptResult::Completed => false,
                 SubagentInitialPromptResult::Timeout => true,
+                SubagentInitialPromptResult::Cancelled => return Err(anyhow!("User cancelled")),
             };
 
             let summary_prompt = if timed_out {
@@ -1784,9 +1784,14 @@ impl SubagentHandle for NativeSubagentHandle {
                 summary_prompt
             };
 
-            acp_thread
+            let response = acp_thread
                 .update(cx, |thread, cx| thread.send(vec![summary_prompt.into()], cx))
                 .await?;
+
+            let was_canceled = response.is_some_and(|r| r.stop_reason == acp::StopReason::Cancelled);
+            if was_canceled {
+                return Err(anyhow!("User cancelled"));
+            }
 
             thread.read_with(cx, |thread, _cx| {
                 thread
@@ -1796,18 +1801,10 @@ impl SubagentHandle for NativeSubagentHandle {
             })
         });
 
-        let user_cancelled = self.user_cancelled.clone();
-        let thread = self.subagent_thread.clone();
         let subagent_session_id = self.session_id.clone();
         let parent_thread = self.parent_thread.clone();
         cx.spawn(async move |cx| {
-            let result = futures::select! {
-                result = wait_for_summary_task.fuse() => result,
-                _ = user_cancelled.fuse() => {
-                    thread.update(cx, |thread, cx| thread.cancel(cx).detach());
-                    Err(anyhow!("User cancelled"))
-                },
-            };
+            let result = wait_for_summary_task.await;
             parent_thread
                 .update(cx, |parent_thread, cx| {
                     parent_thread.unregister_running_subagent(&subagent_session_id, cx)

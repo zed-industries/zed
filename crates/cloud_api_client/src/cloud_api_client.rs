@@ -207,6 +207,34 @@ impl CloudApiClient {
         Ok(())
     }
 
+    pub async fn submit_agent_feedback_comments(
+        &self,
+        body: SubmitAgentThreadFeedbackCommentsBody,
+    ) -> Result<()> {
+        let request = self.build_request(
+            Request::builder().method(Method::POST).uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/feedback/agent_thread_comments")?
+                    .as_ref(),
+            ),
+            AsyncBody::from(serde_json::to_string(&body)?),
+        )?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            anyhow::bail!(
+                "Failed to submit agent feedback comments.\nStatus: {:?}\nBody: {body}",
+                response.status()
+            )
+        }
+
+        Ok(())
+    }
+
     pub async fn submit_edit_prediction_feedback(
         &self,
         body: SubmitEditPredictionFeedbackBody,

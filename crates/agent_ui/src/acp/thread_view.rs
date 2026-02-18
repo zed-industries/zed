@@ -76,7 +76,7 @@ use crate::{
     ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
     RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);

@@ -156,6 +156,7 @@ Required workflow:
    - Validation
    - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
    - Reviewer Checklist
+   - Release Notes (final section, formatted as "Release Notes:", blank line, then one bullet like "- N/A" when not user-facing)
 
 Constraints:
 - Keep changes narrowly scoped to this crash.

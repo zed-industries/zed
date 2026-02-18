@@ -315,6 +315,7 @@
       "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
       "shift-alt-z": "agent::RejectAll",
+      "shift-alt-u": "agent::UndoLastReject",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-shift-enter": "agent::SendImmediately",
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
