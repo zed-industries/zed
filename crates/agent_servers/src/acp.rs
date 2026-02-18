@@ -418,10 +418,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support modes, but `default_mode` was set in settings.",
-                    );
                 }
             }
 
@@ -461,10 +457,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support model selection, but `default_model` was set in settings.",
-                    );
                 }
             }
 
@@ -1211,10 +1203,6 @@ impl acp::Client for ClientDelegate {
         {
             if let Some(session_modes) = &session.session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
-            } else {
-                log::error!(
-                    "Got a `CurrentModeUpdate` notification, but they agent didn't specify `modes` during setting setup."
-                );
             }
         }
 
@@ -1226,10 +1214,6 @@ impl acp::Client for ClientDelegate {
             if let Some(opts) = &session.config_options {
                 *opts.config_options.borrow_mut() = config_options.clone();
                 opts.tx.borrow_mut().send(()).ok();
-            } else {
-                log::error!(
-                    "Got a `ConfigOptionUpdate` notification, but the agent didn't specify `config_options` during session setup."
-                );
             }
         }
 
