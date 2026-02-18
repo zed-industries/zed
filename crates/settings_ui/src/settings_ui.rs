@@ -387,44 +387,13 @@ struct SettingsFieldMetadata {
     should_do_titlecase: Option<bool>,
 }
 
-#[cfg(target_os = "macos")]
-fn open_settings_on_next_frame(window: &mut Window) {
-    // We open the settings window on the next frame when
-    // the window has been activated to avoid the settings window
-    // from being shown before the workspace window.
-    window.on_next_frame(|window, cx| {
-        let window_handle = window
-            .window_handle()
-            .downcast::<MultiWorkspace>()
-            .expect("Workspaces are root Windows");
-        open_settings_editor(None, None, window_handle, cx);
-    });
-}
-
 pub fn init(cx: &mut App) {
     init_renderers(cx);
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
 
-    #[cfg(target_os = "macos")]
     cx.on_action(|_: &OpenSettings, cx| {
-        let Some(app_state) = AppState::global(cx).upgrade() else {
-            return;
-        };
-
-        cx.spawn(async move |cx| {
-            let workspace_window =
-                workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
-            cx.update(|cx| {
-                workspace_window
-                    .update(cx, |_, window, _| {
-                        open_settings_on_next_frame(window);
-                    })
-                    .log_err();
-            });
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        open_settings_editor(None, None, None, cx);
     });
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
@@ -434,14 +403,14 @@ pub fn init(cx: &mut App) {
                     .window_handle()
                     .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(Some(&path), None, window_handle, cx);
+                open_settings_editor(Some(&path), None, Some(window_handle), cx);
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
                     .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(None, None, window_handle, cx);
+                open_settings_editor(None, None, Some(window_handle), cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
@@ -458,7 +427,7 @@ pub fn init(cx: &mut App) {
                             .is_dir()
                             .then_some(tree.read(cx).id())
                     });
-                open_settings_editor(None, target_worktree_id, window_handle, cx);
+                open_settings_editor(None, target_worktree_id, Some(window_handle), cx);
             });
     })
     .detach();
@@ -597,7 +566,7 @@ fn init_renderers(cx: &mut App) {
 pub fn open_settings_editor(
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
-    workspace_handle: WindowHandle<MultiWorkspace>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -654,7 +623,8 @@ pub fn open_settings_editor(
     if let Some(existing_window) = existing_window {
         existing_window
             .update(cx, |settings_window, window, cx| {
-                settings_window.original_window = Some(workspace_handle);
+                settings_window.original_window = workspace_handle;
+
                 window.activate_window();
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
@@ -715,7 +685,7 @@ pub fn open_settings_editor(
             },
             |window, cx| {
                 let settings_window =
-                    cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+                    cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
                         open_path(&path, settings_window, window, cx);
