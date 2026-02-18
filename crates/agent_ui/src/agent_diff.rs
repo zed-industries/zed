@@ -18,7 +18,7 @@ use gpui::{
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
-use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use language::{Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
@@ -768,7 +768,6 @@ fn render_diff_hunk_controls(
                 .on_click({
                     let editor = editor.clone();
                     let thread = thread.clone();
-                    let workspace = workspace.clone();
                     move |_event, window, cx| {
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.buffer().read(cx).snapshot(cx);
