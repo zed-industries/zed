@@ -314,6 +314,13 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
+            if self.kind == acp::ToolKind::Execute {
+                for terminal in self.terminals() {
+                    terminal.update(cx, |terminal, cx| {
+                        terminal.update_command_label(&title, cx);
+                    });
+                }
+            }
             self.label.update(cx, |label, cx| {
                 if self.kind == acp::ToolKind::Execute {
                     label.replace(title, cx);

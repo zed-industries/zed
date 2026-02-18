@@ -1247,7 +1247,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.new_session(project, cx))))
     }
 
-    fn supports_load_session(&self, _cx: &App) -> bool {
+    fn supports_load_session(&self) -> bool {
         true
     }
 
@@ -1262,7 +1262,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.open_thread(session.session_id, cx))
     }
 
-    fn supports_close_session(&self, _cx: &App) -> bool {
+    fn supports_close_session(&self) -> bool {
         true
     }
 

@@ -1691,18 +1691,19 @@ pub(crate) fn next_word_start(
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
-        let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = classifier.kind(left);
-            let right_kind = classifier.kind(right);
-            let at_newline = right == '\n';
+        let new_point =
+            movement::find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+                let at_newline = right == '\n';
 
-            let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+                let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                    || at_newline && crossed_newline
+                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            crossed_newline |= at_newline;
-            found
-        });
+                crossed_newline |= at_newline;
+                found
+            });
         if point == new_point {
             break;
         }
@@ -1717,7 +1718,7 @@ fn next_end_impl(
     times: usize,
     allow_cross_newline: bool,
     always_advance: bool,
-    mut is_boundary: impl FnMut(char, char) -> bool,
+    is_boundary: &mut dyn FnMut(char, char) -> bool,
 ) -> DisplayPoint {
     for _ in 0..times {
         let mut need_next_char = false;
@@ -1730,7 +1731,7 @@ fn next_end_impl(
             map,
             new_point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let at_newline = right == '\n';
 
                 if !allow_cross_newline && at_newline {
@@ -1774,7 +1775,7 @@ pub(crate) fn next_word_end(
         times,
         allow_cross_newline,
         always_advance,
-        |left, right| {
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
             left_kind != right_kind && left_kind != CharKind::Whitespace
@@ -1800,7 +1801,7 @@ pub(crate) fn next_subword_end(
         times,
         allow_cross_newline,
         true,
-        |left, right| {
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
             let is_stopping_punct = |c: char| ".$=\"'{}[]()<>".contains(c);
@@ -1830,7 +1831,7 @@ fn previous_word_start(
             map,
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
@@ -1867,7 +1868,7 @@ fn previous_word_end(
             &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
@@ -1914,21 +1915,22 @@ fn next_subword_start(
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
         let mut crossed_newline = false;
-        let new_point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
-            let left_kind = classifier.kind(left);
-            let right_kind = classifier.kind(right);
-            let at_newline = right == '\n';
-            let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
-            let found_subword_start = is_subword_start(left, right, ".$_-");
-            let is_word_start = (left_kind != right_kind)
-                && (!right.is_ascii_punctuation() || is_stopping_punct(right));
-            let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
-                || at_newline && crossed_newline
-                || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+        let new_point =
+            movement::find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+                let at_newline = right == '\n';
+                let is_stopping_punct = |c: char| "$=\"'{}[]()<>".contains(c);
+                let found_subword_start = is_subword_start(left, right, ".$_-");
+                let is_word_start = (left_kind != right_kind)
+                    && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+                let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
+                    || at_newline && crossed_newline
+                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
 
-            crossed_newline |= at_newline;
-            found
-        });
+                crossed_newline |= at_newline;
+                found
+            });
         if point == new_point {
             break;
         }
@@ -1955,7 +1957,7 @@ fn previous_subword_start(
             map,
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
@@ -2004,7 +2006,7 @@ fn previous_subword_end(
             &map.buffer_snapshot(),
             point,
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
@@ -2754,7 +2756,7 @@ fn find_forward(
 
     for _ in 0..times {
         found = false;
-        let new_to = find_boundary(map, to, mode, |_, right| {
+        let new_to = find_boundary(map, to, mode, &mut |_, right| {
             found = is_character_match(target, right, smartcase);
             found
         });
@@ -2792,7 +2794,7 @@ fn find_backward(
     let mut to = from;
 
     for _ in 0..times {
-        let new_to = find_preceding_boundary_display_point(map, to, mode, |_, right| {
+        let new_to = find_preceding_boundary_display_point(map, to, mode, &mut |_, right| {
             is_character_match(target, right, smartcase)
         });
         if to == new_to {
@@ -2844,7 +2846,7 @@ fn sneak(
             map,
             movement::right(map, to),
             FindRange::MultiLine,
-            |left, right| {
+            &mut |left, right| {
                 found = is_character_match(first_target, left, smartcase)
                     && is_character_match(second_target, right, smartcase);
                 found
@@ -2876,12 +2878,16 @@ fn sneak_backward(
 
     for _ in 0..times {
         found = false;
-        let new_to =
-            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
+        let new_to = find_preceding_boundary_display_point(
+            map,
+            to,
+            FindRange::MultiLine,
+            &mut |left, right| {
                 found = is_character_match(first_target, left, smartcase)
                     && is_character_match(second_target, right, smartcase);
                 found
-            });
+            },
+        );
         if to == new_to {
             break;
         }

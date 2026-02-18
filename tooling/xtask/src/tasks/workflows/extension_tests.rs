@@ -17,7 +17,8 @@ const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
 // This is used by various extensions repos in the zed-extensions org to run automated tests.
 pub(crate) fn extension_tests() -> Workflow {
     let should_check_rust = PathCondition::new("check_rust", r"^(Cargo.lock|Cargo.toml|.*\.rs)$");
-    let should_check_extension = PathCondition::new("check_extension", r"^.*\.scm$");
+    let should_check_extension =
+        PathCondition::new("check_extension", r"^(extension\.toml|.*\.scm)$");
 
     let orchestrate =
         orchestrate_without_package_filter(&[&should_check_rust, &should_check_extension]);

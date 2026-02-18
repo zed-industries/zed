@@ -84,6 +84,8 @@ actions!(
     [
         /// Closes the git panel.
         Close,
+        /// Toggles the git panel.
+        Toggle,
         /// Toggles focus on the git panel.
         ToggleFocus,
         /// Opens the git panel menu.
@@ -224,6 +226,11 @@ const TREE_INDENT: f32 = 16.0;
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
+    });
+    workspace.register_action(|workspace, _: &Toggle, window, cx| {
+        if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
+            workspace.close_panel::<GitPanel>(window, cx);
+        }
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
         CommitModal::toggle(workspace, None, window, cx)

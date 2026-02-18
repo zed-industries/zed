@@ -50,6 +50,7 @@ use {
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
+    chrono::{Duration as ChronoDuration, Utc},
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
@@ -2654,30 +2655,40 @@ fn run_multi_workspace_sidebar_visual_tests(
     // be inside a MultiWorkspace update when that happens.
     cx.update(|cx| {
         sidebar.update(cx, |sidebar, cx| {
+            let now = Utc::now();
+            let today_timestamp = now;
+            let yesterday_timestamp = now - ChronoDuration::days(1);
+            let past_week_timestamp = now - ChronoDuration::days(10);
+            let all_timestamp = now - ChronoDuration::days(60);
+
             let recent_projects = vec![
                 RecentProjectEntry {
                     name: "tiny-project".into(),
                     full_path: recent1_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent1_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: today_timestamp,
                 },
                 RecentProjectEntry {
                     name: "font-kit".into(),
                     full_path: recent2_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent2_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: yesterday_timestamp,
                 },
                 RecentProjectEntry {
                     name: "ideas".into(),
                     full_path: recent3_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent3_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: past_week_timestamp,
                 },
                 RecentProjectEntry {
                     name: "tmp".into(),
                     full_path: recent4_dir.to_string_lossy().to_string().into(),
                     paths: vec![recent4_dir.clone()],
                     workspace_id: WorkspaceId::default(),
+                    timestamp: all_timestamp,
                 },
             ];
             sidebar.set_test_recent_projects(recent_projects, cx);

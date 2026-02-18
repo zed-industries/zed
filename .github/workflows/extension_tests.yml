@@ -44,7 +44,7 @@ jobs:
         }
 
         check_pattern "check_rust" '^(Cargo.lock|Cargo.toml|.*\.rs)$' -qP
-        check_pattern "check_extension" '^.*\.scm$' -qP
+        check_pattern "check_extension" '^(extension\.toml|.*\.scm)$' -qP
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
       check_extension: ${{ steps.filter.outputs.check_extension }}
@@ -106,7 +106,7 @@ jobs:
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
-        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
         PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
@@ -117,7 +117,7 @@ jobs:
             git checkout "$(git log -1 --format=%H)"~1
         fi
 
-        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
             echo "version_changed=false" >> "$GITHUB_OUTPUT" || \

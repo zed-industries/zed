@@ -40,7 +40,7 @@ impl Vim {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let kind = match motion {
                             Motion::NextWordStart { ignore_punctuation }
                             | Motion::NextSubwordStart { ignore_punctuation } => {
@@ -116,7 +116,7 @@ impl Vim {
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         objects_found |= object.expand_selection(map, selection, around, times);
                     });
                 });

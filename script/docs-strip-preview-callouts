@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+#
+# Remove Preview callouts from documentation for stable release.
+#
+# Usage:
+#   script/docs-strip-preview-callouts [--dry-run]
+#
+# This script finds and removes all Preview-related callouts from docs:
+#   > **Preview:** This feature is available in Zed Preview...
+#   > **Changed in Preview (v0.XXX).** See [release notes]...
+#
+# Then creates a PR with the changes.
+#
+# Options:
+#   --dry-run     Show what would be changed without modifying files or creating PR
+#   --verbose     Show detailed progress
+#
+# Run this as part of the stable release workflow.
+
+set -euo pipefail
+
+DRY_RUN=false
+VERBOSE=false
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[strip-preview]${NC} $*" >&2
+    fi
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $*" >&2
+    exit 1
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            head -18 "$0" | tail -16
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Get repo root
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+DOCS_DIR="$REPO_ROOT/docs/src"
+
+echo "Searching for Preview callouts in $DOCS_DIR..."
+
+# Find files with either type of preview callout:
+# - > **Preview:** ...
+# - > **Changed in Preview ...
+files_with_callouts=$(grep -rlE "> \*\*(Preview:|Changed in Preview)" "$DOCS_DIR" 2>/dev/null || true)
+
+if [[ -z "$files_with_callouts" ]]; then
+    echo "No Preview callouts found. Nothing to do."
+    exit 0
+fi
+
+file_count=$(echo "$files_with_callouts" | wc -l | tr -d ' ')
+echo "Found $file_count file(s) with Preview callouts:"
+echo ""
+
+for file in $files_with_callouts; do
+    relative_path="${file#$REPO_ROOT/}"
+    echo "  $relative_path"
+    
+    if [[ "$VERBOSE" == "true" ]]; then
+        grep -nE "> \*\*(Preview:|Changed in Preview)" "$file" | while read -r line; do
+            echo "    $line"
+        done
+    fi
+done
+
+echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${YELLOW}=== DRY RUN ===${NC}"
+    echo ""
+    echo "Would remove Preview callouts from the files above and create a PR."
+    echo ""
+    echo "Lines to be removed:"
+    echo ""
+    
+    for file in $files_with_callouts; do
+        relative_path="${file#$REPO_ROOT/}"
+        echo "--- $relative_path ---"
+        grep -nE "> \*\*(Preview:|Changed in Preview)" "$file" || true
+        echo ""
+    done
+    
+    echo -e "${YELLOW}=== END DRY RUN ===${NC}"
+    echo ""
+    echo "Run without --dry-run to apply changes and create PR."
+    exit 0
+fi
+
+# Check for clean working state
+if [[ -n "$(git status --porcelain docs/)" ]]; then
+    error "docs/ directory has uncommitted changes. Please commit or stash first."
+fi
+
+# Apply changes
+echo "Removing Preview callouts..."
+
+for file in $files_with_callouts; do
+    log "Processing: $file"
+    
+    tmp_file=$(mktemp)
+    
+    # Remove preview callout lines and their continuations
+    # Handles both:
+    #   > **Preview:** This feature is available...
+    #   > **Changed in Preview (v0.XXX).** See [release notes]...
+    awk '
+    BEGIN { in_callout = 0 }
+    /^> \*\*Preview:\*\*/ { 
+        in_callout = 1
+        next 
+    }
+    /^> \*\*Changed in Preview/ { 
+        in_callout = 1
+        next 
+    }
+    in_callout && /^>/ && !/^> \*\*/ {
+        next
+    }
+    in_callout && /^$/ {
+        in_callout = 0
+        next
+    }
+    {
+        in_callout = 0
+        print
+    }
+    ' "$file" > "$tmp_file"
+    
+    mv "$tmp_file" "$file"
+    echo "  Updated: ${file#$REPO_ROOT/}"
+done
+
+echo ""
+echo -e "${GREEN}Preview callouts removed from $file_count file(s).${NC}"
+
+# Check if there are actual changes (in case callouts were in comments or something)
+if [[ -z "$(git status --porcelain docs/)" ]]; then
+    echo ""
+    echo "No effective changes to commit (callouts may have been in non-rendered content)."
+    exit 0
+fi
+
+# Create branch and PR
+echo ""
+echo "Creating PR..."
+
+BRANCH_NAME="docs/stable-release-$(date +%Y-%m-%d)"
+log "Branch: $BRANCH_NAME"
+
+git checkout -b "$BRANCH_NAME"
+git add docs/src/
+
+# Build file list for commit message
+FILE_LIST=$(echo "$files_with_callouts" | sed "s|$REPO_ROOT/||" | sed 's/^/- /')
+
+git commit -m "docs: Remove Preview callouts for stable release
+
+Features documented with Preview callouts are now in Stable.
+
+Files updated:
+$FILE_LIST"
+
+git push -u origin "$BRANCH_NAME"
+
+gh pr create \
+    --title "docs: Remove Preview callouts for stable release" \
+    --body "This PR removes Preview callouts from documentation for features that are now in Stable.
+
+## Files Updated
+
+$(echo "$files_with_callouts" | sed "s|$REPO_ROOT/|• |")
+
+## What This Does
+
+Removes callouts like:
+\`\`\`markdown
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+\`\`\`
+
+And:
+\`\`\`markdown
+> **Changed in Preview (v0.XXX).** See [release notes](/releases#0.XXX).
+\`\`\`
+
+These features are now in Stable, so the callouts are no longer needed." \
+    --label "documentation"
+
+PR_URL=$(gh pr view --json url --jq '.url')
+
+echo ""
+echo -e "${GREEN}Done!${NC}"
+echo ""
+echo "PR created: $PR_URL"
+echo ""
+echo "Next steps:"
+echo "1. Review the PR to ensure callouts were removed correctly"
+echo "2. Merge the PR as part of the stable release"

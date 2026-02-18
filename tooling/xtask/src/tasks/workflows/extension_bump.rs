@@ -13,7 +13,8 @@ use crate::tasks::workflows::{
     },
 };
 
-const VERSION_CHECK: &str = r#"sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml"#;
+const VERSION_CHECK: &str =
+    r#"sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]'"#;
 
 // This is used by various extensions repos in the zed-extensions org to bump extension versions.
 pub(crate) fn extension_bump() -> Workflow {

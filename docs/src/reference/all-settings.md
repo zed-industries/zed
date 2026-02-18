@@ -1,3 +1,8 @@
+---
+title: All Settings
+description: "Complete reference for all Zed settings."
+---
+
 # All Settings
 
 This is the complete reference for all Zed settings.
@@ -6,7 +11,7 @@ You may also want to change your [theme](../themes.md), configure your [key bind
 
 # Settings
 
-Find below an extensive run-through of many supported settings by Zed.
+The sections below document supported Zed settings.
 
 ## Active Pane Modifiers
 
@@ -35,7 +40,7 @@ Non-negative `float` values
 
 ### Inactive Opacity
 
-- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Description: Opacity of inactive panels. When set to 1.0, inactive panes have the same opacity as the active pane. If set to 0, inactive pane content is not visible. Values are clamped to the [0.0, 1.0] range.
 - Setting: `inactive_opacity`
 - Default: `1.0`
 
@@ -129,7 +134,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Indent
 
-- Description: Whether indentation should be adjusted based on the context whilst typing. This can be specified on a per-language basis.
+- Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
 - Setting: `auto_indent`
 - Default: `true`
 
@@ -149,7 +154,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Install extensions
 
-- Description: Define extensions to be autoinstalled or never be installed.
+- Description: Define extensions to install automatically or never install.
 - Setting: `auto_install_extensions`
 - Default: `{ "html": true }`
 
@@ -239,7 +244,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 ## Auto Signature Help
 
-- Description: Show method signatures in the editor, when inside parentheses
+- Description: Show method signatures in the editor when inside parentheses.
 - Setting: `auto_signature_help`
 - Default: `false`
 
@@ -3270,6 +3275,18 @@ Non-negative `integer` values
 - Setting: `regex`
 - Default: `false`
 
+### Search On Input
+
+- Description: Whether to search on input in project search.
+- Setting: `search_on_input`
+- Default: `false`
+
+### Search On Input Debounce Ms
+
+- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
+- Setting: `search_on_input_debounce_ms`
+- Default: `200`
+
 ### Center On Match
 
 - Description: Whether to center the cursor on each search match when navigating.
@@ -3281,12 +3298,6 @@ Non-negative `integer` values
 - Description: If `search_wrap` is disabled, search result do not wrap around the end of the file
 - Setting: `search_wrap`
 - Default: `true`
-
-## Center on Match
-
-- Description: If `center_on_match` is enabled, the editor will center the cursor on the current match when searching.
-- Setting: `center_on_match`
-- Default: `false`
 
 ## Seed Search Query From Cursor
 

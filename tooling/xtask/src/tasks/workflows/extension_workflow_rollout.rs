@@ -9,7 +9,7 @@ use crate::tasks::workflows::steps::CheckoutStep;
 use crate::tasks::workflows::{
     extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
     vars::{self, StepOutput},
 };
 
@@ -59,6 +59,9 @@ fn fetch_extension_repos() -> NamedJob {
     let (get_org_repositories, list_repos_output) = get_repositories();
 
     let job = Job::default()
+        .cond(Expression::new(format!(
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.ref == 'refs/heads/main'"
+        )))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(5u32)
         .outputs([("repos".to_owned(), list_repos_output.to_string())])

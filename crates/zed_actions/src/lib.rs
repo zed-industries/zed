@@ -302,6 +302,8 @@ pub mod project_panel {
     actions!(
         project_panel,
         [
+            /// Toggles the project panel.
+            Toggle,
             /// Toggles focus on the project panel.
             ToggleFocus
         ]
@@ -465,6 +467,8 @@ pub mod assistant {
     actions!(
         agent,
         [
+            /// Toggles the agent panel.
+            Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
         ]
@@ -494,20 +498,6 @@ pub mod assistant {
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
-}
-
-pub mod debugger {
-    use gpui::actions;
-
-    actions!(
-        debugger,
-        [
-            /// Opens the debugger onboarding modal.
-            OpenOnboardingModal,
-            /// Resets the debugger onboarding state.
-            ResetOnboarding
-        ]
-    );
 }
 
 /// Opens the recent projects interface.
@@ -639,6 +629,8 @@ actions!(
 actions!(
     debug_panel,
     [
+        /// Toggles the debug panel.
+        Toggle,
         /// Toggles focus on the debug panel.
         ToggleFocus
     ]

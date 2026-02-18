@@ -45,6 +45,8 @@ use workspace::{
 actions!(
     collab_panel,
     [
+        /// Toggles the collab panel.
+        Toggle,
         /// Toggles focus on the collaboration panel.
         ToggleFocus,
         /// Removes the selected channel or contact.
@@ -91,6 +93,11 @@ pub fn init(cx: &mut App) {
                         }
                     });
                 })
+            }
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<CollabPanel>(window, cx) {
+                workspace.close_panel::<CollabPanel>(window, cx);
             }
         });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {

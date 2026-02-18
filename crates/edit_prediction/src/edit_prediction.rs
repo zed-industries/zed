@@ -2209,6 +2209,10 @@ impl EditPredictionStore {
             .is_some_and(|watcher| watcher.is_project_open_source())
     }
 
+    pub(crate) fn is_data_collection_enabled(&self, cx: &App) -> bool {
+        self.data_collection_choice.is_enabled(cx)
+    }
+
     fn load_data_collection_choice() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)

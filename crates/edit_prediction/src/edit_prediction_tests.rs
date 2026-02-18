@@ -1707,6 +1707,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),

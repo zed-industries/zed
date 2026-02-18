@@ -1,3 +1,8 @@
+---
+title: SQL
+description: "Configure SQL language support in Zed, including language servers, formatting, and debugging."
+---
+
 # SQL
 
 SQL files are handled by the [SQL Extension](https://github.com/zed-extensions/sql).
@@ -21,7 +26,7 @@ which sql-formatter
 sql-formatter --version
 ```
 
-3. Configure Zed to automatically format SQL with `sql-formatter`:
+3. Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > SQL, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -53,7 +58,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 }
 ```
 
-When using a `.sql-formatter.json` file you can use a more simplified set of Zed settings since the language need not be specified inline:
+When using a `.sql-formatter.json` file you can use a simplified Zed settings configuration:
 
 ```json [settings]
   "languages": {

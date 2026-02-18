@@ -665,9 +665,9 @@ pub(crate) async fn insert_images_as_context(
                 let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
                 let multibuffer_anchor = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(*excerpt_id, text_anchor);
+                    .anchor_in_excerpt(excerpt_id, text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
-                (*excerpt_id, text_anchor, multibuffer_anchor)
+                (excerpt_id, text_anchor, multibuffer_anchor)
             })
             .ok()
         else {
