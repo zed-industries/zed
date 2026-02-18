@@ -21,6 +21,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: docs-automation-daily-batch
+  cancel-in-progress: false
+
 env:
   FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
   DROID_MODEL: claude-opus-4-5-20251101
@@ -218,6 +222,12 @@ jobs:
           # Apply stashed changes
           git stash pop || true
 
+          # Skip if changes are already present on the daily branch
+          if git diff --quiet docs/src/; then
+            echo "No new documentation changes to commit after syncing daily branch"
+            exit 0
+          fi
+
           # Stage and commit
           git add docs/src/
           SUMMARY=$(head -50 < /tmp/phase6-summary.md)
@@ -235,13 +245,22 @@ jobs:
           # Check if PR already exists for this branch
           EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' || echo "")
 
+          PR_TITLE="Update documentation ($(date +%Y-%m-%d))"
+          PR_BODY_FILE="/tmp/phase6-pr-body.md"
+          cp /tmp/phase6-summary.md "$PR_BODY_FILE"
+
+          if ! grep -q '^Release Notes:' "$PR_BODY_FILE"; then
+            printf '\nRelease Notes:\n\n- N/A\n' >> "$PR_BODY_FILE"
+          fi
+
           if [ -n "$EXISTING_PR" ]; then
             echo "PR #$EXISTING_PR already exists for branch $BRANCH_NAME, updated with new commit"
+            gh pr edit "$EXISTING_PR" --title "$PR_TITLE" --body-file "$PR_BODY_FILE" || true
           else
             # Create new PR
             gh pr create \
-              --title "docs: automated documentation update ($(date +%Y-%m-%d))" \
-              --body-file /tmp/phase6-summary.md \
+              --title "$PR_TITLE" \
+              --body-file "$PR_BODY_FILE" \
               --base main || true
             echo "PR created on branch: $BRANCH_NAME"
           fi

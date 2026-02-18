@@ -39,9 +39,21 @@ You will receive:
    ```
 
 4. **Create Pull Request**
-   Use the Phase 6 summary as the PR body.
-   
-   PR Title: `docs: [Brief description of documentation updates]`
+   Use the Phase 6 summary as the PR body, then append:
+
+   ```markdown
+   Release Notes:
+
+   - N/A
+   ```
+
+   PR title requirements:
+   - Use imperative mood
+   - No trailing punctuation
+   - No conventional commit prefixes (`fix:`, `feat:`, `docs:`, etc.)
+   - Optional crate prefix only when one crate is clearly the scope (`crate_name: Add ...`)
+
+   PR Title example: `Update documentation for workspace settings`
    
    Labels (if available): `documentation`, `automated`
    
