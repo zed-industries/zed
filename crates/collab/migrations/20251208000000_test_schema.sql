@@ -1,22 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
-CREATE TABLE public.access_tokens (
-    id integer NOT NULL,
-    user_id integer,
-    hash character varying(128),
-    impersonated_user_id integer
-);
-
-CREATE SEQUENCE public.access_tokens_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.access_tokens_id_seq OWNED BY public.access_tokens.id;
-
 CREATE TABLE public.breakpoints (
     id integer NOT NULL,
     project_id integer NOT NULL,
@@ -497,8 +480,6 @@ CREATE TABLE public.worktrees (
     completed_scan_id bigint
 );
 
-ALTER TABLE ONLY public.access_tokens ALTER COLUMN id SET DEFAULT nextval('public.access_tokens_id_seq'::regclass);
-
 ALTER TABLE ONLY public.breakpoints ALTER COLUMN id SET DEFAULT nextval('public.breakpoints_id_seq'::regclass);
 
 ALTER TABLE ONLY public.buffers ALTER COLUMN id SET DEFAULT nextval('public.buffers_id_seq'::regclass);
@@ -532,9 +513,6 @@ ALTER TABLE ONLY public.rooms ALTER COLUMN id SET DEFAULT nextval('public.rooms_
 ALTER TABLE ONLY public.servers ALTER COLUMN id SET DEFAULT nextval('public.servers_id_seq'::regclass);
 
 ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_pkey PRIMARY KEY (id);
@@ -627,8 +605,6 @@ ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
 
 CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
-
-CREATE INDEX index_access_tokens_user_id ON public.access_tokens USING btree (user_id);
 
 CREATE INDEX index_breakpoints_on_project_id ON public.breakpoints USING btree (project_id);
 
@@ -731,9 +707,6 @@ CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (gith
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
 
 CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
