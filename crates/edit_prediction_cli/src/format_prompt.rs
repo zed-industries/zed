@@ -100,6 +100,7 @@ pub async fn run_format_prompt(
                     .captured_prompt_input
                     .as_ref()
                     .map_or(false, |input| input.in_open_source_repo),
+                can_collect_data: false,
             };
             let prompt = format_zeta_prompt(&input, version);
             let prefill = zeta_prompt::get_prefill(&input, version);

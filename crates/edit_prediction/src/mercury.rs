@@ -100,6 +100,7 @@ impl Mercury {
                 excerpt_ranges: None,
                 preferred_model: None,
                 in_open_source_repo: false,
+                can_collect_data: false,
             };
 
             let prompt = build_prompt(&inputs);

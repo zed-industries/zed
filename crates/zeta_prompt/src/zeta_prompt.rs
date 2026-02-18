@@ -65,6 +65,8 @@ pub struct ZetaPromptInput {
     pub preferred_model: Option<EditPredictionModelKind>,
     #[serde(default)]
     pub in_open_source_repo: bool,
+    #[serde(default)]
+    pub can_collect_data: bool,
 }
 
 #[derive(
@@ -1040,6 +1042,7 @@ mod tests {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         }
     }
 
@@ -1416,6 +1419,7 @@ mod tests {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 15..41, 0..excerpt.len());
@@ -1470,6 +1474,7 @@ mod tests {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, 0..28, 0..28);
@@ -1519,6 +1524,7 @@ mod tests {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         };
 
         let prompt = zeta1::format_zeta1_from_input(&input, editable_range, context_range);
