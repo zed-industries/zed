@@ -126,7 +126,6 @@ pub fn init(cx: &mut App) {
         }
     }
 
-    #[cfg(target_os = "macos")]
     cx.on_action(|_: &OpenKeymap, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_keymap_editor(None, workspace, window, cx);
