@@ -1194,6 +1194,13 @@ mod tests {
         t("cargo test").allow(&[extracted_pattern]).is_confirm();
         t("cargo fmt").allow(&[extracted_pattern]).is_confirm();
 
+        // Hyphenated extensions of the subcommand should not match either
+        // (e.g. cargo plugins like "cargo build-foo")
+        t("cargo build-foo")
+            .allow(&[extracted_pattern])
+            .is_confirm();
+        t("cargo builder").allow(&[extracted_pattern]).is_confirm();
+
         // But not commands with different base commands
         t("npm install").allow(&[extracted_pattern]).is_confirm();
 

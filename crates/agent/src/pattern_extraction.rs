@@ -66,7 +66,13 @@ pub fn extract_terminal_pattern(command: &str) -> Option<String> {
     let prefix = extract_command_prefix(command)?;
     let escaped_command = regex::escape(&prefix.command);
     Some(match &prefix.subcommand {
-        Some(subcommand) => format!("^{}\\s+{}\\b", escaped_command, regex::escape(subcommand)),
+        Some(subcommand) => {
+            format!(
+                "^{}\\s+{}(\\s|$)",
+                escaped_command,
+                regex::escape(subcommand)
+            )
+        }
         None => format!("^{}\\b", escaped_command),
     })
 }
@@ -158,23 +164,23 @@ mod tests {
     fn test_extract_terminal_pattern() {
         assert_eq!(
             extract_terminal_pattern("cargo build --release"),
-            Some("^cargo\\s+build\\b".to_string())
+            Some("^cargo\\s+build(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("cargo test -p search"),
-            Some("^cargo\\s+test\\b".to_string())
+            Some("^cargo\\s+test(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("npm install"),
-            Some("^npm\\s+install\\b".to_string())
+            Some("^npm\\s+install(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("git-lfs pull"),
-            Some("^git\\-lfs\\s+pull\\b".to_string())
+            Some("^git\\-lfs\\s+pull(\\s|$)".to_string())
         );
         assert_eq!(
             extract_terminal_pattern("my_script arg"),
-            Some("^my_script\\s+arg\\b".to_string())
+            Some("^my_script\\s+arg(\\s|$)".to_string())
         );
 
         // Flags as second token: only the command name is used
@@ -189,6 +195,18 @@ mod tests {
 
         // Single-word commands
         assert_eq!(extract_terminal_pattern("ls"), Some("^ls\\b".to_string()));
+
+        // Subcommand pattern does not match a hyphenated extension of the subcommand
+        // (e.g. approving "cargo build" should not approve "cargo build-foo")
+        assert_eq!(
+            extract_terminal_pattern("cargo build"),
+            Some("^cargo\\s+build(\\s|$)".to_string())
+        );
+        let pattern = regex::Regex::new(&extract_terminal_pattern("cargo build").unwrap()).unwrap();
+        assert!(pattern.is_match("cargo build --release"));
+        assert!(pattern.is_match("cargo build"));
+        assert!(!pattern.is_match("cargo build-foo"));
+        assert!(!pattern.is_match("cargo builder"));
 
         // Path-like commands are rejected
         assert_eq!(extract_terminal_pattern("./script.sh arg"), None);
