@@ -4,7 +4,7 @@ use std::{
 };
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 
 use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
 use itertools::Itertools;
@@ -2028,9 +2028,16 @@ impl LhsEditor {
         let base_text_buffer = diff.read(lhs_cx).base_text_buffer();
         let diff_snapshot = diff.read(lhs_cx).snapshot(lhs_cx);
         let base_text_buffer_snapshot = base_text_buffer.read(lhs_cx).snapshot();
+        // Filter to only this path's excerpts. `excerpts_for_buffer` returns
+        // excerpts across all path keys, and including excerpts from other paths
+        // causes range merging on the LHS that produces fewer LHS excerpt IDs
+        // than RHS excerpt IDs, leaving some RHS excerpts without companion
+        // mappings.
+        let rhs_excerpt_id_set: HashSet<ExcerptId> = rhs_excerpt_ids.iter().copied().collect();
         let new = rhs_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), lhs_cx)
             .into_iter()
+            .filter(|(id, _)| rhs_excerpt_id_set.contains(id))
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
                     let start = diff_snapshot
@@ -5753,5 +5760,102 @@ mod tests {
                 .unindent(),
             &mut cx,
         );
+    }
+
+    // Regression test for ZED-4ZD: `unwrap()` on `None` in `patches_for_range`
+    // (split.rs:228).
+    //
+    // Root cause: `update_path_excerpts_from_rhs` uses `excerpts_for_buffer`
+    // (which returns excerpts across ALL path keys) instead of only the
+    // current path's excerpts. When a buffer exists under two path keys
+    // simultaneously (e.g. after a sort-prefix change where the old path
+    // wasn't removed because the buffer was dirty), the extra ranges from
+    // the other path cause LHS excerpts to merge, producing fewer LHS
+    // excerpt IDs than RHS excerpt IDs. The trailing `zip` silently drops
+    // the extra RHS IDs, leaving them without companion mappings.
+    //
+    // In debug builds this fires the `debug_assert_eq!` in
+    // `update_path_excerpts_from_rhs`. In release builds the missing
+    // mapping causes `patches_for_range` to panic at the `unwrap()`.
+    #[gpui::test]
+    async fn test_crash_zed_4zd_companion_mapping_mismatch(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+        use util::rel_path::RelPath;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            line 0
+            line 1
+            line 2
+            line 3
+            line 4
+            line 5
+            line 6
+            line 7
+            line 8
+            line 9
+        "
+        .unindent();
+        let current_text = "
+            line 0
+            line 1
+            line 2
+            line 3
+            line 4 modified
+            line 5
+            line 6
+            line 7
+            line 8
+            line 9 modified
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        let path_a =
+            PathKey::with_sort_prefix(0, RelPath::unix("test_file.rs").unwrap().into_arc());
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path_a.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Register the SAME buffer under a second path key with two separate
+        // excerpts. The first path is not removed, so `excerpts_for_buffer`
+        // will return 3 ranges (1 from path_a + 2 from path_b). On the LHS
+        // those 3 ranges merge into 1 excerpt, but path_b has 2 RHS excerpt
+        // IDs — the `zip` drops the second, leaving it unmapped.
+        //
+        // In debug mode this hits the `debug_assert_eq!` in
+        // `update_path_excerpts_from_rhs`; in release mode the unmapped ID
+        // causes `patches_for_range` to unwrap on None.
+        let path_b =
+            PathKey::with_sort_prefix(1, RelPath::unix("test_file.rs").unwrap().into_arc());
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path_b.clone(),
+                buffer.clone(),
+                vec![
+                    Point::new(3, 0)..Point::new(5, 0),
+                    Point::new(8, 0)..Point::new(10, 0),
+                ],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
     }
 }
