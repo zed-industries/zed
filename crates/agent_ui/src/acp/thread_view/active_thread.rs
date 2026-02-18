@@ -810,7 +810,7 @@ impl AcpThreadView {
                 status,
                 turn_time_ms,
             );
-            res
+            res.map(|_| ())
         });
 
         cx.spawn(async move |this, cx| {
@@ -6164,8 +6164,8 @@ impl AcpThreadView {
                                             |this, thread| {
                                                 this.on_click(cx.listener(
                                                     move |_this, _event, _window, cx| {
-                                                        thread.update(cx, |thread, _cx| {
-                                                            thread.stop_by_user();
+                                                        thread.update(cx, |thread, cx| {
+                                                            thread.cancel(cx).detach();
                                                         });
                                                     },
                                                 ))
