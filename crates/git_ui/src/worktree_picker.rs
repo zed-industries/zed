@@ -346,7 +346,12 @@ impl WorktreeListDelegate {
             anyhow::Ok(())
         })
         .detach_and_prompt_err("Failed to create worktree", window, cx, |e, _, _| {
-            Some(e.to_string())
+            let msg = e.to_string();
+            if msg.contains("git.worktree_directory") {
+                Some(format!("Invalid git.worktree_directory setting: {}", e))
+            } else {
+                Some(msg)
+            }
         });
     }
 

@@ -21,7 +21,7 @@ use text::LineEnding;
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
-use std::path::Component;
+
 use std::process::ExitStatus;
 use std::str::FromStr;
 use std::{
@@ -35,7 +35,7 @@ use thiserror::Error;
 use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
-use util::{ResultExt, paths};
+use util::{ResultExt, normalize_path, paths};
 use uuid::Uuid;
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
@@ -112,6 +112,15 @@ pub fn validate_worktree_directory(
         );
     }
 
+    if worktree_directory_setting.is_empty() {
+        anyhow::bail!("git.worktree_directory must not be empty");
+    }
+
+    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
+    if trimmed == ".." {
+        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
+    }
+
     let resolved = resolve_worktree_directory(working_directory, worktree_directory_setting);
 
     let parent = working_directory.parent().unwrap_or(working_directory);
@@ -135,35 +144,6 @@ pub fn worktree_path_for_branch(
     branch: &str,
 ) -> PathBuf {
     resolve_worktree_directory(working_directory, worktree_directory_setting).join(branch)
-}
-
-/// Normalizes a path by resolving `.` and `..` components without
-/// requiring the path to exist on disk (unlike `canonicalize`).
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
 }
 
 /// Commit data needed for the git graph visualization.
@@ -3896,6 +3876,13 @@ mod tests {
 
             // Clean up so the next iteration starts fresh
             repo.remove_worktree(expected_path, true).await.unwrap();
+
+            // Clean up the worktree base directory if it was created outside repo_dir
+            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
+            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
+            if !resolved_dir.starts_with(repo_dir.path()) {
+                let _ = std::fs::remove_dir_all(&resolved_dir);
+            }
         }
     }
 
@@ -3961,6 +3948,13 @@ mod tests {
 
             // Verify the directory is removed
             assert!(!worktree_path.exists());
+
+            // Clean up the worktree base directory if it was created outside repo_dir
+            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
+            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
+            if !resolved_dir.starts_with(repo_dir.path()) {
+                let _ = std::fs::remove_dir_all(&resolved_dir);
+            }
         }
     }
 
@@ -4030,6 +4024,13 @@ mod tests {
             let worktrees = repo.worktrees().await.unwrap();
             assert_eq!(worktrees.len(), 1);
             assert!(!worktree_path.exists());
+
+            // Clean up the worktree base directory if it was created outside repo_dir
+            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
+            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
+            if !resolved_dir.starts_with(repo_dir.path()) {
+                let _ = std::fs::remove_dir_all(&resolved_dir);
+            }
         }
     }
 
@@ -4105,6 +4106,13 @@ mod tests {
 
             // Clean up so the next iteration starts fresh
             repo.remove_worktree(new_path, true).await.unwrap();
+
+            // Clean up the worktree base directory if it was created outside repo_dir
+            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
+            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
+            if !resolved_dir.starts_with(repo_dir.path()) {
+                let _ = std::fs::remove_dir_all(&resolved_dir);
+            }
         }
     }
 
@@ -4180,11 +4188,19 @@ mod tests {
         assert!(validate_worktree_directory(work_dir, ".git/zed-worktrees").is_ok());
         assert!(validate_worktree_directory(work_dir, "my-worktrees").is_ok());
 
-        // Valid: just ".." resolves to parent dir itself
-        assert!(validate_worktree_directory(work_dir, "..").is_ok());
+        // Invalid: just ".." would resolve back to the working directory itself
+        let err = validate_worktree_directory(work_dir, "..").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
 
-        // Valid: empty string resolves to working directory (under parent)
-        assert!(validate_worktree_directory(work_dir, "").is_ok());
+        // Invalid: ".." with trailing separators
+        let err = validate_worktree_directory(work_dir, "..\\").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+        let err = validate_worktree_directory(work_dir, "../").unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+
+        // Invalid: empty string would resolve to the working directory itself
+        let err = validate_worktree_directory(work_dir, "").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
 
         // Invalid: absolute path
         let err = validate_worktree_directory(work_dir, "/tmp/worktrees").unwrap_err();
