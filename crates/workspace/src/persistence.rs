@@ -2356,6 +2356,72 @@ mod tests {
     use std::{thread, time::Duration};
 
     #[gpui::test]
+    async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use crate::persistence::read_multi_workspace_state;
+        use feature_flags::FeatureFlagAppExt;
+        use gpui::AppContext as _;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project1 = Project::test(fs.clone(), [], cx).await;
+        let project2 = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        let window_id =
+            multi_workspace.update_in(cx, |_, window, _cx| window.window_handle().window_id());
+
+        // --- Add a second workspace ---
+        let workspace2 = multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
+            workspace.update(cx, |ws, _cx| ws.set_random_database_id());
+            mw.activate(workspace.clone(), cx);
+            workspace
+        });
+
+        // Run background tasks so serialize has a chance to flush.
+        cx.run_until_parked();
+
+        // Read back the persisted state and check that the active workspace ID was written.
+        let state_after_add = read_multi_workspace_state(window_id);
+        let active_workspace2_db_id = workspace2.read_with(cx, |ws, _| ws.database_id());
+        assert_eq!(
+            state_after_add.active_workspace_id, active_workspace2_db_id,
+            "After adding a second workspace, the serialized active_workspace_id should match \
+             the newly activated workspace's database id"
+        );
+
+        // --- Remove the second workspace (index 1) ---
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_workspace(1, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let state_after_remove = read_multi_workspace_state(window_id);
+        let remaining_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        assert_eq!(
+            state_after_remove.active_workspace_id, remaining_db_id,
+            "After removing a workspace, the serialized active_workspace_id should match \
+             the remaining active workspace's database id"
+        );
+    }
+
+    #[gpui::test]
     async fn test_breakpoints() {
         zlog::init_test();
 

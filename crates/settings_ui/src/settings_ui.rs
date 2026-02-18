@@ -400,7 +400,7 @@ pub fn init(cx: &mut App) {
                         .window_handle()
                         .downcast::<MultiWorkspace>()
                         .expect("Workspaces are root Windows");
-                    open_settings_editor(workspace, Some(&path), false, window_handle, cx);
+                    open_settings_editor(workspace, Some(&path), None, window_handle, cx);
                 },
             )
             .register_action(|workspace, _: &OpenSettings, window, cx| {
@@ -408,14 +408,24 @@ pub fn init(cx: &mut App) {
                     .window_handle()
                     .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, None, false, window_handle, cx);
+                open_settings_editor(workspace, None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
                 let window_handle = window
                     .window_handle()
                     .downcast::<MultiWorkspace>()
                     .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, None, true, window_handle, cx);
+                let target_worktree_id = workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .find_map(|tree| {
+                        tree.read(cx)
+                            .root_entry()?
+                            .is_dir()
+                            .then_some(tree.read(cx).id())
+                    });
+                open_settings_editor(workspace, None, target_worktree_id, window_handle, cx);
             });
     })
     .detach();
@@ -554,7 +564,7 @@ fn init_renderers(cx: &mut App) {
 pub fn open_settings_editor(
     _workspace: &mut Workspace,
     path: Option<&str>,
-    open_project_settings: bool,
+    target_worktree_id: Option<WorktreeId>,
     workspace_handle: WindowHandle<MultiWorkspace>,
     cx: &mut App,
 ) {
@@ -563,8 +573,6 @@ pub fn open_settings_editor(
     /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
-        // Note: This option is unsupported right now
-        _open_project_settings: bool,
         settings_window: &mut SettingsWindow,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -617,16 +625,14 @@ pub fn open_settings_editor(
                 settings_window.original_window = Some(workspace_handle);
                 window.activate_window();
                 if let Some(path) = path {
-                    open_path(path, open_project_settings, settings_window, window, cx);
-                } else if open_project_settings {
-                    if let Some(file_index) = settings_window
+                    open_path(path, settings_window, window, cx);
+                } else if let Some(target_id) = target_worktree_id
+                    && let Some(file_index) = settings_window
                         .files
                         .iter()
-                        .position(|(file, _)| file.worktree_id().is_some())
-                    {
-                        settings_window.change_file(file_index, window, cx);
-                    }
-
+                        .position(|(file, _)| file.worktree_id() == Some(target_id))
+                {
+                    settings_window.change_file(file_index, window, cx);
                     cx.notify();
                 }
             })
@@ -680,17 +686,14 @@ pub fn open_settings_editor(
                     cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
-                        open_path(&path, open_project_settings, settings_window, window, cx);
-                    } else if open_project_settings {
-                        if let Some(file_index) = settings_window
+                        open_path(&path, settings_window, window, cx);
+                    } else if let Some(target_id) = target_worktree_id
+                        && let Some(file_index) = settings_window
                             .files
                             .iter()
-                            .position(|(file, _)| file.worktree_id().is_some())
-                        {
-                            settings_window.change_file(file_index, window, cx);
-                        }
-
-                        settings_window.fetch_files(window, cx);
+                            .position(|(file, _)| file.worktree_id() == Some(target_id))
+                    {
+                        settings_window.change_file(file_index, window, cx);
                     }
                 });
 
@@ -755,8 +758,13 @@ pub struct SettingsWindow {
     pub(crate) regex_validation_error: Option<String>,
 }
 
+struct SearchDocument {
+    id: usize,
+    words: Vec<String>,
+}
+
 struct SearchIndex {
-    bm25_engine: bm25::SearchEngine<usize>,
+    documents: Vec<SearchDocument>,
     fuzzy_match_candidates: Vec<StringMatchCandidate>,
     key_lut: Vec<SearchKeyLUTEntry>,
 }
@@ -1916,11 +1924,25 @@ impl SettingsWindow {
         let search_index = self.search_index.as_ref().unwrap().clone();
 
         self.search_task = Some(cx.spawn(async move |this, cx| {
-            let bm25_task = cx.background_spawn({
+            let exact_match_task = cx.background_spawn({
                 let search_index = search_index.clone();
-                let max_results = search_index.key_lut.len();
                 let query = query.clone();
-                async move { search_index.bm25_engine.search(&query, max_results) }
+                async move {
+                    let query_lower = query.to_lowercase();
+                    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+                    search_index
+                        .documents
+                        .iter()
+                        .filter(|doc| {
+                            query_words.iter().any(|query_word| {
+                                doc.words
+                                    .iter()
+                                    .any(|doc_word| doc_word.starts_with(query_word))
+                            })
+                        })
+                        .map(|doc| doc.id)
+                        .collect::<Vec<usize>>()
+                }
             });
             let cancel_flag = std::sync::atomic::AtomicBool::new(false);
             let fuzzy_search_task = fuzzy::match_strings(
@@ -1934,46 +1956,16 @@ impl SettingsWindow {
             );
 
             let fuzzy_matches = fuzzy_search_task.await;
-            // PERF:
-            // If results are slow to appear, we should:
-            // - return to the structure we had previously where we wait on fuzzy matches first (they resolve quickly) with a min match score of 0.3
-            // - wait on bm25 and replace fuzzy matches with bm25 matches
-            // - to deal with lack of fuzzyness with bm25 searches however, we should keep the fuzzy matches around, and merge fuzzy matches with high score (>0.75?) into bm25 results
-            let bm25_matches = bm25_task.await;
+            let exact_matches = exact_match_task.await;
 
             _ = this
                 .update(cx, |this, cx| {
-                    // For tuning the score threshold
-                    // for fuzzy_match in &fuzzy_matches {
-                    //     let SearchItemKey {
-                    //         page_index,
-                    //         header_index,
-                    //         item_index,
-                    //     } = search_index.key_lut[fuzzy_match.candidate_id];
-                    //     let SettingsPageItem::SectionHeader(header) =
-                    //         this.pages[page_index].items[header_index]
-                    //     else {
-                    //         continue;
-                    //     };
-                    //     let SettingsPageItem::SettingItem(SettingItem {
-                    //         title, description, ..
-                    //     }) = this.pages[page_index].items[item_index]
-                    //     else {
-                    //         continue;
-                    //     };
-                    //     let score = fuzzy_match.score;
-                    //     eprint!("# {header} :: QUERY = {query} :: SCORE = {score}\n{title}\n{description}\n\n");
-                    // }
+                    let exact_indices = exact_matches.into_iter();
                     let fuzzy_indices = fuzzy_matches
                         .into_iter()
-                        // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
-                        // flexible enough to catch misspellings and <4 letter queries
                         .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
                         .map(|fuzzy_match| fuzzy_match.candidate_id);
-                    let bm25_indices = bm25_matches
-                        .into_iter()
-                        .map(|bm25_match| bm25_match.document.id);
-                    let merged_indices = bm25_indices.chain(fuzzy_indices);
+                    let merged_indices = exact_indices.chain(fuzzy_indices);
 
                     this.apply_match_indices(merged_indices);
                     cx.notify();
@@ -1994,8 +1986,19 @@ impl SettingsWindow {
     }
 
     fn build_search_index(&mut self) {
+        fn split_into_words(parts: &[&str]) -> Vec<String> {
+            parts
+                .iter()
+                .flat_map(|s| {
+                    s.split(|c: char| !c.is_alphanumeric())
+                        .filter(|w| !w.is_empty())
+                        .map(|w| w.to_lowercase())
+                })
+                .collect()
+        }
+
         let mut key_lut: Vec<SearchKeyLUTEntry> = vec![];
-        let mut documents = Vec::default();
+        let mut documents: Vec<SearchDocument> = Vec::default();
         let mut fuzzy_match_candidates = Vec::default();
 
         fn push_candidates(
@@ -2026,18 +2029,22 @@ impl SettingsWindow {
                             .field
                             .json_path()
                             .map(|path| path.trim_end_matches('$'));
-                        documents.push(bm25::Document {
+                        documents.push(SearchDocument {
                             id: key_index,
-                            contents: [page.title, header_str, item.title, item.description]
-                                .join("\n"),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                item.title,
+                                item.description,
+                            ]),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
                     }
                     SettingsPageItem::SectionHeader(header) => {
-                        documents.push(bm25::Document {
+                        documents.push(SearchDocument {
                             id: key_index,
-                            contents: header.to_string(),
+                            words: split_into_words(&[header]),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, header);
                         header_index = item_index;
@@ -2045,10 +2052,13 @@ impl SettingsWindow {
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
-                        documents.push(bm25::Document {
+                        documents.push(SearchDocument {
                             id: key_index,
-                            contents: [page.title, header_str, sub_page_link.title.as_ref()]
-                                .join("\n"),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                sub_page_link.title.as_ref(),
+                            ]),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
@@ -2057,10 +2067,13 @@ impl SettingsWindow {
                         );
                     }
                     SettingsPageItem::ActionLink(action_link) => {
-                        documents.push(bm25::Document {
+                        documents.push(SearchDocument {
                             id: key_index,
-                            contents: [page.title, header_str, action_link.title.as_ref()]
-                                .join("\n"),
+                            words: split_into_words(&[
+                                page.title,
+                                header_str,
+                                action_link.title.as_ref(),
+                            ]),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
@@ -2080,10 +2093,8 @@ impl SettingsWindow {
                 });
             }
         }
-        let engine =
-            bm25::SearchEngineBuilder::with_documents(bm25::Language::English, documents).build();
         self.search_index = Some(Arc::new(SearchIndex {
-            bm25_engine: engine,
+            documents,
             key_lut,
             fuzzy_match_candidates,
         }));
@@ -4789,7 +4800,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let (_multi_workspace2, cx) = cx.add_window_view(|window, cx| {
@@ -4802,7 +4813,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let workspace2_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4934,7 +4945,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         let workspace1_handle = cx.window_handle().downcast::<MultiWorkspace>().unwrap();
@@ -4984,7 +4995,7 @@ pub mod test {
                     cx,
                 )
             });
-            MultiWorkspace::new(workspace, cx)
+            MultiWorkspace::new(workspace, window, cx)
         });
 
         cx.run_until_parked();

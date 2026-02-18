@@ -180,7 +180,7 @@ impl StreamingEditFileTool {
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        super::edit_file_tool::authorize_file_edit(
+        super::tool_permissions::authorize_file_edit(
             EditFileTool::NAME,
             &input.path,
             &input.display_description,

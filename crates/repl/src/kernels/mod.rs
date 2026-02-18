@@ -190,7 +190,7 @@ pub fn python_env_kernel_specifications(
                     let python_path = toolchain.path.to_string();
                     let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    let has_ipykernel = util::command::new_smol_command(&python_path)
+                    let has_ipykernel = util::command::new_command(&python_path)
                         .args(&["-c", "import ipykernel"])
                         .output()
                         .await

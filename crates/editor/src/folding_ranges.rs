@@ -859,7 +859,7 @@ mod tests {
                     "    }\n",
                     "}\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );
@@ -996,7 +996,7 @@ mod tests {
                     "\n",
                     "fn outer() { outer… }\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );

@@ -1703,7 +1703,7 @@ mod tests {
                     None,
                     prompt_capabilities.clone(),
                     available_commands.clone(),
-                    "Claude Code".into(),
+                    "Claude Agent".into(),
                     "Test",
                     EditorMode::AutoHeight {
                         min_lines: 1,
@@ -1728,7 +1728,7 @@ mod tests {
         // Should fail because available_commands is empty (no commands supported)
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("not supported by Claude Agent"));
         assert!(error_message.contains("Available commands: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
@@ -1745,7 +1745,7 @@ mod tests {
 
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Code"));
+        assert!(error_message.contains("not supported by Claude Agent"));
         assert!(error_message.contains("/file"));
         assert!(error_message.contains("Available commands: /help"));
 

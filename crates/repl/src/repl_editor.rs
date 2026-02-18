@@ -108,7 +108,7 @@ pub fn install_ipykernel_and_assign(
     let window_handle = window.window_handle();
 
     let install_task = cx.background_spawn(async move {
-        let output = util::command::new_smol_command(python_path.to_string_lossy().as_ref())
+        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
             .args(&["-m", "pip", "install", "ipykernel"])
             .output()
             .await
