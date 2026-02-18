@@ -293,7 +293,7 @@ async fn predict_teacher(
     step_progress: &crate::progress::StepProgress,
 ) -> anyhow::Result<()> {
     match backend {
-        TeacherBackend::Sonnet45 => {
+        TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
             predict_anthropic(
                 example,
                 backend,
@@ -483,7 +483,7 @@ async fn predict_openai(
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
         Some(PredictionProvider::Teacher(backend)) => match backend {
-            TeacherBackend::Sonnet45 => {
+            TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create Anthropic client")

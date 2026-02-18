@@ -1,3 +1,8 @@
+---
+title: Icon Themes
+description: "Zed comes with a built-in icon theme, with more icon themes available as extensions."
+---
+
 # Icon Themes
 
 Zed comes with a built-in icon theme, with more icon themes available as extensions.

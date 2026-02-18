@@ -22,6 +22,9 @@ impl FeatureFlag for AgentV2FeatureFlag {
     }
 }
 
+/// A feature flag for granting access to beta ACP features.
+///
+/// We reuse this feature flag for new betas, so don't delete it if it is not currently in use.
 pub struct AcpBetaFeatureFlag;
 
 impl FeatureFlag for AcpBetaFeatureFlag {

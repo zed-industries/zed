@@ -277,7 +277,6 @@ dependencies = [
  "collections",
  "credentials_provider",
  "env_logger 0.11.8",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -4643,7 +4642,6 @@ dependencies = [
  "sysinfo 0.37.2",
  "task",
  "tasks_ui",
- "telemetry",
  "terminal_view",
  "text",
  "theme",
@@ -7153,7 +7151,6 @@ dependencies = [
  "call",
  "cloud_llm_client",
  "collections",
- "command_palette_hooks",
  "component",
  "ctor",
  "db",
@@ -13455,6 +13452,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "chrono",
  "dap",
  "db",
  "dev_container",
@@ -15300,6 +15298,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent_ui",
+ "chrono",
  "db",
  "editor",
  "feature_flags",
@@ -20671,6 +20670,7 @@ dependencies = [
  "anyhow",
  "async-recursion",
  "call",
+ "chrono",
  "client",
  "clock",
  "collections",
@@ -21111,7 +21111,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.225.0"
+version = "0.226.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

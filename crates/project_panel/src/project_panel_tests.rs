@@ -8829,7 +8829,7 @@ fn visible_entries_as_strings(
     let mut has_editor = false;
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.for_each_visible_entry(range, window, cx, |project_entry, details, _, _| {
+        panel.for_each_visible_entry(range, window, cx, &mut |project_entry, details, _, _| {
             if details.is_editing {
                 assert!(!has_editor, "duplicate editor entry");
                 has_editor = true;

@@ -57,7 +57,7 @@ impl MultiBuffer {
         self.excerpts_by_path
             .get(path)
             .map(|excerpts| excerpts.as_slice())
-            .unwrap_or(&[])
+            .unwrap_or_default()
             .iter()
             .copied()
     }

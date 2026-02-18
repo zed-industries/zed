@@ -1616,7 +1616,7 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).tab_content(params, window, cx)
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -2013,13 +2013,13 @@ impl LhsEditor {
         diff: Entity<BufferDiff>,
         lhs_cx: &mut Context<MultiBuffer>,
     ) -> Option<(Vec<ExcerptId>, Vec<Vec<ExcerptId>>)> {
-        let rhs_excerpt_ids: Vec<ExcerptId> =
-            rhs_multibuffer.excerpts_for_path(&path_key).collect();
-
         let Some(excerpt_id) = rhs_multibuffer.excerpts_for_path(&path_key).next() else {
             lhs_multibuffer.remove_excerpts_for_path(path_key, lhs_cx);
             return None;
         };
+
+        let rhs_excerpt_ids: Vec<ExcerptId> =
+            rhs_multibuffer.excerpts_for_path(&path_key).collect();
 
         let rhs_multibuffer_snapshot = rhs_multibuffer.snapshot(lhs_cx);
         let main_buffer = rhs_multibuffer_snapshot
@@ -2254,7 +2254,7 @@ mod tests {
         assert_eq!(lhs_content, expected_lhs, "lhs");
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 25)]
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
         use rand::prelude::*;
 

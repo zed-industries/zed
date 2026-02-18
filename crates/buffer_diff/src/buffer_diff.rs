@@ -914,28 +914,25 @@ impl BufferDiffInner<language::BufferSnapshot> {
         buffer: &'a text::BufferSnapshot,
         secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let mut cursor = self.hunks.filter::<_, DiffHunkSummary>(buffer, filter);
-
-        let anchor_iter = iter::from_fn(move || {
-            cursor.next();
-            cursor.item()
-        })
-        .flat_map(move |hunk| {
-            [
-                (
-                    &hunk.buffer_range.start,
+        let anchor_iter = self
+            .hunks
+            .filter::<_, DiffHunkSummary>(buffer, filter)
+            .flat_map(move |hunk| {
+                [
                     (
-                        hunk.buffer_range.start,
-                        hunk.diff_base_byte_range.start,
-                        hunk,
+                        &hunk.buffer_range.start,
+                        (
+                            hunk.buffer_range.start,
+                            hunk.diff_base_byte_range.start,
+                            hunk,
+                        ),
                     ),
-                ),
-                (
-                    &hunk.buffer_range.end,
-                    (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
-                ),
-            ]
-        });
+                    (
+                        &hunk.buffer_range.end,
+                        (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
+                    ),
+                ]
+            });
 
         let mut pending_hunks_cursor = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
         pending_hunks_cursor.next();
