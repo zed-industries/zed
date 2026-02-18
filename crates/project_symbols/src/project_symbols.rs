@@ -107,6 +107,8 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
+    type StableId = SharedString;
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
     }
@@ -224,20 +226,17 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<String> {
+    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
         let mat = self.matches.get(ix)?;
         let symbol = self.symbols.get(mat.candidate_id)?;
         let path_str = match &symbol.path {
             SymbolLocation::InProject(path) => format!("{:?}:{:?}", path.worktree_id, path.path),
             SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
         };
-        Some(format!(
-            "{}:{}:{:?}",
-            path_str, symbol.name, symbol.range.start
-        ))
+        Some(format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start).into())
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
         self.matches.iter().position(|mat| {
             if let Some(symbol) = self.symbols.get(mat.candidate_id) {
                 let path_str = match &symbol.path {
@@ -246,7 +245,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     }
                     SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
                 };
-                format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start) == stable_id
+                format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start)
+                    == stable_id.as_ref()
             } else {
                 false
             }

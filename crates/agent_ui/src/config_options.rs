@@ -479,6 +479,7 @@ impl ConfigOptionPickerDelegate {
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()

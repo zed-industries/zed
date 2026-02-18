@@ -136,6 +136,7 @@ impl ModalView for AttachModal {}
 
 impl PickerDelegate for AttachModalDelegate {
     type ListItem = ListItem;
+    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()

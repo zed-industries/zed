@@ -10,17 +10,36 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Render, SharedString, Styled, StyledText, Task, TextStyle, WeakEntity,
+    Window, div, rems,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, stable_id::StableId};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
+
+/// Stable identifier for outline items, used to preserve manual selections
+/// across match updates in the outline picker.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+struct OutlineStableId {
+    text: SharedString,
+    depth: usize,
+}
+
+impl OutlineStableId {
+    fn new(text: impl Into<SharedString>, depth: usize) -> Self {
+        Self {
+            text: text.into(),
+            depth,
+        }
+    }
+}
+
+impl StableId for OutlineStableId {}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
@@ -252,6 +271,7 @@ impl OutlineViewDelegate {
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
+    type StableId = OutlineStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
@@ -343,19 +363,23 @@ impl PickerDelegate for OutlineViewDelegate {
         Task::ready(())
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<String> {
+    fn match_stable_id(&self, ix: usize) -> Option<OutlineStableId> {
         let mat = self.matches.get(ix)?;
         let outline_item = self.outline.items.get(mat.candidate_id)?;
-        Some(format!("{}:{}", outline_item.text, outline_item.depth))
+        Some(OutlineStableId::new(
+            outline_item.text.clone(),
+            outline_item.depth,
+        ))
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &OutlineStableId) -> Option<usize> {
         self.matches.iter().position(|mat| {
-            if let Some(outline_item) = self.outline.items.get(mat.candidate_id) {
-                format!("{}:{}", outline_item.text, outline_item.depth) == stable_id
-            } else {
-                false
-            }
+            self.outline
+                .items
+                .get(mat.candidate_id)
+                .is_some_and(|item| {
+                    item.text == stable_id.text.as_ref() && item.depth == stable_id.depth
+                })
         })
     }
 

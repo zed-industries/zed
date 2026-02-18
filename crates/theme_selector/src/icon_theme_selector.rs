@@ -134,6 +134,7 @@ impl IconThemeSelectorDelegate {
 
 impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
+    type StableId = SharedString;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Icon Theme...".into()
@@ -246,12 +247,14 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<String> {
-        self.matches.get(ix).map(|m| m.string.clone())
+    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+        self.matches.get(ix).map(|m| m.string.clone().into())
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &str) -> Option<usize> {
-        self.matches.iter().position(|m| m.string == stable_id)
+    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+        self.matches
+            .iter()
+            .position(|m| m.string == stable_id.as_ref())
     }
 
     fn render_match(
