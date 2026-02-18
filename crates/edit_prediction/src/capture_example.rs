@@ -1,5 +1,5 @@
 use crate::{
-    EditPredictionExampleCaptureFeatureFlag, StoredEvent,
+    StoredEvent,
     cursor_excerpt::editable_and_context_ranges_for_cursor_position,
     example_spec::{
         CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile,
@@ -9,16 +9,11 @@ use crate::{
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
 use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::{BufferSnapshot as TextBufferSnapshot, Point, ToOffset as _};
-
-pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
-pub(crate) const DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 100;
-pub(crate) const ZETA2_TESTING_RATE_PER_10K_PREDICTION: u16 = 500;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -159,6 +154,8 @@ pub fn capture_example(
                 excerpt_start_row: Some(0),
                 events: captured_events,
                 related_files: captured_related_files,
+                in_open_source_repo: false,
+                zed_version: None,
             }
         });
 
@@ -307,24 +304,6 @@ fn generate_timestamp_name() -> String {
     }
 }
 
-pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
-    let default_rate = if cx.is_staff() {
-        DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
-    } else {
-        DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
-    };
-    let capture_rate = language::language_settings::all_language_settings(None, cx)
-        .edit_predictions
-        .example_capture_rate
-        .unwrap_or(default_rate);
-    cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
-        && rand::random::<u16>() % 10_000 < capture_rate
-}
-
-pub(crate) fn should_send_testing_zeta2_request() -> bool {
-    rand::random::<u16>() % 10_000 < ZETA2_TESTING_RATE_PER_10K_PREDICTION
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,9 +446,7 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the external edit was recorded in events
-        let events = ep_store.update(cx, |store, cx| {
-            store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-        });
+        let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
         assert!(
             matches!(
                 events

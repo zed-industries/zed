@@ -37,14 +37,14 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
-    DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
-    KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -618,6 +618,7 @@ pub struct App {
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
+    pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -642,6 +643,8 @@ pub struct App {
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
     pub(crate) element_arena: RefCell<Arena>,
+    /// Per-App event arena.
+    pub(crate) event_arena: Arena,
 }
 
 impl App {
@@ -702,6 +705,7 @@ impl App {
                 keystroke_observers: SubscriberSet::new(),
                 keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
+                thermal_state_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 restart_observers: SubscriberSet::new(),
@@ -720,6 +724,7 @@ impl App {
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
+                event_arena: Arena::new(1024 * 1024),
             }),
         });
 
@@ -734,6 +739,18 @@ impl App {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_thermal_state_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.thermal_state_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
                 }
@@ -1082,6 +1099,27 @@ impl App {
             .cloned()
     }
 
+    /// Returns the current thermal state of the system.
+    pub fn thermal_state(&self) -> ThermalState {
+        self.platform.thermal_state()
+    }
+
+    /// Invokes a handler when the thermal state changes
+    pub fn on_thermal_state_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        let (subscription, activate) = self.thermal_state_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Returns the appearance of the application's windows.
     pub fn window_appearance(&self) -> WindowAppearance {
         self.platform.window_appearance()
@@ -1305,7 +1343,7 @@ impl App {
                         emitter,
                         event_type,
                         event,
-                    } => self.apply_emit_effect(emitter, event_type, event),
+                    } => self.apply_emit_effect(emitter, event_type, &*event),
 
                     Effect::RefreshWindows => {
                         self.apply_refresh_effect();
@@ -1342,6 +1380,7 @@ impl App {
                 }
 
                 if self.pending_effects.is_empty() {
+                    self.event_arena.clear();
                     break;
                 }
             }
@@ -1399,12 +1438,12 @@ impl App {
             .retain(&emitter, |handler| handler(self));
     }
 
-    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: Box<dyn Any>) {
+    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: &dyn Any) {
         self.event_listeners
             .clone()
             .retain(&emitter, |(stored_type, handler)| {
                 if *stored_type == event_type {
-                    handler(event.as_ref(), self)
+                    handler(event, self)
                 } else {
                     true
                 }
@@ -2372,7 +2411,7 @@ pub(crate) enum Effect {
     Emit {
         emitter: EntityId,
         event_type: TypeId,
-        event: Box<dyn Any>,
+        event: ArenaBox<dyn Any>,
     },
     RefreshWindows,
     NotifyGlobalObservers {

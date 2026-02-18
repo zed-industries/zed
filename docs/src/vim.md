@@ -1,3 +1,8 @@
+---
+title: Vim Mode - Zed
+description: Full Vim emulation in Zed with motions, text objects, visual mode, macros, and Zed-specific extensions.
+---
+
 # Vim Mode
 
 Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.
@@ -74,7 +79,7 @@ The following commands use the language server to help you navigate and refactor
 
 ### Tree-sitter
 
-Tree-sitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
+Tree-sitter is the parser Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
 | Command                         | Default Shortcut            |
 | ------------------------------- | --------------------------- |
@@ -150,7 +155,7 @@ The following commands help you bring up Zed's completion menu, request a sugges
 
 ### Supported plugins
 
-Zed's vim mode includes some features that are usually provided by very popular plugins in the Vim ecosystem:
+Zed's vim mode includes features commonly provided by plugins in the Vim ecosystem:
 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
@@ -532,14 +537,15 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 {
   "context": "Editor && !menu",
   "bindings": {
+    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
     "ctrl-c": "editor::Copy",               // vim default: return to normal mode
     "ctrl-x": "editor::Cut",                // vim default: decrement
     "ctrl-v": "editor::Paste",              // vim default: visual block mode
+    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-y": "editor::Undo",               // vim default: line up
-    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
+    "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-o": "workspace::Open",            // vim default: go back
     "ctrl-s": "workspace::Save",            // vim default: show signature
-    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },

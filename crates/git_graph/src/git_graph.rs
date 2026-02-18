@@ -5,13 +5,15 @@ use git::{
     parse_git_remote_url,
     repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
 };
-use git_ui::commit_tooltip::CommitAvatar;
+use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, ParentElement,
-    PathBuilder, Pixels, Point, Render, ScrollWheelEvent, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, actions, anchored, deferred, point, px,
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
+    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
+    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
+    anchored, deferred, point, px,
 };
+use menu::{SelectNext, SelectPrevious};
 use project::{
     Project,
     git_store::{CommitDataState, GitStoreEvent, Repository, RepositoryEvent},
@@ -30,27 +32,72 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
+const RESIZE_HANDLE_WIDTH: f32 = 8.0;
+
+struct DraggedSplitHandle;
+
+pub struct SplitState {
+    left_ratio: f32,
+    visible_left_ratio: f32,
+}
+
+impl SplitState {
+    pub fn new() -> Self {
+        Self {
+            left_ratio: 1.0,
+            visible_left_ratio: 1.0,
+        }
+    }
+
+    pub fn right_ratio(&self) -> f32 {
+        1.0 - self.visible_left_ratio
+    }
+
+    fn on_drag_move(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedSplitHandle>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+        let bounds_width = bounds.right() - bounds.left();
+
+        let min_ratio = 0.1;
+        let max_ratio = 0.9;
+
+        let new_ratio = (drag_position.x - bounds.left()) / bounds_width;
+        self.visible_left_ratio = new_ratio.clamp(min_ratio, max_ratio);
+    }
+
+    fn commit_ratio(&mut self) {
+        self.left_ratio = self.visible_left_ratio;
+    }
+
+    fn on_double_click(&mut self) {
+        self.left_ratio = 1.0;
+        self.visible_left_ratio = 1.0;
+    }
+}
 
 actions!(
     git_graph,
     [
-        /// Opens the Git Graph panel.
-        Open,
         /// Opens the commit view for the selected commit.
         OpenCommitView,
     ]
 );
+
+pub struct GitGraphFeatureFlag;
+
+impl FeatureFlag for GitGraphFeatureFlag {
+    const NAME: &'static str = "git-graph";
+}
 
 fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
     static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
@@ -508,11 +555,19 @@ pub fn init(cx: &mut App) {
                 |div| {
                     let workspace = workspace.weak_handle();
 
-                    div.on_action(move |_: &Open, window, cx| {
+                    div.on_action(move |_: &git_ui::git_panel::Open, window, cx| {
                         workspace
                             .update(cx, |workspace, cx| {
+                                let existing = workspace.items_of_type::<GitGraph>(cx).next();
+                                if let Some(existing) = existing {
+                                    workspace.activate_item(&existing, true, true, window, cx);
+                                    return;
+                                }
+
                                 let project = workspace.project().clone();
-                                let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
+                                let workspace_handle = workspace.weak_handle();
+                                let git_graph = cx
+                                    .new(|cx| GitGraph::new(project, workspace_handle, window, cx));
                                 workspace.add_item_to_active_pane(
                                     Box::new(git_graph),
                                     None,
@@ -578,6 +633,7 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     graph_data: GraphData,
     project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
@@ -590,6 +646,7 @@ pub struct GitGraph {
     selected_commit_diff: Option<CommitDiff>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
+    commit_details_split_state: Entity<SplitState>,
 }
 
 impl GitGraph {
@@ -603,7 +660,12 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.min(8) as f32) + LEFT_PADDING * 2.0
     }
 
-    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
@@ -661,6 +723,7 @@ impl GitGraph {
         GitGraph {
             focus_handle,
             project,
+            workspace,
             graph_data: graph,
             _load_task: None,
             _commit_diff_task: None,
@@ -674,6 +737,7 @@ impl GitGraph {
             selected_commit_diff: None,
             log_source,
             log_order,
+            commit_details_split_state: cx.new(|_cx| SplitState::new()),
         }
     }
 
@@ -844,6 +908,22 @@ impl GitGraph {
             .collect()
     }
 
+    fn select_prev(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_sub(1), cx);
+        } else {
+            self.select_entry(0, cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(selected_entry_idx) = &self.selected_entry_idx {
+            self.select_entry(selected_entry_idx.saturating_add(1), cx);
+        } else {
+            self.select_prev(&SelectPrevious, window, cx);
+        }
+    }
+
     fn select_entry(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.selected_entry_idx == Some(idx) {
             return;
@@ -851,6 +931,12 @@ impl GitGraph {
 
         self.selected_entry_idx = Some(idx);
         self.selected_commit_diff = None;
+        self.table_interaction_state.update(cx, |state, cx| {
+            state
+                .scroll_handle
+                .scroll_to_item(idx, ScrollStrategy::Nearest);
+            cx.notify();
+        });
 
         let Some(commit) = self.graph_data.commits.get(idx) else {
             return;
@@ -878,6 +964,43 @@ impl GitGraph {
         }));
 
         cx.notify();
+    }
+
+    fn open_selected_commit_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected_entry_index) = self.selected_entry_idx else {
+            return;
+        };
+
+        self.open_commit_view(selected_entry_index, window, cx);
+    }
+
+    fn open_commit_view(
+        &mut self,
+        entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit_entry) = self.graph_data.commits.get(entry_index) else {
+            return;
+        };
+
+        let repository = self
+            .project
+            .read_with(cx, |project, cx| project.active_repository(cx));
+
+        let Some(repository) = repository else {
+            return;
+        };
+
+        CommitView::open(
+            commit_entry.data.sha.to_string(),
+            repository.downgrade(),
+            self.workspace.clone(),
+            None,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn get_remote(
@@ -1014,6 +1137,9 @@ impl GitGraph {
             .border_l_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().surface_background)
+            .flex_basis(DefiniteLength::Fraction(
+                self.commit_details_split_state.read(cx).right_ratio(),
+            ))
             .child(
                 v_flex()
                     .p_3()
@@ -1462,6 +1588,40 @@ impl GitGraph {
             cx.notify();
         }
     }
+
+    fn render_commit_view_resize_handle(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("commit-view-split-resize-container")
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .w(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("commit-view-split-resize-handle")
+                    .absolute()
+                    .left(px(-RESIZE_HANDLE_WIDTH / 2.0))
+                    .w(px(RESIZE_HANDLE_WIDTH))
+                    .h_full()
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.commit_details_split_state.update(cx, |state, _| {
+                                state.on_double_click();
+                            });
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for GitGraph {
@@ -1579,9 +1739,13 @@ impl Render for GitGraph {
                                     .when(is_selected, |row| {
                                         row.bg(cx.theme().colors().element_selected)
                                     })
-                                    .on_click(move |_, _, cx| {
+                                    .on_click(move |event, window, cx| {
+                                        let click_count = event.click_count();
                                         weak.update(cx, |this, cx| {
                                             this.select_entry(index, cx);
+                                            if click_count >= 2 {
+                                                this.open_commit_view(index, window, cx);
+                                            }
                                         })
                                         .ok();
                                     })
@@ -1594,8 +1758,19 @@ impl Render for GitGraph {
                             ),
                     )
                 })
+                .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
+                    this.commit_details_split_state.update(cx, |state, cx| {
+                        state.on_drag_move(event, window, cx);
+                    });
+                }))
+                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
+                    this.commit_details_split_state.update(cx, |state, _cx| {
+                        state.commit_ratio();
+                    });
+                }))
                 .when(self.selected_entry_idx.is_some(), |this| {
-                    this.child(self.render_commit_detail_panel(window, cx))
+                    this.child(self.render_commit_view_resize_handle(window, cx))
+                        .child(self.render_commit_detail_panel(window, cx))
                 })
         };
 
@@ -1604,6 +1779,11 @@ impl Render for GitGraph {
             .bg(cx.theme().colors().editor_background)
             .key_context("GitGraph")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &OpenCommitView, window, cx| {
+                this.open_selected_commit_view(window, cx);
+            }))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_next))
             .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
@@ -1636,7 +1816,7 @@ impl Item for GitGraph {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 }
@@ -1663,7 +1843,7 @@ impl SerializableItem for GitGraph {
 
     fn deserialize(
         project: Entity<Project>,
-        _: WeakEntity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         window: &mut Window,
@@ -1674,7 +1854,7 @@ impl SerializableItem for GitGraph {
             .ok()
             .is_some_and(|is_open| is_open)
         {
-            let git_graph = cx.new(|cx| GitGraph::new(project, window, cx));
+            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, window, cx));
             Task::ready(Ok(git_graph))
         } else {
             Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")))

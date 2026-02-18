@@ -1,3 +1,8 @@
+---
+title: How to Migrate from WebStorm to Zed
+description: "Guide for migrating from WebStorm to Zed, including settings and keybindings."
+---
+
 # How to Migrate from WebStorm to Zed
 
 This guide covers how to set up Zed if you're coming from WebStorm, including keybindings, settings, and the differences you should expect as a JavaScript/TypeScript developer.
@@ -36,24 +41,11 @@ If you're coming from WebStorm, the fastest way to feel at home is to use the Je
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
 
 Settings WebStorm users typically configure first:
 
@@ -84,7 +76,7 @@ Once inside a project:
 - Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like WebStorm's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like WebStorm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like WebStorm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like WebStorm's Project tool window).
 
 ## Differences in Keybindings
 
@@ -167,7 +159,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For JavaScrip
 - **ESLint** — Linting integration
 - **Prettier** — Code formatting (built-in)
 
-The TypeScript LSP experience is mature and robust. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
+The TypeScript LSP experience is well-supported. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
 
 Where you might notice differences:
 
@@ -320,9 +312,9 @@ The test output appears in the terminal panel. For Jest, use `--verbose` for det
 
 ### Extensions vs. Plugins
 
-WebStorm has a plugin ecosystem covering additional language support, themes, and tool integrations.
+WebStorm has a plugin catalog covering additional language support, themes, and tool integrations.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
@@ -380,7 +372,7 @@ To use other AI models in Zed, you have several options:
 
 - Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
 - Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Code](https://zed.dev/docs/ai/external-agents.html)
+- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 
@@ -394,7 +386,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 "format_on_save": "on"
 ```
 
-**Configure Prettier as the default formatter:**
+**Configure Prettier as the default formatter** (requires manual JSON editing):
 
 ```json
 {
@@ -407,7 +399,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 }
 ```
 
-**Enable ESLint code actions:**
+**Enable ESLint code actions** (requires manual JSON editing):
 
 ```json
 {

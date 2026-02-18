@@ -89,7 +89,6 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
     let company_buffer = related_excerpt_store.update(cx, |store, cx| {
         store
             .related_files_with_buffers(cx)
-            .into_iter()
             .find(|(file, _)| file.path.to_str() == Some("root/src/company.rs"))
             .map(|(_, buffer)| buffer)
             .expect("company.rs buffer not found")

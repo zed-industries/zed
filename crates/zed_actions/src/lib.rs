@@ -302,6 +302,8 @@ pub mod project_panel {
     actions!(
         project_panel,
         [
+            /// Toggles the project panel.
+            Toggle,
             /// Toggles focus on the project panel.
             ToggleFocus
         ]
@@ -363,6 +365,54 @@ pub mod search {
         ]
     );
 }
+pub mod buffer_search {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Opens the buffer search interface with the specified configuration.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+    #[action(namespace = buffer_search)]
+    #[serde(deny_unknown_fields)]
+    pub struct Deploy {
+        #[serde(default = "util::serde::default_true")]
+        pub focus: bool,
+        #[serde(default)]
+        pub replace_enabled: bool,
+        #[serde(default)]
+        pub selection_search_enabled: bool,
+    }
+
+    impl Deploy {
+        pub fn find() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: false,
+            }
+        }
+
+        pub fn replace() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: true,
+                selection_search_enabled: false,
+            }
+        }
+    }
+
+    actions!(
+        buffer_search,
+        [
+            /// Deploys the search and replace interface.
+            DeployReplace,
+            /// Dismisses the search bar.
+            Dismiss,
+            /// Focuses back on the editor.
+            FocusEditor
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -386,8 +436,8 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Code onboarding modal.
-            OpenClaudeCodeOnboardingModal,
+            /// Opens the Claude Agent onboarding modal.
+            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -402,8 +452,6 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
-            /// Toggles the utility/agent pane open/closed state.
-            ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
         ]
@@ -419,6 +467,8 @@ pub mod assistant {
     actions!(
         agent,
         [
+            /// Toggles the agent panel.
+            Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
         ]
@@ -448,20 +498,6 @@ pub mod assistant {
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
-}
-
-pub mod debugger {
-    use gpui::actions;
-
-    actions!(
-        debugger,
-        [
-            /// Opens the debugger onboarding modal.
-            OpenOnboardingModal,
-            /// Resets the debugger onboarding state.
-            ResetOnboarding
-        ]
-    );
 }
 
 /// Opens the recent projects interface.
@@ -593,6 +629,8 @@ actions!(
 actions!(
     debug_panel,
     [
+        /// Toggles the debug panel.
+        Toggle,
         /// Toggles focus on the debug panel.
         ToggleFocus
     ]

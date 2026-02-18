@@ -80,16 +80,15 @@ pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<Hash
 
 async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec<String>> {
     const MARKER: &str = "<MARKER>";
-    let mut cmd = util::command::new_smol_command("git");
-    cmd.current_dir(working_directory)
+    let output = util::command::new_command("git")
+        .current_dir(working_directory)
         .arg("show")
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
-        .args(shas.iter().map(ToString::to_string));
-    let output = cmd
+        .args(shas.iter().map(ToString::to_string))
         .output()
         .await
-        .with_context(|| format!("starting git blame process: {:?}", cmd))?;
+        .context("starting git show process")?;
     anyhow::ensure!(
         output.status.success(),
         "'git show' failed with error {:?}",

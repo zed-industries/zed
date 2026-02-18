@@ -38,14 +38,15 @@ chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
 db.workspace = true
+feature_flags.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
-menu.workspace = true
 notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
 rpc.workspace = true
+semver.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
@@ -70,8 +71,10 @@ http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 util = { workspace = true, features = ["test-support"] }

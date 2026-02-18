@@ -1,10 +1,10 @@
 use gpui::{
     AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    point, prelude::FluentBuilder, px,
+    point, prelude::FluentBuilder, px, relative,
 };
 use theme::ActiveTheme;
 
-use crate::{ElevationIndex, IconButton, h_flex};
+use crate::{ElevationIndex, prelude::*};
 
 use super::ButtonLike;
 
@@ -68,10 +68,13 @@ impl RenderOnce for SplitButton {
         );
 
         h_flex()
-            .rounded_sm()
             .when(is_filled_or_outlined, |this| {
-                this.border_1()
+                this.rounded_sm()
+                    .border_1()
                     .border_color(cx.theme().colors().border.opacity(0.8))
+            })
+            .when(self.style == SplitButtonStyle::Transparent, |this| {
+                this.gap_px()
             })
             .child(div().flex_grow().child(match self.left {
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
@@ -79,7 +82,7 @@ impl RenderOnce for SplitButton {
             }))
             .child(
                 div()
-                    .h_full()
+                    .h(relative(0.8))
                     .w_px()
                     .bg(cx.theme().colors().border.opacity(0.5)),
             )

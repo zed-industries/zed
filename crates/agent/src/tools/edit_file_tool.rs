@@ -1,6 +1,8 @@
+use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
+use super::save_file_tool::SaveFileTool;
+use super::tool_permissions::authorize_file_edit;
 use crate::{
-    AgentTool, Templates, Thread, ToolCallEventStream, ToolPermissionDecision,
-    decide_permission_from_settings,
+    AgentTool, Templates, Thread, ToolCallEventStream,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
@@ -14,14 +16,11 @@ use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
 use language_model::LanguageModelToolResultContent;
-use paths;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
@@ -29,7 +28,7 @@ use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
-/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `terminal` tool with the 'mv' command instead.
+/// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `move_path` tool instead.
 ///
 /// Before using this tool:
 ///
@@ -144,87 +143,20 @@ impl EditFileTool {
         }
     }
 
-    pub fn with_thread(&self, new_thread: WeakEntity<Thread>) -> Self {
-        Self {
-            project: self.project.clone(),
-            thread: new_thread,
-            language_registry: self.language_registry.clone(),
-            templates: self.templates.clone(),
-        }
-    }
-
     fn authorize(
         &self,
         input: &EditFileToolInput,
         event_stream: &ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let path_str = input.path.to_string_lossy();
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        let decision = decide_permission_from_settings(Self::name(), &path_str, settings);
-
-        match decision {
-            ToolPermissionDecision::Allow => return Task::ready(Ok(())),
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(anyhow!("{}", reason)));
-            }
-            ToolPermissionDecision::Confirm => {}
-        }
-
-        // If any path component matches the local settings folder, then this could affect
-        // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_name();
-        let path = Path::new(&input.path);
-        if path.components().any(|component| {
-            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
-        }) {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (local settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        // It's also possible that the global config dir is configured to be inside the project,
-        // so check for that edge case too.
-        // TODO this is broken when remoting
-        if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
-            && canonical_path.starts_with(paths::config_dir())
-        {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            return event_stream.authorize(
-                format!("{} (global settings)", input.display_description),
-                context,
-                cx,
-            );
-        }
-
-        // Check if path is inside the global config directory
-        // First check if it's already inside project - if not, try to canonicalize
-        let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
-        }) else {
-            return Task::ready(Err(anyhow!("thread was dropped")));
-        };
-
-        // If the path is inside the project, and it's not one of the above edge cases,
-        // then no confirmation is necessary. Otherwise, confirmation is necessary.
-        if project_path.is_some() {
-            Task::ready(Ok(()))
-        } else {
-            let context = crate::ToolPermissionContext {
-                tool_name: "edit_file".to_string(),
-                input_value: path_str.to_string(),
-            };
-            event_stream.authorize(&input.display_description, context, cx)
-        }
+        authorize_file_edit(
+            Self::NAME,
+            &input.path,
+            &input.display_description,
+            &self.thread,
+            event_stream,
+            cx,
+        )
     }
 }
 
@@ -232,9 +164,7 @@ impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
     type Output = EditFileToolOutput;
 
-    fn name() -> &'static str {
-        "edit_file"
-    }
+    const NAME: &'static str = "edit_file";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Edit
@@ -342,8 +272,8 @@ impl AgentTool for EditFileTool {
                     let last_read = thread.file_read_times.get(abs_path).copied();
                     let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                     let dirty = buffer.read(cx).is_dirty();
-                    let has_save = thread.has_tool("save_file");
-                    let has_restore = thread.has_tool("restore_file_from_disk");
+                    let has_save = thread.has_tool(SaveFileTool::NAME);
+                    let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
                     (last_read, current, dirty, has_save, has_restore)
                 })?;
 
@@ -467,7 +397,8 @@ impl AgentTool for EditFileTool {
                 }
             }
 
-            // If format_on_save is enabled, format the buffer
+            let edit_agent_output = output.await?;
+
             let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
                 let settings = language_settings::language_settings(
                     buffer.language().map(|l| l.name()),
@@ -476,8 +407,6 @@ impl AgentTool for EditFileTool {
                 );
                 settings.format_on_save != FormatOnSave::Off
             });
-
-            let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
@@ -583,13 +512,6 @@ impl AgentTool for EditFileTool {
         }));
         Ok(())
     }
-
-    fn rebind_thread(
-        &self,
-        new_thread: gpui::WeakEntity<crate::Thread>,
-    ) -> Option<std::sync::Arc<dyn crate::AnyAgentTool>> {
-        Some(self.with_thread(new_thread).erase())
-    }
 }
 
 /// Validate that the file path is valid, meaning:
@@ -662,12 +584,14 @@ fn resolve_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::tool_permissions::{SensitiveSettingsKind, sensitive_settings_kind};
     use crate::{ContextServerRegistry, Templates};
-    use fs::Fs;
+    use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use prompt_store::ProjectContext;
     use serde_json::json;
+    use settings::Settings;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
 
@@ -1243,15 +1167,17 @@ mod tests {
             Some("test 4 (local settings)".into())
         );
 
-        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
+        // Test 5: When global default is allow, sensitive and outside-project
+        // paths still require confirmation
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-            settings.always_allow_tool_actions = true;
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
+        // 5.1: .zed/settings.json is a sensitive path — still prompts
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        cx.update(|cx| {
+        let _auth = cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
                     display_description: "test 5.1".into(),
@@ -1261,11 +1187,14 @@ mod tests {
                 &stream_tx,
                 cx,
             )
-        })
-        .await
-        .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("test 5.1 (local settings)".into())
+        );
 
+        // 5.2: /etc/hosts is outside the project, but Allow auto-approves
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
         cx.update(|cx| {
             tool.authorize(
@@ -1281,6 +1210,342 @@ mod tests {
         .await
         .unwrap();
         assert!(stream_rx.try_next().is_err());
+
+        // 5.3: Normal in-project path with allow — no confirmation needed
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.3".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert!(stream_rx.try_next().is_err());
+
+        // 5.4: With Confirm default, non-project paths still prompt
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "test 5.4".into(),
+                    path: "/etc/hosts".into(),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(event.tool_call.fields.title, Some("test 5.4".into()));
+    }
+
+    #[gpui::test]
+    async fn test_authorize_create_under_symlink_with_allow(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({})).await;
+        fs.insert_tree("/outside", json!({})).await;
+        fs.insert_symlink("/root/link", PathBuf::from("/outside"))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(EditFileTool::new(
+            project,
+            thread.downgrade(),
+            language_registry,
+            Templates::new(),
+        ));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let authorize_task = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "create through symlink".into(),
+                    path: "link/new.txt".into(),
+                    mode: EditFileMode::Create,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.contains("points outside the project")),
+            "Expected symlink escape authorization for create under external symlink"
+        );
+
+        event
+            .response
+            .send(acp::PermissionOptionId::new("allow"))
+            .unwrap();
+        authorize_task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_edit_file_symlink_escape_requests_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({
+                "config.txt": "old content"
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            path!("/root/link_to_external").as_ref(),
+            PathBuf::from("/outside"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+            Templates::new(),
+        ));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _authorize_task = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "edit through symlink".into(),
+                    path: PathBuf::from("link_to_external/config.txt"),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let auth = stream_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("points outside the project"),
+            "title should mention symlink escape, got: {title}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_edit_file_symlink_escape_denied(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({
+                "config.txt": "old content"
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            path!("/root/link_to_external").as_ref(),
+            PathBuf::from("/outside"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+            Templates::new(),
+        ));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let authorize_task = cx.update(|cx| {
+            tool.authorize(
+                &EditFileToolInput {
+                    display_description: "edit through symlink".into(),
+                    path: PathBuf::from("link_to_external/config.txt"),
+                    mode: EditFileMode::Edit,
+                },
+                &stream_tx,
+                cx,
+            )
+        });
+
+        let auth = stream_rx.expect_authorization().await;
+        drop(auth); // deny by dropping
+
+        let result = authorize_task.await;
+        assert!(result.is_err(), "should fail when denied");
+    }
+
+    #[gpui::test]
+    async fn test_edit_file_symlink_escape_honors_deny_policy(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                "edit_file".into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    ..Default::default()
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({
+                "config.txt": "old content"
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            path!("/root/link_to_external").as_ref(),
+            PathBuf::from("/outside"),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project.clone(),
+                cx.new(|_cx| ProjectContext::default()),
+                context_server_registry,
+                Templates::new(),
+                Some(model),
+                cx,
+            )
+        });
+        let tool = Arc::new(EditFileTool::new(
+            project.clone(),
+            thread.downgrade(),
+            language_registry,
+            Templates::new(),
+        ));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.authorize(
+                    &EditFileToolInput {
+                        display_description: "edit through symlink".into(),
+                        path: PathBuf::from("link_to_external/config.txt"),
+                        mode: EditFileMode::Edit,
+                    },
+                    &stream_tx,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(result.is_err(), "Tool should fail when policy denies");
+        assert!(
+            !matches!(
+                stream_rx.try_next(),
+                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+            ),
+            "Deny policy should not emit symlink authorization prompt",
+        );
     }
 
     #[gpui::test]
@@ -2281,6 +2546,57 @@ mod tests {
             error_msg.contains("save or revert the file manually"),
             "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error_msg
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_detects_nonexistent_subdirectory(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
+        let config_dir = paths::config_dir();
+        fs.insert_tree(&*config_dir.to_string_lossy(), json!({}))
+            .await;
+        let path = config_dir.join("nonexistent_subdir_xyz").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path, fs.as_ref()).await,
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_detects_deeply_nested_nonexistent_subdirectory(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
+        let config_dir = paths::config_dir();
+        fs.insert_tree(&*config_dir.to_string_lossy(), json!({}))
+            .await;
+        let path = config_dir.join("a").join("b").join("c").join("evil.json");
+        assert!(
+            matches!(
+                sensitive_settings_kind(&path, fs.as_ref()).await,
+                Some(SensitiveSettingsKind::Global)
+            ),
+            "Path in deeply nested non-existent subdirectory of config dir should be detected as sensitive: {:?}",
+            path
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sensitive_settings_kind_returns_none_for_non_config_path(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = project::FakeFs::new(cx.executor());
+        let path = PathBuf::from("/tmp/not_a_config_dir/some_file.json");
+        assert!(
+            sensitive_settings_kind(&path, fs.as_ref()).await.is_none(),
+            "Path outside config dir should not be detected as sensitive: {:?}",
+            path
         );
     }
 }

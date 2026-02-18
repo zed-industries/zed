@@ -9,7 +9,6 @@ members = [
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
-    "crates/agent_ui_v2",
     "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
@@ -155,12 +154,14 @@ members = [
     "crates/schema_generator",
     "crates/search",
     "crates/session",
+    "crates/sidebar",
     "crates/settings",
     "crates/settings_content",
     "crates/settings_json",
     "crates/settings_macros",
     "crates/settings_profile_selector",
     "crates/settings_ui",
+    "crates/shell_command_parser",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -253,7 +254,6 @@ action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
-agent_ui_v2 = { path = "crates/agent_ui_v2" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
 ai_onboarding = { path = "crates/ai_onboarding" }
@@ -284,7 +284,7 @@ collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
-component_preview  = { path = "crates/component_preview" }
+component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 copilot_chat = { path = "crates/copilot_chat" }
@@ -354,6 +354,7 @@ markdown_preview = { path = "crates/markdown_preview" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
+mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", branch = "fix-font-family-xml-escaping", default-features = false }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
@@ -388,18 +389,20 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev ="e2074c6c2acf07b57cf717e076bdda7a9ac6e70b", features = ["wav", "playback", "wav_output", "recording"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
+sidebar = { path = "crates/sidebar" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
 settings_json = { path = "crates/settings_json" }
 settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
+shell_command_parser = { path = "crates/shell_command_parser" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -460,11 +463,13 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 
 agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "936aee8761a17affc84ab418ae21306c27c26221" }
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.12.1", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12.1", default-features = false, features = [
+    "async-std",
+] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -490,9 +495,6 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e3cf011ca18a6dfd907d1dedd93e85e21f005fe3" }
 brotli = "8.0.2"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -510,7 +512,7 @@ convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
-cpal = "0.16"
+cpal = "0.17"
 crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
@@ -551,21 +553,21 @@ itertools = "0.14.0"
 json_dotpath = "1.1"
 jsonschema = "0.37.0"
 jsonwebtoken = "10.0"
-jupyter-protocol = "0.10.0"
-jupyter-websocket-client = "0.15.0"
+jupyter-protocol = "1.2.0"
+jupyter-websocket-client = "1.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "fb6bcad59522455a041b7eb9579f706e5cfb2d6f" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410987660bf560d1e617cb78117c6b6b9f599" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
-naga = { version = "25.0", features = ["wgsl-in"] }
+naga = { version = "28.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = "0.15.0"
+nbformat = "1.0.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -592,7 +594,7 @@ objc2-foundation = { version = "=0.3.1", default-features = false, features = [
     "NSUndoManager",
     "NSValue",
     "objc2-core-foundation",
-    "std"
+    "std",
 ] }
 open = "5.0.0"
 ordered-float = "2.1.1"
@@ -634,7 +636,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662
     "stream",
 ], package = "zed-reqwest", version = "0.12.15-zed" }
 rsa = "0.9.6"
-runtimelib = { version = "0.30.0", default-features = false, features = [
+runtimelib = { version = "1.2.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -685,9 +687,16 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
-tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io", "tokio"] }
+tokio-socks = { version = "0.5.2", default-features = false, features = [
+    "futures-io",
+    "tokio",
+] }
 toml = "0.8"
-toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+toml_edit = { version = "0.22", default-features = false, features = [
+    "display",
+    "parse",
+    "serde",
+] }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.26", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
@@ -698,7 +707,7 @@ tree-sitter-diff = "0.1.0"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
 tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
-tree-sitter-go = "0.23"
+tree-sitter-go = "0.25"
 tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
@@ -736,6 +745,7 @@ wasmtime = { version = "33", default-features = false, features = [
 wasmtime-wasi = "33"
 wax = "0.7"
 which = "6.0.0"
+wgpu = "28.0"
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
@@ -796,8 +806,8 @@ features = [
 
 [patch.crates-io]
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "6c550ac3c56cbd143c57ea6390e197af9d790908" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
 
@@ -853,6 +863,7 @@ refineable = { codegen-units = 1 }
 release_channel = { codegen-units = 1 }
 reqwest_client = { codegen-units = 1 }
 session = { codegen-units = 1 }
+sidebar = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
 story = { codegen-units = 1 }
