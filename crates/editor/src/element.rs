@@ -4226,15 +4226,7 @@ impl EditorElement {
                     .size
                     .width
                     .max(fixed_block_max_width)
-                    .max(
-                        editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
-                    )
-                    .into(),
-                (BlockStyle::FlexClipped, _) => hitbox
-                    .size
-                    .width
-                    .max(fixed_block_max_width)
-                    .max(*scroll_width + editor_margins.extended_right)
+                    .max(editor_margins.gutter.width + *scroll_width)
                     .into(),
                 (BlockStyle::Fixed, _) => unreachable!(),
             };
@@ -4277,7 +4269,7 @@ impl EditorElement {
                     element,
                     available_space: size(width, element_size.height.into()),
                     style,
-                    overlaps_gutter: !block.place_near() && style != BlockStyle::FlexClipped,
+                    overlaps_gutter: !block.place_near(),
                     is_buffer_header: block.is_buffer_header(),
                 });
             }
@@ -4291,17 +4283,12 @@ impl EditorElement {
             let style = block.style();
             let width = match style {
                 BlockStyle::Fixed => AvailableSpace::MinContent,
-                BlockStyle::Flex => {
-                    AvailableSpace::Definite(hitbox.size.width.max(fixed_block_max_width).max(
-                        editor_margins.gutter.width + *scroll_width + editor_margins.extended_right,
-                    ))
-                }
-                BlockStyle::FlexClipped => AvailableSpace::Definite(
+                BlockStyle::Flex => AvailableSpace::Definite(
                     hitbox
                         .size
                         .width
                         .max(fixed_block_max_width)
-                        .max(*scroll_width + editor_margins.extended_right),
+                        .max(editor_margins.gutter.width + *scroll_width),
                 ),
                 BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
             };
@@ -4361,7 +4348,6 @@ impl EditorElement {
         &self,
         blocks: &mut Vec<BlockLayout>,
         hitbox: &Hitbox,
-        gutter_hitbox: &Hitbox,
         line_height: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
@@ -4382,10 +4368,6 @@ impl EditorElement {
                 // Position the block outside the visible area
                 hitbox.origin + point(Pixels::ZERO, hitbox.size.height)
             };
-
-            if block.style == BlockStyle::FlexClipped {
-                origin += point(gutter_hitbox.size.width, Pixels::ZERO);
-            }
 
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += point(Pixels::from(-scroll_pixel_position.x), Pixels::ZERO);
@@ -9599,12 +9581,11 @@ impl Element for EditorElement {
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
 
-                    let extended_right = 2 * em_width + right_margin;
-                    let editor_width = text_width - gutter_dimensions.margin - extended_right;
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - 2 * em_width - right_margin;
                     let editor_margins = EditorMargins {
                         gutter: gutter_dimensions,
                         right: right_margin,
-                        extended_right,
                     };
 
                     snapshot = self.editor.update(cx, |editor, cx| {
@@ -10488,7 +10469,6 @@ impl Element for EditorElement {
                         self.layout_blocks(
                             &mut blocks,
                             &hitbox,
-                            &gutter_hitbox,
                             line_height,
                             scroll_position,
                             scroll_pixel_position,
