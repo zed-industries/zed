@@ -304,8 +304,8 @@ Here is an example of a custom Google AI model you could add to your Zed setting
     "google": {
       "available_models": [
         {
-          "name": "gemini-2.5-flash-preview-05-20",
-          "display_name": "Gemini 2.5 Flash (Thinking)",
+          "name": "gemini-3-flash-preview",
+          "display_name": "Gemini 3 Flash (Thinking)",
           "max_tokens": 1000000,
           "mode": {
             "type": "thinking",
@@ -508,7 +508,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
+The Zed agent comes pre-configured to use the latest version for common models (GPT-5.2, GPT-5 mini, o4-mini, GPT-4.1, and others).
 To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -517,8 +517,8 @@ To use alternate models, perhaps a preview release, or if you wish to control th
     "openai": {
       "available_models": [
         {
-          "name": "gpt-5",
-          "display_name": "gpt-5 high",
+          "name": "gpt-5.2",
+          "display_name": "gpt-5.2 high",
           "reasoning_effort": "high",
           "max_tokens": 272000,
           "max_completion_tokens": 20000
@@ -529,8 +529,8 @@ To use alternate models, perhaps a preview release, or if you wish to control th
           "max_tokens": 128000
         },
         {
-          "name": "gpt-5-codex",
-          "display_name": "GPT-5 Codex",
+          "name": "gpt-5.2-codex",
+          "display_name": "GPT-5.2 Codex",
           "max_tokens": 128000,
           "capabilities": {
             "chat_completions": false
@@ -546,7 +546,7 @@ You must provide the model's context window in the `max_tokens` parameter; this 
 
 OpenAI `o1` and `o`-class models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
 
-If a model does not support the `/chat/completions` endpoint (for example `gpt-5-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
+If a model does not support the `/chat/completions` endpoint (for example `gpt-5.2-codex`), disable it by setting `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint instead.
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 

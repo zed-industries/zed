@@ -54,7 +54,7 @@ Here's how you can customize your settings file ([how to edit](../configuring-ze
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-sonnet-4"
+      "model": "claude-sonnet-4-5"
     },
     "inline_alternatives": [
       {
@@ -71,14 +71,14 @@ When multiple models are configured, you'll see in the Inline Assistant UI butto
 The models you specify here are always used in _addition_ to your [default model](#default-model).
 
 For example, the following configuration will generate three outputs for every assist.
-One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and another one with Gemini 2.5 Flash.
+One with Claude Sonnet 4.5 (the default model), another with GPT-5-mini, and another one with Gemini 3 Flash.
 
 ```json [settings]
 {
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-sonnet-4"
+      "model": "claude-sonnet-4-5"
     },
     "inline_alternatives": [
       {
@@ -87,7 +87,7 @@ One with Claude Sonnet 4 (the default model), another with GPT-5-mini, and anoth
       },
       {
         "provider": "zed.dev",
-        "model": "gemini-2.5-flash"
+        "model": "gemini-3-flash"
       }
     ]
   }
