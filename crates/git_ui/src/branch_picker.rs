@@ -10,7 +10,7 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
-use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use picker::{Picker, PickerDelegate, PickerEditorPosition, stable_id::StableId};
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
@@ -362,6 +362,18 @@ impl Entry {
     }
 }
 
+/// Stable identifier for branch picker items, used to preserve manual selections
+/// across match updates in the branch picker.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum BranchStableId {
+    Branch(SharedString),
+    NewUrl(String),
+    NewBranch(String),
+    NewRemoteName { name: String, url: SharedString },
+}
+
+impl StableId for BranchStableId {}
+
 #[derive(Clone, Copy, PartialEq)]
 enum BranchFilter {
     /// Show both local and remote branches.
@@ -561,7 +573,7 @@ impl BranchListDelegate {
 
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
-    type StableId = ();
+    type StableId = BranchStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
@@ -783,6 +795,39 @@ impl PickerDelegate for BranchListDelegate {
                 })
                 .log_err();
         })
+    }
+    fn match_stable_id(&self, ix: usize) -> Option<BranchStableId> {
+        match self.matches.get(ix)? {
+            Entry::Branch { branch, .. } => Some(BranchStableId::Branch(branch.ref_name.clone())),
+            Entry::NewUrl { url } => Some(BranchStableId::NewUrl(url.clone())),
+            Entry::NewBranch { name } => Some(BranchStableId::NewBranch(name.clone())),
+            Entry::NewRemoteName { name, url } => Some(BranchStableId::NewRemoteName {
+                name: name.clone(),
+                url: url.clone(),
+            }),
+        }
+    }
+
+    fn find_match_by_stable_id(&self, stable_id: &BranchStableId) -> Option<usize> {
+        self.matches
+            .iter()
+            .position(|entry| match (entry, stable_id) {
+                (Entry::Branch { branch, .. }, BranchStableId::Branch(ref_name)) => {
+                    &branch.ref_name == ref_name
+                }
+                (Entry::NewUrl { url }, BranchStableId::NewUrl(stable_url)) => url == stable_url,
+                (Entry::NewBranch { name }, BranchStableId::NewBranch(stable_name)) => {
+                    name == stable_name
+                }
+                (
+                    Entry::NewRemoteName { name, url },
+                    BranchStableId::NewRemoteName {
+                        name: stable_name,
+                        url: stable_url,
+                    },
+                ) => name == stable_name && url == stable_url,
+                _ => false,
+            })
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
