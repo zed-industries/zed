@@ -6165,6 +6165,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "project_panel",
+ "project_panel_settings",
  "serde",
  "serde_json",
  "settings",
@@ -7171,6 +7172,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "project_panel_settings",
  "prompt_store",
  "rand 0.9.2",
  "remote",
@@ -12780,6 +12782,7 @@ dependencies = [
  "notifications",
  "pretty_assertions",
  "project",
+ "project_panel_settings",
  "rayon",
  "remote_connection",
  "schemars",
@@ -12796,6 +12799,20 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+]
+
+[[package]]
+name = "project_panel_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "schemars",
+ "serde",
+ "settings",
+ "ui",
+ "util",
 ]
 
 [[package]]
