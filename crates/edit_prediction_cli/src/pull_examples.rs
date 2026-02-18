@@ -785,7 +785,7 @@ pub async fn fetch_rated_examples_after(
     max_rows_per_timestamp: usize,
     offset: usize,
     background_executor: BackgroundExecutor,
-    min_capture_version: Option<MinCaptureVersion>,
+    _min_capture_version: Option<MinCaptureVersion>,
 ) -> Result<Vec<Example>> {
     if inputs.is_empty() {
         return Ok(Vec::new());
@@ -844,22 +844,11 @@ pub async fn fetch_rated_examples_after(
                 AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
                 AND rated.event_properties:output IS NOT NULL
                 AND rated.event_properties:can_collect_data = true
-                AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(rated.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
-                    OR (
-                        TRY_CAST(SPLIT_PART(rated.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(rated.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
-                    )
-                ))
             ORDER BY rated.time ASC
             LIMIT ?
             OFFSET ?
         "#};
 
-        let min_minor_str = min_capture_version.map(|v| v.minor.to_string());
-        let min_patch_str = min_capture_version.map(|v| v.patch.to_string());
-        let min_minor_str_ref = min_minor_str.as_deref();
-        let min_patch_str_ref = min_patch_str.as_deref();
         let bindings = json!({
             "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
             "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
@@ -867,12 +856,8 @@ pub async fn fetch_rated_examples_after(
             "4": { "type": "TEXT", "value": rating_value },
             "5": { "type": "TEXT", "value": rating_value },
             "6": { "type": "TEXT", "value": after_date },
-            "7": { "type": "FIXED", "value": min_minor_str_ref },
-            "8": { "type": "FIXED", "value": min_minor_str_ref },
-            "9": { "type": "FIXED", "value": min_minor_str_ref },
-            "10": { "type": "FIXED", "value": min_patch_str_ref },
-            "11": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
-            "12": { "type": "FIXED", "value": offset.to_string() }
+            "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "8": { "type": "FIXED", "value": offset.to_string() }
         });
 
         let request = json!({
