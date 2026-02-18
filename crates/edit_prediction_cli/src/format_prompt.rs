@@ -284,23 +284,18 @@ impl TeacherPrompt {
     }
 
     fn format_edit_history(edit_history: &str) -> String {
-        // Strip comments ("garbage lines") from edit history
-        let lines = edit_history
-            .lines()
-            .filter(|&s| Self::is_udiff_content_line(s))
-            .collect::<Vec<_>>();
+        let lines: Vec<&str> = edit_history.lines().collect();
 
-        let history_lines = if lines.len() > Self::MAX_HISTORY_LINES {
-            &lines[lines.len() - Self::MAX_HISTORY_LINES..]
-        } else {
-            &lines
-        };
-
-        if history_lines.is_empty() {
+        if lines.is_empty() {
             return "(No edit history)".to_string();
         }
 
-        history_lines.join("\n")
+        if lines.len() > Self::MAX_HISTORY_LINES {
+            let truncated = lines[lines.len() - Self::MAX_HISTORY_LINES..].join("\n");
+            format!("{truncated}\n[...truncated...]")
+        } else {
+            lines.join("\n")
+        }
     }
 
     pub fn format_context(example: &Example) -> String {
@@ -375,15 +370,6 @@ impl TeacherPrompt {
 
         let region = &text[start..end];
         Ok(region.strip_suffix('\n').unwrap_or(region).to_string())
-    }
-
-    fn is_udiff_content_line(s: &str) -> bool {
-        s.starts_with("-")
-            || s.starts_with("+")
-            || s.starts_with(" ")
-            || s.starts_with("---")
-            || s.starts_with("+++")
-            || s.starts_with("@@")
     }
 }
 
