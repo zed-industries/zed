@@ -67,7 +67,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             .into_any_element(),
         ),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
-        Some(render_openai_compatible_provider(settings_window, window, cx).into_any_element()),
+        Some(render_open_ai_compatible_provider(settings_window, window, cx).into_any_element()),
         Some(
             render_api_key_provider(
                 IconName::AiMistral,
@@ -332,7 +332,7 @@ fn sweep_settings() -> Box<[SettingsPageItem]> {
     })])
 }
 
-fn render_openai_compatible_provider(
+fn render_open_ai_compatible_provider(
     settings_window: &SettingsWindow,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,

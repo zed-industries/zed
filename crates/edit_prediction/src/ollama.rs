@@ -203,9 +203,18 @@ impl Ollama {
                     in_open_source_repo: false,
                 };
 
-                let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
-                let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
-                let prompt = format_fim_prompt(&model, &prefix, &suffix);
+                let Some((prefix, suffix)) = inputs
+                    .cursor_excerpt
+                    .split_at_checked(inputs.cursor_offset_in_excerpt)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "cursor offset {} was out of bounds for excerpt length {}",
+                        inputs.cursor_offset_in_excerpt,
+                        inputs.cursor_excerpt.len()
+                    ));
+                };
+
+                let prompt = format_fim_prompt(&model, prefix, suffix);
                 let stop_tokens = get_fim_stop_tokens();
 
                 (prompt, stop_tokens, None, inputs)

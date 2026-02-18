@@ -58,8 +58,8 @@ mod license_detection;
 pub mod mercury;
 pub mod ollama;
 mod onboarding_modal;
+pub mod open_ai_compatible;
 pub mod open_ai_response;
-pub mod openai_compatible;
 mod prediction;
 pub mod sweep_ai;
 
@@ -77,7 +77,7 @@ use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
-use crate::openai_compatible::OpenAiCompatibleEditPrediction;
+use crate::open_ai_compatible::OpenAiCompatibleEditPrediction;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;

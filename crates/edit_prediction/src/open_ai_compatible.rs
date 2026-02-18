@@ -247,7 +247,7 @@ impl OpenAiCompatibleEditPrediction {
             let id = std::mem::take(&mut open_ai_response.id);
             let response_str = text_from_response(open_ai_response).unwrap_or_default();
 
-            log::trace!("openai_compatible response: {}", response_str);
+            log::trace!("open_ai_compatible response: {}", response_str);
 
             let edits = if is_zeta {
                 let editable_range =
