@@ -274,6 +274,8 @@ impl MultiBuffer {
         counts: Vec<usize>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
+        let (new, counts) =
+            self.expand_new_ranges_to_existing(&path, buffer_snapshot, new, counts, cx);
         let insert_result = self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
 
         let mut result = Vec::new();
@@ -293,6 +295,76 @@ impl MultiBuffer {
             }
         }
         (result, insert_result.added_new_excerpt)
+    }
+
+    /// Expand each new merged range to encompass any overlapping existing
+    /// excerpt, then re-merge. This turns "partial overlap where the union
+    /// equals the existing range" into an exact match, avoiding unnecessary
+    /// remove+insert churn that floods the wrap map with edits.
+    fn expand_new_ranges_to_existing(
+        &self,
+        path: &PathKey,
+        buffer_snapshot: &BufferSnapshot,
+        mut new: Vec<ExcerptRange<Point>>,
+        counts: Vec<usize>,
+        cx: &App,
+    ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
+        let existing = self.excerpts_by_path.get(path).cloned().unwrap_or_default();
+        if existing.is_empty() || new.is_empty() {
+            return (new, counts);
+        }
+
+        let snapshot = self.snapshot(cx);
+        let buffer_id = buffer_snapshot.remote_id();
+        let existing_ranges: Vec<Range<Point>> = existing
+            .iter()
+            .filter_map(|&id| {
+                let excerpt = snapshot.excerpt(id)?;
+                (excerpt.buffer_id == buffer_id)
+                    .then(|| excerpt.range.context.to_point(buffer_snapshot))
+            })
+            .collect();
+
+        let mut changed = false;
+        for new_range in &mut new {
+            for existing_range in &existing_ranges {
+                if new_range.context.start <= existing_range.end
+                    && new_range.context.end >= existing_range.start
+                {
+                    let expanded_start = new_range.context.start.min(existing_range.start);
+                    let expanded_end = new_range.context.end.max(existing_range.end);
+                    if expanded_start != new_range.context.start
+                        || expanded_end != new_range.context.end
+                    {
+                        new_range.context.start = expanded_start;
+                        new_range.context.end = expanded_end;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if !changed {
+            return (new, counts);
+        }
+
+        let mut result_ranges: Vec<ExcerptRange<Point>> = Vec::new();
+        let mut result_counts: Vec<usize> = Vec::new();
+        for (range, count) in new.into_iter().zip(counts) {
+            if let Some(last) = result_ranges.last_mut() {
+                if last.context.end >= range.context.start
+                    || last.context.end.row + 1 == range.context.start.row
+                {
+                    last.context.end = last.context.end.max(range.context.end);
+                    *result_counts.last_mut().unwrap() += count;
+                    continue;
+                }
+            }
+            result_ranges.push(range);
+            result_counts.push(count);
+        }
+
+        (result_ranges, result_counts)
     }
 
     pub fn update_path_excerpts(

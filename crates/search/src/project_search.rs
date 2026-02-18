@@ -5270,4 +5270,60 @@ pub mod tests {
         assert_eq!(read_match_count(search_view, cx), 6);
         assert_eq!(events.borrow().len(), 0);
     }
+
+    #[gpui::test]
+    async fn test_incremental_search_produces_no_edits_on_narrowing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Two matches 5 lines apart: with context_line_count=2, contexts
+        // [3..7] and [8..12] are adjacent and merge into a single excerpt
+        // [3..12]. When narrowing to "targeted", only line 5 matches,
+        // producing context [3..7] — a strict subset of [3..12].
+        let mut lines: Vec<String> = (0..20).map(|i| format!("line {i}: filler")).collect();
+        lines[5] = "line 5: targeted item".into();
+        lines[10] = "line 10: target item".into();
+        let big_file = lines.join("\n");
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "big.txt": big_file,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+        let (events, _subscription) = subscribe_to_excerpt_events(&search, cx);
+        let take_excerpt_changes = || -> Vec<ExcerptEvent> {
+            events
+                .borrow_mut()
+                .drain(..)
+                .filter(|e| !matches!(e, ExcerptEvent::Edited))
+                .collect()
+        };
+
+        // Broad query "target" — matches lines 5 and 10 in big.txt,
+        // merged into a single excerpt.
+        perform_search(search_view, "target", cx);
+        assert_all_highlights_match_query(search_view, "target", cx);
+        assert_eq!(read_match_count(search_view, cx), 2);
+        take_excerpt_changes(); // consume initial events
+
+        // Narrow to "targeted" — only line 5 matches. The excerpt context
+        // shrinks from [3..12] to [3..7], but [3..7] ⊂ [3..12] so the
+        // existing excerpt must be kept in place with zero events.
+        perform_incremental_search(search_view, "targeted", cx);
+        assert_all_highlights_match_query(search_view, "targeted", cx);
+        assert_eq!(read_match_count(search_view, cx), 1);
+        assert_eq!(take_excerpt_changes(), Vec::new());
+    }
 }
