@@ -119,7 +119,7 @@ impl Editor {
         for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.semantic_token_state.enabled() {
+        if !self.mode().is_full() || !self.semantic_token_state.enabled() || !self.enable_lsp_data {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
                 display_map.semantic_token_highlights.clear();
