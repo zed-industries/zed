@@ -15,6 +15,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct PathExcerptInsertResult {
+    pub inserted_ranges: Vec<Range<Anchor>>,
     pub excerpt_ids: Vec<ExcerptId>,
     pub added_new_excerpt: bool,
 }
@@ -100,7 +101,7 @@ impl MultiBuffer {
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_merged_excerpt_ranges_for_path(
+        let excerpt_insertion_result = self.set_merged_excerpt_ranges_for_path(
             path,
             buffer,
             excerpt_ranges,
@@ -108,6 +109,10 @@ impl MultiBuffer {
             new,
             counts,
             cx,
+        );
+        (
+            excerpt_insertion_result.inserted_ranges,
+            excerpt_insertion_result.added_new_excerpt,
         )
     }
 
@@ -120,7 +125,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_merged_excerpt_ranges_for_path(
+        let excerpt_insertion_result = self.set_merged_excerpt_ranges_for_path(
             path,
             buffer,
             excerpt_ranges,
@@ -128,6 +133,10 @@ impl MultiBuffer {
             new,
             counts,
             cx,
+        );
+        (
+            excerpt_insertion_result.inserted_ranges,
+            excerpt_insertion_result.added_new_excerpt,
         )
     }
 
@@ -156,7 +165,7 @@ impl MultiBuffer {
 
             multi_buffer
                 .update(&mut app, move |multi_buffer, cx| {
-                    let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
+                    let excerpt_insertion_result = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
                         excerpt_ranges,
@@ -165,7 +174,7 @@ impl MultiBuffer {
                         counts,
                         cx,
                     );
-                    ranges
+                    excerpt_insertion_result.inserted_ranges
                 })
                 .ok()
                 .unwrap_or_default()
@@ -264,7 +273,7 @@ impl MultiBuffer {
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    fn set_merged_excerpt_ranges_for_path(
+    pub fn set_merged_excerpt_ranges_for_path(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
@@ -273,28 +282,30 @@ impl MultiBuffer {
         new: Vec<ExcerptRange<Point>>,
         counts: Vec<usize>,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
+    ) -> PathExcerptInsertResult {
         let (new, counts) =
             self.expand_new_ranges_to_existing(&path, buffer_snapshot, new, counts, cx);
-        let insert_result = self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
+        let (excerpt_ids, added_new_excerpt) =
+            self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
 
-        let mut result = Vec::new();
+        let mut inserted_ranges = Vec::new();
         let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in insert_result
-            .excerpt_ids
-            .into_iter()
-            .zip(counts.into_iter())
-        {
+        for (&excerpt_id, range_count) in excerpt_ids.iter().zip(counts.into_iter()) {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
                     buffer_snapshot.anchor_before(&range.primary.start)
                         ..buffer_snapshot.anchor_after(&range.primary.end),
                 );
-                result.push(range)
+                inserted_ranges.push(range)
             }
         }
-        (result, insert_result.added_new_excerpt)
+
+        PathExcerptInsertResult {
+            inserted_ranges,
+            excerpt_ids,
+            added_new_excerpt,
+        }
     }
 
     /// Expand each new merged range to encompass any overlapping existing
@@ -367,14 +378,14 @@ impl MultiBuffer {
         (result_ranges, result_counts)
     }
 
-    pub fn update_path_excerpts(
+    fn update_path_excerpts(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
         buffer_snapshot: &BufferSnapshot,
         new: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> PathExcerptInsertResult {
+    ) -> (Vec<ExcerptId>, bool) {
         let mut insert_after = self
             .excerpts_by_path
             .range(..path.clone())
@@ -555,9 +566,6 @@ impl MultiBuffer {
                 .insert(path, excerpt_ids.iter().dedup().cloned().collect());
         }
 
-        PathExcerptInsertResult {
-            excerpt_ids,
-            added_new_excerpt: added_a_new_excerpt,
-        }
+        (excerpt_ids, added_a_new_excerpt)
     }
 }
