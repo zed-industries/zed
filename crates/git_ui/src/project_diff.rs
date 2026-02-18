@@ -99,6 +99,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_review_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -144,6 +145,78 @@ impl ProjectDiff {
                         workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
                     })
                     .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn deploy_review_diff(
+        workspace: &mut Workspace,
+        _: &ReviewDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(project_diff) = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+        else {
+            return;
+        };
+
+        let diff_base = project_diff.read(cx).diff_base(cx).clone();
+        let DiffBase::Merge { base_ref } = diff_base else {
+            return;
+        };
+
+        let Some(repo) = project_diff.read(cx).branch_diff.read(cx).repo().cloned() else {
+            return;
+        };
+
+        let diff_receiver = repo.update(cx, |repo, cx| {
+            repo.diff(
+                DiffType::MergeBase {
+                    base_ref: base_ref.clone(),
+                },
+                cx,
+            )
+        });
+
+        let workspace_handle = cx.entity();
+        let workspace_weak = workspace_handle.downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let diff_text = diff_receiver.await??;
+
+                let mention_uri = MentionUri::GitDiff {
+                    base_ref: base_ref.into(),
+                };
+                let diff_uri = mention_uri.to_uri().to_string();
+
+                let content_blocks = vec![
+                    acp::ContentBlock::Text(acp::TextContent::new(
+                        "Please review this branch diff carefully. Point out any issues, potential bugs, \
+                         or improvement opportunities you find.\n\n"
+                            .to_string(),
+                    )),
+                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                        acp::EmbeddedResourceResource::TextResourceContents(
+                            acp::TextResourceContents::new(diff_text, diff_uri),
+                        ),
+                    )),
+                ];
+
+                workspace_handle.update_in(cx, |workspace, window, cx| {
+                    if let Some(delegate) = <dyn AgentPanelDelegate>::try_global(cx) {
+                        delegate.new_thread_with_content(
+                            workspace,
+                            content_blocks,
+                            true,
+                            window,
+                            cx,
+                        );
+                    }
+                })?;
+
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
@@ -1515,15 +1588,11 @@ fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusH
 
 pub struct BranchDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
-    workspace: WeakEntity<Workspace>,
 }
 
 impl BranchDiffToolbar {
-    pub fn new(workspace: &Workspace, _cx: &mut Context<Self>) -> Self {
-        Self {
-            project_diff: None,
-            workspace: workspace.weak_handle(),
-        }
+    pub fn new(_cx: &mut Context<Self>) -> Self {
+        Self { project_diff: None }
     }
 
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
@@ -1595,6 +1664,7 @@ impl Render for BranchDiffToolbar {
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
+                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta_in(
                                 "Review Diff",
@@ -1605,7 +1675,7 @@ impl Render for BranchDiffToolbar {
                             )
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.review_diff(window, cx);
+                            this.dispatch_action(&ReviewDiff, window, cx);
                         })),
                 )
             })
@@ -1618,62 +1688,6 @@ impl Render for BranchDiffToolbar {
                     ),
                 )
             })
-    }
-}
-
-impl BranchDiffToolbar {
-    fn review_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project_diff) = self.project_diff(cx) else {
-            return;
-        };
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let diff_base = project_diff.read(cx).diff_base(cx).clone();
-        let DiffBase::Merge { base_ref } = diff_base else {
-            return;
-        };
-
-        let Some(repo) = project_diff.read(cx).branch_diff.read(cx).repo().cloned() else {
-            return;
-        };
-
-        let diff_receiver = repo.update(cx, |repo, cx| {
-            repo.diff(
-                DiffType::MergeBase {
-                    base_ref: base_ref.clone(),
-                },
-                cx,
-            )
-        });
-        cx.spawn_in(window, async move |_this, cx| {
-            let diff_text = diff_receiver.await??;
-
-            let mention_uri = MentionUri::GitDiff {
-                base_ref: base_ref.into(),
-            };
-            let diff_uri = mention_uri.to_uri().to_string();
-
-            let content_blocks = vec![
-                acp::ContentBlock::Text(acp::TextContent::new(
-                    "Please review this branch diff carefully. Point out any issues, potential bugs, \
-                     or improvement opportunities you find.\n\n".to_string(),
-                )),
-                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                    acp::EmbeddedResourceResource::TextResourceContents(
-                        acp::TextResourceContents::new(diff_text, diff_uri),
-                    ),
-                )),
-            ];
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                if let Some(delegate) = <dyn AgentPanelDelegate>::try_global(cx) {
-                    delegate.new_thread_with_content(workspace, content_blocks, true, window, cx);
-                }
-            })
-        })
-        .detach_and_log_err(cx);
     }
 }
 
