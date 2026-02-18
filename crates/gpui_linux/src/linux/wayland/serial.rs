@@ -47,15 +47,23 @@ impl SerialTracker {
             .unwrap_or(0)
     }
 
-    /// Returns the latest tracked serial of the provided [`SerialKind`]s
+    /// Returns the most recent serial across all tracked kinds.
     ///
-    /// Will return 0 if not tracked.
-    pub fn latest_of(&self, kinds: &[SerialKind]) -> u32 {
-        kinds
-            .iter()
-            .filter_map(|kind| self.serials.get(kind))
-            .max_by_key(|serial_data| serial_data.serial)
-            .map(|serial_data| serial_data.serial)
+    /// Wayland compositor serial numbers are monotonically increasing, so the
+    /// highest value is always the most recently received one. This is the
+    /// correct serial to use for [`set_selection`] when the triggering event
+    /// may have been a mouse press rather than a key press: using 0 (the
+    /// default when a kind has never been seen) causes compositors to silently
+    /// reject the request.
+    ///
+    /// Returns 0 only if no serial of any kind has been received yet.
+    ///
+    /// [`set_selection`]: wayland_client::protocol::wl_data_device::WlDataDevice::set_selection
+    pub fn get_latest(&self) -> u32 {
+        self.serials
+            .values()
+            .map(|sd| sd.serial)
+            .max()
             .unwrap_or(0)
     }
 }
