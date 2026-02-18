@@ -12,10 +12,13 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_SECTION_PATTERN = /(?:^|\n)Release Notes:\r?\n(?<section>(?:\s*-\s+.*(?:\r?\n|$))+)/m;
+const RELEASE_NOTES_AT_END_PATTERN = /(?:^|\n)Release Notes:\r?\n(?:\s*-\s+.*(?:\r?\n|$))+\s*$/m;
 const body = danger.github.pr.body;
 
-const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
+const releaseNotesMatch = body.match(RELEASE_NOTES_SECTION_PATTERN);
+const hasReleaseNotes = releaseNotesMatch !== null;
+const hasReleaseNotesAtEnd = RELEASE_NOTES_AT_END_PATTERN.test(body);
 
 if (!hasReleaseNotes) {
   warn(
@@ -36,8 +39,28 @@ if (!hasReleaseNotes) {
       "",
       "- N/A",
       "```",
+      "",
+      'The "Release Notes" section must be the final section in the PR body.',
     ].join("\n"),
   );
+}
+
+if (hasReleaseNotes && !hasReleaseNotesAtEnd) {
+  warn('The "Release Notes" section must be the final section in the PR body.');
+}
+
+const changedFiles = [...danger.git.created_files, ...danger.git.modified_files, ...danger.git.deleted_files];
+const isDocsOnlyChange = changedFiles.length > 0 && changedFiles.every((file) => file.startsWith("docs/"));
+
+if (isDocsOnlyChange && releaseNotesMatch?.groups?.section) {
+  const releaseNotesBullets = [...releaseNotesMatch.groups.section.matchAll(/^\s*-\s+(.*)$/gm)].map((match) =>
+    match[1].trim(),
+  );
+  const hasOnlyNaBullet = releaseNotesBullets.length === 1 && releaseNotesBullets[0].toUpperCase() === "N/A";
+
+  if (!hasOnlyNaBullet) {
+    warn('Docs-only PRs should use "- N/A" under "Release Notes".');
+  }
 }
 
 const ISSUE_LINK_PATTERN =
