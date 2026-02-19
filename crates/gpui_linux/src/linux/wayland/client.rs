@@ -691,7 +691,7 @@ impl LinuxClient for WaylandClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
         // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
         // be tricky.
@@ -1328,9 +1328,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let old_layout =
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.modifiers = Modifiers::from_xkb(keymap_state);
+                state.modifiers = modifiers_from_xkb(keymap_state);
                 let keymap_state = state.keymap_state.as_mut().unwrap();
-                state.capslock = Capslock::from_xkb(keymap_state);
+                state.capslock = capslock_from_xkb(keymap_state);
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,

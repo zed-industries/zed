@@ -39,7 +39,7 @@ use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(crate::PlatformInput) -> gpui::DispatchEventResult>>,
+    input: Option<Box<dyn FnMut(gpui::PlatformInput) -> gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,

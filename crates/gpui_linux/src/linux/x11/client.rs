@@ -968,8 +968,8 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-                let modifiers = Modifiers::from_xkb(&state.xkb);
-                let capslock = Capslock::from_xkb(&state.xkb);
+                let modifiers = modifiers_from_xkb(&state.xkb);
+                let capslock = capslock_from_xkb(&state.xkb);
                 if state.last_modifiers_changed_event == modifiers
                     && state.last_capslock_changed_event == capslock
                 {

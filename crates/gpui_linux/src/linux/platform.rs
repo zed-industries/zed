@@ -866,131 +866,131 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl gpui::Keystroke {
-    pub(super) fn from_xkb(
-        state: &State,
-        mut modifiers: gpui::Modifiers,
-        keycode: Keycode,
-    ) -> Self {
-        let key_utf32 = state.key_get_utf32(keycode);
-        let key_utf8 = state.key_get_utf8(keycode);
-        let key_sym = state.key_get_one_sym(keycode);
+pub(super) fn keystroke_from_xkb(
+    state: &State,
+    mut modifiers: gpui::Modifiers,
+    keycode: Keycode,
+) -> gpui::Keystroke {
+    let key_utf32 = state.key_get_utf32(keycode);
+    let key_utf8 = state.key_get_utf8(keycode);
+    let key_sym = state.key_get_one_sym(keycode);
 
-        let key = match key_sym {
-            Keysym::Return => "enter".to_owned(),
-            Keysym::Prior => "pageup".to_owned(),
-            Keysym::Next => "pagedown".to_owned(),
-            Keysym::ISO_Left_Tab => "tab".to_owned(),
-            Keysym::KP_Prior => "pageup".to_owned(),
-            Keysym::KP_Next => "pagedown".to_owned(),
-            Keysym::XF86_Back => "back".to_owned(),
-            Keysym::XF86_Forward => "forward".to_owned(),
-            Keysym::XF86_Cut => "cut".to_owned(),
-            Keysym::XF86_Copy => "copy".to_owned(),
-            Keysym::XF86_Paste => "paste".to_owned(),
-            Keysym::XF86_New => "new".to_owned(),
-            Keysym::XF86_Open => "open".to_owned(),
-            Keysym::XF86_Save => "save".to_owned(),
+    let key = match key_sym {
+        Keysym::Return => "enter".to_owned(),
+        Keysym::Prior => "pageup".to_owned(),
+        Keysym::Next => "pagedown".to_owned(),
+        Keysym::ISO_Left_Tab => "tab".to_owned(),
+        Keysym::KP_Prior => "pageup".to_owned(),
+        Keysym::KP_Next => "pagedown".to_owned(),
+        Keysym::XF86_Back => "back".to_owned(),
+        Keysym::XF86_Forward => "forward".to_owned(),
+        Keysym::XF86_Cut => "cut".to_owned(),
+        Keysym::XF86_Copy => "copy".to_owned(),
+        Keysym::XF86_Paste => "paste".to_owned(),
+        Keysym::XF86_New => "new".to_owned(),
+        Keysym::XF86_Open => "open".to_owned(),
+        Keysym::XF86_Save => "save".to_owned(),
 
-            Keysym::comma => ",".to_owned(),
-            Keysym::period => ".".to_owned(),
-            Keysym::less => "<".to_owned(),
-            Keysym::greater => ">".to_owned(),
-            Keysym::slash => "/".to_owned(),
-            Keysym::question => "?".to_owned(),
+        Keysym::comma => ",".to_owned(),
+        Keysym::period => ".".to_owned(),
+        Keysym::less => "<".to_owned(),
+        Keysym::greater => ">".to_owned(),
+        Keysym::slash => "/".to_owned(),
+        Keysym::question => "?".to_owned(),
 
-            Keysym::semicolon => ";".to_owned(),
-            Keysym::colon => ":".to_owned(),
-            Keysym::apostrophe => "'".to_owned(),
-            Keysym::quotedbl => "\"".to_owned(),
+        Keysym::semicolon => ";".to_owned(),
+        Keysym::colon => ":".to_owned(),
+        Keysym::apostrophe => "'".to_owned(),
+        Keysym::quotedbl => "\"".to_owned(),
 
-            Keysym::bracketleft => "[".to_owned(),
-            Keysym::braceleft => "{".to_owned(),
-            Keysym::bracketright => "]".to_owned(),
-            Keysym::braceright => "}".to_owned(),
-            Keysym::backslash => "\\".to_owned(),
-            Keysym::bar => "|".to_owned(),
+        Keysym::bracketleft => "[".to_owned(),
+        Keysym::braceleft => "{".to_owned(),
+        Keysym::bracketright => "]".to_owned(),
+        Keysym::braceright => "}".to_owned(),
+        Keysym::backslash => "\\".to_owned(),
+        Keysym::bar => "|".to_owned(),
 
-            Keysym::grave => "`".to_owned(),
-            Keysym::asciitilde => "~".to_owned(),
-            Keysym::exclam => "!".to_owned(),
-            Keysym::at => "@".to_owned(),
-            Keysym::numbersign => "#".to_owned(),
-            Keysym::dollar => "$".to_owned(),
-            Keysym::percent => "%".to_owned(),
-            Keysym::asciicircum => "^".to_owned(),
-            Keysym::ampersand => "&".to_owned(),
-            Keysym::asterisk => "*".to_owned(),
-            Keysym::parenleft => "(".to_owned(),
-            Keysym::parenright => ")".to_owned(),
-            Keysym::minus => "-".to_owned(),
-            Keysym::underscore => "_".to_owned(),
-            Keysym::equal => "=".to_owned(),
-            Keysym::plus => "+".to_owned(),
-            Keysym::space => "space".to_owned(),
-            Keysym::BackSpace => "backspace".to_owned(),
-            Keysym::Tab => "tab".to_owned(),
-            Keysym::Delete => "delete".to_owned(),
-            Keysym::Escape => "escape".to_owned(),
+        Keysym::grave => "`".to_owned(),
+        Keysym::asciitilde => "~".to_owned(),
+        Keysym::exclam => "!".to_owned(),
+        Keysym::at => "@".to_owned(),
+        Keysym::numbersign => "#".to_owned(),
+        Keysym::dollar => "$".to_owned(),
+        Keysym::percent => "%".to_owned(),
+        Keysym::asciicircum => "^".to_owned(),
+        Keysym::ampersand => "&".to_owned(),
+        Keysym::asterisk => "*".to_owned(),
+        Keysym::parenleft => "(".to_owned(),
+        Keysym::parenright => ")".to_owned(),
+        Keysym::minus => "-".to_owned(),
+        Keysym::underscore => "_".to_owned(),
+        Keysym::equal => "=".to_owned(),
+        Keysym::plus => "+".to_owned(),
+        Keysym::space => "space".to_owned(),
+        Keysym::BackSpace => "backspace".to_owned(),
+        Keysym::Tab => "tab".to_owned(),
+        Keysym::Delete => "delete".to_owned(),
+        Keysym::Escape => "escape".to_owned(),
 
-            Keysym::Left => "left".to_owned(),
-            Keysym::Right => "right".to_owned(),
-            Keysym::Up => "up".to_owned(),
-            Keysym::Down => "down".to_owned(),
-            Keysym::Home => "home".to_owned(),
-            Keysym::End => "end".to_owned(),
-            Keysym::Insert => "insert".to_owned(),
+        Keysym::Left => "left".to_owned(),
+        Keysym::Right => "right".to_owned(),
+        Keysym::Up => "up".to_owned(),
+        Keysym::Down => "down".to_owned(),
+        Keysym::Home => "home".to_owned(),
+        Keysym::End => "end".to_owned(),
+        Keysym::Insert => "insert".to_owned(),
 
-            _ => {
-                let name = xkb::keysym_get_name(key_sym).to_lowercase();
-                if key_sym.is_keypad_key() {
-                    name.replace("kp_", "")
-                } else if let Some(key) = key_utf8.chars().next()
-                    && key_utf8.len() == 1
-                    && key.is_ascii()
+        _ => {
+            let name = xkb::keysym_get_name(key_sym).to_lowercase();
+            if key_sym.is_keypad_key() {
+                name.replace("kp_", "")
+            } else if let Some(key) = key_utf8.chars().next()
+                && key_utf8.len() == 1
+                && key.is_ascii()
+            {
+                if key.is_ascii_graphic() {
+                    key_utf8.to_lowercase()
+                // map ctrl-a to `a`
+                // ctrl-0..9 may emit control codes like ctrl-[, but
+                // we don't want to map them to `[`
+                } else if key_utf32 <= 0x1f
+                    && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
                 {
-                    if key.is_ascii_graphic() {
-                        key_utf8.to_lowercase()
-                    // map ctrl-a to `a`
-                    // ctrl-0..9 may emit control codes like ctrl-[, but
-                    // we don't want to map them to `[`
-                    } else if key_utf32 <= 0x1f
-                        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
-                    {
-                        ((key_utf32 as u8 + 0x40) as char)
-                            .to_ascii_lowercase()
-                            .to_string()
-                    } else {
-                        name
-                    }
-                } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
-                    String::from(key_en)
+                    ((key_utf32 as u8 + 0x40) as char)
+                        .to_ascii_lowercase()
+                        .to_string()
                 } else {
                     name
                 }
-            }
-        };
-
-        if modifiers.shift {
-            // we only include the shift for upper-case letters by convention,
-            // so don't include for numbers and symbols, but do include for
-            // tab/enter, etc.
-            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
-                modifiers.shift = false;
+            } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
+                String::from(key_en)
+            } else {
+                name
             }
         }
+    };
 
-        // Ignore control characters (and DEL) for the purposes of key_char
-        let key_char =
-            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
-
-        Self {
-            modifiers,
-            key,
-            key_char,
+    if modifiers.shift {
+        // we only include the shift for upper-case letters by convention,
+        // so don't include for numbers and symbols, but do include for
+        // tab/enter, etc.
+        if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
+            modifiers.shift = false;
         }
     }
 
+    // Ignore control characters (and DEL) for the purposes of key_char
+    let key_char =
+        (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
+
+    gpui::Keystroke {
+        modifiers,
+        key,
+        key_char,
+    }
+}
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl gpui::Keystroke {
     /**
      * Returns which symbol the dead key represents
      * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
@@ -1052,30 +1052,26 @@ impl gpui::Keystroke {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl gpui::Modifiers {
-    pub(super) fn from_xkb(keymap_state: &State) -> Self {
-        let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-        let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-        let control =
-            keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-        let platform =
-            keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-        Self {
-            shift,
-            alt,
-            control,
-            platform,
-            function: false,
-        }
+
+pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui::Modifiers {
+    let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+    let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+    let control = keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+    let platform = keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+    Self {
+        shift,
+        alt,
+        control,
+        platform,
+        function: false,
     }
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl gpui::Capslock {
-    pub(super) fn from_xkb(keymap_state: &State) -> Self {
-        let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-        Self { on }
-    }
+
+pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
+    let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+    Self { on }
 }
 
 #[cfg(test)]
