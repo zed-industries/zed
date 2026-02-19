@@ -346,23 +346,21 @@ async fn resolve_dynamic_schema(
                 .map(|adapter| adapter.name().to_string())
                 .collect::<Vec<_>>();
 
-            cx.update(|cx| {
-                let language_names = &languages
-                    .language_names()
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect::<Vec<_>>();
+            let language_names = &languages
+                .language_names()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
 
-                settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
-                    language_names,
-                    lsp_adapter_names: &lsp_adapter_names,
-                    // These are not allowed in project-specific settings but
-                    // they're still fields required by the
-                    // `SettingsJsonSchemaParams` struct.
-                    font_names: &[],
-                    theme_names: &[],
-                    icon_theme_names: &[],
-                })
+            settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
+                language_names,
+                lsp_adapter_names: &lsp_adapter_names,
+                // These are not allowed in project-specific settings but
+                // they're still fields required by the
+                // `SettingsJsonSchemaParams` struct.
+                font_names: &[],
+                theme_names: &[],
+                icon_theme_names: &[],
             })
         }
         "debug_tasks" => {
