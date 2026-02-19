@@ -236,6 +236,7 @@ pub struct ProjectSearch {
     search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
+    search_input_confirmed: bool,
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
@@ -294,6 +295,7 @@ impl ProjectSearch {
             search_id: 0,
             no_results: None,
             limit_reached: false,
+            search_input_confirmed: false,
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
@@ -313,6 +315,7 @@ impl ProjectSearch {
             search_id: self.search_id,
             no_results: self.no_results,
             limit_reached: self.limit_reached,
+            search_input_confirmed: self.search_input_confirmed,
             search_history_cursor: self.search_history_cursor.clone(),
             search_included_history_cursor: self.search_included_history_cursor.clone(),
             search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
@@ -356,6 +359,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
+        self.search_input_confirmed = !incremental;
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
 
@@ -1518,21 +1522,42 @@ impl ProjectSearchView {
                 )
             });
 
-            let range_to_select = match_ranges[new_index].clone();
-            self.results_editor.update(cx, |editor, cx| {
-                let range_to_select = editor.range_for_match(&range_to_select);
-                let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
-                    Autoscroll::center()
-                } else {
-                    Autoscroll::fit()
-                };
-                editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
-                editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
-                    s.select_ranges([range_to_select])
-                });
-            });
-            self.highlight_matches(&match_ranges, Some(new_index), cx);
+            self.select_match_range(&match_ranges, new_index, window, cx);
         }
+    }
+
+    fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.entity.clone().update(cx, |entity, cx| {
+            if !entity.match_ranges.is_empty() {
+                self.active_match_index = Some(0);
+                self.select_match_range(&entity.match_ranges, 0, window, cx);
+            }
+        })
+    }
+
+    fn select_match_range(
+        &mut self,
+        match_ranges: &[Range<Anchor>],
+        index: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(range) = match_ranges.get(index) else {
+            return;
+        };
+        self.results_editor.update(cx, |editor, cx| {
+            let range_to_select = editor.range_for_match(range);
+            let autoscroll = if EditorSettings::get_global(cx).search.center_on_match {
+                Autoscroll::center()
+            } else {
+                Autoscroll::fit()
+            };
+            editor.unfold_ranges(std::slice::from_ref(&range_to_select), false, true, cx);
+            editor.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
+                s.select_ranges([range_to_select])
+            });
+        });
+        self.highlight_matches(match_ranges, Some(index), cx);
     }
 
     fn focus_query_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1585,6 +1610,7 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.entity.read(cx);
+        let search_input_confirmed = model.search_input_confirmed;
         let match_ranges = model.match_ranges.clone();
         let is_incremental_pending =
             model.pending_search.is_some() && EditorSettings::get_global(cx).search.search_on_input;
@@ -1612,7 +1638,8 @@ impl ProjectSearchView {
                     editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
                 }
             });
-            let should_auto_focus = !EditorSettings::get_global(cx).search.search_on_input;
+            let should_auto_focus =
+                search_input_confirmed || !EditorSettings::get_global(cx).search.search_on_input;
             if is_new_search
                 && self.query_editor.focus_handle(cx).is_focused(window)
                 && should_auto_focus
@@ -1832,12 +1859,28 @@ impl ProjectSearchBar {
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                if !search_view
+                if search_view
                     .replacement_editor
                     .focus_handle(cx)
                     .is_focused(window)
                 {
-                    cx.stop_propagation();
+                    return;
+                }
+
+                cx.stop_propagation();
+                if EditorSettings::get_global(cx).search.search_on_input {
+                    // Results are already available from incremental search.
+                    // Mark confirmed so entity_changed auto-focuses when
+                    // a pending search completes, and select the first match
+                    // if results already exist.
+                    search_view
+                        .entity
+                        .update(cx, |model, _| model.search_input_confirmed = true);
+                    if search_view.has_matches() {
+                        search_view.select_first_match(window, cx);
+                        search_view.focus_results_editor(window, cx);
+                    }
+                } else {
                     search_view
                         .prompt_to_save_if_dirty_then_search(window, cx)
                         .detach_and_log_err(cx);
@@ -5306,5 +5349,156 @@ pub mod tests {
         assert_all_highlights_match_query(search_view, "targeted", cx);
         assert_eq!(read_match_count(search_view, cx), 1);
         assert_eq!(take_excerpt_changes(), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_search_on_input_keeps_focus_confirm_shifts_it(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .search
+                        .get_or_insert_default()
+                        .search_on_input = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+                "three.rs": "const THREE: usize = one::ONE + two::TWO;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, move |workspace, window, cx| {
+            assert_eq!(workspace.panes().len(), 1);
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        });
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view expected to appear after new search event trigger");
+
+        // Type into the query editor — with search_on_input the EditorEvent::Edited
+        // subscriber triggers an incremental search. The query editor must stay focused.
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |query_editor, cx| {
+                        query_editor.set_text("ONE", window, cx);
+                    });
+                });
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        !search_view.entity.read(cx).match_ranges.is_empty(),
+                        "Incremental search should have found matches",
+                    );
+                    assert!(
+                        search_view.query_editor.focus_handle(cx).is_focused(window),
+                        "Query editor should remain focused after incremental search with search_on_input",
+                    );
+                    assert!(
+                        !search_view.results_editor.focus_handle(cx).is_focused(window),
+                        "Results editor should not be focused after incremental search with search_on_input",
+                    );
+                });
+            })
+            .unwrap();
+
+        // Move the results editor cursor to the end of the buffer so it's
+        // far away from the first match, then re-focus the query editor.
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.results_editor.update(cx, |editor, cx| {
+                        editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+                    });
+                    let ranges = search_view.results_editor.update(cx, |editor, cx| {
+                        editor
+                            .selections
+                            .display_ranges(&editor.display_snapshot(cx))
+                    });
+                    assert_eq!(ranges.len(), 1);
+                    assert_ne!(
+                        ranges[0].start,
+                        DisplayPoint::new(DisplayRow(0), 0),
+                        "Cursor should be past the start of the buffer after MoveToEnd",
+                    );
+                    search_view.query_editor.focus_handle(cx).focus(window, cx);
+                });
+            })
+            .unwrap();
+
+        // Press Enter (Confirm) via the search bar — this should shift focus
+        // to the results editor with the first match selected, regardless of
+        // where the cursor was before.
+        cx.dispatch_action(Confirm);
+        cx.background_executor.run_until_parked();
+
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert!(
+                        !search_view.entity.read(cx).match_ranges.is_empty(),
+                        "Confirm search should have found matches",
+                    );
+                    assert!(
+                        search_view.results_editor.focus_handle(cx).is_focused(window),
+                        "Results editor should be focused after confirming search with search_on_input",
+                    );
+                    assert!(
+                        !search_view.query_editor.focus_handle(cx).is_focused(window),
+                        "Query editor should not be focused after confirming search with search_on_input",
+                    );
+                    assert_eq!(
+                        search_view.active_match_index,
+                        Some(0),
+                        "First match should be selected after confirm",
+                    );
+                    let results_editor = search_view.results_editor.read(cx);
+                    let selection = results_editor.selections.newest_anchor();
+                    let snapshot = results_editor.buffer().read(cx).snapshot(cx);
+                    let selected_text = snapshot
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    assert_eq!(
+                        selected_text, "ONE",
+                        "First match text should be selected after confirm",
+                    );
+                });
+            })
+            .unwrap();
     }
 }
