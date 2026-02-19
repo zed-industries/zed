@@ -3035,6 +3035,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "thiserror 2.0.17",
  "yawc",
 ]
 
