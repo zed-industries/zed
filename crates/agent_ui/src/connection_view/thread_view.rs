@@ -7969,7 +7969,10 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.permission_dropdown_handle.clone().toggle(window, cx);
+        let menu_handle = self.permission_dropdown_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
     }
 
     fn open_add_context_menu(
