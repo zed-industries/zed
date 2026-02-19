@@ -30,6 +30,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
+html_to_markdown.workspace = true
 http_client.workspace = true
 image.workspace = true
 jupyter-websocket-client.workspace = true
