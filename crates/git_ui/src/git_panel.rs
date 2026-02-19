@@ -3445,7 +3445,7 @@ impl GitPanel {
                     let head_content = head_text.unwrap_or_default();
 
                     let index_buffer = project
-                        .update(cx, |project, cx| project.create_buffer(false, cx))
+                        .update(cx, |project, cx| project.create_buffer(language.clone(), false, cx))
                         .await?;
 
                     // Copy file info from working copy buffer for proper filename display
@@ -3474,7 +3474,7 @@ impl GitPanel {
                             diff.update_diff(
                                 index_snapshot.text.clone(),
                                 Some(head_content.into()),
-                                true,
+                                Some(true),
                                 language,
                                 cx,
                             )
