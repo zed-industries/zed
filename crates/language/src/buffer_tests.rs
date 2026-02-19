@@ -13,6 +13,7 @@ use regex::RegexBuilder;
 use settings::SettingsStore;
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::{
     env,
     ops::Range,
@@ -1357,6 +1358,61 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
             let foo = 1;ˇ"},
         Vec::new(),
         cx,
+    );
+}
+
+#[gpui::test]
+fn test_enclosing_bracket_ranges_large_block(cx: &mut App) {
+    // Build a buffer with an impl block large enough that the distance between
+    // `{` and `}` exceeds MAX_BYTES_TO_QUERY (16 KB). Each comment line is
+    // ~24 bytes, so ~700 lines push us past the limit.
+    let comment_line_count = 1000;
+    let mut source = String::from("impl Foo {\n");
+    for i in 0..comment_line_count {
+        writeln!(source, "    // line {i:04}  padding").unwrap();
+    }
+    source.push_str("}\n");
+
+    let buffer = cx.new(|cx| Buffer::local(source.clone(), cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+
+    let open_brace = source.find('{').unwrap();
+    let close_brace = source.rfind('}').unwrap();
+
+    // Cursor right after the opening brace — should find the enclosing pair.
+    let cursor = open_brace + 1;
+    let pairs = snapshot
+        .enclosing_bracket_ranges(cursor..cursor)
+        .map(|pair| (pair.open_range, pair.close_range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs,
+        vec![(open_brace..open_brace + 1, close_brace..close_brace + 1)],
+        "enclosing_bracket_ranges should find the bracket pair even when \
+         open and close are in different row-chunks"
+    );
+
+    // Cursor at the opening brace itself.
+    let pairs = snapshot
+        .enclosing_bracket_ranges(open_brace..open_brace)
+        .map(|pair| (pair.open_range, pair.close_range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs,
+        vec![(open_brace..open_brace + 1, close_brace..close_brace + 1)],
+        "cursor at the opening brace should also find the pair"
+    );
+
+    // Cursor somewhere in the middle of the block.
+    let middle = source.len() / 2;
+    let pairs = snapshot
+        .enclosing_bracket_ranges(middle..middle)
+        .map(|pair| (pair.open_range, pair.close_range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs,
+        vec![(open_brace..open_brace + 1, close_brace..close_brace + 1)],
+        "cursor in the middle of a large block should find the enclosing pair"
     );
 }
 

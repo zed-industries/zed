@@ -33,6 +33,7 @@ use gpui::{
     Task, TextStyle,
 };
 
+use itertools::Itertools;
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -4555,10 +4556,16 @@ impl BufferSnapshot {
     ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
         let mut all_bracket_matches = HashMap::default();
 
+        let (query_ranges, max_bytes_to_query) = self.extend_range_for_enclosing_brackets(&range);
+        let point_ranges = query_ranges
+            .iter()
+            .map(|r| r.to_point(self))
+            .collect::<Vec<_>>();
+
         for chunk in self
             .tree_sitter_data
             .chunks
-            .applicable_chunks(&[range.to_point(self)])
+            .applicable_chunks(&point_ranges)
         {
             if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
                 continue;
@@ -4581,7 +4588,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
+                    max_bytes_to_query: Some(max_bytes_to_query),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
@@ -4779,6 +4786,59 @@ impl BufferSnapshot {
         all_bracket_matches
     }
 
+    /// Walk the syntax tree upward from `range` and return a set of byte
+    /// ranges to query (plus the `max_bytes_to_query` limit) for bracket
+    /// matching.
+    ///
+    /// When the cursor sits inside a block whose byte extent exceeds
+    /// `MAX_BYTES_TO_QUERY`, the default containing-byte-range causes
+    /// tree-sitter's query cursor to skip its bracket children.  Rather than
+    /// expanding to the entire block (which would pull in every intermediate
+    /// chunk — catastrophic for huge files), we add small windows around the
+    /// block's start and end where bracket tokens actually live.
+    fn extend_range_for_enclosing_brackets(
+        &self,
+        range: &Range<usize>,
+    ) -> (Vec<Range<usize>>, usize) {
+        let mut ranges = vec![range.clone()];
+        let mut max_bytes = MAX_BYTES_TO_QUERY;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+            if !Self::goto_node_enclosing_range(&mut cursor, range, false) {
+                continue;
+            }
+            loop {
+                let node = cursor.node();
+                let node_range = node.byte_range();
+                // Skip the syntax-layer root — it spans the whole document
+                // and never carries brackets itself.
+                if node_range.len() > max_bytes && node.parent().is_some() {
+                    let window = MAX_BYTES_TO_QUERY;
+                    ranges.push(
+                        node_range.start
+                            ..node_range.start.saturating_add(window).min(node_range.end),
+                    );
+                    ranges.push(
+                        node_range.end.saturating_sub(window).max(node_range.start)..node_range.end,
+                    );
+                    // The containing byte range is centered on each chunk's
+                    // midpoint, so we need 2× the block span to guarantee
+                    // every boundary chunk's window covers both brackets.
+                    max_bytes = max_bytes.max(node_range.len().saturating_mul(2));
+                }
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+        }
+
+        (ranges, max_bytes)
+    }
+
     pub fn all_bracket_ranges(
         &self,
         range: Range<usize>,
@@ -4790,6 +4850,7 @@ impl BufferSnapshot {
                 let bracket_range = bracket_match.open_range.start..bracket_match.close_range.end;
                 bracket_range.overlaps(&range)
             })
+            .dedup_by(|a, b| a.open_range == b.open_range && a.close_range == b.close_range)
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
