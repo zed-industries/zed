@@ -22,7 +22,7 @@ static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(load_all_actions);
+static ALL_ACTIONS: LazyLock<ActionManifest> = LazyLock::new(load_all_actions);
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
@@ -68,7 +68,7 @@ enum PreprocessorError {
 
 impl PreprocessorError {
     fn new_for_not_found_action(action_name: String) -> Self {
-        for action in &*ALL_ACTIONS {
+        for action in &ALL_ACTIONS.actions {
             for alias in &action.deprecated_aliases {
                 if alias == action_name.as_str() {
                     return PreprocessorError::DeprecatedActionUsed {
@@ -256,13 +256,14 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
     ALL_ACTIONS
+        .actions
         .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
-        .map(|index| &ALL_ACTIONS[index])
+        .map(|index| &ALL_ACTIONS.actions[index])
 }
 
 fn actions_available() -> bool {
-    !ALL_ACTIONS.is_empty()
+    !ALL_ACTIONS.actions.is_empty()
 }
 
 fn is_missing_action(name: &str) -> bool {
@@ -294,7 +295,8 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
     let settings_validator = jsonschema::validator_for(&settings_schema)
         .expect("failed to compile settings JSON schema");
 
-    let keymap_schema = KeymapFile::generate_json_schema_from_inventory();
+    let keymap_schema =
+        keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
     let keymap_validator =
         jsonschema::validator_for(&keymap_schema).expect("failed to compile keymap JSON schema");
 
@@ -512,19 +514,30 @@ where
 struct ActionDef {
     name: String,
     human_name: String,
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
     deprecated_aliases: Vec<String>,
+    #[serde(default)]
+    deprecation_message: Option<String>,
     #[serde(rename = "documentation")]
     docs: Option<String>,
 }
 
-fn load_all_actions() -> Vec<ActionDef> {
+#[derive(Debug, serde::Deserialize)]
+struct ActionManifest {
+    actions: Vec<ActionDef>,
+    #[serde(default)]
+    schema_definitions: serde_json::Map<String, serde_json::Value>,
+}
+
+fn load_all_actions() -> ActionManifest {
     let asset_path = concat!(env!("CARGO_MANIFEST_DIR"), "/actions.json");
     match std::fs::read_to_string(asset_path) {
         Ok(content) => {
-            let mut actions: Vec<ActionDef> =
+            let mut manifest: ActionManifest =
                 serde_json::from_str(&content).expect("Failed to parse actions.json");
-            actions.sort_by(|a, b| a.name.cmp(&b.name));
-            actions
+            manifest.actions.sort_by(|a, b| a.name.cmp(&b.name));
+            manifest
         }
         Err(err) => {
             if std::env::var("CI").is_ok() {
@@ -534,7 +547,10 @@ fn load_all_actions() -> Vec<ActionDef> {
                 "Warning: actions.json not found, action validation will be skipped: {}",
                 err
             );
-            Vec::new()
+            ActionManifest {
+                actions: Vec::new(),
+                schema_definitions: serde_json::Map::new(),
+            }
         }
     }
 }
@@ -668,7 +684,7 @@ fn title_regex() -> &'static Regex {
 }
 
 fn generate_big_table_of_actions() -> String {
-    let actions = &*ALL_ACTIONS;
+    let actions = &ALL_ACTIONS.actions;
     let mut output = String::new();
 
     let mut actions_sorted = actions.iter().collect::<Vec<_>>();
@@ -718,6 +734,54 @@ fn generate_big_table_of_actions() -> String {
     output
 }
 
+fn keymap_schema_for_actions(
+    actions: &[ActionDef],
+    schema_definitions: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mut generator = KeymapFile::action_schema_generator();
+
+    for (name, definition) in schema_definitions {
+        generator
+            .definitions_mut()
+            .insert(name.clone(), definition.clone());
+    }
+
+    let mut action_schemas = Vec::new();
+    let mut documentation = collections::HashMap::<&str, &str>::default();
+    let mut deprecations = collections::HashMap::<&str, &str>::default();
+    let mut deprecation_messages = collections::HashMap::<&str, &str>::default();
+
+    for action in actions {
+        let schema = action
+            .schema
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+        action_schemas.push((action.name.as_str(), schema));
+        if let Some(doc) = &action.docs {
+            documentation.insert(action.name.as_str(), doc.as_str());
+        }
+        if let Some(msg) = &action.deprecation_message {
+            deprecation_messages.insert(action.name.as_str(), msg.as_str());
+        }
+        for alias in &action.deprecated_aliases {
+            deprecations.insert(alias.as_str(), action.name.as_str());
+            let alias_schema = action
+                .schema
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+            action_schemas.push((alias.as_str(), alias_schema));
+        }
+    }
+
+    KeymapFile::generate_json_schema(
+        generator,
+        action_schemas,
+        &documentation,
+        &deprecations,
+        &deprecation_messages,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,7 +792,15 @@ mod tests {
     }
 
     fn keymap_validator() -> jsonschema::Validator {
-        let schema = KeymapFile::generate_json_schema_from_inventory();
+        let actions = vec![ActionDef {
+            name: "editor::AcceptEditPrediction".into(),
+            human_name: String::new(),
+            schema: None,
+            deprecated_aliases: vec![],
+            deprecation_message: None,
+            docs: None,
+        }];
+        let schema = keymap_schema_for_actions(&actions, &serde_json::Map::new());
         jsonschema::validator_for(&schema).expect("failed to compile keymap JSON schema")
     }
 
