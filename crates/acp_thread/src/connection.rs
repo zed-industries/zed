@@ -446,9 +446,20 @@ impl PermissionOptionChoice {
 }
 
 #[derive(Debug, Clone)]
+pub struct CommandPattern {
+    pub pattern: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum PermissionOptions {
     Flat(Vec<acp::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
+    DropdownWithPatterns {
+        choices: Vec<PermissionOptionChoice>,
+        command_patterns: Vec<CommandPattern>,
+        tool_name: String,
+    },
 }
 
 impl PermissionOptions {
@@ -456,6 +467,7 @@ impl PermissionOptions {
         match self {
             PermissionOptions::Flat(options) => options.is_empty(),
             PermissionOptions::Dropdown(options) => options.is_empty(),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.is_empty(),
         }
     }
 
@@ -474,6 +486,17 @@ impl PermissionOptions {
                     None
                 }
             }),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if choice.allow.kind == kind {
+                        Some(&choice.allow)
+                    } else if choice.deny.kind == kind {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
         }
     }
 

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use shell_command_parser::extract_commands;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -83,6 +85,43 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
         Some(subcommand) => Some(format!("{} {}", prefix.command, subcommand)),
         None => Some(prefix.command),
     }
+}
+
+/// Extracts patterns for ALL commands in a pipeline, not just the first one.
+///
+/// For a command like `"cargo test 2>&1 | tail"`, this returns patterns for
+/// both `cargo` and `tail`. Path-based commands (e.g. `./script.sh`) are
+/// filtered out, and duplicate command names are deduplicated while preserving
+/// order.
+pub fn extract_all_terminal_patterns(command: &str) -> Vec<(String, String)> {
+    let commands = match extract_commands(command) {
+        Some(commands) => commands,
+        None => return Vec::new(),
+    };
+
+    let mut seen = HashSet::new();
+    let mut results = Vec::new();
+
+    for cmd in &commands {
+        let first_token = match cmd.split_whitespace().next() {
+            Some(token) => token,
+            None => continue,
+        };
+
+        if !first_token
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            continue;
+        }
+
+        if seen.insert(first_token.to_string()) {
+            let pattern = format!("^{}\\b", regex::escape(first_token));
+            results.push((pattern, first_token.to_string()));
+        }
+    }
+
+    results
 }
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
@@ -235,6 +274,46 @@ mod tests {
             extract_terminal_pattern_display("ls"),
             Some("ls".to_string())
         );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_pipeline() {
+        assert_eq!(
+            extract_all_terminal_patterns("cargo test 2>&1 | tail"),
+            vec![
+                ("^cargo\\b".to_string(), "cargo".to_string()),
+                ("^tail\\b".to_string(), "tail".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_single_command() {
+        assert_eq!(
+            extract_all_terminal_patterns("cargo build --release"),
+            vec![("^cargo\\b".to_string(), "cargo".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_chained() {
+        assert_eq!(
+            extract_all_terminal_patterns("npm install && npm test"),
+            vec![("^npm\\b".to_string(), "npm".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_with_path_commands() {
+        assert_eq!(
+            extract_all_terminal_patterns("./script.sh | grep foo"),
+            vec![("^grep\\b".to_string(), "grep".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_all_paths() {
+        assert_eq!(extract_all_terminal_patterns("./a.sh | /usr/bin/b"), vec![]);
     }
 
     #[test]
