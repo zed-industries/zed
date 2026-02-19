@@ -381,8 +381,9 @@ impl ProjectDiff {
         });
 
         let editor = cx.new(|cx| {
+            // Force split view for git diff
             let diff_display_editor = SplittableEditor::new(
-                EditorSettings::get_global(cx).diff_view_style,
+                settings::DiffViewStyle::Split,
                 multibuffer.clone(),
                 project.clone(),
                 workspace.clone(),
@@ -415,16 +416,6 @@ impl ProjectDiff {
                 }
             });
             diff_display_editor
-        });
-        // Ensure split view is enabled for git diff
-        let editor_weak = editor.downgrade();
-        window.defer(cx, {
-            let editor = editor_weak.clone();
-            move |window, cx| {
-                let _ = editor.update(cx, |editor, cx| {
-                    editor.split(window, cx);
-                });
-            }
         });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
 
@@ -756,6 +747,10 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
+            // If this is the first buffer, ensure split view is active
+            if was_empty {
+                editor.split(window, cx);
+            }
             (was_empty, is_newly_added)
         });
 

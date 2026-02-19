@@ -217,7 +217,7 @@ jobs:
   clippy_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues
     runs-on: macos-14
     steps:
     - name: steps::checkout_repo
@@ -359,7 +359,7 @@ jobs:
   run_tests_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues
     runs-on: macos-14
     steps:
     - name: steps::checkout_repo
@@ -624,10 +624,8 @@ jobs:
     - check_style
     - clippy_windows
     - clippy_linux
-    - clippy_mac
     - run_tests_windows
     - run_tests_linux
-    - run_tests_mac
     - doctests
     - check_workspace_binaries
     - check_dependencies
@@ -651,10 +649,8 @@ jobs:
         check_result "check_style" "${{ needs.check_style.result }}"
         check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
         check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
-        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
         check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
         check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
-        check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
         check_result "doctests" "${{ needs.doctests.result }}"
         check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
