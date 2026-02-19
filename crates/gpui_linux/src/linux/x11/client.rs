@@ -50,7 +50,8 @@ use super::{
 
 use crate::linux::{
     DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, capslock_from_xkb,
-    get_xkb_compose_state, is_within_click_distance, log_cursor_icon_warning, modifiers_from_xkb,
+    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
+    keystroke_from_xkb, keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb,
     open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
@@ -60,9 +61,9 @@ use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_x
 
 use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta,
-    Size, TouchPhase, WindowParams, point, px,
+    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
+    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
+    TouchPhase, WindowParams, point, px,
 };
 use gpui_wgpu::WgpuContext;
 
@@ -857,7 +858,7 @@ impl X11Client {
             }
             Event::SelectionNotify(event) => {
                 let window = self.get_window(event.requestor)?;
-                let mut state = self.0.borrow_mut();
+                let state = self.0.borrow_mut();
                 let reply = get_reply(
                     || "Failed to get XDND_DATA",
                     state.xcb_connection.get_property(
@@ -1011,7 +1012,7 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut keystroke = gpui::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let mut keystroke = keystroke_from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1035,7 +1036,7 @@ impl X11Client {
                                 keystroke.key_char = None;
                                 state.pre_edit_text = compose_state
                                     .utf8()
-                                    .or(gpui::Keystroke::underlying_dead_key(keysym));
+                                    .or(keystroke_underlying_dead_key(keysym));
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
                                 drop(state);
@@ -1048,7 +1049,7 @@ impl X11Client {
                                 if let Some(pre_edit) = pre_edit {
                                     window.handle_ime_commit(pre_edit);
                                 }
-                                if let Some(current_key) = Keystroke::underlying_dead_key(keysym) {
+                                if let Some(current_key) = keystroke_underlying_dead_key(keysym) {
                                     window.handle_ime_preedit(current_key);
                                 }
                                 state = self.0.borrow_mut();
@@ -1081,7 +1082,7 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let keystroke = gpui::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let keystroke = keystroke_from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1246,7 +1247,7 @@ impl X11Client {
                 }
 
                 state = self.0.borrow_mut();
-                if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
+                if let Some(pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
                     let scroll_delta = get_scroll_delta_and_update_state(pointer, &event);
                     drop(state);
                     if let Some(scroll_delta) = scroll_delta {
@@ -1305,7 +1306,7 @@ impl X11Client {
             }
             Event::XinputDeviceChanged(event) => {
                 let mut state = self.0.borrow_mut();
-                if let Some(mut pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
+                if let Some(pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
                     reset_pointer_device_scroll_positions(pointer);
                 }
             }
@@ -1333,7 +1334,7 @@ impl X11Client {
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
-                state.pre_key_char_down = Some(Keystroke::from_xkb(
+                state.pre_key_char_down = Some(keystroke_from_xkb(
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
@@ -1592,12 +1593,20 @@ impl LinuxClient for X11Client {
 
     fn open_uri(&self, uri: &str) {
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        open_uri_internal(self.background_executor(), uri, None);
+        open_uri_internal(
+            self.with_common(|c| c.background_executor.clone()),
+            uri,
+            None,
+        );
     }
 
     fn reveal_path(&self, path: PathBuf) {
         #[cfg(any(feature = "x11", feature = "wayland"))]
-        reveal_path_internal(self.background_executor(), path, None);
+        reveal_path_internal(
+            self.with_common(|c| c.background_executor.clone()),
+            path,
+            None,
+        );
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {
@@ -1879,7 +1888,7 @@ impl X11ClientState {
             return *cursor;
         }
 
-        let mut result;
+        let result;
         match style {
             CursorStyle::None => match create_invisible_cursor(&self.xcb_connection) {
                 Ok(loaded_cursor) => result = Ok(loaded_cursor),

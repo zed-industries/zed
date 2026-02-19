@@ -191,21 +191,27 @@ impl LinuxCommon {
     }
 }
 
-impl<P: LinuxClient + 'static> Platform for P {
+pub(crate) struct LinuxPlatform<P> {
+    pub(crate) inner: P,
+}
+
+impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.with_common(|common| common.background_executor.clone())
+        self.inner
+            .with_common(|common| common.background_executor.clone())
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.with_common(|common| common.foreground_executor.clone())
+        self.inner
+            .with_common(|common| common.foreground_executor.clone())
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.with_common(|common| common.text_system.clone())
+        self.inner.with_common(|common| common.text_system.clone())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
-        self.keyboard_layout()
+        self.inner.keyboard_layout()
     }
 
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
@@ -213,7 +219,8 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
+        self.inner
+            .with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
     fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
@@ -225,20 +232,22 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
-        LinuxClient::run(self);
+        LinuxClient::run(&self.inner);
 
-        let quit = self.with_common(|common| common.callbacks.quit.take());
+        let quit = self
+            .inner
+            .with_common(|common| common.callbacks.quit.take());
         if let Some(mut fun) = quit {
             fun();
         }
     }
 
     fn quit(&self) {
-        self.with_common(|common| common.signal.stop());
+        self.inner.with_common(|common| common.signal.stop());
     }
 
     fn compositor_name(&self) -> &'static str {
-        self.compositor_name()
+        self.inner.compositor_name()
     }
 
     fn restart(&self, binary_path: Option<PathBuf>) {
@@ -308,31 +317,31 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.primary_display()
+        self.inner.primary_display()
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        self.displays()
+        self.inner.displays()
     }
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        self.is_screen_capture_supported()
+        self.inner.is_screen_capture_supported()
     }
 
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
-        self.screen_capture_sources()
+        self.inner.screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
-        self.active_window()
+        self.inner.active_window()
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
-        self.window_stack()
+        self.inner.window_stack()
     }
 
     fn open_window(
@@ -340,15 +349,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        self.open_window(handle, options)
+        self.inner.open_window(handle, options)
     }
 
     fn open_url(&self, url: &str) {
-        self.open_uri(url);
+        self.inner.open_uri(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.with_common(|common| common.callbacks.open_urls = Some(callback));
+        self.inner
+            .with_common(|common| common.callbacks.open_urls = Some(callback));
     }
 
     fn prompt_for_paths(
@@ -361,7 +371,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let identifier = self.window_identifier();
+        let identifier = self.inner.window_identifier();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
@@ -421,7 +431,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
-        let identifier = self.window_identifier();
+        let identifier = self.inner.window_identifier();
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
@@ -478,7 +488,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn reveal_path(&self, path: &Path) {
-        self.reveal_path(path.to_owned());
+        self.inner.reveal_path(path.to_owned());
     }
 
     fn open_with_system(&self, path: &Path) {
@@ -499,31 +509,31 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.callbacks.quit = Some(callback);
         });
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.callbacks.reopen = Some(callback);
         });
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.callbacks.app_menu_action = Some(callback);
         });
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.callbacks.will_open_app_menu = Some(callback);
         });
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.callbacks.validate_app_menu_command = Some(callback);
         });
     }
@@ -535,13 +545,13 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.with_common(|common| {
+        self.inner.with_common(|common| {
             common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
         })
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.with_common(|common| Some(common.menus.clone()))
+        self.inner.with_common(|common| Some(common.menus.clone()))
     }
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
@@ -555,11 +565,11 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.set_cursor_style(style)
+        self.inner.set_cursor_style(style)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        self.with_common(|common| common.auto_hide_scrollbars)
+        self.inner.with_common(|common| common.auto_hide_scrollbars)
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -629,7 +639,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn window_appearance(&self) -> WindowAppearance {
-        self.with_common(|common| common.appearance)
+        self.inner.with_common(|common| common.appearance)
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
@@ -637,19 +647,19 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn write_to_primary(&self, item: ClipboardItem) {
-        self.write_to_primary(item)
+        self.inner.write_to_primary(item)
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.write_to_clipboard(item)
+        self.inner.write_to_clipboard(item)
     }
 
     fn read_from_primary(&self) -> Option<ClipboardItem> {
-        self.read_from_primary()
+        self.inner.read_from_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.read_from_clipboard()
+        self.inner.read_from_clipboard()
     }
 
     fn add_recent_document(&self, _path: &Path) {}
@@ -987,76 +997,73 @@ pub(super) fn keystroke_from_xkb(
         key_char,
     }
 }
+
+/**
+ * Returns which symbol the dead key represents
+ * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
+ */
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl gpui::Keystroke {
-    /**
-     * Returns which symbol the dead key represents
-     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
-     */
-    pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
-        match keysym {
-            Keysym::dead_grave => Some("`".to_owned()),
-            Keysym::dead_acute => Some("´".to_owned()),
-            Keysym::dead_circumflex => Some("^".to_owned()),
-            Keysym::dead_tilde => Some("~".to_owned()),
-            Keysym::dead_macron => Some("¯".to_owned()),
-            Keysym::dead_breve => Some("˘".to_owned()),
-            Keysym::dead_abovedot => Some("˙".to_owned()),
-            Keysym::dead_diaeresis => Some("¨".to_owned()),
-            Keysym::dead_abovering => Some("˚".to_owned()),
-            Keysym::dead_doubleacute => Some("˝".to_owned()),
-            Keysym::dead_caron => Some("ˇ".to_owned()),
-            Keysym::dead_cedilla => Some("¸".to_owned()),
-            Keysym::dead_ogonek => Some("˛".to_owned()),
-            Keysym::dead_iota => Some("ͅ".to_owned()),
-            Keysym::dead_voiced_sound => Some("゙".to_owned()),
-            Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
-            Keysym::dead_belowdot => Some("̣̣".to_owned()),
-            Keysym::dead_hook => Some("̡".to_owned()),
-            Keysym::dead_horn => Some("̛".to_owned()),
-            Keysym::dead_stroke => Some("̶̶".to_owned()),
-            Keysym::dead_abovecomma => Some("̓̓".to_owned()),
-            Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
-            Keysym::dead_doublegrave => Some("̏".to_owned()),
-            Keysym::dead_belowring => Some("˳".to_owned()),
-            Keysym::dead_belowmacron => Some("̱".to_owned()),
-            Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
-            Keysym::dead_belowtilde => Some("̰".to_owned()),
-            Keysym::dead_belowbreve => Some("̮".to_owned()),
-            Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
-            Keysym::dead_invertedbreve => Some("̯".to_owned()),
-            Keysym::dead_belowcomma => Some("̦".to_owned()),
-            Keysym::dead_currency => None,
-            Keysym::dead_lowline => None,
-            Keysym::dead_aboveverticalline => None,
-            Keysym::dead_belowverticalline => None,
-            Keysym::dead_longsolidusoverlay => None,
-            Keysym::dead_a => None,
-            Keysym::dead_A => None,
-            Keysym::dead_e => None,
-            Keysym::dead_E => None,
-            Keysym::dead_i => None,
-            Keysym::dead_I => None,
-            Keysym::dead_o => None,
-            Keysym::dead_O => None,
-            Keysym::dead_u => None,
-            Keysym::dead_U => None,
-            Keysym::dead_small_schwa => Some("ə".to_owned()),
-            Keysym::dead_capital_schwa => Some("Ə".to_owned()),
-            Keysym::dead_greek => None,
-            _ => None,
-        }
+pub fn keystroke_underlying_dead_key(keysym: Keysym) -> Option<String> {
+    match keysym {
+        Keysym::dead_grave => Some("`".to_owned()),
+        Keysym::dead_acute => Some("´".to_owned()),
+        Keysym::dead_circumflex => Some("^".to_owned()),
+        Keysym::dead_tilde => Some("~".to_owned()),
+        Keysym::dead_macron => Some("¯".to_owned()),
+        Keysym::dead_breve => Some("˘".to_owned()),
+        Keysym::dead_abovedot => Some("˙".to_owned()),
+        Keysym::dead_diaeresis => Some("¨".to_owned()),
+        Keysym::dead_abovering => Some("˚".to_owned()),
+        Keysym::dead_doubleacute => Some("˝".to_owned()),
+        Keysym::dead_caron => Some("ˇ".to_owned()),
+        Keysym::dead_cedilla => Some("¸".to_owned()),
+        Keysym::dead_ogonek => Some("˛".to_owned()),
+        Keysym::dead_iota => Some("ͅ".to_owned()),
+        Keysym::dead_voiced_sound => Some("゙".to_owned()),
+        Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
+        Keysym::dead_belowdot => Some("̣̣".to_owned()),
+        Keysym::dead_hook => Some("̡".to_owned()),
+        Keysym::dead_horn => Some("̛".to_owned()),
+        Keysym::dead_stroke => Some("̶̶".to_owned()),
+        Keysym::dead_abovecomma => Some("̓̓".to_owned()),
+        Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
+        Keysym::dead_doublegrave => Some("̏".to_owned()),
+        Keysym::dead_belowring => Some("˳".to_owned()),
+        Keysym::dead_belowmacron => Some("̱".to_owned()),
+        Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
+        Keysym::dead_belowtilde => Some("̰".to_owned()),
+        Keysym::dead_belowbreve => Some("̮".to_owned()),
+        Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
+        Keysym::dead_invertedbreve => Some("̯".to_owned()),
+        Keysym::dead_belowcomma => Some("̦".to_owned()),
+        Keysym::dead_currency => None,
+        Keysym::dead_lowline => None,
+        Keysym::dead_aboveverticalline => None,
+        Keysym::dead_belowverticalline => None,
+        Keysym::dead_longsolidusoverlay => None,
+        Keysym::dead_a => None,
+        Keysym::dead_A => None,
+        Keysym::dead_e => None,
+        Keysym::dead_E => None,
+        Keysym::dead_i => None,
+        Keysym::dead_I => None,
+        Keysym::dead_o => None,
+        Keysym::dead_O => None,
+        Keysym::dead_u => None,
+        Keysym::dead_U => None,
+        Keysym::dead_small_schwa => Some("ə".to_owned()),
+        Keysym::dead_capital_schwa => Some("Ə".to_owned()),
+        Keysym::dead_greek => None,
+        _ => None,
     }
 }
-
 #[cfg(any(feature = "wayland", feature = "x11"))]
-
 pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui::Modifiers {
     let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
     let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
     let control = keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
     let platform = keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-    Self {
+    gpui::Modifiers {
         shift,
         alt,
         control,
@@ -1066,7 +1073,6 @@ pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui::Modifiers {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-
 pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
     let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
     gpui::Capslock { on }

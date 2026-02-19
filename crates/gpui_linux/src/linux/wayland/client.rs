@@ -75,7 +75,8 @@ use super::{
 
 use crate::linux::{
     DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, ResultExt as _,
-    SCROLL_LINES, capslock_from_xkb, get_xkb_compose_state, is_within_click_distance,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state,
+    is_within_click_distance, keystroke_from_xkb, keystroke_underlying_dead_key,
     modifiers_from_xkb, open_uri_internal, read_fd, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
@@ -1255,7 +1256,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut client = this.get_client();
+        let client = this.get_client();
         let mut state = client.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
@@ -1368,14 +1369,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
-                            Keystroke::from_xkb(keymap_state, state.modifiers, keycode);
+                            keystroke_from_xkb(keymap_state, state.modifiers, keycode);
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
                                     keystroke.key_char = None;
                                     state.pre_edit_text =
-                                        compose.utf8().or(Keystroke::underlying_dead_key(keysym));
+                                        compose.utf8().or(keystroke_underlying_dead_key(keysym));
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
                                     drop(state);
@@ -1392,7 +1393,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 }
                                 xkb::Status::Cancelled => {
                                     let pre_edit = state.pre_edit_text.take();
-                                    let new_pre_edit = Keystroke::underlying_dead_key(keysym);
+                                    let new_pre_edit = keystroke_underlying_dead_key(keysym);
                                     state.pre_edit_text = new_pre_edit.clone();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {
@@ -1430,8 +1431,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     prefer_character_input: false,
                                 });
                                 move |event_timestamp, _metadata, this| {
-                                    let mut client = this.get_client();
-                                    let mut state = client.borrow_mut();
+                                    let client = this.get_client();
+                                    let state = client.borrow();
                                     let is_repeating = id == state.repeat.current_id
                                         && state.repeat.current_keycode.is_some()
                                         && state.keyboard_focused_window.is_some();
@@ -1457,7 +1458,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
                         let input = PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: keystroke_from_xkb(keymap_state, state.modifiers, keycode),
                         });
 
                         if state.repeat.current_keycode == Some(keycode) {
@@ -1585,7 +1586,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut client = this.get_client();
+        let client = this.get_client();
         let mut state = client.borrow_mut();
 
         match event {
@@ -1674,7 +1675,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                                 state.cursor.set_icon(
                                     &wl_pointer,
                                     serial,
-                                    cursor_style_to_icon_names(style),
+                                    cursor_style_to_icon_names(default_style),
                                     scale,
                                 );
                             }

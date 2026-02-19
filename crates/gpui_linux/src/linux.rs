@@ -31,21 +31,27 @@ pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
     use anyhow::Context as _;
 
     if headless {
-        return Rc::new(HeadlessClient::new());
+        return Rc::new(LinuxPlatform {
+            inner: HeadlessClient::new(),
+        });
     }
 
     match gpui::guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new()),
+        "Wayland" => Rc::new(LinuxPlatform {
+            inner: WaylandClient::new(),
+        }),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(
-            X11Client::new()
+        "X11" => Rc::new(LinuxPlatform {
+            inner: X11Client::new()
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
-        ),
+        }),
 
-        "Headless" => Rc::new(HeadlessClient::new()),
+        "Headless" => Rc::new(LinuxPlatform {
+            inner: HeadlessClient::new(),
+        }),
         _ => unreachable!(),
     }
 }

@@ -32,9 +32,9 @@ impl XDPEventSource {
                 let settings = Settings::new().await?;
 
                 if let Ok(initial_appearance) = settings.color_scheme().await {
-                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
-                        initial_appearance,
-                    )))?;
+                    sender.send(Event::WindowAppearance(
+                        window_appearance_from_color_scheme(initial_appearance),
+                    ))?;
                 }
                 if let Ok(initial_theme) = settings
                     .read::<String>("org.gnome.desktop.interface", "cursor-theme")
@@ -91,9 +91,9 @@ impl XDPEventSource {
 
                 let mut appearance_changed = settings.receive_color_scheme_changed().await?;
                 while let Some(scheme) = appearance_changed.next().await {
-                    sender.send(Event::WindowAppearance(WindowAppearance::from_native(
-                        scheme,
-                    )))?;
+                    sender.send(Event::WindowAppearance(
+                        window_appearance_from_color_scheme(scheme),
+                    ))?;
                 }
 
                 anyhow::Ok(())
@@ -155,17 +155,10 @@ impl EventSource for XDPEventSource {
     }
 }
 
-impl WindowAppearance {
-    fn from_native(cs: ColorScheme) -> WindowAppearance {
-        match cs {
-            ColorScheme::PreferDark => WindowAppearance::Dark,
-            ColorScheme::PreferLight => WindowAppearance::Light,
-            ColorScheme::NoPreference => WindowAppearance::Light,
-        }
-    }
-
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    fn set_native(&mut self, cs: ColorScheme) {
-        *self = Self::from_native(cs);
+fn window_appearance_from_color_scheme(cs: ColorScheme) -> WindowAppearance {
+    match cs {
+        ColorScheme::PreferDark => WindowAppearance::Dark,
+        ColorScheme::PreferLight => WindowAppearance::Light,
+        ColorScheme::NoPreference => WindowAppearance::Light,
     }
 }

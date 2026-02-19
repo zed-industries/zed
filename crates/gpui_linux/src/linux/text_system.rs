@@ -5,18 +5,13 @@ use cosmic_text::{
     FontSystem, ShapeBuffer, ShapeLine,
 };
 use gpui::{
-    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
-    size,
+    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
+    Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, size,
 };
 
 use itertools::Itertools;
 use parking_lot::RwLock;
-use pathfinder_geometry::{
-    rect::{RectF, RectI},
-    vector::{Vector2F, Vector2I},
-};
 use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 use swash::{
@@ -498,51 +493,6 @@ fn cosmic_font_features(features: &FontFeatures) -> Result<CosmicFontFeatures> {
         result.set(tag, feature.1);
     }
     Ok(result)
-}
-
-fn bounds_f32_from_rect_f(rect: RectF) -> Bounds<f32> {
-    Bounds {
-        origin: point(rect.origin_x(), rect.origin_y()),
-        size: size(rect.width(), rect.height()),
-    }
-}
-
-fn device_bounds_from_rect_i(rect: RectI) -> Bounds<DevicePixels> {
-    Bounds {
-        origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-        size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
-    }
-}
-
-fn device_size_from_vector2i(value: Vector2I) -> Size<DevicePixels> {
-    size(value.x().into(), value.y().into())
-}
-
-fn int_bounds_from_rect_i(rect: RectI) -> Bounds<i32> {
-    Bounds {
-        origin: point(rect.origin_x(), rect.origin_y()),
-        size: size(rect.width(), rect.height()),
-    }
-}
-
-fn vector2i_from_point(point: Point<u32>) -> Vector2I {
-    Vector2I::new(point.x as i32, point.y as i32)
-}
-
-fn size_f32_from_vector2f(vec: Vector2F) -> Size<f32> {
-    size(vec.x(), vec.y())
-}
-
-fn cosmic_weight(value: FontWeight) -> cosmic_text::Weight {
-    cosmic_text::Weight(value.0 as u16)
-}
-
-fn cosmic_style(style: FontStyle) -> cosmic_text::Style {
-    match style {
-        FontStyle::Normal => cosmic_text::Style::Normal,
-        FontStyle::Italic => cosmic_text::Style::Italic,
-        FontStyle::Oblique => cosmic_text::Style::Oblique,
-    }
 }
 
 fn font_into_properties(font: &gpui::Font) -> font_kit::properties::Properties {
