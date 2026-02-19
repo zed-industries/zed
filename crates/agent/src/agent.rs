@@ -1656,7 +1656,6 @@ impl NativeThreadEnvironment {
             session_id,
             subagent_thread,
             parent_thread: parent_thread_entity.downgrade(),
-            acp_thread,
             wait_for_prompt_to_complete,
         }) as _)
     }
@@ -1726,7 +1725,6 @@ pub struct NativeSubagentHandle {
     session_id: acp::SessionId,
     parent_thread: WeakEntity<Thread>,
     subagent_thread: Entity<Thread>,
-    acp_thread: Entity<AcpThread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
 }
 
@@ -1735,51 +1733,35 @@ impl SubagentHandle for NativeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_summary(&self, summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>> {
         let thread = self.subagent_thread.clone();
-        let acp_thread = self.acp_thread.clone();
         let wait_for_prompt = self.wait_for_prompt_to_complete.clone();
 
-        let wait_for_summary_task = cx.spawn(async move |cx| {
-            let timed_out = match wait_for_prompt.await {
-                SubagentInitialPromptResult::Completed => false,
-                SubagentInitialPromptResult::Timeout => true,
+        let subagent_session_id = self.session_id.clone();
+        let parent_thread = self.parent_thread.clone();
+
+        cx.spawn(async move |cx| {
+            match wait_for_prompt.await {
+                SubagentInitialPromptResult::Completed => {}
+                SubagentInitialPromptResult::Timeout => {
+                    return Err(anyhow!("The time to complete the task was exceeded."));
+                }
                 SubagentInitialPromptResult::Cancelled => return Err(anyhow!("User cancelled")),
             };
 
-            let summary_prompt = if timed_out {
-                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
-                format!("{}\n{}", "The time to complete the task was exceeded. Stop with the task and follow the directions below:", summary_prompt)
-            } else {
-                summary_prompt
-            };
-
-            let response = acp_thread
-                .update(cx, |thread, cx| thread.send(vec![summary_prompt.into()], cx))
-                .await?;
-
-            let was_canceled = response.is_some_and(|r| r.stop_reason == acp::StopReason::Cancelled);
-            if was_canceled {
-                return Err(anyhow!("User cancelled"));
-            }
-
-            thread.read_with(cx, |thread, _cx| {
+            let result = thread.read_with(cx, |thread, _cx| {
                 thread
                     .last_message()
                     .map(|m| m.to_markdown())
                     .context("No response from subagent")
-            })
-        });
+            });
 
-        let subagent_session_id = self.session_id.clone();
-        let parent_thread = self.parent_thread.clone();
-        cx.spawn(async move |cx| {
-            let result = wait_for_summary_task.await;
             parent_thread
                 .update(cx, |parent_thread, cx| {
                     parent_thread.unregister_running_subagent(&subagent_session_id, cx)
                 })
                 .ok();
+
             result
         })
     }

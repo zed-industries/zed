@@ -46,14 +46,7 @@ pub struct SubagentToolInput {
 
     /// The initial prompt that tells the subagent what task to perform.
     /// Be specific about what you want the subagent to accomplish.
-    pub task_prompt: String,
-
-    /// The prompt sent to the subagent when it completes its task, asking it
-    /// to summarize what it did and return results. This summary becomes the
-    /// tool result you receive.
-    ///
-    /// Example: "Summarize what you found, listing the top 3 alternatives with pros/cons."
-    pub summary_prompt: String,
+    pub prompt: String,
 
     /// Optional: Maximum runtime in milliseconds. If exceeded, the subagent is
     /// asked to summarize and return. No timeout by default.
@@ -121,7 +114,7 @@ impl AgentTool for SubagentTool {
         let subagent = match self.environment.create_subagent(
             parent_thread_entity,
             input.label,
-            input.task_prompt,
+            input.prompt,
             input.timeout_ms.map(|ms| Duration::from_millis(ms)),
             cx,
         ) {
@@ -139,7 +132,7 @@ impl AgentTool for SubagentTool {
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
         cx.spawn(async move |cx| {
-            let summary = subagent.wait_for_summary(input.summary_prompt, cx).await?;
+            let summary = subagent.wait_for_output(cx).await?;
             Ok(SubagentToolOutput {
                 subagent_session_id,
                 summary,

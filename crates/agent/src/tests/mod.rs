@@ -166,7 +166,7 @@ impl SubagentHandle for FakeSubagentHandle {
         self.session_id.clone()
     }
 
-    fn wait_for_summary(&self, _summary_prompt: String, cx: &AsyncApp) -> Task<Result<String>> {
+    fn wait_for_output(&self, cx: &AsyncApp) -> Task<Result<String>> {
         let task = self.wait_for_summary_task.clone();
         cx.background_spawn(async move { Ok(task.await) })
     }
@@ -4232,8 +4232,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
-        task_prompt: "subagent task prompt".to_string(),
-        summary_prompt: "subagent summary prompt".to_string(),
+        prompt: "subagent task prompt".to_string(),
         timeout_ms: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
@@ -4396,8 +4395,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
-        task_prompt: "subagent task prompt".to_string(),
-        summary_prompt: "subagent summary prompt".to_string(),
+        prompt: "subagent task prompt".to_string(),
         timeout_ms: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
@@ -4534,8 +4532,7 @@ async fn test_subagent_tool_call_cancellation_during_summary_prompt(cx: &mut Tes
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
-        task_prompt: "subagent task prompt".to_string(),
-        summary_prompt: "subagent summary prompt".to_string(),
+        prompt: "subagent task prompt".to_string(),
         timeout_ms: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
@@ -4867,8 +4864,7 @@ async fn test_subagent_tool_returns_summary(cx: &mut TestAppContext) {
         })
         .expect("Failed to create subagent");
 
-    let summary_task =
-        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
+    let summary_task = subagent_handle.wait_for_output(&cx.to_async());
 
     cx.run_until_parked();
 
@@ -4967,8 +4963,7 @@ async fn test_subagent_tool_includes_cancellation_notice_when_timeout_is_exceede
         })
         .expect("Failed to create subagent");
 
-    let summary_task =
-        subagent_handle.wait_for_summary("summary prompt".to_string(), &cx.to_async());
+    let summary_task = subagent_handle.wait_for_output(&cx.to_async());
 
     cx.run_until_parked();
 
