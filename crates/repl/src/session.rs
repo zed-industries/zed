@@ -514,6 +514,51 @@ impl Session {
         self.result_inlays.clear();
     }
 
+    pub fn clear_output_at_position(&mut self, position: Anchor, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        let (block_id, code_range, msg_id) = {
+            let snapshot = editor.read(cx).buffer().read(cx).read(cx);
+            let pos_range = position..position;
+
+            let block_to_remove = self
+                .blocks
+                .iter()
+                .find(|(_, block)| block.code_range.includes(&pos_range, &snapshot));
+
+            let Some((msg_id, block)) = block_to_remove else {
+                return;
+            };
+
+            (block.block_id, block.code_range.clone(), msg_id.clone())
+        };
+
+        let inlay_to_remove = self.result_inlays.get(&msg_id).map(|(id, _, _)| *id);
+
+        self.blocks.remove(&msg_id);
+        if inlay_to_remove.is_some() {
+            self.result_inlays.remove(&msg_id);
+        }
+
+        self.editor
+            .update(cx, |editor, cx| {
+                let mut block_ids = HashSet::default();
+                block_ids.insert(block_id);
+                editor.remove_blocks(block_ids, None, cx);
+
+                if let Some(inlay_id) = inlay_to_remove {
+                    editor.splice_inlays(&[inlay_id], vec![], cx);
+                }
+
+                editor.remove_gutter_highlights::<ReplExecutedRange>(vec![code_range], cx);
+            })
+            .ok();
+
+        cx.notify();
+    }
+
     pub fn execute(
         &mut self,
         code: String,

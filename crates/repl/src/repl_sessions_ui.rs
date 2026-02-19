@@ -21,6 +21,8 @@ actions!(
         RunInPlace,
         /// Clears all outputs in the REPL.
         ClearOutputs,
+        /// Clears the output of the cell at the current cursor position.
+        ClearCurrentOutput,
         /// Opens the REPL sessions panel.
         Sessions,
         /// Interrupts the currently running kernel.
