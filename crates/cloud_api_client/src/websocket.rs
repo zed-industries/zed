@@ -6,9 +6,8 @@ use cloud_api_types::websocket_protocol::MessageToClient;
 use futures::channel::mpsc::unbounded;
 use futures::{FutureExt as _, SinkExt as _, Stream, StreamExt as _, TryStreamExt as _, pin_mut};
 use gpui::{App, BackgroundExecutor, Task};
-use tokio::net::TcpStream;
+use yawc::TcpWebSocket;
 use yawc::frame::{Frame, OpCode};
-use yawc::{MaybeTlsStream, WebSocket};
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -17,10 +16,10 @@ pub type MessageStream = Pin<Box<dyn Stream<Item = Result<MessageToClient>>>>;
 /// Wrapper around a [`WebSocket`] which provides a [`spawn`](Self::spawn) method.
 ///
 /// This allows handling a [`tokio`] based websocket using a [`gpui::Task`].
-pub struct Connection(WebSocket<MaybeTlsStream<TcpStream>>);
+pub struct Connection(TcpWebSocket);
 
 impl Connection {
-    pub fn new(ws: WebSocket<MaybeTlsStream<TcpStream>>) -> Self {
+    pub fn new(ws: TcpWebSocket) -> Self {
         Self(ws)
     }
 

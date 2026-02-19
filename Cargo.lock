@@ -3035,7 +3035,6 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
- "tokio",
  "yawc",
 ]
 
