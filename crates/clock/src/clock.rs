@@ -66,11 +66,25 @@ pub struct Lamport {
 }
 
 /// A [version vector](https://en.wikipedia.org/wiki/Version_vector).
-#[derive(Clone, Default, Hash, Eq, PartialEq)]
+#[derive(Default, Hash, Eq, PartialEq)]
 pub struct Global {
     // 4 is chosen as it is the biggest count that does not increase the size of the field itself.
     // Coincidentally, it also covers all the important non-collab replica ids.
     values: SmallVec<[u32; 4]>,
+}
+
+impl Clone for Global {
+    fn clone(&self) -> Self {
+        // We manually implement clone to avoid the overhead of SmallVec's clone implementation.
+        // Using `from_slice` is faster than `clone` for SmallVec as we can use our `Copy` implementation of u32.
+        Self {
+            values: SmallVec::from_slice(&self.values),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.values.clone_from(&source.values);
+    }
 }
 
 impl Global {

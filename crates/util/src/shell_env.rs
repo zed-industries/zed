@@ -141,7 +141,7 @@ async fn capture_windows(
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
-    let mut cmd = crate::command::new_smol_command(shell_path);
+    let mut cmd = crate::command::new_command(shell_path);
     cmd.args(args);
     let cmd = match shell_kind {
         ShellKind::Csh

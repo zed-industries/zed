@@ -1,6 +1,8 @@
 use acp_thread::ThreadStatus;
 use agent_ui::{AgentPanel, AgentPanelEvent};
+use chrono::{Datelike, Local, NaiveDate, TimeDelta};
 use db::kvp::KEY_VALUE_STORE;
+
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -10,6 +12,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::Event as ProjectEvent;
 use recent_projects::{RecentProjectEntry, get_recent_projects};
+use std::fmt::Display;
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,7 +20,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
-use ui::{Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip, prelude::*};
+use ui::{
+    AgentThreadStatus, Divider, DividerColor, KeyBinding, ListSubHeader, Tab, ThreadItem, Tooltip,
+    prelude::*,
+};
 use ui_input::ErasedEditor;
 use util::ResultExt as _;
 use workspace::{
@@ -25,16 +31,11 @@ use workspace::{
     SidebarEvent, ToggleWorkspaceSidebar, Workspace,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AgentThreadStatus {
-    Running,
-    Completed,
-}
-
 #[derive(Clone, Debug)]
 struct AgentThreadInfo {
     title: SharedString,
     status: AgentThreadStatus,
+    icon: IconName,
 }
 
 const LAST_THREAD_TITLES_KEY: &str = "sidebar-last-thread-titles";
@@ -97,6 +98,7 @@ impl WorkspaceThreadEntry {
             Some(AgentThreadInfo {
                 title: SharedString::from(title.clone()),
                 status: AgentThreadStatus::Completed,
+                icon: IconName::ZedAgent,
             })
         });
 
@@ -110,14 +112,29 @@ impl WorkspaceThreadEntry {
 
     fn thread_info(workspace: &Entity<Workspace>, cx: &App) -> Option<AgentThreadInfo> {
         let agent_panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
-        let thread = agent_panel.read(cx).active_agent_thread(cx)?;
-        let thread_ref = thread.read(cx);
-        let title = thread_ref.title();
-        let status = match thread_ref.status() {
-            ThreadStatus::Generating => AgentThreadStatus::Running,
-            ThreadStatus::Idle => AgentThreadStatus::Completed,
+        let agent_panel_ref = agent_panel.read(cx);
+
+        let thread_view = agent_panel_ref.as_active_thread_view(cx)?.read(cx);
+        let thread = thread_view.thread.read(cx);
+
+        let icon = thread_view.agent_icon;
+        let title = thread.title();
+
+        let status = if thread.is_waiting_for_confirmation() {
+            AgentThreadStatus::WaitingForConfirmation
+        } else if thread.had_error() {
+            AgentThreadStatus::Error
+        } else {
+            match thread.status() {
+                ThreadStatus::Generating => AgentThreadStatus::Running,
+                ThreadStatus::Idle => AgentThreadStatus::Completed,
+            }
         };
-        Some(AgentThreadInfo { title, status })
+        Some(AgentThreadInfo {
+            title,
+            status,
+            icon,
+        })
     }
 }
 
@@ -199,7 +216,7 @@ impl WorkspacePickerDelegate {
                 SidebarEntry::WorkspaceThread(thread) => thread
                     .thread_info
                     .as_ref()
-                    .map(|info| (thread.index, info.status.clone())),
+                    .map(|info| (thread.index, info.status)),
                 _ => None,
             })
             .collect();
@@ -294,30 +311,87 @@ impl WorkspacePickerDelegate {
             .collect();
 
         if !recent.is_empty() {
-            self.entries
-                .push(SidebarEntry::Separator("Recent Projects".into()));
+            let today = Local::now().naive_local().date();
+            let mut current_bucket: Option<TimeBucket> = None;
+
             for project in recent {
+                let entry_date = project.timestamp.with_timezone(&Local).naive_local().date();
+                let bucket = TimeBucket::from_dates(today, entry_date);
+
+                if current_bucket != Some(bucket) {
+                    current_bucket = Some(bucket);
+                    self.entries
+                        .push(SidebarEntry::Separator(bucket.to_string().into()));
+                }
+
                 self.entries.push(SidebarEntry::RecentProject(project));
             }
         }
     }
+}
 
-    fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
-        let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-            return;
-        };
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TimeBucket {
+    Today,
+    Yesterday,
+    ThisWeek,
+    PastWeek,
+    All,
+}
 
-        cx.defer(move |cx| {
-            if let Some(task) = handle
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.open_project(paths, window, cx)
-                })
-                .log_err()
-            {
-                task.detach_and_log_err(cx);
-            }
-        });
+impl TimeBucket {
+    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
+        if date == reference {
+            return TimeBucket::Today;
+        }
+
+        if date == reference - TimeDelta::days(1) {
+            return TimeBucket::Yesterday;
+        }
+
+        let week = date.iso_week();
+
+        if reference.iso_week() == week {
+            return TimeBucket::ThisWeek;
+        }
+
+        let last_week = (reference - TimeDelta::days(7)).iso_week();
+
+        if week == last_week {
+            return TimeBucket::PastWeek;
+        }
+
+        TimeBucket::All
     }
+}
+
+impl Display for TimeBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TimeBucket::Today => write!(f, "Today"),
+            TimeBucket::Yesterday => write!(f, "Yesterday"),
+            TimeBucket::ThisWeek => write!(f, "This Week"),
+            TimeBucket::PastWeek => write!(f, "Past Week"),
+            TimeBucket::All => write!(f, "All"),
+        }
+    }
+}
+
+fn open_recent_project(paths: Vec<PathBuf>, window: &mut Window, cx: &mut App) {
+    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+        return;
+    };
+
+    cx.defer(move |cx| {
+        if let Some(task) = handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project(paths, window, cx)
+            })
+            .log_err()
+        {
+            task.detach_and_log_err(cx);
+        }
+    });
 }
 
 impl PickerDelegate for WorkspacePickerDelegate {
@@ -500,7 +574,7 @@ impl PickerDelegate for WorkspacePickerDelegate {
             }
             SidebarEntry::RecentProject(project_entry) => {
                 let paths = project_entry.paths.clone();
-                Self::open_recent_project(paths, window, cx);
+                open_recent_project(paths, window, cx);
             }
         }
     }
@@ -555,12 +629,12 @@ impl PickerDelegate for WorkspacePickerDelegate {
 
                 let has_notification = self.notified_workspaces.contains(&workspace_index);
                 let thread_subtitle = thread_info.as_ref().map(|info| info.title.clone());
+                let status = thread_info
+                    .as_ref()
+                    .map_or(AgentThreadStatus::default(), |info| info.status);
                 let running = matches!(
-                    thread_info,
-                    Some(AgentThreadInfo {
-                        status: AgentThreadStatus::Running,
-                        ..
-                    })
+                    status,
+                    AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
                 );
 
                 Some(
@@ -568,9 +642,14 @@ impl PickerDelegate for WorkspacePickerDelegate {
                         ("workspace-item", thread_entry.index),
                         thread_subtitle.unwrap_or("New Thread".into()),
                     )
-                    .icon(IconName::Folder)
+                    .icon(
+                        thread_info
+                            .as_ref()
+                            .map_or(IconName::ZedAgent, |info| info.icon),
+                    )
                     .running(running)
                     .generation_done(has_notification)
+                    .status(status)
                     .selected(selected)
                     .worktree(worktree_label.clone())
                     .worktree_highlight_positions(positions.clone())
@@ -795,8 +874,14 @@ impl Sidebar {
         title: SharedString,
         status: AgentThreadStatus,
     ) {
-        self.test_thread_infos
-            .insert(index, AgentThreadInfo { title, status });
+        self.test_thread_infos.insert(
+            index,
+            AgentThreadInfo {
+                title,
+                status,
+                icon: IconName::ZedAgent,
+            },
+        );
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -913,6 +998,10 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         cx.defer_in(window, move |this, window, cx| {
+            if !this.multi_workspace.read(cx).multi_workspace_enabled(cx) {
+                return;
+            }
+
             this._project_subscriptions = this.subscribe_to_projects(window, cx);
             this._agent_panel_subscriptions = this.subscribe_to_agent_panels(window, cx);
             this._thread_subscriptions = this.subscribe_to_threads(window, cx);
@@ -1003,10 +1092,11 @@ impl Render for Sidebar {
                     .mt_px()
                     .pb_px()
                     .pr_1()
-                    .when(cfg!(target_os = "macos"), |this| {
-                        this.pl(px(TRAFFIC_LIGHT_PADDING))
-                    })
-                    .when(cfg!(not(target_os = "macos")), |this| this.pl_2())
+                    .when_else(
+                        cfg!(target_os = "macos") && !window.is_fullscreen(),
+                        |this| this.pl(px(TRAFFIC_LIGHT_PADDING)),
+                        |this| this.pl_2(),
+                    )
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
@@ -1092,7 +1182,7 @@ mod tests {
         cx: &mut gpui::VisualTestContext,
     ) {
         sidebar.update_in(cx, |s, _window, _cx| {
-            s.set_test_thread_info(index, SharedString::from(title.to_string()), status.clone());
+            s.set_test_thread_info(index, SharedString::from(title.to_string()), status);
         });
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();

@@ -84,10 +84,8 @@ impl AgentTool for WebSearchTool {
                 return Task::ready(Err(anyhow!("{}", reason)));
             }
             ToolPermissionDecision::Confirm => {
-                let context = crate::ToolPermissionContext {
-                    tool_name: Self::NAME.to_string(),
-                    input_values: vec![input.query.clone()],
-                };
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.query.clone()]);
                 Some(event_stream.authorize(
                     format!("Search the web for {}", MarkdownInlineCode(&input.query)),
                     context,

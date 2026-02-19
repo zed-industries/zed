@@ -82,7 +82,6 @@ fn outline_for_editor(
 ) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
     let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
     let (excerpt_id, _, buffer_snapshot) = multibuffer.as_singleton()?;
-    let excerpt_id = *excerpt_id;
     let buffer_id = buffer_snapshot.remote_id();
     let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
 

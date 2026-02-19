@@ -1,6 +1,11 @@
+---
+title: Visual Customization
+description: "Various aspects of Zed's visual layout can be configured in the Settings Editor or settings file."
+---
+
 # Visual Customization
 
-Various aspects of Zed's visual layout can be configured via either the settings window or the `settings.json` file, which you can access via {#action zed::OpenSettings} ({#kb zed::OpenSettings}) and {#action zed::OpenSettingsFile} ({#kb zed::OpenSettingsFile}) respectively.
+Various aspects of Zed's visual layout can be configured in the Settings Editor ({#kb zed::OpenSettings}) or in your settings file ({#kb zed::OpenSettingsFile}).
 
 See [All Settings](./reference/all-settings.md) for additional information and other non-visual settings.
 
@@ -467,7 +472,8 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Sort order for entries (directories_first, mixed, files_first)
     "sort_mode": "directories_first",
-    // Whether to hide the root entry when only one folder is open in the window.
+    // Whether to hide the root entry when only one folder is open in the window;
+    // this also affects how file paths appear in the file finder history.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false

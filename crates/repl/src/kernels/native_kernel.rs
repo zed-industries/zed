@@ -12,7 +12,7 @@ use jupyter_protocol::{
 };
 use project::Fs;
 use runtimelib::{RuntimeError, dirs};
-use smol::{net::TcpListener, process::Command};
+use smol::net::TcpListener;
 use std::{
     env,
     fmt::Debug,
@@ -20,6 +20,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use util::command::Command;
 use uuid::Uuid;
 
 use super::{KernelSession, RunningKernel};
@@ -52,7 +53,7 @@ impl LocalKernelSpecification {
             self.name
         );
 
-        let mut cmd = util::command::new_smol_command(&argv[0]);
+        let mut cmd = util::command::new_command(&argv[0]);
 
         for arg in &argv[1..] {
             if arg == "{connection_file}" {
@@ -85,7 +86,7 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
 }
 
 pub struct NativeRunningKernel {
-    pub process: smol::process::Child,
+    pub process: util::command::Child,
     connection_path: PathBuf,
     _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
@@ -143,9 +144,9 @@ impl NativeRunningKernel {
 
             let mut process = cmd
                 .current_dir(&working_directory)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .stdin(std::process::Stdio::piped())
+                .stdout(util::command::Stdio::piped())
+                .stderr(util::command::Stdio::piped())
+                .stdin(util::command::Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to start the kernel process")?;
@@ -490,7 +491,7 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
     }
 
     // Search for kernels inside the base python environment
-    let command = util::command::new_smol_command("python")
+    let command = util::command::new_command("python")
         .arg("-c")
         .arg("import sys; print(sys.prefix)")
         .output()

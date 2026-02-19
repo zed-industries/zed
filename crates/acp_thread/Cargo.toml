@@ -30,6 +30,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
+log.workspace = true
 markdown.workspace = true
 parking_lot = { workspace = true, optional = true }
 image = { workspace = true, optional = true }

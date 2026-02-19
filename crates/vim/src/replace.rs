@@ -263,7 +263,7 @@ impl Vim {
 
             if let Some(position) = final_cursor_position {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|_map, selection| {
+                    s.move_with(&mut |_map, selection| {
                         selection.collapse_to(position, SelectionGoal::None);
                     });
                 })

@@ -175,6 +175,8 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
+    /// Whether to search on input in project search.
+    pub search_on_input: bool,
 }
 
 impl EditorSettings {
@@ -219,7 +221,13 @@ impl Settings for EditorSettings {
             scrollbar: Scrollbar {
                 show: scrollbar.show.map(Into::into).unwrap(),
                 git_diff: scrollbar.git_diff.unwrap()
-                    && content.git.unwrap().enabled.unwrap().is_git_diff_enabled(),
+                    && content
+                        .git
+                        .as_ref()
+                        .unwrap()
+                        .enabled
+                        .unwrap()
+                        .is_git_diff_enabled(),
                 selected_text: scrollbar.selected_text.unwrap(),
                 selected_symbol: scrollbar.selected_symbol.unwrap(),
                 search_results: scrollbar.search_results.unwrap(),
@@ -271,6 +279,7 @@ impl Settings for EditorSettings {
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
+                search_on_input: search.search_on_input.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

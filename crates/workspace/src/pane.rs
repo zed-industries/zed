@@ -2802,7 +2802,16 @@ impl Pane {
                 .icon_size(IconSize::Small)
                 .disabled(!toggleable)
                 .tooltip(move |_, cx| {
-                    Tooltip::with_meta("Unlock File", None, "This will make this file editable", cx)
+                    if toggleable {
+                        Tooltip::with_meta(
+                            "Unlock File",
+                            None,
+                            "This will make this file editable",
+                            cx,
+                        )
+                    } else {
+                        Tooltip::with_meta("Locked File", None, "This file is read-only", cx)
+                    }
                 })
                 .on_click(cx.listener(move |pane, _, window, cx| {
                     if let Some(item) = pane.item_for_index(ix) {
@@ -3483,7 +3492,8 @@ impl Pane {
                     .debug_selector(|| "pinned_tabs_row".into())
                     .overflow_x_scroll()
                     .w_full()
-                    .children(pinned_tabs),
+                    .children(pinned_tabs)
+                    .child(self.render_pinned_tab_bar_drop_target(cx)),
             );
         v_flex()
             .w_full()
@@ -3525,12 +3535,11 @@ impl Pane {
         div()
             .id("tab_bar_drop_target")
             .min_w_6()
+            .h(Tab::container_height(cx))
+            .flex_grow()
             // HACK: This empty child is currently necessary to force the drop target to appear
             // despite us setting a min width above.
             .child("")
-            // HACK: h_full doesn't occupy the complete height, using fixed height instead
-            .h(Tab::container_height(cx))
-            .flex_grow()
             .drag_over::<DraggedTab>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
             })
@@ -3562,6 +3571,47 @@ impl Pane {
                 if event.click_count() == 2 {
                     window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
                 }
+            }))
+    }
+
+    fn render_pinned_tab_bar_drop_target(&self, cx: &mut Context<Pane>) -> impl IntoElement {
+        div()
+            .id("pinned_tabs_border")
+            .debug_selector(|| "pinned_tabs_border".into())
+            .min_w_6()
+            .h(Tab::container_height(cx))
+            .flex_grow()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            // HACK: This empty child is currently necessary to force the drop target to appear
+            // despite us setting a min width above.
+            .child("")
+            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .on_drop(
+                cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_pinned_tab_bar_drop(dragged_tab, window, cx)
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
+                    this.drag_split_direction = None;
+                    this.handle_project_entry_drop(
+                        &selection.active_selection.entry_id,
+                        Some(this.pinned_tab_count),
+                        window,
+                        cx,
+                    )
+                }),
+            )
+            .on_drop(cx.listener(move |this, paths, window, cx| {
+                this.drag_split_direction = None;
+                this.handle_external_paths_drop(paths, window, cx)
             }))
     }
 
@@ -3723,6 +3773,60 @@ impl Pane {
 
                             if should_remain_pinned {
                                 this.pinned_tab_count += 1;
+                            }
+                        }
+                    });
+                });
+            })
+            .log_err();
+    }
+
+    fn handle_pinned_tab_bar_drop(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item_id = dragged_tab.item.item_id();
+        let pinned_count = self.pinned_tab_count;
+
+        self.handle_tab_drop(dragged_tab, pinned_count, window, cx);
+
+        let to_pane = cx.entity();
+
+        self.workspace
+            .update(cx, |_, cx| {
+                cx.defer_in(window, move |_, _, cx| {
+                    to_pane.update(cx, |this, cx| {
+                        if let Some(actual_ix) = this.index_for_item_id(item_id) {
+                            // If the tab ended up at or after pinned_tab_count, it's not pinned
+                            // so we pin it now
+                            if actual_ix >= this.pinned_tab_count {
+                                let was_active = this.active_item_index == actual_ix;
+                                let destination_ix = this.pinned_tab_count;
+
+                                // Move item to pinned area if needed
+                                if actual_ix != destination_ix {
+                                    let item = this.items.remove(actual_ix);
+                                    this.items.insert(destination_ix, item);
+
+                                    // Update active_item_index to follow the moved item
+                                    if was_active {
+                                        this.active_item_index = destination_ix;
+                                    } else if this.active_item_index > actual_ix
+                                        && this.active_item_index <= destination_ix
+                                    {
+                                        // Item moved left past the active item
+                                        this.active_item_index -= 1;
+                                    } else if this.active_item_index >= destination_ix
+                                        && this.active_item_index < actual_ix
+                                    {
+                                        // Item moved right past the active item
+                                        this.active_item_index += 1;
+                                    }
+                                }
+                                this.pinned_tab_count += 1;
+                                cx.notify();
                             }
                         }
                     });
@@ -4424,7 +4528,7 @@ impl NavHistory {
     pub fn for_each_entry(
         &self,
         cx: &App,
-        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
+        f: &mut dyn FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
         let borrowed_history = self.0.lock();
         borrowed_history
@@ -5371,6 +5475,46 @@ mod tests {
         assert!(
             pinned_row_bounds.is_none(),
             "Should be single row when disabled again"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_separate_pinned_row_has_right_border(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Enable separate row setting
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+
+        // Pin one tab - now we have both pinned and unpinned tabs (two-row layout)
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+        cx.run_until_parked();
+
+        // Verify two-row layout is active
+        let pinned_row_bounds = cx.debug_bounds("pinned_tabs_row");
+        assert!(
+            pinned_row_bounds.is_some(),
+            "Two-row layout should be active when both pinned and unpinned tabs exist"
+        );
+
+        // Verify pinned_tabs_border element exists (the right border after pinned tabs)
+        let border_bounds = cx.debug_bounds("pinned_tabs_border");
+        assert!(
+            border_bounds.is_some(),
+            "pinned_tabs_border should exist in two-row layout to show right border"
         );
     }
 
@@ -6324,6 +6468,206 @@ mod tests {
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["B", "C", "A*", "D"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_pinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+        init_test(cx);
+        set_pinned_tabs_separate_row(cx, true);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_b.item_id()).unwrap(),
+                window,
+                cx,
+            );
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_c.item_id()).unwrap(),
+                window,
+                cx,
+            );
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_d.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C!", "D*!"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 0) should have debug bounds");
+        let tab_c_bounds = cx
+            .debug_bounds("TAB-2")
+            .expect("Tab C (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_c_bounds.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_c_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["B!", "C!", "A*!", "D!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_unpinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+        init_test(cx);
+        set_pinned_tabs_separate_row(cx, true);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 0) should have debug bounds");
+        let tab_c_bounds = cx
+            .debug_bounds("TAB-2")
+            .expect("Tab C (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_c_bounds.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_c_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["B", "C", "A*", "D"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_mixed_tabs_when_show_pinned_tabs_in_separate_row_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+
+        init_test(cx);
+        set_pinned_tabs_separate_row(cx, true);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        add_labeled_item(&pane, "F", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_b.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C", "D", "E", "F*"], cx);
+        cx.run_until_parked();
+
+        let tab_c_bounds = cx
+            .debug_bounds("TAB-2")
+            .expect("Tab C (index 2) should have debug bounds");
+        let tab_e_bounds = cx
+            .debug_bounds("TAB-4")
+            .expect("Tab E (index 4) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_c_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseMoveEvent {
+            position: tab_e_bounds.center(),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        });
+        cx.run_until_parked();
+        cx.simulate_event(MouseUpEvent {
+            position: tab_e_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["A!", "B!", "D", "E", "C*", "F"], cx);
     }
 
     #[gpui::test]
@@ -7583,8 +7927,8 @@ mod tests {
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
         assert!(tab_bounds.right() <= scroll_bounds.right());
-        // -38.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-38.5));
+        // -39.5 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

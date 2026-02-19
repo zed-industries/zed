@@ -7,10 +7,11 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, Corner, DefiniteLength, ElementId, Entity,
-    EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, ParentElement,
-    PathBuilder, Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, point, px,
+    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
+    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
+    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
+    anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -36,6 +37,53 @@ const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
+const RESIZE_HANDLE_WIDTH: f32 = 8.0;
+
+struct DraggedSplitHandle;
+
+pub struct SplitState {
+    left_ratio: f32,
+    visible_left_ratio: f32,
+}
+
+impl SplitState {
+    pub fn new() -> Self {
+        Self {
+            left_ratio: 1.0,
+            visible_left_ratio: 1.0,
+        }
+    }
+
+    pub fn right_ratio(&self) -> f32 {
+        1.0 - self.visible_left_ratio
+    }
+
+    fn on_drag_move(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedSplitHandle>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+        let bounds_width = bounds.right() - bounds.left();
+
+        let min_ratio = 0.1;
+        let max_ratio = 0.9;
+
+        let new_ratio = (drag_position.x - bounds.left()) / bounds_width;
+        self.visible_left_ratio = new_ratio.clamp(min_ratio, max_ratio);
+    }
+
+    fn commit_ratio(&mut self) {
+        self.left_ratio = self.visible_left_ratio;
+    }
+
+    fn on_double_click(&mut self) {
+        self.left_ratio = 1.0;
+        self.visible_left_ratio = 1.0;
+    }
+}
 
 actions!(
     git_graph,
@@ -598,6 +646,7 @@ pub struct GitGraph {
     selected_commit_diff: Option<CommitDiff>,
     _commit_diff_task: Option<Task<()>>,
     _load_task: Option<Task<()>>,
+    commit_details_split_state: Entity<SplitState>,
 }
 
 impl GitGraph {
@@ -688,6 +737,7 @@ impl GitGraph {
             selected_commit_diff: None,
             log_source,
             log_order,
+            commit_details_split_state: cx.new(|_cx| SplitState::new()),
         }
     }
 
@@ -1087,6 +1137,9 @@ impl GitGraph {
             .border_l_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().surface_background)
+            .flex_basis(DefiniteLength::Fraction(
+                self.commit_details_split_state.read(cx).right_ratio(),
+            ))
             .child(
                 v_flex()
                     .p_3()
@@ -1535,6 +1588,40 @@ impl GitGraph {
             cx.notify();
         }
     }
+
+    fn render_commit_view_resize_handle(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("commit-view-split-resize-container")
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .w(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("commit-view-split-resize-handle")
+                    .absolute()
+                    .left(px(-RESIZE_HANDLE_WIDTH / 2.0))
+                    .w(px(RESIZE_HANDLE_WIDTH))
+                    .h_full()
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.commit_details_split_state.update(cx, |state, _| {
+                                state.on_double_click();
+                            });
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for GitGraph {
@@ -1671,8 +1758,19 @@ impl Render for GitGraph {
                             ),
                     )
                 })
+                .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
+                    this.commit_details_split_state.update(cx, |state, cx| {
+                        state.on_drag_move(event, window, cx);
+                    });
+                }))
+                .on_drop::<DraggedSplitHandle>(cx.listener(|this, _event, _window, cx| {
+                    this.commit_details_split_state.update(cx, |state, _cx| {
+                        state.commit_ratio();
+                    });
+                }))
                 .when(self.selected_entry_idx.is_some(), |this| {
-                    this.child(self.render_commit_detail_panel(window, cx))
+                    this.child(self.render_commit_view_resize_handle(window, cx))
+                        .child(self.render_commit_detail_panel(window, cx))
                 })
         };
 
@@ -1718,7 +1816,7 @@ impl Item for GitGraph {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         f(*event)
     }
 }

@@ -79,6 +79,7 @@ impl Settings for ItemSettings {
             git_status: tabs.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()
@@ -212,7 +213,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -579,7 +580,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription {
         window.subscribe(self, cx, move |_, event, window, cx| {
-            T::to_item_events(event, |item_event| handler(item_event, window, cx));
+            T::to_item_events(event, &mut |item_event| handler(item_event, window, cx));
         })
     }
 
@@ -836,7 +837,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         workspace.enqueue_item_serialization(item).ok();
                     }
 
-                    T::to_item_events(event, |event| match event {
+                    T::to_item_events(event, &mut |event| match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
                                 pane.close_item_by_id(
@@ -1545,7 +1546,7 @@ pub mod test {
     impl Item for TestItem {
         type Event = ItemEvent;
 
-        fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
             f(*event)
         }
 

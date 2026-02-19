@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, named},
+    steps::{self, CheckoutStep, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -22,8 +22,10 @@ pub fn bump_patch_version() -> Workflow {
 }
 
 fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
-    fn checkout_branch(branch: &WorkflowInput, token: &StepOutput) -> Step<Use> {
-        steps::checkout_repo_with_token(token).add_with(("ref", branch.to_string()))
+    fn checkout_branch(branch: &WorkflowInput, token: &StepOutput) -> CheckoutStep {
+        steps::checkout_repo()
+            .with_token(token)
+            .with_ref(branch.to_string())
     }
 
     fn bump_patch_version(token: &StepOutput) -> Step<Run> {

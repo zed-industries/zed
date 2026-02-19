@@ -1,3 +1,8 @@
+---
+title: Bash
+description: "Configure Bash language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Bash
 
 Bash language support in Zed is provided by the community-maintained [Basher extension](https://github.com/d1y/bash.zed).

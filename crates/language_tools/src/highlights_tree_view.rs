@@ -428,7 +428,7 @@ impl HighlightsTreeView {
         entry_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
+        f: &mut dyn FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let entry = self.cached_entries.get(entry_ix)?;
@@ -510,7 +510,7 @@ impl HighlightsTreeView {
                                     entry_ix,
                                     window,
                                     cx,
-                                    |editor, mut range, _, window, cx| {
+                                    &mut |editor, mut range, _, window, cx| {
                                         mem::swap(&mut range.start, &mut range.end);
                                         editor.change_selections(
                                             SelectionEffects::scroll(Autoscroll::newest()),
@@ -533,7 +533,7 @@ impl HighlightsTreeView {
                                         entry_ix,
                                         window,
                                         cx,
-                                        |editor, range, key, _, cx| {
+                                        &mut |editor, range, key, _, cx| {
                                             Self::set_editor_highlights(editor, key, &[range], cx);
                                         },
                                     );
@@ -623,7 +623,7 @@ impl HighlightsTreeView {
                 entry_ix,
                 window,
                 cx,
-                |editor, mut range, _, window, cx| {
+                &mut |editor, mut range, _, window, cx| {
                     mem::swap(&mut range.start, &mut range.end);
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::newest()),
@@ -730,7 +730,7 @@ impl Focusable for HighlightsTreeView {
 impl Item for HighlightsTreeView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Highlights".into()

@@ -145,6 +145,10 @@
   "restore_on_file_reopen": true,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
+  // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+  // the panel when it is already focused, instead of just moving focus back
+  // to the editor.
+  "close_panel_on_toggle": false,
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used
   //              If you drop onto the left/right quarter of the pane a new horizontal split will be used
@@ -667,6 +671,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Whether to search on input in project search.
+    "search_on_input": true,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -797,7 +803,8 @@
     "sort_mode": "directories_first",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
-    // Whether to hide the root entry when only one folder is open in the window.
+    // Whether to hide the root entry when only one folder is open in the window;
+    // this also affects how file paths appear in the file finder history.
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
@@ -1480,6 +1487,25 @@
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
+    // Directory where git worktrees are created, relative to the repository
+    // working directory.
+    //
+    // When the resolved directory is outside the project root, the
+    // project's directory name is automatically appended so that
+    // sibling repos don't collide. For example, with the default
+    // "../worktrees" and a project at ~/code/zed, worktrees are
+    // created under ~/code/worktrees/zed/.
+    //
+    // When the resolved directory is inside the project root, no
+    // extra component is added (it's already project-scoped).
+    //
+    // Examples:
+    //   "../worktrees" — ~/code/worktrees/<project>/ (default)
+    //   ".git/zed-worktrees" — <project>/.git/zed-worktrees/
+    //   "my-worktrees" — <project>/my-worktrees/
+    //
+    // Trailing slashes are ignored.
+    "worktree_directory": "../worktrees",
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [
@@ -1794,15 +1820,15 @@
         "(?x)",
         "(?<path>",
         "    (",
-        "        # multi-char path: first char (not opening delimiter or space)",
-        "        [^({\\[<\"'`\\ ]",
+        "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+        "        [^({\\[<\"'`\\ \\u2500-\\u257F]",
         "        # middle chars: non-space, and colon/paren only if not followed by digit/paren",
         "        ([^\\ :(]|[:(][^0-9()])*",
         "        # last char: not closing delimiter or colon",
         "        [^()}\\]>\"'`.,;:\\ ]",
         "    |",
-        "        # single-char path: not delimiter, punctuation, or space",
-        "        [^(){}\\[\\]<>\"'`.,;:\\ ]",
+        "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+        "        [^(){}\\[\\]<>\"'`.,;:\\ \\u2500-\\u257F]",
         "    )",
         "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
         "    (:+[0-9]+(:[0-9]+)?|:?\\([0-9]+([,:]?[0-9]+)?\\))?",
@@ -2094,7 +2120,7 @@
       "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."],
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "!kanayago", "..."],
     },
     "Rust": {
       "debuggers": ["CodeLLDB"],

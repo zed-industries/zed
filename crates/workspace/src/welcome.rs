@@ -2,6 +2,7 @@ use crate::{
     NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
+use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::WeakEntity;
 use gpui::{
@@ -212,7 +213,14 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>>,
+    recent_workspaces: Option<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    >,
 }
 
 impl WelcomePage {
@@ -272,7 +280,9 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths)) = recent_workspaces.get(action.index) {
+            if let Some((_workspace_id, location, paths, _timestamp)) =
+                recent_workspaces.get(action.index)
+            {
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
 
                 if is_local {
@@ -349,7 +359,7 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths))| {
+            .map(|(index, (_, loc, paths, _))| {
                 self.render_recent_project(index, first_section_entries + index, loc, paths)
             })
             .collect::<Vec<_>>();
@@ -455,7 +465,7 @@ impl Item for WelcomePage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(crate::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(crate::item::ItemEvent)) {
         f(*event)
     }
 }
