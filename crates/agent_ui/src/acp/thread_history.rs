@@ -679,9 +679,16 @@ impl AcpThreadHistory {
             (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
                 let now = Utc::now();
                 let duration = now.signed_duration_since(entry_time);
-                let days = duration.num_days();
 
-                format!("{}d", days)
+                if duration.num_days() > 0 {
+                    format!("{}d", duration.num_days())
+                } else if duration.num_hours() > 0 {
+                    format!("{}h ago", duration.num_hours())
+                } else if duration.num_minutes() > 0 {
+                    format!("{}m ago", duration.num_minutes())
+                } else {
+                    "Just now".to_string()
+                }
             }
             (EntryTimeFormat::TimeOnly, Some(entry_time)) => {
                 format.format_timestamp(entry_time.timestamp(), self.local_timezone)

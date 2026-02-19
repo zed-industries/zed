@@ -125,6 +125,8 @@ struct SerializedAgentPanel {
     selected_agent: Option<AgentType>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
+    #[serde(default)]
+    thread_target: Option<SerializedThreadTarget>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -133,6 +135,41 @@ struct SerializedActiveThread {
     agent_type: AgentType,
     title: Option<String>,
     cwd: Option<std::path::PathBuf>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+enum SerializedThreadTarget {
+    LocalProject,
+    NewWorktree,
+    ExistingWorktree { path: PathBuf, branch: String },
+}
+
+impl From<&ThreadTarget> for SerializedThreadTarget {
+    fn from(target: &ThreadTarget) -> Self {
+        match target {
+            ThreadTarget::LocalProject => SerializedThreadTarget::LocalProject,
+            ThreadTarget::NewWorktree => SerializedThreadTarget::NewWorktree,
+            ThreadTarget::ExistingWorktree { path, branch } => {
+                SerializedThreadTarget::ExistingWorktree {
+                    path: path.clone(),
+                    branch: branch.clone(),
+                }
+            }
+        }
+    }
+}
+
+impl From<SerializedThreadTarget> for ThreadTarget {
+    fn from(target: SerializedThreadTarget) -> Self {
+        match target {
+            SerializedThreadTarget::LocalProject => ThreadTarget::LocalProject,
+            SerializedThreadTarget::NewWorktree => ThreadTarget::NewWorktree,
+            SerializedThreadTarget::ExistingWorktree { path, branch } => {
+                ThreadTarget::ExistingWorktree { path, branch }
+            }
+        }
+    }
 }
 
 pub fn init(cx: &mut App) {
@@ -598,6 +635,7 @@ impl AgentPanel {
 
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
+        let thread_target = Some(SerializedThreadTarget::from(&self.thread_target));
 
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
@@ -621,6 +659,7 @@ impl AgentPanel {
                     width,
                     selected_agent: Some(selected_agent),
                     last_active_thread,
+                    thread_target,
                 },
             )
             .await?;
@@ -665,6 +704,33 @@ impl AgentPanel {
                 })?
                 .await?;
 
+            let last_active_thread = if let Some(thread_info) = serialized_panel
+                .as_ref()
+                .and_then(|p| p.last_active_thread.clone())
+            {
+                let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                let load_result = cx.update(|_window, cx| {
+                    let thread_store = ThreadStore::global(cx);
+                    thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
+                });
+                let thread_exists = if let Ok(task) = load_result {
+                    task.await.ok().flatten().is_some()
+                } else {
+                    false
+                };
+                if thread_exists {
+                    Some(thread_info)
+                } else {
+                    log::warn!(
+                        "last active thread {} not found in database, skipping restoration",
+                        thread_info.session_id
+                    );
+                    None
+                }
+            } else {
+                None
+            };
+
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel =
                     cx.new(|cx| Self::new(workspace, text_thread_store, prompt_store, window, cx));
@@ -675,11 +741,14 @@ impl AgentPanel {
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent = selected_agent;
                         }
+                        if let Some(thread_target) = serialized_panel.thread_target.clone() {
+                            panel.thread_target = ThreadTarget::from(thread_target);
+                        }
                         cx.notify();
                     });
                 }
 
-                if let Some(thread_info) = serialized_panel.and_then(|p| p.last_active_thread) {
+                if let Some(thread_info) = last_active_thread {
                     let agent_type = thread_info.agent_type.clone();
                     let session_info = AgentSessionInfo {
                         session_id: acp::SessionId::new(thread_info.session_id),
@@ -1573,6 +1642,10 @@ impl AgentPanel {
                 {
                     update_settings_file(self.fs.clone(), cx, move |settings, _| {
                         let provider = model.provider_id().0.to_string();
+                        let enable_thinking = model.supports_thinking();
+                        let effort = model
+                            .default_effort_level()
+                            .map(|effort| effort.value.to_string());
                         let model = model.id().0.to_string();
                         settings
                             .agent
@@ -1580,8 +1653,8 @@ impl AgentPanel {
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
                                 model,
-                                enable_thinking: false,
-                                effort: None,
+                                enable_thinking,
+                                effort,
                             })
                     });
                 }
@@ -1800,10 +1873,31 @@ impl AgentPanel {
     }
 
     fn set_thread_target(&mut self, action: &SetThreadTarget, cx: &mut Context<Self>) {
+        let is_via_collab = self.project.read(cx).is_via_collab();
+        let has_git_repo = self.project_has_git_repository(cx);
+
         let new_target = match action.kind {
             ThreadTargetKind::LocalProject => ThreadTarget::LocalProject,
-            ThreadTargetKind::NewWorktree => ThreadTarget::NewWorktree,
+            ThreadTargetKind::NewWorktree => {
+                if !has_git_repo {
+                    log::error!(
+                        "set_thread_target: cannot use NewWorktree without a git repository"
+                    );
+                    return;
+                }
+                if is_via_collab {
+                    log::error!("set_thread_target: cannot use NewWorktree in a collab project");
+                    return;
+                }
+                ThreadTarget::NewWorktree
+            }
             ThreadTargetKind::ExistingWorktree => {
+                if is_via_collab {
+                    log::error!(
+                        "set_thread_target: cannot use ExistingWorktree in a collab project"
+                    );
+                    return;
+                }
                 let Some(path) = action.path.as_ref() else {
                     log::error!("set_thread_target: missing path for existing_worktree");
                     return;
