@@ -3800,7 +3800,7 @@ impl AgentPanel {
 mod tests {
     use super::*;
     use crate::acp::thread_view::tests::{StubAgentServer, init_test};
-    use agent_client_protocol as acp;
+
     use assistant_text_thread::TextThreadStore;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
