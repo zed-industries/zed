@@ -45,7 +45,10 @@ fn main() {
 // All macOS-specific imports grouped together
 #[cfg(target_os = "macos")]
 use {
-    acp_thread::{AgentConnection, StubAgentConnection},
+    acp_thread::{
+        AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
+        AgentSessionListResponse, SessionListUpdate, StubAgentConnection,
+    },
     agent_client_protocol as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
@@ -545,6 +548,26 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         Err(e) => {
             eprintln!("✗ thread_item_icon_decorations: FAILED - {}", e);
             failed += 1;
+        }
+    }
+
+    // Run Test 11: Thread target selector visual tests
+    #[cfg(feature = "visual-tests")]
+    {
+        println!("\n--- Test 11: thread_target_selector (4 variants) ---");
+        match run_thread_target_selector_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+            Ok(TestResult::Passed) => {
+                println!("✓ thread_target_selector: PASSED");
+                passed += 1;
+            }
+            Ok(TestResult::BaselineUpdated(_)) => {
+                println!("✓ thread_target_selector: Baselines updated");
+                updated += 1;
+            }
+            Err(e) => {
+                eprintln!("✗ thread_target_selector: FAILED - {}", e);
+                failed += 1;
+            }
         }
     }
 
@@ -3065,4 +3088,371 @@ fn run_error_wrapping_visual_tests(
     }
 
     Ok(test_result)
+}
+
+#[cfg(target_os = "macos")]
+struct StubSessionList {
+    sessions: Vec<AgentSessionInfo>,
+    updates_tx: smol::channel::Sender<SessionListUpdate>,
+    updates_rx: smol::channel::Receiver<SessionListUpdate>,
+}
+
+#[cfg(target_os = "macos")]
+impl StubSessionList {
+    fn new(sessions: Vec<AgentSessionInfo>) -> Self {
+        let (updates_tx, updates_rx) = smol::channel::unbounded();
+        Self {
+            sessions,
+            updates_tx,
+            updates_rx,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl AgentSessionList for StubSessionList {
+    fn list_sessions(
+        &self,
+        _request: AgentSessionListRequest,
+        _cx: &mut App,
+    ) -> gpui::Task<anyhow::Result<AgentSessionListResponse>> {
+        gpui::Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+        Some(self.updates_rx.clone())
+    }
+
+    fn notify_refresh(&self) {
+        self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "visual-tests"))]
+fn run_thread_target_selector_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    use agent_ui::{AgentPanel, ThreadTarget, WorktreeCreationStatus};
+
+    // Enable the agent-v2 feature flag so the thread target selector renders
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["agent-v2".to_string()]);
+    });
+
+    let project = cx.update(|cx| {
+        project::Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+
+    // Create a window sized for the agent panel
+    let window_size = size(px(500.0), px(900.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let workspace_window: WindowHandle<Workspace> = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    })
+                },
+            )
+        })
+        .context("Failed to open thread target selector test window")?;
+
+    cx.run_until_parked();
+
+    // Load the AgentPanel
+    let (weak_workspace, async_window_cx) = workspace_window
+        .update(cx, |workspace, window, cx| {
+            (workspace.weak_handle(), window.to_async(cx))
+        })
+        .context("Failed to get workspace handle")?;
+
+    let prompt_builder =
+        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
+    cx.background_executor.allow_parking();
+    let panel = cx
+        .foreground_executor
+        .block_test(AgentPanel::load(
+            weak_workspace,
+            prompt_builder,
+            async_window_cx,
+        ))
+        .context("Failed to load AgentPanel")?;
+    cx.background_executor.forbid_parking();
+
+    workspace_window
+        .update(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<AgentPanel>(window, cx);
+        })
+        .context("Failed to add and open AgentPanel")?;
+
+    cx.run_until_parked();
+
+    // Inject the stub server and open a thread so the toolbar is visible
+    let connection = StubAgentConnection::new();
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
+        });
+    })?;
+
+    cx.run_until_parked();
+
+    // ---- Screenshot 1: Default "Local Project" selector ----
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_default = run_visual_test(
+        "thread_target_selector_default",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
+    // ---- Screenshot 2: "New Worktree" selected ----
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_thread_target_for_tests(ThreadTarget::NewWorktree, cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_new_worktree = run_visual_test(
+        "thread_target_selector_new_worktree",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
+    // ---- Screenshot 3: "Creating worktree…" status banner ----
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel
+                .set_worktree_creation_status_for_tests(Some(WorktreeCreationStatus::Creating), cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_creating = run_visual_test(
+        "worktree_creation_status_creating",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
+    // ---- Screenshot 4: Error status banner ----
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_worktree_creation_status_for_tests(
+                Some(WorktreeCreationStatus::Error(
+                    "Failed to create worktree: branch already exists".into(),
+                )),
+                cx,
+            );
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_error = run_visual_test(
+        "worktree_creation_status_error",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
+    // ---- Screenshot 5: History with worktree branch badges ----
+    // Clear the creation status first
+    cx.update_window(workspace_window.into(), |_, _window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_thread_target_for_tests(ThreadTarget::default(), cx);
+            panel.set_worktree_creation_status_for_tests(None, cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    // Set up a session list with entries that have worktree_branch metadata
+    let now = Utc::now();
+    let sessions = vec![
+        AgentSessionInfo {
+            session_id: acp::SessionId::new("session-with-branch-1"),
+            cwd: None,
+            title: Some("Refactor authentication module".into()),
+            updated_at: Some(now - ChronoDuration::minutes(15)),
+            meta: Some(acp::Meta::from_iter([(
+                "worktree_branch".to_string(),
+                "zed/agent/bR9kz".into(),
+            )])),
+        },
+        AgentSessionInfo {
+            session_id: acp::SessionId::new("session-no-branch"),
+            cwd: None,
+            title: Some("Fix CI pipeline flakiness".into()),
+            updated_at: Some(now - ChronoDuration::hours(2)),
+            meta: None,
+        },
+        AgentSessionInfo {
+            session_id: acp::SessionId::new("session-with-branch-2"),
+            cwd: None,
+            title: Some("Add visual test coverage for toolbar".into()),
+            updated_at: Some(now - ChronoDuration::hours(5)),
+            meta: Some(acp::Meta::from_iter([(
+                "worktree_branch".to_string(),
+                "zed/agent/x7Qpm".into(),
+            )])),
+        },
+        AgentSessionInfo {
+            session_id: acp::SessionId::new("session-with-branch-3"),
+            cwd: None,
+            title: Some("Implement dark mode toggle".into()),
+            updated_at: Some(now - ChronoDuration::days(1)),
+            meta: Some(acp::Meta::from_iter([(
+                "worktree_branch".to_string(),
+                "zed/agent/kL3nW".into(),
+            )])),
+        },
+    ];
+
+    let session_list: Rc<dyn AgentSessionList> = Rc::new(StubSessionList::new(sessions));
+
+    // Inject the session list into the history entity and switch to history view
+    let history = cx.read(|cx| panel.read(cx).history().clone());
+    history.update(cx, |history, cx| {
+        history.set_session_list(Some(session_list), cx);
+    });
+    cx.run_until_parked();
+
+    // Navigate to history view
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_history_for_tests(window, cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_history = run_visual_test(
+        "history_with_worktree_branch",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
+    // Clean up
+    workspace_window
+        .update(cx, |workspace, _window, cx| {
+            let project = workspace.project().clone();
+            project.update(cx, |project, cx| {
+                let worktree_ids: Vec<_> =
+                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in worktree_ids {
+                    project.remove_worktree(id, cx);
+                }
+            });
+        })
+        .log_err();
+
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    // Reset feature flags
+    cx.update(|cx| {
+        cx.update_flags(false, vec![]);
+    });
+
+    let results = [
+        ("default", result_default),
+        ("new_worktree", result_new_worktree),
+        ("creating", result_creating),
+        ("error", result_error),
+        ("history", result_history),
+    ];
+
+    let mut has_baseline_update = None;
+    let mut failures = Vec::new();
+
+    for (name, result) in &results {
+        match result {
+            Ok(TestResult::Passed) => {}
+            Ok(TestResult::BaselineUpdated(p)) => {
+                has_baseline_update = Some(p.clone());
+            }
+            Err(e) => {
+                failures.push(format!("{}: {}", name, e));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        Err(anyhow::anyhow!(
+            "thread_target_selector failures: {}",
+            failures.join("; ")
+        ))
+    } else if let Some(p) = has_baseline_update {
+        Ok(TestResult::BaselineUpdated(p))
+    } else {
+        Ok(TestResult::Passed)
+    }
 }

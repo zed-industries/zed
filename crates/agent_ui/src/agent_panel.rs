@@ -3785,6 +3785,36 @@ impl AgentPanel {
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<AcpServerView>> {
         self.active_thread_view()
     }
+
+    /// Sets the thread target directly, bypassing validation.
+    ///
+    /// This is a test-only helper for visual tests that need to show specific
+    /// thread target states without requiring a real git repository.
+    pub fn set_thread_target_for_tests(&mut self, target: ThreadTarget, cx: &mut Context<Self>) {
+        self.thread_target = target;
+        cx.notify();
+    }
+
+    /// Sets the worktree creation status directly.
+    ///
+    /// This is a test-only helper for visual tests that need to show the
+    /// "Creating worktree…" spinner or error banners.
+    pub fn set_worktree_creation_status_for_tests(
+        &mut self,
+        status: Option<WorktreeCreationStatus>,
+        cx: &mut Context<Self>,
+    ) {
+        self.worktree_creation_status = status;
+        cx.notify();
+    }
+
+    /// Opens the history view.
+    ///
+    /// This is a test-only helper that exposes the private `open_history()`
+    /// method for visual tests.
+    pub fn open_history_for_tests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_history(window, cx);
+    }
 }
 
 #[cfg(test)]
