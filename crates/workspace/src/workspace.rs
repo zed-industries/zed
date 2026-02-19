@@ -612,35 +612,58 @@ impl From<WorkspaceId> for i64 {
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
-    let paths = cx.prompt_for_paths(options);
-    cx.spawn(
-        async move |cx| match paths.await.anyhow().and_then(|res| res) {
-            Ok(Some(paths)) => {
-                cx.update(|cx| {
-                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
+    if let Some(workspace_window) = local_workspace_windows(cx).into_iter().next() {
+        workspace_window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
                 });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                util::log_err(&err);
-                cx.update(|cx| {
-                    if let Some(workspace_window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<MultiWorkspace>())
-                    {
-                        workspace_window
-                            .update(cx, |multi_workspace, _, cx| {
-                                let workspace = multi_workspace.workspace().clone();
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.show_portal_error(err.to_string(), cx);
-                                });
-                            })
-                            .ok();
-                    }
+            })
+            .ok();
+    } else {
+        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, cx);
+        cx.spawn(async move |cx| {
+            let (window, _) = task.await?;
+            window.update(cx, |multi_workspace, window, cx| {
+                window.activate_window();
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
                 });
-            }
-        },
-    )
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+}
+
+pub fn prompt_for_open_path_and_open(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    options: PathPromptOptions,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let paths = workspace.prompt_for_open_path(
+        options,
+        DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |this, cx| {
+        let Some(paths) = paths.await.log_err().flatten() else {
+            return;
+        };
+        if let Some(task) = this
+            .update_in(cx, |this, window, cx| {
+                this.open_workspace_for_paths(false, paths, window, cx)
+            })
+            .log_err()
+        {
+            task.await.log_err();
+        }
+    })
     .detach();
 }
 
