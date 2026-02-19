@@ -521,10 +521,15 @@ impl AcpThreadHistory {
             self.selected_index = 0;
             return;
         }
-        while matches!(
-            self.visible_items.get(index),
-            None | Some(ListItemType::BucketSeparator(..))
-        ) {
+        let max_iterations = self.visible_items.len();
+        let mut iterations = 0;
+        while iterations < max_iterations
+            && matches!(
+                self.visible_items.get(index),
+                None | Some(ListItemType::BucketSeparator(..))
+            )
+        {
+            iterations += 1;
             index = match bias {
                 Bias::Left => {
                     if index == 0 {
