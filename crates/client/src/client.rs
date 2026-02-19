@@ -19,11 +19,12 @@ use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
-    channel::oneshot, future::BoxFuture,
+    channel::{mpsc, oneshot},
+    future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
@@ -195,8 +196,10 @@ pub struct Client {
     telemetry: Arc<Telemetry>,
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
-    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
-    message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
+    handler_set: Mutex<ProtoMessageHandlerSet>,
+    message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
+    sign_out_tx: mpsc::UnboundedSender<()>,
+    _handle_sign_out: Mutex<Option<Task<()>>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -527,7 +530,8 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        Arc::new(Self {
+        let (sign_out_tx, mut sign_out_rx) = mpsc::unbounded();
+        let this = Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
@@ -536,7 +540,9 @@ impl Client {
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
-            message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
+            message_to_client_handlers: Mutex::new(Vec::new()),
+            sign_out_tx,
+            _handle_sign_out: Mutex::new(None),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -544,7 +550,19 @@ impl Client {
             establish_connection: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             rpc_url: RwLock::default(),
-        })
+        });
+        this._handle_sign_out.lock().replace(cx.spawn({
+            let weak_client = Arc::downgrade(&this);
+            async move |cx| {
+                while sign_out_rx.next().await.is_some() {
+                    if let Some(client) = weak_client.upgrade() {
+                        client.sign_out(&cx).await;
+                    }
+                }
+            }
+        }));
+
+        this
     }
 
     pub fn production(cx: &mut App) -> Arc<Self> {
@@ -1519,6 +1537,11 @@ impl Client {
         }
     }
 
+    /// Requests a sign out to be performed asynchronously.
+    pub fn request_sign_out(&self) {
+        self.sign_out_tx.unbounded_send(()).ok();
+    }
+
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncApp) {
         self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
@@ -1706,7 +1729,7 @@ impl ProtoClient for Client {
         self.peer.send_dynamic(connection_id, envelope)
     }
 
-    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+    fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
 

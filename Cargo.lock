@@ -3035,6 +3035,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "thiserror 2.0.17",
  "yawc",
 ]
 
@@ -9108,6 +9109,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
