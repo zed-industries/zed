@@ -708,24 +708,29 @@ impl AgentPanel {
                 .as_ref()
                 .and_then(|p| p.last_active_thread.clone())
             {
-                let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                let load_result = cx.update(|_window, cx| {
-                    let thread_store = ThreadStore::global(cx);
-                    thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
-                });
-                let thread_exists = if let Ok(task) = load_result {
-                    task.await.ok().flatten().is_some()
+                let is_native = matches!(thread_info.agent_type, AgentType::NativeAgent);
+                if is_native {
+                    let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                    let load_result = cx.update(|_window, cx| {
+                        let thread_store = ThreadStore::global(cx);
+                        thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
+                    });
+                    let thread_exists = if let Ok(task) = load_result {
+                        task.await.ok().flatten().is_some()
+                    } else {
+                        false
+                    };
+                    if thread_exists {
+                        Some(thread_info)
+                    } else {
+                        log::warn!(
+                            "last active thread {} not found in database, skipping restoration",
+                            thread_info.session_id
+                        );
+                        None
+                    }
                 } else {
-                    false
-                };
-                if thread_exists {
                     Some(thread_info)
-                } else {
-                    log::warn!(
-                        "last active thread {} not found in database, skipping restoration",
-                        thread_info.session_id
-                    );
-                    None
                 }
             } else {
                 None
