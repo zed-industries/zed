@@ -357,7 +357,8 @@ impl VsCodeSettings {
     fn search_content(&self) -> Option<SearchSettingsContent> {
         skip_default(SearchSettingsContent {
             include_ignored: self.read_bool("search.useIgnoreFiles"),
-            ..Default::default()
+            search_on_input: self.read_bool("search.searchOnType"),
+            ..SearchSettingsContent::default()
         })
     }
 
