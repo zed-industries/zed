@@ -7370,6 +7370,7 @@ dependencies = [
  "core-video",
  "ctor",
  "derive_more 0.99.20",
+ "embed-resource",
  "env_logger 0.11.8",
  "etagere",
  "foreign-types 0.5.0",
@@ -7570,7 +7571,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "embed-resource",
  "etagere",
  "futures 0.3.31",
  "gpui",

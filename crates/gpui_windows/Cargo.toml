@@ -15,7 +15,6 @@ path = "src/gpui_windows.rs"
 default = ["gpui/default"]
 test-support = ["gpui/test-support"]
 screen-capture = ["gpui/screen-capture", "scap"]
-windows-manifest = []
 
 [dependencies]
 gpui.workspace = true
@@ -44,5 +43,4 @@ workspace = true
 optional = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-embed-resource = "3.0"
 windows-registry = "0.5"
