@@ -14,7 +14,7 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type MessageStream = Pin<Box<dyn Stream<Item = Result<MessageToClient>>>>;
 
-/// Wrapper around a [`WebSocket`] which provides [`spawn`](Self::spawn) method.
+/// Wrapper around a [`WebSocket`] which provides a [`spawn`](Self::spawn) method.
 ///
 /// This allows handling a [`tokio`] based websocket using a [`gpui::Task`].
 pub struct Connection(WebSocket<MaybeTlsStream<TcpStream>>);
