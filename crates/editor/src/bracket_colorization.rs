@@ -118,7 +118,11 @@ impl Editor {
                     .ok();
             }
 
-            let (bracket_matches_by_accent, updated_chunks) = bracket_matches_by_accent.await;
+            let viewport_start_row =
+                        buffer_snapshot.offset_to_point(buffer_range.start).row;
+                    let viewport_end_row = buffer_snapshot.offset_to_point(buffer_range.end).row;
+
+                    let (bracket_matches_by_accent, updated_chunks) = bracket_matches_by_accent.await;
 
             editor
                 .update(cx, |editor, cx| {
@@ -160,11 +164,20 @@ fn compute_bracket_ranges(
         .fetch_bracket_ranges(buffer_range.start..buffer_range.end, Some(fetched_chunks))
         .into_iter()
         .flat_map(|(chunk_range, pairs)| {
-            if fetched_chunks.insert(chunk_range) {
-                pairs
-            } else {
-                Vec::new()
-            }
+            if fetched_chunks.contains(&chunk_range) {
+                return Vec::new();
+                            }
+                            // Only claim chunks overlapping the viewport as
+                            // fetched.  Boundary chunks pulled in by
+                            // `extend_range_for_enclosing_brackets` contribute
+                            // their bracket pairs but must remain re-queryable
+            // when the user scrolls to them.
+                            if chunk_range.start <= viewport_end_row
+                                && chunk_range.end > viewport_start_row
+                            {
+                                fetched_chunks.insert(chunk_range);
+                            }
+            pairs
         })
         .filter_map(|pair| {
             let color_index = pair.color_index?;
@@ -642,6 +655,100 @@ fn process_data«1()1» «1{
 5 hsla(355.00, 65.00%, 75.94%, 1.00)
 "#},
             &bracket_colors_markup(&mut cx),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_bracket_colorization_large_block(cx: &mut gpui::TestAppContext) {
+        // Each `//\n` is 3 bytes; 6000 lines ≈ 18 KB, exceeding MAX_BYTES_TO_QUERY (16 KB).
+        let comment_lines = 6000;
+
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let mut cx = EditorLspTestContext::new(
+            Arc::into_inner(rust_lang()).unwrap(),
+            lsp::ServerCapabilities::default(),
+            cx,
+        )
+        .await;
+
+        cx.set_state(&separate_with_comment_lines(
+            indoc! {r#"
+mod foo {
+    ˇfn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+"#},
+            indoc! {r#"
+    fn process_data_2() {
+        let map: Option<Vec<()>> = None;
+    }
+}
+"#},
+            comment_lines,
+        ));
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                indoc! {r#"
+    fn process_data_2«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &bracket_colors_markup(&mut cx),
+            "Top chunk: brackets should be colorized even when the enclosing \
+             block exceeds MAX_BYTES_TO_QUERY"
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.move_up(&MoveUp, window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            &separate_with_comment_lines(
+                indoc! {r#"
+mod foo «1{
+    fn process_data_1«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+"#},
+                indoc! {r#"
+    fn process_data_2«2()2» «2{
+        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
+    }2»
+}1»
+
+1 hsla(207.80, 16.20%, 69.19%, 1.00)
+2 hsla(29.00, 54.00%, 65.88%, 1.00)
+3 hsla(286.00, 51.00%, 75.25%, 1.00)
+4 hsla(187.00, 47.00%, 59.22%, 1.00)
+5 hsla(355.00, 65.00%, 75.94%, 1.00)
+"#},
+                comment_lines,
+            ),
+            &bracket_colors_markup(&mut cx),
+            "After scrolling to bottom, both chunks should have bracket \
+             highlights across a large block"
         );
     }
 
