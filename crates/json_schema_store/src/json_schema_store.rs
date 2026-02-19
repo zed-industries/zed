@@ -330,15 +330,13 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
-                cx.global::<settings::SettingsStore>().json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        font_names,
-                        theme_names,
-                        icon_theme_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                    },
-                )
+                settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
+                    language_names,
+                    font_names,
+                    theme_names,
+                    icon_theme_names,
+                    lsp_adapter_names: &lsp_adapter_names,
+                })
             })
         }
         "project_settings" => {
@@ -355,18 +353,16 @@ async fn resolve_dynamic_schema(
                     .map(|name| name.to_string())
                     .collect::<Vec<_>>();
 
-                cx.global::<settings::SettingsStore>().project_json_schema(
-                    &settings::SettingsJsonSchemaParams {
-                        language_names,
-                        lsp_adapter_names: &lsp_adapter_names,
-                        // These are not allowed in project-specific settings but
-                        // they're still fields required by the
-                        // `SettingsJsonSchemaParams` struct.
-                        font_names: &[],
-                        theme_names: &[],
-                        icon_theme_names: &[],
-                    },
-                )
+                settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
+                    language_names,
+                    lsp_adapter_names: &lsp_adapter_names,
+                    // These are not allowed in project-specific settings but
+                    // they're still fields required by the
+                    // `SettingsJsonSchemaParams` struct.
+                    font_names: &[],
+                    theme_names: &[],
+                    icon_theme_names: &[],
+                })
             })
         }
         "debug_tasks" => {

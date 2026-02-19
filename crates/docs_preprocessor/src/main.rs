@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::KeymapFile;
+use settings::{KeymapFile, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -290,6 +290,14 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
 }
 
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let settings_validator = jsonschema::validator_for(&settings_schema)
+        .expect("failed to compile settings JSON schema");
+
+    let keymap_schema = KeymapFile::generate_json_schema_from_inventory();
+    let keymap_validator =
+        jsonschema::validator_for(&keymap_schema).expect("failed to compile keymap JSON schema");
+
     fn for_each_labeled_code_block_mut(
         book: &mut Book,
         errors: &mut HashSet<PreprocessorError>,
@@ -378,9 +386,15 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.insert(0, '{');
                     snippet_json_fixed.push_str("\n}");
                 }
-                settings::parse_json_with_comments::<settings::SettingsContent>(
-                    &snippet_json_fixed,
-                )?;
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = settings_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
+                }
             }
             "keymap" => {
                 if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
@@ -388,21 +402,14 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.push_str("\n]");
                 }
 
-                let keymap = settings::KeymapFile::parse(&snippet_json_fixed)
-                    .context("Failed to parse keymap JSON")?;
-                for section in keymap.sections() {
-                    for (_keystrokes, action) in section.bindings() {
-                        if let Some((action_name, _)) = settings::KeymapFile::parse_action(action)
-                            .map_err(|err| anyhow::format_err!(err))
-                            .context("Failed to parse action")?
-                        {
-                            anyhow::ensure!(
-                                !is_missing_action(action_name),
-                                "Action not found: {}",
-                                action_name
-                            );
-                        }
-                    }
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = keymap_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
                 }
             }
             "debug" => {
@@ -709,4 +716,113 @@ fn generate_big_table_of_actions() -> String {
     output.push_str("</dl>\n");
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_validator() -> jsonschema::Validator {
+        let schema = SettingsStore::json_schema_for_docs();
+        jsonschema::validator_for(&schema).expect("failed to compile settings JSON schema")
+    }
+
+    fn keymap_validator() -> jsonschema::Validator {
+        let schema = KeymapFile::generate_json_schema_from_inventory();
+        jsonschema::validator_for(&schema).expect("failed to compile keymap JSON schema")
+    }
+
+    fn assert_schema_rejects(validator: &jsonschema::Validator, json: &serde_json::Value) {
+        let errors: Vec<String> = validator
+            .iter_errors(json)
+            .map(|err| err.to_string())
+            .collect();
+        assert!(
+            !errors.is_empty(),
+            "Expected validation to reject, but it passed for: {json}"
+        );
+    }
+
+    fn assert_schema_accepts(validator: &jsonschema::Validator, json: &serde_json::Value) {
+        let errors: Vec<String> = validator
+            .iter_errors(json)
+            .map(|err| err.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "Expected validation to pass, but got: {}",
+            errors.join("\n")
+        );
+    }
+
+    #[test]
+    fn test_settings_rejects_unknown_top_level_key() {
+        let validator = settings_validator();
+        let json = serde_json::json!({
+            "features": {
+                "edit_prediction_provider": "zed"
+            }
+        });
+        assert_schema_rejects(&validator, &json);
+    }
+
+    #[test]
+    fn test_settings_accepts_valid_settings() {
+        let validator = settings_validator();
+        let json = serde_json::json!({
+            "edit_predictions": {
+                "mode": "eager"
+            }
+        });
+        assert_schema_accepts(&validator, &json);
+    }
+
+    #[test]
+    fn test_settings_accepts_valid_nested_settings() {
+        let validator = settings_validator();
+        let json = serde_json::json!({
+            "show_edit_predictions": false
+        });
+        assert_schema_accepts(&validator, &json);
+    }
+
+    #[test]
+    fn test_settings_rejects_unknown_nested_key() {
+        let validator = settings_validator();
+        let json = serde_json::json!({
+            "edit_predictions": {
+                "not_a_real_setting": true
+            }
+        });
+        assert_schema_rejects(&validator, &json);
+    }
+
+    #[test]
+    fn test_keymap_accepts_valid_keybinding() {
+        let validator = keymap_validator();
+        let json = serde_json::json!([
+            {
+                "context": "Editor && edit_prediction",
+                "bindings": {
+                    "tab": "editor::AcceptEditPrediction"
+                }
+            }
+        ]);
+        assert_schema_accepts(&validator, &json);
+    }
+
+    #[test]
+    fn test_keymap_rejects_unknown_top_level_key() {
+        let validator = keymap_validator();
+        let json = serde_json::json!([
+            {
+                "context": "Editor",
+                "bindings": {
+                    "tab": "editor::AcceptEditPrediction"
+                },
+                "not_a_real_key": true
+            }
+        ]);
+        assert_schema_rejects(&validator, &json);
+    }
 }

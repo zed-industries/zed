@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+jsonschema.workspace = true
 # We are specifically pinning this version of mdbook, as later versions introduce issues with double-nested subdirectories.
 # Ask @maxdeviant about this before bumping.
 mdbook = "= 0.4.40"
