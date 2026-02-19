@@ -359,6 +359,8 @@ messages!(
     (GetSharedAgentThreadResponse, Foreground),
     (FindSearchCandidatesChunk, Background),
     (FindSearchCandidatesCancelled, Background),
+    (GetRemoteProfilingData, Background),
+    (GetRemoteProfilingDataResponse, Background),
 );
 
 request_messages!(
@@ -555,6 +557,7 @@ request_messages!(
     (TrustWorktrees, Ack),
     (RestrictWorktrees, Ack),
     (FindSearchCandidatesChunk, Ack),
+    (GetRemoteProfilingData, GetRemoteProfilingDataResponse),
 );
 
 lsp_messages!(
@@ -741,7 +744,8 @@ entity_messages!(
     RestrictWorktrees,
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
-    DownloadFileByPath
+    DownloadFileByPath,
+    GetRemoteProfilingData
 );
 
 entity_messages!(

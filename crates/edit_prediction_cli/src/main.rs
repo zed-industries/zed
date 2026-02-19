@@ -297,8 +297,10 @@ struct EvalArgs {
     summary_json: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub enum TeacherBackend {
+    Sonnet46,
+    #[default]
     Sonnet45,
     Gpt52,
 }
@@ -306,6 +308,7 @@ pub enum TeacherBackend {
 impl std::fmt::Display for TeacherBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TeacherBackend::Sonnet46 => write!(f, "sonnet46"),
             TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
             TeacherBackend::Gpt52 => write!(f, "gpt52"),
         }
@@ -318,9 +321,12 @@ impl std::str::FromStr for TeacherBackend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
+            "sonnet46" => Ok(TeacherBackend::Sonnet46),
             "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
             "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
-            _ => anyhow::bail!("unknown teacher backend `{s}`. Valid options: sonnet45, gpt52"),
+            _ => anyhow::bail!(
+                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52"
+            ),
         }
     }
 }
@@ -329,6 +335,7 @@ impl TeacherBackend {
     pub fn model_name(&self) -> &'static str {
         match self {
             TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
+            TeacherBackend::Sonnet46 => "claude-sonnet-4-6",
             TeacherBackend::Gpt52 => "gpt-5.2",
         }
     }
@@ -386,14 +393,14 @@ impl std::str::FromStr for PredictionProvider {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
-                    .unwrap_or(TeacherBackend::Sonnet45);
+                    .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::Teacher(backend))
             }
             "teacher-non-batching" | "teacher_non_batching" | "teachernonbatching" => {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
-                    .unwrap_or(TeacherBackend::Sonnet45);
+                    .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
@@ -401,7 +408,7 @@ impl std::str::FromStr for PredictionProvider {
                 anyhow::bail!(
                     "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
-                 For teacher, you can specify a backend like `teacher:sonnet45` or `teacher:gpt52`.\n\
+                 For teacher, you can specify a backend like `teacher:sonnet46` or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaFormat::options_as_string()
                 )

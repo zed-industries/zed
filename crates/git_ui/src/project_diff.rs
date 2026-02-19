@@ -5,6 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
     resolve_active_repository,
 };
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -14,6 +15,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use git::repository::DiffType;
 
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
@@ -47,6 +49,7 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
+use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
 
 actions!(
@@ -59,6 +62,8 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
+        /// Opens a new agent thread with the branch diff for review.
+        ReviewDiff,
         LeaderAndFollower,
     ]
 );
@@ -92,6 +97,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_review_diff);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -137,6 +143,59 @@ impl ProjectDiff {
                         workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
                     })
                     .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn deploy_review_diff(
+        workspace: &mut Workspace,
+        _: &ReviewDiff,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(project_diff) = workspace
+            .items_of_type::<Self>(cx)
+            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+        else {
+            return;
+        };
+
+        let diff_base = project_diff.read(cx).diff_base(cx).clone();
+        let DiffBase::Merge { base_ref } = diff_base else {
+            return;
+        };
+
+        let Some(repo) = project_diff.read(cx).branch_diff.read(cx).repo().cloned() else {
+            return;
+        };
+
+        let diff_receiver = repo.update(cx, |repo, cx| {
+            repo.diff(
+                DiffType::MergeBase {
+                    base_ref: base_ref.clone(),
+                },
+                cx,
+            )
+        });
+
+        let workspace_handle = cx.entity();
+        let workspace_weak = workspace_handle.downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let diff_text = diff_receiver.await??;
+
+                workspace_handle.update_in(cx, |_workspace, window, cx| {
+                    window.dispatch_action(
+                        ReviewBranchDiff {
+                            diff_text: diff_text.into(),
+                            base_ref: base_ref.to_string().into(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                })?;
+
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
@@ -1511,7 +1570,7 @@ pub struct BranchDiffToolbar {
 }
 
 impl BranchDiffToolbar {
-    pub fn new(_: &mut Context<Self>) -> Self {
+    pub fn new(_cx: &mut Context<Self>) -> Self {
         Self { project_diff: None }
     }
 
@@ -1567,14 +1626,39 @@ impl Render for BranchDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
+        let show_review_button = AgentSettings::get_global(cx).enabled(cx);
+
         h_group_xl()
             .my_neg_1()
             .py_1()
             .items_center()
             .flex_wrap()
             .justify_end()
-            .when(review_count > 0, |el| {
-                el.child(
+            .when(show_review_button, |this| {
+                let focus_handle = focus_handle.clone();
+                this.child(
+                    Button::new("review-diff", "Review Diff")
+                        .icon(IconName::ZedAssistant)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
+                        .tooltip(move |_, cx| {
+                            Tooltip::with_meta_in(
+                                "Review Diff",
+                                Some(&ReviewDiff),
+                                "Send this diff for your last agent to review.",
+                                &focus_handle,
+                                cx,
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&ReviewDiff, window, cx);
+                        })),
+                )
+            })
+            .when(review_count > 0, |this| {
+                this.child(vertical_divider()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)

@@ -687,7 +687,7 @@ impl Vim {
                         });
                     });
                 }
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);

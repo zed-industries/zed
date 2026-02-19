@@ -2091,6 +2091,7 @@ pub async fn init_test(
                 node_runtime,
                 languages,
                 extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,

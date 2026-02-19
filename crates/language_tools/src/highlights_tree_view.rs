@@ -556,7 +556,7 @@ impl HighlightsTreeView {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Editor>,
     ) {
-        editor.highlight_background_key(
+        editor.highlight_background(
             HighlightKey::HighlightsTreeView(key),
             ranges,
             |_, theme| theme.colors().editor_document_highlight_write_background,

@@ -89,6 +89,26 @@ pub struct CompileConfig<'a> {
      pub header_paths: Vec<&'a Path>,
 ```
 
+
+```diff
+--- a/tree-sitter/crates/loader/src/loader.rs
++++ b/tree-sitter/crates/loader/src/loader.rs
+@@ -621,6 +621,8 @@
+     wasm_store: Mutex<Option<tree_sitter::WasmStore>>,
+ }
+
+-str
++struct LanguageEntry {
++    path: PathBuf,
++    language: OnceCell<Language>,
++    extra_files: Option<Vec<PathBuf>>,
++}
++
+ pub struct CompileConfig<'a> {
+     pub src_path: &'a Path,
+     pub header_paths: Vec<&'a Path>,
+```
+
 ```diff
 --- a/tree-sitter/crates/loader/src/loader.rs
 +++ b/tree-sitter/crates/loader/src/loader.rs

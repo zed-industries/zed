@@ -301,6 +301,13 @@ EOF
 
 echo "$MANIFEST" | jq -r '.suggestions[] | "- [PR #\(.pr)](\(.file)): \(.title)"' >> "$PR_BODY_FILE"
 
+cat >> "$PR_BODY_FILE" << 'EOF'
+
+Release Notes:
+
+- N/A
+EOF
+
 git add docs/
 git commit -m "docs: auto-apply preview release suggestions
 
