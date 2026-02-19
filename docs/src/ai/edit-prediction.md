@@ -18,8 +18,8 @@ Once signed in, predictions appear as you type.
 You can confirm that Zeta is properly configured either by verifying whether you have the following code in your settings file:
 
 ```json [settings]
-"features": {
-  "edit_prediction_provider": "zed"
+"edit_predictions": {
+  "provider": "zed"
 },
 ```
 
@@ -350,8 +350,8 @@ After adding your API key, Sweep will appear in the provider dropdown in the sta
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "sweep"
+  "edit_predictions": {
+    "provider": "sweep"
   }
 }
 ```
@@ -399,6 +399,16 @@ After adding your API key, Codestral will appear in the provider dropdown in the
   }
 }
 ```
+
+### Self-Hosted OpenAI-compatible servers
+
+To configure Zed to use an arbitrary server for edit predictions:
+
+1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+2. Search for "Edit Predictions" and click **Configure Providers**
+3. Find the "OpenAI-compatible API" section and enter the URL and model name. You can also select a prompt format that Zed should use. Zed currently supports several FIM prompt formats, as well as Zed's own Zeta prompt format. If you do not select a prompt format, Zed will attempt to infer it from the model name.
+
+The URL must accept requests according to OpenAI's [Completions API](https://developers.openai.com/api/reference/resources/completions/methods/create)
 
 ## See also
 

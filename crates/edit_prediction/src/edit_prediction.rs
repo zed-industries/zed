@@ -35,7 +35,9 @@ use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
-use settings::{EditPredictionProvider, Settings as _, update_settings_file};
+use settings::{
+    EditPredictionPromptFormat, EditPredictionProvider, Settings as _, update_settings_file,
+};
 use std::collections::{VecDeque, hash_map};
 use std::env;
 use text::Edit;
@@ -55,6 +57,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 
 pub mod cursor_excerpt;
 pub mod example_spec;
+pub mod fim;
 mod license_detection;
 pub mod mercury;
 pub mod ollama;
@@ -67,15 +70,13 @@ pub mod udiff;
 
 mod capture_example;
 mod zed_edit_prediction_delegate;
-pub mod zeta1;
-pub mod zeta2;
+pub mod zeta;
 
 #[cfg(test)]
 mod edit_prediction_tests;
 
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
-use crate::ollama::Ollama;
 use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
@@ -138,21 +139,19 @@ pub struct EditPredictionStore {
     zeta2_raw_config: Option<Zeta2RawConfig>,
     pub sweep_ai: SweepAi,
     pub mercury: Mercury,
-    pub ollama: Ollama,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejection>,
     shown_predictions: VecDeque<EditPrediction>,
     rated_predictions: HashSet<EditPredictionId>,
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum EditPredictionModel {
-    #[default]
     Zeta1,
     Zeta2,
+    Fim { format: EditPredictionPromptFormat },
     Sweep,
     Mercury,
-    Ollama,
 }
 
 #[derive(Clone)]
@@ -697,7 +696,6 @@ impl EditPredictionStore {
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
             sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
-            ollama: Ollama::new(),
 
             data_collection_choice,
             reject_predictions_tx: reject_tx,
@@ -727,7 +725,7 @@ impl EditPredictionStore {
         self.zeta2_raw_config.as_ref()
     }
 
-    pub fn icons(&self) -> edit_prediction_types::EditPredictionIconSet {
+    pub fn icons(&self, cx: &App) -> edit_prediction_types::EditPredictionIconSet {
         use ui::IconName;
         match self.edit_prediction_model {
             EditPredictionModel::Sweep => {
@@ -747,8 +745,16 @@ impl EditPredictionStore {
                     .with_down(IconName::ZedPredictDown)
                     .with_error(IconName::ZedPredictError)
             }
-            EditPredictionModel::Ollama => {
-                edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
+            EditPredictionModel::Fim { .. } => {
+                let settings = &all_language_settings(None, cx).edit_predictions;
+                match settings.provider {
+                    EditPredictionProvider::Ollama => {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::AiOllama)
+                    }
+                    _ => {
+                        edit_prediction_types::EditPredictionIconSet::new(IconName::AiOpenAiCompat)
+                    }
+                }
             }
         }
     }
@@ -861,7 +867,10 @@ impl EditPredictionStore {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        if matches!(self.edit_prediction_model, EditPredictionModel::Zeta2) {
+        if matches!(
+            self.edit_prediction_model,
+            EditPredictionModel::Zeta2 | EditPredictionModel::Zeta1
+        ) {
             self.user_store.read(cx).edit_prediction_usage()
         } else {
             None
@@ -1300,10 +1309,16 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Ollama => {}
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                zeta2::edit_prediction_accepted(self, current_prediction, cx)
+                let is_cloud = !matches!(
+                    all_language_settings(None, cx).edit_predictions.provider,
+                    EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+                );
+                if is_cloud {
+                    zeta::edit_prediction_accepted(self, current_prediction, cx)
+                }
             }
+            EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -1438,15 +1453,20 @@ impl EditPredictionStore {
     ) {
         match self.edit_prediction_model {
             EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                self.reject_predictions_tx
-                    .unbounded_send(EditPredictionRejection {
-                        request_id: prediction_id.to_string(),
-                        reason,
-                        was_shown,
-                    })
-                    .log_err();
+                let is_cloud = !matches!(
+                    all_language_settings(None, cx).edit_predictions.provider,
+                    EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
+                );
+                if is_cloud {
+                    self.reject_predictions_tx
+                        .unbounded_send(EditPredictionRejection {
+                            request_id: prediction_id.to_string(),
+                            reason,
+                            was_shown,
+                        })
+                        .log_err();
+                }
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Ollama => {}
             EditPredictionModel::Mercury => {
                 mercury::edit_prediction_rejected(
                     prediction_id,
@@ -1456,6 +1476,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
+            EditPredictionModel::Sweep | EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -1670,9 +1691,21 @@ impl EditPredictionStore {
             }
         }
 
-        let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
-        let drop_on_cancel = is_ollama;
-        let max_pending_predictions = if is_ollama { 1 } else { 2 };
+        let (needs_acceptance_tracking, max_pending_predictions) =
+            match all_language_settings(None, cx).edit_predictions.provider {
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
+                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Ollama => (false, 1),
+                EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
+                EditPredictionProvider::None
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral => unreachable!(),
+            };
+
+        let drop_on_cancel = !needs_acceptance_tracking;
         let throttle_timeout = Self::THROTTLE_TIMEOUT;
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
@@ -1889,22 +1922,22 @@ impl EditPredictionStore {
             user_actions,
         };
 
-        let task = match &self.edit_prediction_model {
-            EditPredictionModel::Zeta1 => zeta2::request_prediction_with_zeta2(
+        let task = match self.edit_prediction_model {
+            EditPredictionModel::Zeta1 => zeta::request_prediction_with_zeta(
                 self,
                 inputs,
                 Some(zeta_prompt::EditPredictionModelKind::Zeta1),
                 cx,
             ),
-            EditPredictionModel::Zeta2 => zeta2::request_prediction_with_zeta2(
+            EditPredictionModel::Zeta2 => zeta::request_prediction_with_zeta(
                 self,
                 inputs,
                 Some(zeta_prompt::EditPredictionModelKind::Zeta2),
                 cx,
             ),
+            EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
-            EditPredictionModel::Ollama => self.ollama.request_prediction(inputs, cx),
         };
 
         cx.spawn(async move |this, cx| {
