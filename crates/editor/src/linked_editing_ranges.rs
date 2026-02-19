@@ -297,6 +297,30 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_linked_edits_delete(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.set_state("<ˇdiv></div>");
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .set_linked_edit_ranges_for_testing(
+                    vec![(
+                        Point::new(0, 1)..Point::new(0, 4),
+                        vec![Point::new(0, 7)..Point::new(0, 10)],
+                    )],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.delete(&Default::default(), window, cx);
+        });
+        cx.assert_editor_state("<ˇiv></iv>");
+    }
+
+    #[gpui::test]
     async fn test_linked_edits_selection(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let mut cx = EditorTestContext::new(cx).await;

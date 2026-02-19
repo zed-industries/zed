@@ -10722,21 +10722,9 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
 
+            let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
+
             let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut linked_edits = LinkedEdits::new();
-
-            if !this.linked_edit_ranges.is_empty() {
-                let empty_text: Arc<str> = Arc::from("");
-                let selections = this.selections.all::<MultiBufferPoint>(&display_map);
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-
-                for selection in selections.iter() {
-                    let selection_start = snapshot.anchor_before(selection.start).text_anchor;
-                    let selection_end = snapshot.anchor_after(selection.end).text_anchor;
-                    linked_edits.push(this, selection_start..selection_end, empty_text.clone(), cx);
-                }
-            }
-
             let mut selections = this.selections.all::<MultiBufferPoint>(&display_map);
             for selection in &mut selections {
                 if selection.is_empty() {
@@ -10795,8 +10783,11 @@ impl Editor {
                     }
                 })
             });
+            let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
             this.insert("", window, cx);
+            linked_edits.apply(cx);
             this.refresh_edit_prediction(true, false, window, cx);
+            refresh_linked_ranges(this, window, cx);
         });
     }
 
