@@ -6,7 +6,7 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use gpui::{Capslock, ResultExt as _, TaskTiming, profiler};
+use gpui::{Capslock, TaskTiming, profiler};
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
@@ -49,8 +49,8 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
-    log_cursor_icon_warning, open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, get_xkb_compose_state,
+    is_within_click_distance, log_cursor_icon_warning, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
