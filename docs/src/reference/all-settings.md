@@ -4427,7 +4427,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "show_user_picture": true,
   "show_user_menu": true,
   "show_sign_in": true,
-  "show_menus": false
+  "show_menus": false,
+  "show_menus_on_hover": false
 }
 ```
 

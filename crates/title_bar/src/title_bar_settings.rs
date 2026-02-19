@@ -10,6 +10,7 @@ pub struct TitleBarSettings {
     pub show_sign_in: bool,
     pub show_user_menu: bool,
     pub show_menus: bool,
+    pub show_menus_on_hover: bool,
 }
 
 impl Settings for TitleBarSettings {
@@ -24,6 +25,7 @@ impl Settings for TitleBarSettings {
             show_sign_in: content.show_sign_in.unwrap(),
             show_user_menu: content.show_user_menu.unwrap(),
             show_menus: content.show_menus.unwrap(),
+            show_menus_on_hover: content.show_menus_on_hover.unwrap(),
         }
     }
 }
