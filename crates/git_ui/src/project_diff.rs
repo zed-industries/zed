@@ -1152,10 +1152,7 @@ impl Render for ProjectDiff {
                     None
                 };
                 let keybinding_focus_handle = self.focus_handle(cx);
-                el.flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
+                el.flex().items_center().justify_center().child(
                     v_flex()
                         .gap_1()
                         .child(

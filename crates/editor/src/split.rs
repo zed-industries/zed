@@ -762,7 +762,10 @@ impl SplittableEditor {
         });
 
         self.lhs = Some(lhs);
-        eprintln!("SplittableEditor::split: lhs set to Some, lhs.is_some={}", self.lhs.is_some());
+        eprintln!(
+            "SplittableEditor::split: lhs set to Some, lhs.is_some={}",
+            self.lhs.is_some()
+        );
 
         cx.notify();
     }
@@ -1914,7 +1917,10 @@ impl Render for SplittableEditor {
         _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        eprintln!("SplittableEditor::render: lhs.is_some={}", self.lhs.is_some());
+        eprintln!(
+            "SplittableEditor::render: lhs.is_some={}",
+            self.lhs.is_some()
+        );
         let inner = if self.lhs.is_some() {
             let style = self.rhs_editor.read(cx).create_style(cx);
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
