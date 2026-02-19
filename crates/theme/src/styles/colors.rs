@@ -321,6 +321,9 @@ pub struct ThemeColors {
     /// Background color for line highlights of deleted hunks in diff views.
     /// Defaults to `version_control.deleted` at reduced opacity if not set.
     pub version_control_deleted_background: Hsla,
+    /// Background color for line highlights of modified hunks in diff views.
+    /// Defaults to `version_control.modified` at reduced opacity if not set.
+    pub version_control_modified_background: Hsla,
     /// Represents an added word in a word diff.
     pub version_control_word_added: Hsla,
     /// Represents a deleted word in a word diff.

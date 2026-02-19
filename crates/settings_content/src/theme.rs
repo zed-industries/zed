@@ -1003,6 +1003,12 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.deleted_background")]
     pub version_control_deleted_background: Option<String>,
 
+    /// Background color for line highlights of modified hunks in diff views.
+    /// When set, overrides the default (which is `version_control.modified` at reduced opacity),
+    /// allowing higher-contrast themes for accessibility.
+    #[serde(rename = "version_control.modified_background")]
+    pub version_control_modified_background: Option<String>,
+
     /// Color for added words in word diffs.
     #[serde(rename = "version_control.word_added")]
     pub version_control_word_added: Option<String>,

@@ -760,6 +760,10 @@ pub fn theme_colors_refinement(
             .version_control_deleted_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
+        version_control_modified_background: this
+            .version_control_modified_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok()),
         version_control_word_added: this
             .version_control_word_added
             .as_ref()

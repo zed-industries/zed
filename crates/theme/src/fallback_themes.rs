@@ -246,6 +246,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_ignored: crate::gray().light().step_12(),
                 version_control_added_background: ADDED_COLOR.alpha(0.12),
                 version_control_deleted_background: REMOVED_COLOR.alpha(0.12),
+                version_control_modified_background: MODIFIED_COLOR.alpha(0.12),
                 version_control_word_added: WORD_ADDED_COLOR,
                 version_control_word_deleted: WORD_DELETED_COLOR,
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
