@@ -3,7 +3,7 @@ use html_to_markdown::markdown::{
     CodeHandler, HeadingHandler, ListHandler, ParagraphHandler, StyledTextHandler, TableHandler,
     WebpageChromeRemover,
 };
-use html_to_markdown::{convert_html_to_markdown, TagHandler};
+use html_to_markdown::{TagHandler, convert_html_to_markdown};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -187,7 +187,11 @@ mod tests {
         let md = html_to_markdown(html).unwrap();
 
         // Should have separator row inserted after first row
-        assert!(md.contains("| --- | --- |"), "Missing separator row: {}", md);
+        assert!(
+            md.contains("| --- | --- |"),
+            "Missing separator row: {}",
+            md
+        );
         assert!(md.contains("| Feature | Supported |"));
         assert!(md.contains("| Tables | ✓ |"));
     }
