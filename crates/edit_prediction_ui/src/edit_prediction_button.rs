@@ -1523,6 +1523,14 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         providers.push(EditPredictionProvider::Ollama);
     }
 
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .open_ai_compatible_api
+        .is_some()
+    {
+        providers.push(EditPredictionProvider::OpenAiCompatibleApi);
+    }
+
     if edit_prediction::sweep_ai::sweep_api_token(cx)
         .read(cx)
         .has_key()
