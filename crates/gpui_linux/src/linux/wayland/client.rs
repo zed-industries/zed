@@ -75,8 +75,8 @@ use super::{
 
 use crate::linux::{
     DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, ResultExt as _,
-    SCROLL_LINES, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
+    SCROLL_LINES, capslock_from_xkb, get_xkb_compose_state, is_within_click_distance,
+    modifiers_from_xkb, open_uri_internal, read_fd, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -299,7 +299,7 @@ impl WaylandClientStatePtr {
     pub fn enable_ime(&self) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
-        let Some(mut text_input) = state.text_input.take() else {
+        let Some(text_input) = state.text_input.take() else {
             return;
         };
 
@@ -452,8 +452,7 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, mut event_queue) =
-            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
+        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -536,7 +535,7 @@ impl WaylandClient {
             .as_ref()
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
-        let mut cursor = Cursor::new(&conn, &globals, 24);
+        let cursor = Cursor::new(&conn, &globals, 24);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -568,7 +567,7 @@ impl WaylandClient {
             })
             .unwrap();
 
-        let mut state = Rc::new(RefCell::new(WaylandClientState {
+        let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
             gpu_context,
@@ -758,9 +757,12 @@ impl LinuxClient for WaylandClient {
                     .clone()
                     .expect("window is focused by pointer");
                 let scale = focused_window.primary_output_scale();
-                state
-                    .cursor
-                    .set_icon(&wl_pointer, serial, style.to_icon_names(), scale);
+                state.cursor.set_icon(
+                    &wl_pointer,
+                    serial,
+                    cursor_style_to_icon_names(style),
+                    scale,
+                );
             }
         }
     }
@@ -1013,7 +1015,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut client = this.get_client();
+        let client = this.get_client();
         let mut state = client.borrow_mut();
 
         let Some(window) = get_window(&mut state, &surface.id()) else {
@@ -1615,9 +1617,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             cursor_shape_device.set_shape(serial, to_shape(style));
                         } else {
                             let scale = window.primary_output_scale();
-                            state
-                                .cursor
-                                .set_icon(wl_pointer, serial, style.to_icon_names(), scale);
+                            state.cursor.set_icon(
+                                wl_pointer,
+                                serial,
+                                cursor_style_to_icon_names(style),
+                                scale,
+                            );
                         }
                     }
                     drop(state);
@@ -1669,7 +1674,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                                 state.cursor.set_icon(
                                     &wl_pointer,
                                     serial,
-                                    default_style.to_icon_names(),
+                                    cursor_style_to_icon_names(style),
                                     scale,
                                 );
                             }

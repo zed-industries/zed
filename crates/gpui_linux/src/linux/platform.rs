@@ -760,39 +760,37 @@ pub(super) unsafe fn read_fd(fd: filedescriptor::FileDescriptor) -> Result<Vec<u
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) const DEFAULT_CURSOR_ICON_NAME: &str = "left_ptr";
 
-impl CursorStyle {
-    #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(super) fn to_icon_names(self) -> &'static [&'static str] {
-        // Based on cursor names from chromium:
-        // https://github.com/chromium/chromium/blob/d3069cf9c973dc3627fa75f64085c6a86c8f41bf/ui/base/cursor/cursor_factory.cc#L113
-        match self {
-            CursorStyle::Arrow => &[DEFAULT_CURSOR_ICON_NAME],
-            CursorStyle::IBeam => &["text", "xterm"],
-            CursorStyle::Crosshair => &["crosshair", "cross"],
-            CursorStyle::ClosedHand => &["closedhand", "grabbing", "hand2"],
-            CursorStyle::OpenHand => &["openhand", "grab", "hand1"],
-            CursorStyle::PointingHand => &["pointer", "hand", "hand2"],
-            CursorStyle::ResizeLeft => &["w-resize", "left_side"],
-            CursorStyle::ResizeRight => &["e-resize", "right_side"],
-            CursorStyle::ResizeLeftRight => &["ew-resize", "sb_h_double_arrow"],
-            CursorStyle::ResizeUp => &["n-resize", "top_side"],
-            CursorStyle::ResizeDown => &["s-resize", "bottom_side"],
-            CursorStyle::ResizeUpDown => &["sb_v_double_arrow", "ns-resize"],
-            CursorStyle::ResizeUpLeftDownRight => &["size_fdiag", "bd_double_arrow", "nwse-resize"],
-            CursorStyle::ResizeUpRightDownLeft => &["size_bdiag", "nesw-resize", "fd_double_arrow"],
-            CursorStyle::ResizeColumn => &["col-resize", "sb_h_double_arrow"],
-            CursorStyle::ResizeRow => &["row-resize", "sb_v_double_arrow"],
-            CursorStyle::IBeamCursorForVerticalLayout => &["vertical-text"],
-            CursorStyle::OperationNotAllowed => &["not-allowed", "crossed_circle"],
-            CursorStyle::DragLink => &["alias"],
-            CursorStyle::DragCopy => &["copy"],
-            CursorStyle::ContextualMenu => &["context-menu"],
-            CursorStyle::None => {
-                #[cfg(debug_assertions)]
-                panic!("CursorStyle::None should be handled separately in the client");
-                #[cfg(not(debug_assertions))]
-                &[DEFAULT_CURSOR_ICON_NAME]
-            }
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn cursor_style_to_icon_names(style: CursorStyle) -> &'static [&'static str] {
+    // Based on cursor names from chromium:
+    // https://github.com/chromium/chromium/blob/d3069cf9c973dc3627fa75f64085c6a86c8f41bf/ui/base/cursor/cursor_factory.cc#L113
+    match style {
+        CursorStyle::Arrow => &[DEFAULT_CURSOR_ICON_NAME],
+        CursorStyle::IBeam => &["text", "xterm"],
+        CursorStyle::Crosshair => &["crosshair", "cross"],
+        CursorStyle::ClosedHand => &["closedhand", "grabbing", "hand2"],
+        CursorStyle::OpenHand => &["openhand", "grab", "hand1"],
+        CursorStyle::PointingHand => &["pointer", "hand", "hand2"],
+        CursorStyle::ResizeLeft => &["w-resize", "left_side"],
+        CursorStyle::ResizeRight => &["e-resize", "right_side"],
+        CursorStyle::ResizeLeftRight => &["ew-resize", "sb_h_double_arrow"],
+        CursorStyle::ResizeUp => &["n-resize", "top_side"],
+        CursorStyle::ResizeDown => &["s-resize", "bottom_side"],
+        CursorStyle::ResizeUpDown => &["sb_v_double_arrow", "ns-resize"],
+        CursorStyle::ResizeUpLeftDownRight => &["size_fdiag", "bd_double_arrow", "nwse-resize"],
+        CursorStyle::ResizeUpRightDownLeft => &["size_bdiag", "nesw-resize", "fd_double_arrow"],
+        CursorStyle::ResizeColumn => &["col-resize", "sb_h_double_arrow"],
+        CursorStyle::ResizeRow => &["row-resize", "sb_v_double_arrow"],
+        CursorStyle::IBeamCursorForVerticalLayout => &["vertical-text"],
+        CursorStyle::OperationNotAllowed => &["not-allowed", "crossed_circle"],
+        CursorStyle::DragLink => &["alias"],
+        CursorStyle::DragCopy => &["copy"],
+        CursorStyle::ContextualMenu => &["context-menu"],
+        CursorStyle::None => {
+            #[cfg(debug_assertions)]
+            panic!("CursorStyle::None should be handled separately in the client");
+            #[cfg(not(debug_assertions))]
+            &[DEFAULT_CURSOR_ICON_NAME]
         }
     }
 }
@@ -1071,7 +1069,7 @@ pub(super) fn modifiers_from_xkb(keymap_state: &State) -> gpui::Modifiers {
 
 pub(super) fn capslock_from_xkb(keymap_state: &State) -> gpui::Capslock {
     let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
-    Self { on }
+    gpui::Capslock { on }
 }
 
 #[cfg(test)]

@@ -49,8 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, get_xkb_compose_state,
-    is_within_click_distance, log_cursor_icon_warning, open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, capslock_from_xkb,
+    get_xkb_compose_state, is_within_click_distance, log_cursor_icon_warning, modifiers_from_xkb,
+    open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -683,7 +684,7 @@ impl X11Client {
             return;
         }
 
-        let Some((mut ximc, mut xim_handler)) = state.take_xim() else {
+        let Some((mut ximc, xim_handler)) = state.take_xim() else {
             return;
         };
         let mut ic_attributes = ximc
@@ -1378,7 +1379,7 @@ impl X11Client {
         };
 
         let mut state = self.0.borrow_mut();
-        let (mut ximc, mut xim_handler) = state.take_xim()?;
+        let (mut ximc, xim_handler) = state.take_xim()?;
         state.composing = !text.is_empty();
         drop(state);
         window.handle_ime_preedit(text);
@@ -1886,7 +1887,7 @@ impl X11ClientState {
             },
             _ => 'outer: {
                 let mut errors = String::new();
-                let cursor_icon_names = style.to_icon_names();
+                let cursor_icon_names = cursor_style_to_icon_names(style);
                 for cursor_icon_name in cursor_icon_names {
                     match self
                         .cursor_handle

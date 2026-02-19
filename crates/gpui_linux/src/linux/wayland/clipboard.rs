@@ -239,7 +239,7 @@ impl Clipboard {
                     calloop::Mode::Level,
                 ),
                 move |_, file, _| {
-                    let mut file = unsafe { file.get_mut() };
+                    let file = unsafe { file.get_mut() };
                     loop {
                         match file.write(&bytes[written..]) {
                             Ok(n) if written + n == bytes.len() => {

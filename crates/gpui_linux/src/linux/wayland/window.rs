@@ -1407,7 +1407,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     state.renderer.update_transparency(!opaque);
-    let mut opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
+    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
     opaque_area.inset(f32::from(state.inset()) as i32);
 
     let region = state

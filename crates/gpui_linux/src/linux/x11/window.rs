@@ -933,7 +933,7 @@ impl X11WindowStatePtr {
     }
 
     pub fn property_notify(&self, event: xproto::PropertyNotifyEvent) -> anyhow::Result<()> {
-        let mut state = self.state.borrow_mut();
+        let state = self.state.borrow_mut();
         if event.atom == state.atoms._NET_WM_STATE {
             self.set_wm_properties(state)?;
         } else if event.atom == state.atoms._GTK_EDGE_CONSTRAINTS {
