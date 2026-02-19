@@ -3,6 +3,7 @@ mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
 mod keymap_file;
+mod reduce_motion_setting;
 mod settings_file;
 mod settings_store;
 mod vscode_import;
@@ -41,6 +42,7 @@ pub use keymap_file::{
     KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
     KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
+pub use reduce_motion_setting::*;
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
