@@ -4556,16 +4556,10 @@ impl BufferSnapshot {
     ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
         let mut all_bracket_matches = HashMap::default();
 
-        let (query_ranges, max_bytes_to_query) = self.extend_range_for_enclosing_brackets(&range);
-        let point_ranges = query_ranges
-            .iter()
-            .map(|r| r.to_point(self))
-            .collect::<Vec<_>>();
-
         for chunk in self
             .tree_sitter_data
             .chunks
-            .applicable_chunks(&point_ranges)
+            .applicable_chunks(&[range.to_point(self)])
         {
             if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
                 continue;
@@ -4588,7 +4582,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_bytes_to_query: Some(max_bytes_to_query),
+                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
@@ -4786,69 +4780,182 @@ impl BufferSnapshot {
         all_bracket_matches
     }
 
-    /// Walk the syntax tree upward from `range` and return a set of byte
-    /// ranges to query (plus the `max_bytes_to_query` limit) for bracket
-    /// matching.
+    /// Walk the syntax tree upward from `range` and find bracket pairs for
+    /// enclosing nodes whose byte extent exceeds `MAX_BYTES_TO_QUERY`.
     ///
-    /// When the cursor sits inside a block whose byte extent exceeds
-    /// `MAX_BYTES_TO_QUERY`, the default containing-byte-range causes
-    /// tree-sitter's query cursor to skip its bracket children.  Rather than
-    /// expanding to the entire block (which would pull in every intermediate
-    /// chunk — catastrophic for huge files), we add small windows around the
-    /// block's start and end where bracket tokens actually live.
-    fn extend_range_for_enclosing_brackets(
+    /// Tree-sitter's `set_containing_byte_range` requires all captured nodes
+    /// to be fully contained within the range.  When a block is larger than
+    /// `MAX_BYTES_TO_QUERY`, the open and close brackets land in different
+    /// containing-range windows, so the query never returns the pair.
+    ///
+    /// Instead of expanding the query range (which is catastrophically slow),
+    /// we walk the syntax tree directly: for each oversized enclosing node we
+    /// inspect its first and last children to find bracket tokens, then count
+    /// ancestor brackets for the nesting depth (color_index).
+    pub fn bracket_pairs_for_large_enclosing_blocks(
         &self,
         range: &Range<usize>,
-    ) -> (Vec<Range<usize>>, usize) {
-        let mut ranges = vec![range.clone()];
-        let mut max_bytes = MAX_BYTES_TO_QUERY;
+    ) -> Vec<BracketMatch<usize>> {
+        const BRACKET_PAIRS: &[(u8, u8)] =
+            &[(b'{', b'}'), (b'(', b')'), (b'[', b']'), (b'<', b'>')];
+
+        let mut result = Vec::new();
 
         for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
+            let depth = layer.depth;
             let mut cursor = layer.node().walk();
-            if !Self::goto_node_enclosing_range(&mut cursor, range, false) {
-                continue;
-            }
+            // Descend to the deepest node covering `range.start` so the
+            // upward walk visits every bracket-carrying ancestor (e.g.
+            // `declaration_list` inside `mod_item`).  Unlike
+            // `goto_node_enclosing_range`, this only needs a single point
+            // inside the block, so it works even when the viewport extends
+            // past the enclosing node.
+            while cursor.goto_first_child_for_byte(range.start).is_some() {}
+
+            let mut seen = HashSet::default();
             loop {
                 let node = cursor.node();
-                let node_range = node.byte_range();
-                // Skip the syntax-layer root — it spans the whole document
-                // and never carries brackets itself.
-                if node_range.len() > max_bytes && node.parent().is_some() {
-                    let window = MAX_BYTES_TO_QUERY;
-                    ranges.push(
-                        node_range.start
-                            ..node_range.start.saturating_add(window).min(node_range.end),
-                    );
-                    ranges.push(
-                        node_range.end.saturating_sub(window).max(node_range.start)..node_range.end,
-                    );
-                    // The containing byte range is centered on each chunk's
-                    // midpoint, so we need 2× the block span to guarantee
-                    // every boundary chunk's window covers both brackets.
-                    max_bytes = max_bytes.max(node_range.len().saturating_mul(2));
-                }
+
+                // `goto_first_child_for_byte` follows one path (e.g.
+                // `impl_item` → `impl` keyword), so bracket-carrying siblings
+                // like `declaration_list` are only reachable as children of an
+                // ancestor.  Check every direct child, and one level deeper
+                // for cases like `impl_item` → `declaration_list` → `{ }`.
+                Self::collect_large_bracket_children(
+                    node,
+                    &self.text,
+                    BRACKET_PAIRS,
+                    depth,
+                    &mut seen,
+                    &mut result,
+                );
+
                 if !cursor.goto_parent() {
                     break;
                 }
             }
         }
 
-        (ranges, max_bytes)
+        result
+    }
+
+    fn collect_large_bracket_children(
+        node: tree_sitter::Node,
+        text: &text::BufferSnapshot,
+        bracket_pairs: &[(u8, u8)],
+        syntax_layer_depth: usize,
+        seen: &mut HashSet<(usize, usize)>,
+        result: &mut Vec<BracketMatch<usize>>,
+    ) {
+        for child_idx in 0..node.child_count() as u32 {
+            let Some(child) = node.child(child_idx) else {
+                continue;
+            };
+            let child_range = child.byte_range();
+            if child_range.len() <= MAX_BYTES_TO_QUERY {
+                continue;
+            }
+            if child.parent().is_none() {
+                continue;
+            }
+            if !seen.insert((child_range.start, child_range.end)) {
+                continue;
+            }
+            if let Some((open_range, close_range)) =
+                Self::find_bracket_children(child, text, bracket_pairs)
+            {
+                let nesting_depth =
+                    Self::count_bracket_ancestors_from_node(child, text, bracket_pairs);
+                result.push(BracketMatch {
+                    open_range,
+                    close_range,
+                    syntax_layer_depth,
+                    newline_only: false,
+                    color_index: Some(nesting_depth),
+                });
+            } else {
+                // Brackets may be one level deeper (e.g. `impl_item` has
+                // `declaration_list` as a child, which in turn holds `{ }`).
+                Self::collect_large_bracket_children(
+                    child,
+                    text,
+                    bracket_pairs,
+                    syntax_layer_depth,
+                    seen,
+                    result,
+                );
+            }
+        }
+    }
+
+    /// Check whether `node` has a first and last child that form a matching
+    /// bracket pair, returning their byte ranges if so.
+    fn find_bracket_children(
+        node: tree_sitter::Node,
+        text: &text::BufferSnapshot,
+        bracket_pairs: &[(u8, u8)],
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let child_count = node.child_count();
+        if child_count < 2 {
+            return None;
+        }
+        let first = node.child(0)?;
+        let last = node.child((child_count - 1) as u32)?;
+        if first.byte_range().len() != 1 || last.byte_range().len() != 1 {
+            return None;
+        }
+        let open_byte = *text
+            .as_rope()
+            .bytes_in_range(first.byte_range())
+            .next()?
+            .first()?;
+        let close_byte = *text
+            .as_rope()
+            .bytes_in_range(last.byte_range())
+            .next()?
+            .first()?;
+        bracket_pairs
+            .iter()
+            .any(|&(o, c)| o == open_byte && c == close_byte)
+            .then(|| (first.byte_range(), last.byte_range()))
+    }
+
+    /// Count how many ancestor nodes above `node` also carry bracket
+    /// children, giving the nesting depth for colorization.
+    fn count_bracket_ancestors_from_node(
+        node: tree_sitter::Node,
+        text: &text::BufferSnapshot,
+        bracket_pairs: &[(u8, u8)],
+    ) -> usize {
+        let mut count = 0;
+        let mut current = node;
+        while let Some(parent) = current.parent() {
+            if parent.parent().is_none() {
+                break;
+            }
+            if Self::find_bracket_children(parent, text, bracket_pairs).is_some() {
+                count += 1;
+            }
+            current = parent;
+        }
+        count
     }
 
     pub fn all_bracket_ranges(
         &self,
         range: Range<usize>,
     ) -> impl Iterator<Item = BracketMatch<usize>> {
+        let large_block_pairs = self.bracket_pairs_for_large_enclosing_blocks(&range);
         self.fetch_bracket_ranges(range.clone(), None)
             .into_values()
             .flatten()
+            .chain(large_block_pairs)
             .filter(move |bracket_match| {
                 let bracket_range = bracket_match.open_range.start..bracket_match.close_range.end;
-                bracket_range.overlaps(&range)
+                bracket_range.overlaps(&range) || bracket_range.contains_inclusive(&range)
             })
             .dedup_by(|a, b| a.open_range == b.open_range && a.close_range == b.close_range)
     }

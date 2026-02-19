@@ -1417,6 +1417,138 @@ fn test_enclosing_bracket_ranges_large_block(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_bracket_pairs_for_large_enclosing_blocks(cx: &mut App) {
+    use crate::syntax_map::MAX_BYTES_TO_QUERY;
+
+    // Build a source that looks like real code: uses, structs, and other
+    // items before a large impl block — similar to editor.rs.
+    let mut source = String::from(
+        "use std::collections::HashMap;\n\
+         use std::sync::Arc;\n\
+         \n\
+         pub struct Foo {\n\
+         \x20   field_a: i32,\n\
+         \x20   field_b: String,\n\
+         }\n\
+         \n\
+         pub struct Bar {\n\
+         \x20   items: Vec<Foo>,\n\
+         }\n\
+         \n",
+    );
+    let impl_start = source.len();
+    source.push_str("impl Foo {\n");
+    let fn_body = "        let x = 1;\n        let y = 2;\n        x + y\n";
+    let mut fn_count = 0;
+    while source.len() < MAX_BYTES_TO_QUERY + 1000 {
+        writeln!(
+            source,
+            "    fn func_{fn_count}() -> i32 {{\n{fn_body}    }}"
+        )
+        .unwrap();
+        fn_count += 1;
+    }
+    source.push_str("}\n");
+
+    let buffer = cx.new(|cx| Buffer::local(source.clone(), cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+
+    let open_brace = source[impl_start..].find('{').unwrap() + impl_start;
+    let close_brace = source.rfind('}').unwrap();
+
+    // Query from a viewport near the beginning of the impl block.
+    let viewport_start = open_brace + 1;
+    let viewport_end = (viewport_start + 500).min(source.len());
+    let pairs = snapshot.bracket_pairs_for_large_enclosing_blocks(&(viewport_start..viewport_end));
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should find exactly one large enclosing bracket pair from top viewport"
+    );
+    assert_eq!(pairs[0].open_range, open_brace..open_brace + 1);
+    assert_eq!(pairs[0].close_range, close_brace..close_brace + 1);
+    assert_eq!(pairs[0].color_index, Some(0), "outermost block has depth 0");
+
+    // Query from a viewport in the middle of the impl block.
+    let middle = source.len() / 2;
+    let pairs = snapshot.bracket_pairs_for_large_enclosing_blocks(&(middle..middle + 500));
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should find exactly one large enclosing bracket pair from middle viewport"
+    );
+    assert_eq!(pairs[0].open_range, open_brace..open_brace + 1);
+    assert_eq!(pairs[0].close_range, close_brace..close_brace + 1);
+
+    // Query from a viewport near the end of the impl block.
+    let near_end = close_brace.saturating_sub(200);
+    let pairs = snapshot.bracket_pairs_for_large_enclosing_blocks(&(near_end..close_brace + 1));
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should find exactly one large enclosing bracket pair from bottom viewport"
+    );
+    assert_eq!(pairs[0].open_range, open_brace..open_brace + 1);
+    assert_eq!(pairs[0].close_range, close_brace..close_brace + 1);
+
+    // Viewport that extends past the closing brace should still find the pair
+    // (the viewport may include trailing content after `}`).
+    let pairs = snapshot.bracket_pairs_for_large_enclosing_blocks(&(near_end..source.len()));
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should find the pair even when viewport extends past the block"
+    );
+    assert_eq!(pairs[0].open_range, open_brace..open_brace + 1);
+    assert_eq!(pairs[0].close_range, close_brace..close_brace + 1);
+}
+
+#[gpui::test]
+fn test_bracket_pairs_for_large_block_viewport_before_block(cx: &mut App) {
+    use crate::syntax_map::MAX_BYTES_TO_QUERY;
+
+    // Simulate a viewport that starts a few lines BEFORE `impl Foo {`,
+    // e.g. the user sees the closing `}` of the previous item and then
+    // `impl Foo {`.  `goto_first_child_for_byte(range.start)` descends
+    // into the previous item, so the `impl_item` node is only reachable
+    // as a sibling — and brackets live on its `declaration_list` child,
+    // one level deeper.
+    let preamble = "struct Bar {\n    field: i32,\n}\n\n";
+    let mut source = String::from(preamble);
+    let impl_start = source.len();
+    source.push_str("impl Foo {\n");
+    let fn_body = "        let x = 1;\n        let y = 2;\n        x + y\n";
+    let mut fn_count = 0;
+    while source.len() < impl_start + MAX_BYTES_TO_QUERY + 1000 {
+        writeln!(
+            source,
+            "    fn func_{fn_count}() -> i32 {{\n{fn_body}    }}"
+        )
+        .unwrap();
+        fn_count += 1;
+    }
+    source.push_str("}\n");
+
+    let buffer = cx.new(|cx| Buffer::local(source.clone(), cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _cx| buffer.snapshot());
+
+    let open_brace = source[impl_start..].find('{').unwrap() + impl_start;
+    let close_brace = source.rfind('}').unwrap();
+
+    // Viewport starts inside the preamble (before the impl block).
+    let viewport_start = preamble.len().saturating_sub(10);
+    let viewport_end = open_brace + 200;
+    let pairs = snapshot.bracket_pairs_for_large_enclosing_blocks(&(viewport_start..viewport_end));
+    assert_eq!(
+        pairs.len(),
+        1,
+        "should find the impl bracket pair even when viewport starts before the block"
+    );
+    assert_eq!(pairs[0].open_range, open_brace..open_brace + 1);
+    assert_eq!(pairs[0].close_range, close_brace..close_brace + 1);
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &mut App) {
     let mut assert = |selection_text, bracket_pair_texts| {
         assert_bracket_pairs(
