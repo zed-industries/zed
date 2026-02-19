@@ -61,7 +61,7 @@ use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use text::Bias;
 use ui::App;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use util::{ResultExt, get_default_system_shell_preferring_bash, markdown::MarkdownEscaped, paths::PathStyle};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -265,8 +265,14 @@ impl ToolCall {
 
         let result = Self {
             id: tool_call.tool_call_id,
-            label: cx
-                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
+            label: cx.new(|cx| {
+                Markdown::new(
+                    MarkdownEscaped(&title).to_string().into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            }),
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -323,11 +329,14 @@ impl ToolCall {
             }
             self.label.update(cx, |label, cx| {
                 if self.kind == acp::ToolKind::Execute {
-                    label.replace(title, cx);
+                    label.replace(MarkdownEscaped(&title).to_string(), cx);
                 } else if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx);
+                    label.replace(
+                        MarkdownEscaped(first_line).to_string() + "…",
+                        cx,
+                    );
                 } else {
-                    label.replace(title, cx);
+                    label.replace(MarkdownEscaped(&title).to_string(), cx);
                 }
             });
         }
