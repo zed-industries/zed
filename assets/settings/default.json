@@ -1578,6 +1578,13 @@
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 64,
+    },
+    "open_ai_compatible_api": {
+      "api_url": "http://localhost:11434",
+      "model": "",
+      "prompt_format": "infer",
       "max_output_tokens": 64,
     },
     // Whether edit predictions are enabled when editing text threads in the agent panel.
