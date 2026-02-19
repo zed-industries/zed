@@ -1,10 +1,11 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::{self as acp, ToolCallUpdateFields, ToolKind};
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use language_model::{LanguageModelImage, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -387,26 +388,60 @@ impl AnyAgentTool for ContextServerTool {
                 return Err(AgentToolOutput::from_error(error_message));
             }
 
-            let mut result = String::new();
+            let mut text_result = String::new();
+            let mut image_content: Option<LanguageModelImage> = None;
+            let mut tool_call_content: Vec<acp::ToolCallContent> = Vec::new();
+
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
-                        result.push_str(&text);
+                        text_result.push_str(&text);
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(text.clone())),
+                        )));
                     }
-                    context_server::types::ToolResponseContent::Image { .. } => {
-                        log::warn!("Ignoring image content from tool response");
+                    context_server::types::ToolResponseContent::Image { data, mime_type } => {
+                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Image(acp::ImageContent::new(
+                                data.clone(),
+                                mime_type.clone(),
+                            )),
+                        )));
+                        if image_content.is_none() {
+                            image_content = Some(LanguageModelImage::from_base64(data));
+                        } else {
+                            log::warn!("Ignoring additional image from tool response");
+                        }
                     }
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
                     }
-                    context_server::types::ToolResponseContent::Resource { .. } => {
-                        log::warn!("Ignoring resource content from tool response");
+                    context_server::types::ToolResponseContent::Resource { resource } => {
+                        log::warn!(
+                            "Ignoring resource content from tool response (URI: {})",
+                            resource.uri
+                        );
                     }
                 }
             }
+
+            if !tool_call_content.is_empty() {
+                event_stream.update_fields(ToolCallUpdateFields::new().content(tool_call_content));
+            }
+
+            let llm_output: LanguageModelToolResultContent =
+                match (image_content, text_result.is_empty()) {
+                    (Some(image), true) => image.into(),
+                    (Some(image), false) => {
+                        log::warn!("Ignoring text content from tool response");
+                        image.into()
+                    }
+                    (None, _) => text_result.clone().into(),
+                };
+
             Ok(AgentToolOutput {
-                raw_output: result.clone().into(),
-                llm_output: result.into(),
+                raw_output: text_result.into(),
+                llm_output,
             })
         })
     }

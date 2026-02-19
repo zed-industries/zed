@@ -1084,6 +1084,22 @@ impl Thread {
                 }
             });
 
+        // Extract image content from tool result for UI display
+        let image_content: Option<Vec<acp::ToolCallContent>> =
+            tool_result
+                .as_ref()
+                .and_then(|result| match &result.content {
+                    LanguageModelToolResultContent::Image(image) => {
+                        Some(vec![acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Image(acp::ImageContent::new(
+                                image.source.to_string(),
+                                "image/png".to_string(),
+                            )),
+                        ))])
+                    }
+                    LanguageModelToolResultContent::Text(_) => None,
+                });
+
         let tool = self.tools.get(tool_use.name.as_ref()).cloned().or_else(|| {
             self.context_server_registry
                 .read(cx)
@@ -1110,13 +1126,13 @@ impl Thread {
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
-            stream.update_tool_call_fields(
-                &tool_use.id,
-                acp::ToolCallUpdateFields::new()
-                    .status(status)
-                    .raw_output(output),
-                None,
-            );
+            let mut update_fields = acp::ToolCallUpdateFields::new()
+                .status(status)
+                .raw_output(output);
+            if let Some(content) = image_content {
+                update_fields = update_fields.content(content);
+            }
+            stream.update_tool_call_fields(&tool_use.id, update_fields, None);
             return;
         };
 
@@ -1143,13 +1159,13 @@ impl Thread {
                 .log_err();
         }
 
-        stream.update_tool_call_fields(
-            &tool_use.id,
-            acp::ToolCallUpdateFields::new()
-                .status(status)
-                .raw_output(output),
-            None,
-        );
+        let mut update_fields = acp::ToolCallUpdateFields::new()
+            .status(status)
+            .raw_output(output);
+        if let Some(content) = image_content {
+            update_fields = update_fields.content(content);
+        }
+        stream.update_tool_call_fields(&tool_use.id, update_fields, None);
     }
 
     pub fn from_db(
