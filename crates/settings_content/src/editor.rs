@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::num;
 
 use collections::HashMap;
+use gpui::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -22,6 +23,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
+    /// Cursor tail animation settings for block cursors.
+    pub cursor_tail: Option<CursorTailContent>,
     /// Determines when the mouse cursor should be hidden in an editor or input box.
     ///
     /// Default: on_typing_and_movement
@@ -830,6 +833,68 @@ pub struct SearchSettingsContent {
     pub center_on_match: Option<bool>,
     /// Whether to search on input in project search.
     pub search_on_input: Option<bool>,
+}
+
+/// Preset profile for cursor tail animation.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorTailProfile {
+    #[default]
+    Classic,
+    Silk,
+    Comet,
+    Swift,
+    Custom,
+}
+
+/// Cursor tail animation settings for block cursors.
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CursorTailContent {
+    /// Whether to enable cursor tail animation.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Cursor tail preset profile.
+    ///
+    /// Default: classic
+    pub profile: Option<CursorTailProfile>,
+    /// Trail animation duration in milliseconds.
+    ///
+    /// Default: 90
+    pub duration_ms: Option<DelayMs>,
+    /// Minimum movement distance required to show a trail, in cursor-height units.
+    ///
+    /// Default: 1.5
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub minimum_distance_multiplier: Option<f32>,
+    /// Maximum trail length, in cursor-height units.
+    ///
+    /// Default: 6.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub max_length_multiplier: Option<f32>,
+    /// Additional alpha multiplier applied to the trail color.
+    ///
+    /// Default: 1.0
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub opacity: Option<f32>,
+    /// Optional trail color override.
+    ///
+    /// Default: null (uses cursor/player color)
+    pub color: Option<Rgba>,
 }
 
 #[with_fallible_options]

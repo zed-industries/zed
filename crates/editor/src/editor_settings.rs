@@ -1,12 +1,12 @@
 use core::num;
 
-use gpui::App;
+use gpui::{App, Hsla, Rgba};
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CompletionDetailAlignment, CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn,
-    DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode,
-    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
+    CompletionDetailAlignment, CurrentLineHighlight, CursorTailProfile, DelayMs, DiffViewStyle,
+    DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer, GoToDefinitionFallback,
+    HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine,
     ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
@@ -18,6 +18,7 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
+    pub cursor_tail: CursorTailSettings,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -72,6 +73,63 @@ pub struct Jupyter {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct StickyScroll {
     pub enabled: bool,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CursorTailSettings {
+    pub enabled: bool,
+    pub profile: CursorTailProfile,
+    pub duration_ms: DelayMs,
+    pub minimum_distance_multiplier: f32,
+    pub max_length_multiplier: f32,
+    pub opacity: f32,
+    pub color: Option<Hsla>,
+}
+
+#[derive(Copy, Clone)]
+struct CursorTailPreset {
+    duration_ms: DelayMs,
+    minimum_distance_multiplier: f32,
+    max_length_multiplier: f32,
+    opacity: f32,
+    color: Option<Hsla>,
+}
+
+fn cursor_tail_profile_color(hex: &str) -> Option<Hsla> {
+    Rgba::try_from(hex).ok().map(Into::into)
+}
+
+fn cursor_tail_preset(profile: CursorTailProfile) -> CursorTailPreset {
+    match profile {
+        CursorTailProfile::Classic | CursorTailProfile::Custom => CursorTailPreset {
+            duration_ms: DelayMs(90),
+            minimum_distance_multiplier: 1.5,
+            max_length_multiplier: 6.0,
+            opacity: 1.0,
+            color: None,
+        },
+        CursorTailProfile::Silk => CursorTailPreset {
+            duration_ms: DelayMs(96),
+            minimum_distance_multiplier: 1.0,
+            max_length_multiplier: 8.0,
+            opacity: 0.78,
+            color: cursor_tail_profile_color("#9ED8FF"),
+        },
+        CursorTailProfile::Comet => CursorTailPreset {
+            duration_ms: DelayMs(130),
+            minimum_distance_multiplier: 0.75,
+            max_length_multiplier: 11.0,
+            opacity: 0.64,
+            color: cursor_tail_profile_color("#8BF6D5"),
+        },
+        CursorTailProfile::Swift => CursorTailPreset {
+            duration_ms: DelayMs(64),
+            minimum_distance_multiplier: 1.25,
+            max_length_multiplier: 5.3,
+            opacity: 0.92,
+            color: cursor_tail_profile_color("#FFD28F"),
+        },
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,9 +260,56 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let cursor_tail = editor.cursor_tail.unwrap_or_default();
+        let cursor_tail_profile = cursor_tail.profile.unwrap_or(CursorTailProfile::Classic);
+        let cursor_tail_profile_preset = cursor_tail_preset(cursor_tail_profile);
+        let use_custom_cursor_tail_values = cursor_tail_profile == CursorTailProfile::Custom;
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
+            cursor_tail: CursorTailSettings {
+                enabled: cursor_tail.enabled.unwrap_or(false),
+                profile: cursor_tail_profile,
+                duration_ms: if use_custom_cursor_tail_values {
+                    cursor_tail
+                        .duration_ms
+                        .unwrap_or(cursor_tail_profile_preset.duration_ms)
+                } else {
+                    cursor_tail_profile_preset.duration_ms
+                },
+                minimum_distance_multiplier: if use_custom_cursor_tail_values {
+                    cursor_tail
+                        .minimum_distance_multiplier
+                        .unwrap_or(cursor_tail_profile_preset.minimum_distance_multiplier)
+                } else {
+                    cursor_tail_profile_preset.minimum_distance_multiplier
+                }
+                .max(0.0),
+                max_length_multiplier: if use_custom_cursor_tail_values {
+                    cursor_tail
+                        .max_length_multiplier
+                        .unwrap_or(cursor_tail_profile_preset.max_length_multiplier)
+                } else {
+                    cursor_tail_profile_preset.max_length_multiplier
+                }
+                .max(0.0),
+                opacity: if use_custom_cursor_tail_values {
+                    cursor_tail
+                        .opacity
+                        .unwrap_or(cursor_tail_profile_preset.opacity)
+                } else {
+                    cursor_tail_profile_preset.opacity
+                }
+                .clamp(0.0, 1.0),
+                color: if use_custom_cursor_tail_values {
+                    cursor_tail
+                        .color
+                        .map(Into::into)
+                        .or(cursor_tail_profile_preset.color)
+                } else {
+                    cursor_tail_profile_preset.color
+                },
+            },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),

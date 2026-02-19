@@ -1169,6 +1169,7 @@ pub struct Editor {
     blink_manager: Entity<BlinkManager>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
+    cursor_tail_states: HashMap<CursorTrailKey, CursorTrailState>,
     pub show_local_selections: bool,
     mode: EditorMode,
     show_breadcrumbs: bool,
@@ -1481,6 +1482,39 @@ enum SelectionHistoryMode {
 struct HoveredCursor {
     replica_id: ReplicaId,
     selection_id: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CursorTrailSource {
+    Local,
+    Remote(ReplicaId),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CursorTrailKey {
+    pub source: CursorTrailSource,
+    pub selection_id: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct CursorTrailRect {
+    pub origin: gpui::Point<Pixels>,
+    pub size: Size<Pixels>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct CursorTrailAnimationState {
+    pub from: CursorTrailRect,
+    pub to: CursorTrailRect,
+    pub started_at: Instant,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct CursorTrailState {
+    last_head: DisplayPoint,
+    last_rect: CursorTrailRect,
+    animation: Option<CursorTrailAnimationState>,
+    last_seen: Instant,
 }
 
 #[derive(Debug)]
@@ -2493,6 +2527,7 @@ impl Editor {
             style: None,
             show_cursor_names: false,
             hovered_cursors: HashMap::default(),
+            cursor_tail_states: HashMap::default(),
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             edit_predictions_hidden_for_vim_mode: false,
@@ -23873,6 +23908,162 @@ impl Editor {
             && self.focus_handle.is_focused(window)
     }
 
+    pub(crate) fn cursor_tail_state_max_age(duration: Duration) -> Duration {
+        duration.saturating_mul(2).max(Duration::from_millis(300))
+    }
+
+    fn cursor_tail_rebind_candidate_key(
+        states: &HashMap<CursorTrailKey, CursorTrailState>,
+        active_keys: &HashSet<CursorTrailKey>,
+        key: CursorTrailKey,
+        head: DisplayPoint,
+        now: Instant,
+        max_age: Duration,
+    ) -> Option<CursorTrailKey> {
+        let mut best_candidate: Option<(CursorTrailKey, (u32, u32, Duration))> = None;
+        for (candidate_key, state) in states {
+            if candidate_key.source != key.source
+                || *candidate_key == key
+                || active_keys.contains(candidate_key)
+            {
+                continue;
+            }
+
+            let Some(age) = now.checked_duration_since(state.last_seen) else {
+                continue;
+            };
+            if age > max_age {
+                continue;
+            }
+
+            let score = (
+                state.last_head.row().0.abs_diff(head.row().0),
+                state.last_head.column().abs_diff(head.column()),
+                age,
+            );
+            if best_candidate
+                .as_ref()
+                .is_none_or(|(_, best_score)| score < *best_score)
+            {
+                best_candidate = Some((*candidate_key, score));
+            }
+        }
+        best_candidate.map(|(candidate_key, _)| candidate_key)
+    }
+
+    fn cursor_tail_interpolated_rect(
+        animation: CursorTrailAnimationState,
+        now: Instant,
+        duration: Duration,
+    ) -> CursorTrailRect {
+        if duration.is_zero() {
+            return animation.to;
+        }
+
+        let elapsed = now
+            .checked_duration_since(animation.started_at)
+            .unwrap_or_default();
+        let progress = (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0);
+        CursorTrailRect {
+            origin: point(
+                animation.from.origin.x
+                    + (animation.to.origin.x - animation.from.origin.x) * progress,
+                animation.from.origin.y
+                    + (animation.to.origin.y - animation.from.origin.y) * progress,
+            ),
+            size: size(
+                animation.from.size.width
+                    + (animation.to.size.width - animation.from.size.width) * progress,
+                animation.from.size.height
+                    + (animation.to.size.height - animation.from.size.height) * progress,
+            ),
+        }
+    }
+
+    pub(crate) fn record_cursor_tail_animation(
+        &mut self,
+        key: CursorTrailKey,
+        active_keys: &HashSet<CursorTrailKey>,
+        head: DisplayPoint,
+        rect: CursorTrailRect,
+        now: Instant,
+        duration: Duration,
+    ) -> Option<CursorTrailAnimationState> {
+        let mut state = if let Some(state) = self.cursor_tail_states.remove(&key) {
+            state
+        } else {
+            let max_age = Self::cursor_tail_state_max_age(duration);
+            let rebound_state = Self::cursor_tail_rebind_candidate_key(
+                &self.cursor_tail_states,
+                active_keys,
+                key,
+                head,
+                now,
+                max_age,
+            )
+            .and_then(|candidate_key| self.cursor_tail_states.remove(&candidate_key));
+
+            let Some(rebound_state) = rebound_state else {
+                self.cursor_tail_states.insert(
+                    key,
+                    CursorTrailState {
+                        last_head: head,
+                        last_rect: rect,
+                        animation: None,
+                        last_seen: now,
+                    },
+                );
+                return None;
+            };
+            rebound_state
+        };
+
+        let moved = state.last_head != head || state.last_rect.size != rect.size;
+        if moved {
+            let from = state
+                .animation
+                .and_then(|animation| {
+                    now.checked_duration_since(animation.started_at)
+                        .filter(|elapsed| *elapsed < duration)
+                        .map(|_| Self::cursor_tail_interpolated_rect(animation, now, duration))
+                })
+                .unwrap_or(state.last_rect);
+            state.animation = Some(CursorTrailAnimationState {
+                from,
+                to: rect,
+                started_at: now,
+            });
+            state.last_head = head;
+            state.last_rect = rect;
+        } else if state.last_rect.origin != rect.origin {
+            state.last_rect = rect;
+            state.animation = None;
+        }
+
+        state.last_seen = now;
+
+        let mut animation = state.animation;
+        if animation
+            .and_then(|animation| now.checked_duration_since(animation.started_at))
+            .is_none_or(|elapsed| elapsed >= duration)
+        {
+            state.animation = None;
+            animation = None;
+        }
+
+        self.cursor_tail_states.insert(key, state);
+        animation
+    }
+
+    pub(crate) fn prune_cursor_tail_states(&mut self, now: Instant, max_age: Duration) {
+        self.cursor_tail_states
+            .retain(|_, state| now.duration_since(state.last_seen) <= max_age);
+    }
+
+    pub(crate) fn clear_cursor_tail_states(&mut self) {
+        self.cursor_tail_states.clear();
+    }
+
     pub fn set_show_cursor_when_unfocused(&mut self, is_enabled: bool, cx: &mut Context<Self>) {
         self.show_cursor_when_unfocused = is_enabled;
         cx.notify();
@@ -24275,6 +24466,9 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
+            if !editor_settings.cursor_tail.enabled {
+                self.clear_cursor_tail_states();
+            }
         }
 
         if old_cursor_shape != self.cursor_shape {
@@ -26195,6 +26389,144 @@ mod tests {
         assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
         assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
         assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+
+    #[test]
+    fn test_cursor_tail_rebind_candidate_uses_closest_recent_state() {
+        let now = Instant::now();
+        let desired_key = CursorTrailKey {
+            source: CursorTrailSource::Local,
+            selection_id: 99,
+        };
+        let desired_head = DisplayPoint::new(DisplayRow(7), 3);
+        let mut states = HashMap::default();
+        states.insert(
+            CursorTrailKey {
+                source: CursorTrailSource::Local,
+                selection_id: 1,
+            },
+            CursorTrailState {
+                last_head: DisplayPoint::new(DisplayRow(10), 2),
+                last_rect: CursorTrailRect {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(10.0), px(20.0)),
+                },
+                animation: None,
+                last_seen: now - Duration::from_millis(40),
+            },
+        );
+        states.insert(
+            CursorTrailKey {
+                source: CursorTrailSource::Local,
+                selection_id: 2,
+            },
+            CursorTrailState {
+                last_head: DisplayPoint::new(DisplayRow(7), 2),
+                last_rect: CursorTrailRect {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(10.0), px(20.0)),
+                },
+                animation: None,
+                last_seen: now - Duration::from_millis(20),
+            },
+        );
+        states.insert(
+            CursorTrailKey {
+                source: CursorTrailSource::Remote(ReplicaId::default()),
+                selection_id: 3,
+            },
+            CursorTrailState {
+                last_head: desired_head,
+                last_rect: CursorTrailRect {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(10.0), px(20.0)),
+                },
+                animation: None,
+                last_seen: now - Duration::from_millis(10),
+            },
+        );
+
+        let candidate = Editor::cursor_tail_rebind_candidate_key(
+            &states,
+            &HashSet::default(),
+            desired_key,
+            desired_head,
+            now,
+            Duration::from_millis(60),
+        );
+
+        assert_eq!(
+            candidate,
+            Some(CursorTrailKey {
+                source: CursorTrailSource::Local,
+                selection_id: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_cursor_tail_interpolation_uses_elapsed_progress() {
+        let now = Instant::now();
+        let duration = Duration::from_millis(100);
+        let animation = CursorTrailAnimationState {
+            from: CursorTrailRect {
+                origin: point(px(10.0), px(20.0)),
+                size: size(px(12.0), px(24.0)),
+            },
+            to: CursorTrailRect {
+                origin: point(px(30.0), px(40.0)),
+                size: size(px(20.0), px(30.0)),
+            },
+            started_at: now - Duration::from_millis(50),
+        };
+
+        let interpolated = Editor::cursor_tail_interpolated_rect(animation, now, duration);
+        assert!((interpolated.origin.x - px(20.0)).abs() < px(0.01));
+        assert!((interpolated.origin.y - px(30.0)).abs() < px(0.01));
+        assert!((interpolated.size.width - px(16.0)).abs() < px(0.01));
+        assert!((interpolated.size.height - px(27.0)).abs() < px(0.01));
+    }
+
+    #[test]
+    fn test_cursor_tail_rebind_skips_current_frame_active_keys() {
+        let now = Instant::now();
+        let existing_key = CursorTrailKey {
+            source: CursorTrailSource::Local,
+            selection_id: 1,
+        };
+        let desired_key = CursorTrailKey {
+            source: CursorTrailSource::Local,
+            selection_id: 99,
+        };
+
+        let mut states = HashMap::default();
+        states.insert(
+            existing_key,
+            CursorTrailState {
+                last_head: DisplayPoint::new(DisplayRow(7), 3),
+                last_rect: CursorTrailRect {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(10.0), px(20.0)),
+                },
+                animation: None,
+                last_seen: now - Duration::from_millis(20),
+            },
+        );
+
+        let mut active_keys = HashSet::default();
+        active_keys.insert(existing_key);
+        active_keys.insert(desired_key);
+
+        let candidate = Editor::cursor_tail_rebind_candidate_key(
+            &states,
+            &active_keys,
+            desired_key,
+            DisplayPoint::new(DisplayRow(7), 3),
+            now,
+            Duration::from_millis(60),
+        );
+
+        assert_eq!(candidate, None);
     }
 }
 

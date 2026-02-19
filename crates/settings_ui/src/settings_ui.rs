@@ -460,6 +460,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<bool>(render_toggle_button)
         .add_basic_renderer::<String>(render_text_field)
         .add_basic_renderer::<SharedString>(render_text_field)
+        .add_basic_renderer::<gpui::Rgba>(render_rgba_field)
         .add_basic_renderer::<settings::SaturatingBool>(render_toggle_button)
         .add_basic_renderer::<settings::CursorShape>(render_dropdown)
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
@@ -470,6 +471,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
+        .add_basic_renderer::<settings::CursorTailProfile>(render_dropdown)
         .add_basic_renderer::<settings::HideMouseMode>(render_dropdown)
         .add_basic_renderer::<settings::CurrentLineHighlight>(render_dropdown)
         .add_basic_renderer::<settings::ShowWhitespaceSetting>(render_dropdown)
@@ -4011,6 +4013,62 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     cx,
                     move |settings, _cx| {
                         (field.write)(settings, new_text.map(Into::into));
+                    },
+                )
+                .log_err(); // todo(settings_ui) don't log err
+            }
+        })
+        .into_any_element()
+}
+
+fn render_rgba_field(
+    field: SettingField<gpui::Rgba>,
+    file: SettingsUiFile,
+    metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, initial_value) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let initial_text = initial_value.map(|value| {
+        serde_json::to_string(value)
+            .unwrap_or_else(|_| format!("#{:08x}", u32::from(*value)))
+            .trim_matches('"')
+            .to_string()
+    });
+
+    SettingsInputField::new()
+        .tab_index(0)
+        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
+        .when_some(
+            metadata.and_then(|metadata| metadata.placeholder),
+            |editor, placeholder| editor.with_placeholder(placeholder),
+        )
+        .on_confirm({
+            move |new_text, window, cx| {
+                let parsed_value = match new_text {
+                    Some(text) if !text.trim().is_empty() => {
+                        match gpui::Rgba::try_from(text.trim()) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                log::error!(
+                                    "invalid color value for {:?}: {error}",
+                                    field.json_path
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+
+                update_settings_file(
+                    file.clone(),
+                    field.json_path,
+                    window,
+                    cx,
+                    move |settings, _cx| {
+                        (field.write)(settings, parsed_value);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err

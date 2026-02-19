@@ -1035,7 +1035,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 5] {
+    fn cursor_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1088,6 +1088,172 @@ fn appearance_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Enabled",
+                description: "Enable animated cursor tail effects for block cursors.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Profile",
+                description: "Preset profile for cursor tail behavior (classic, silk, comet, swift, custom).",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.profile"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.profile.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .profile = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Duration",
+                description: "Trail animation duration in milliseconds. Used when profile is custom.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.duration_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.duration_ms.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .duration_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Minimum Distance",
+                description: "Minimum movement distance required to show a trail, in cursor-height units. Used when profile is custom.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.minimum_distance_multiplier"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| {
+                                cursor_tail.minimum_distance_multiplier.as_ref()
+                            })
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .minimum_distance_multiplier = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Maximum Length",
+                description: "Maximum trail length, in cursor-height units. Used when profile is custom.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.max_length_multiplier"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.max_length_multiplier.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .max_length_multiplier = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Opacity",
+                description: "Alpha multiplier for cursor trail rendering. Used when profile is custom.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.opacity"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.opacity.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .opacity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Cursor Tail Color",
+                description: "Optional color override for cursor trails. Used when profile is custom.",
+                field: Box::new(SettingField {
+                    json_path: Some("cursor_tail.color"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .as_ref()
+                            .and_then(|cursor_tail| cursor_tail.color.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .cursor_tail
+                            .get_or_insert_default()
+                            .color = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("#9ed8ff"),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
         ]

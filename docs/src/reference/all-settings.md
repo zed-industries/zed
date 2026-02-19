@@ -720,6 +720,94 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
+## Cursor Tail
+
+- Description: Cursor tail animation for block cursors in the editor.
+- Setting: `cursor_tail`
+- Default:
+
+```json [settings]
+{
+  "cursor_tail": {
+    "enabled": false,
+    "profile": "classic",
+    "duration_ms": 90,
+    "minimum_distance_multiplier": 1.5,
+    "max_length_multiplier": 6.0,
+    "opacity": 1.0,
+    "color": null
+  }
+}
+```
+
+Trail behavior is based on `shaders/cursor_tail.glsl`.
+The animation is only applied when the cursor shape is `block`.
+
+When `cursor_tail.color` is set:
+
+- local cursor trails use the configured color
+- local multicursor trails use the configured color
+- collaborator trails keep collaborator/player colors
+
+### Profile
+
+- Description: Cursor tail preset profile.
+- Setting: `profile`
+- Default: `classic`
+
+**Options**
+
+1. `classic`  
+   Uses values from `cursor_tail.glsl` (`duration_ms: 90`, `minimum_distance_multiplier: 1.5`, `max_length_multiplier: 6.0`, `opacity: 1.0`, no color override).
+2. `silk`  
+   Smooth profile with a soft blue tint.
+3. `comet`  
+   Longer and slower trail with a subtle teal tint.
+4. `swift`  
+   Fast and snappy profile with a warm tint.
+5. `custom`  
+   Uses `duration_ms`, `minimum_distance_multiplier`, `max_length_multiplier`, `opacity`, and `color` directly.
+
+### Enabled
+
+- Description: Whether to enable cursor tail animation.
+- Setting: `enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Duration
+
+- Description: Trail animation duration in milliseconds.
+- Setting: `duration_ms`
+- Default: `90`
+
+### Minimum Distance Multiplier
+
+- Description: Minimum movement distance required to show a trail, in cursor-height units.
+- Setting: `minimum_distance_multiplier`
+- Default: `1.5`
+
+### Maximum Length Multiplier
+
+- Description: Maximum trail length, in cursor-height units.
+- Setting: `max_length_multiplier`
+- Default: `6.0`
+
+### Opacity
+
+- Description: Alpha multiplier applied to the trail color.
+- Setting: `opacity`
+- Default: `1.0`
+
+### Color
+
+- Description: Optional trail color override.
+- Setting: `color`
+- Default: `null` (use cursor/player color)
+
 ## Gutter
 
 - Description: Settings for the editor gutter

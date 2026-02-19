@@ -216,6 +216,27 @@
   //
   // Default: "bar"
   "cursor_shape": "bar",
+  // Cursor tail animation for block cursors in the editor.
+  //
+  // Default:
+  // {
+  //   "enabled": false,
+  //   "profile": "classic",
+  //   "duration_ms": 90,
+  //   "minimum_distance_multiplier": 1.5,
+  //   "max_length_multiplier": 6.0,
+  //   "opacity": 1.0,
+  //   "color": null
+  // }
+  "cursor_tail": {
+    "enabled": false,
+    "profile": "classic",
+    "duration_ms": 90,
+    "minimum_distance_multiplier": 1.5,
+    "max_length_multiplier": 6.0,
+    "opacity": 1.0,
+    "color": null
+  },
   // Determines when the mouse cursor should be hidden in an editor or input box.
   //
   // 1. Never hide the mouse cursor:
