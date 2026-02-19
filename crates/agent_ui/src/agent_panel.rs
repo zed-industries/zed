@@ -4185,13 +4185,15 @@ mod tests {
     #[gpui::test]
     async fn test_set_active_blocked_during_worktree_creation(cx: &mut TestAppContext) {
         init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
         });
 
-        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/project",
             json!({
