@@ -7138,10 +7138,7 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
- "acp_thread",
- "agent-client-protocol",
  "agent_settings",
- "agent_ui",
  "anyhow",
  "askpass",
  "buffer_diff",
