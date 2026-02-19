@@ -13,7 +13,7 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Addon, Editor, EditorEvent, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -749,18 +749,6 @@ impl ProjectDiff {
             );
             (was_empty, is_newly_added)
         });
-
-        // Ensure split view is active for git diff
-        // Do this outside the editor.update to avoid double borrow
-        if was_empty {
-            eprintln!("ProjectDiff::register_buffer: calling split (was_empty=true)");
-            self.editor.update(cx, |editor, cx| {
-                eprintln!("ProjectDiff::register_buffer: inside editor.update, calling split");
-                editor.split(window, cx);
-                eprintln!("ProjectDiff::register_buffer: split returned");
-            });
-            eprintln!("ProjectDiff::register_buffer: split call completed");
-        }
 
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
