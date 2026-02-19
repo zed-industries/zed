@@ -107,6 +107,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Zed,
             Codestral,
             Ollama,
+            OpenAiCompatibleApi,
             Sweep,
             Mercury,
             Experimental(String),
@@ -119,6 +120,7 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
+            Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
             Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
