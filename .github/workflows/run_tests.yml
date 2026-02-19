@@ -15,7 +15,6 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -110,7 +109,6 @@ jobs:
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -583,8 +581,7 @@ jobs:
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
     - name: run_tests::check_scripts::check_xtask_workflows
-      if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-      run: |
+        run: |
         cargo xtask workflows
         if ! git diff --exit-code .github; then
           echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
@@ -645,7 +642,7 @@ jobs:
     - check_docs
     - check_licenses
     - check_scripts
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
+    if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass

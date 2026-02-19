@@ -1,7 +1,10 @@
-# Zed
+# Zed (seri114's fork)
 
-[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
-[![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
+> **Note:** This is a personal fork of [zed-industries/zed](https://github.com/zed-industries/zed).
+> Changes are for personal use and not intended for upstream contribution.
+
+[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/seri114/zed/enhance/assets/badge/v0.json)](https://zed.dev)
+[![CI](https://github.com/seri114/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/seri114/zed/actions/workflows/run_tests.yml)
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
