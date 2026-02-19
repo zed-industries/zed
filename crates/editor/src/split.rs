@@ -225,10 +225,12 @@ where
     for (source_buffer, buffer_offset_range, source_excerpt_id, source_context_range) in
         source_snapshot.range_to_buffer_ranges_with_context(source_bounds)
     {
-        let target_excerpt_id = excerpt_map.get(&source_excerpt_id).copied().unwrap();
-        let target_buffer = target_snapshot
-            .buffer_for_excerpt(target_excerpt_id)
-            .unwrap();
+        let Some(target_excerpt_id) = excerpt_map.get(&source_excerpt_id).copied() else {
+            continue;
+        };
+        let Some(target_buffer) = target_snapshot.buffer_for_excerpt(target_excerpt_id) else {
+            continue;
+        };
 
         let buffer_id = source_buffer.remote_id();
 
