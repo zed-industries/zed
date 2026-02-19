@@ -64,12 +64,10 @@ impl Editor {
                         .filter_map(|pair| {
                             let color_index = pair.color_index?;
 
-                            let buffer_open_range = buffer_snapshot
-                                .anchor_before(pair.open_range.start)
-                                ..buffer_snapshot.anchor_after(pair.open_range.end);
-                            let buffer_close_range = buffer_snapshot
-                                .anchor_before(pair.close_range.start)
-                                ..buffer_snapshot.anchor_after(pair.close_range.end);
+                            let buffer_open_range =
+                                buffer_snapshot.anchor_range_around(pair.open_range);
+                            let buffer_close_range =
+                                buffer_snapshot.anchor_range_around(pair.close_range);
                             let [
                                 buffer_open_range_start,
                                 buffer_open_range_end,
