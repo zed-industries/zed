@@ -573,7 +573,7 @@ jobs:
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
     - name: run_tests::check_scripts::check_xtask_workflows
-        run: |
+      run: |
         cargo xtask workflows
         if ! git diff --exit-code .github; then
           echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"

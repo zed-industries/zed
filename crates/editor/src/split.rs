@@ -484,12 +484,8 @@ impl SplittableEditor {
                             .ok();
                     })
                     .ok();
-                if style == DiffViewStyle::Split {
-                    this.update(cx, |this, cx| {
-                        this.split(window, cx);
-                    })
-                    .ok();
-                }
+                // Don't auto-split here - let the caller decide when to split
+                // This allows ProjectDiff to split after buffers are registered
             }
         });
         let split_state = cx.new(|cx| SplitEditorState::new(cx));
