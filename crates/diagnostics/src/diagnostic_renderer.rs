@@ -13,8 +13,8 @@ use settings::Settings;
 use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Context, IntoElement, ParentElement, SharedString, Styled,
-    Window, div,
+    ActiveTheme, AnyElement, App, Context, CopyButton, IntoElement, ParentElement, SharedString,
+    Styled, Window, div, v_flex,
 };
 use util::maybe;
 
@@ -81,6 +81,7 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
+                    copy_message: primary.diagnostic.message.clone().into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -95,6 +96,7 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
+                    copy_message: entry.diagnostic.message.clone().into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -191,6 +193,7 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
     pub(crate) diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
+    pub(crate) copy_message: SharedString,
 }
 
 impl DiagnosticBlock {
@@ -213,10 +216,19 @@ impl DiagnosticBlock {
         let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
         let line_height = editor_line_height;
         let diagnostics_editor = self.diagnostics_editor.clone();
+        let copy_button_id = format!(
+            "copy-diagnostic-{}-{}-{}-{}",
+            self.initial_range.start.row,
+            self.initial_range.start.column,
+            self.initial_range.end.row,
+            self.initial_range.end.column
+        );
 
         div()
+            .relative()
             .border_l_2()
             .px_2()
+            .pr_8()
             .line_height(line_height)
             .bg(background_color)
             .border_color(border_color)
@@ -240,6 +252,14 @@ impl DiagnosticBlock {
                             .ok();
                     }
                 }),
+            )
+            .child(
+                div().absolute().top_0().right_1().bottom_0().child(
+                    v_flex().justify_center().child(
+                        CopyButton::new(copy_button_id, self.copy_message.clone())
+                            .tooltip_label("Copy Diagnostic"),
+                    ),
+                ),
             )
             .into_any_element()
     }
