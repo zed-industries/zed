@@ -126,7 +126,7 @@ struct SerializedAgentPanel {
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
     #[serde(default)]
-    thread_target: Option<SerializedThreadTarget>,
+    thread_target: Option<ThreadTarget>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -135,41 +135,6 @@ struct SerializedActiveThread {
     agent_type: AgentType,
     title: Option<String>,
     cwd: Option<std::path::PathBuf>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-enum SerializedThreadTarget {
-    LocalProject,
-    NewWorktree,
-    ExistingWorktree { path: PathBuf, branch: String },
-}
-
-impl From<&ThreadTarget> for SerializedThreadTarget {
-    fn from(target: &ThreadTarget) -> Self {
-        match target {
-            ThreadTarget::LocalProject => SerializedThreadTarget::LocalProject,
-            ThreadTarget::NewWorktree => SerializedThreadTarget::NewWorktree,
-            ThreadTarget::ExistingWorktree { path, branch } => {
-                SerializedThreadTarget::ExistingWorktree {
-                    path: path.clone(),
-                    branch: branch.clone(),
-                }
-            }
-        }
-    }
-}
-
-impl From<SerializedThreadTarget> for ThreadTarget {
-    fn from(target: SerializedThreadTarget) -> Self {
-        match target {
-            SerializedThreadTarget::LocalProject => ThreadTarget::LocalProject,
-            SerializedThreadTarget::NewWorktree => ThreadTarget::NewWorktree,
-            SerializedThreadTarget::ExistingWorktree { path, branch } => {
-                ThreadTarget::ExistingWorktree { path, branch }
-            }
-        }
-    }
 }
 
 pub fn init(cx: &mut App) {
@@ -453,7 +418,8 @@ impl From<ExternalAgent> for AgentType {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ThreadTarget {
     #[default]
     LocalProject,
@@ -635,7 +601,7 @@ impl AgentPanel {
 
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
-        let thread_target = Some(SerializedThreadTarget::from(&self.thread_target));
+        let thread_target = Some(self.thread_target.clone());
 
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
@@ -747,7 +713,7 @@ impl AgentPanel {
                             panel.selected_agent = selected_agent;
                         }
                         if let Some(thread_target) = serialized_panel.thread_target.clone() {
-                            panel.thread_target = ThreadTarget::from(thread_target);
+                            panel.thread_target = thread_target;
                         }
                         cx.notify();
                     });
