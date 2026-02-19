@@ -756,6 +756,8 @@ impl Model {
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4_5Thinking
+                | Self::ClaudeSonnet4_6
+                | Self::ClaudeSonnet4_6Thinking
                 | Self::Nova2Lite,
                 "jp",
             ) => Ok(format!("{}.{}", region_group, model_id)),

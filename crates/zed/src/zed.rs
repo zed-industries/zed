@@ -796,36 +796,33 @@ fn register_actions(
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
-            let paths = workspace.prompt_for_open_path(
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
                 PathPromptOptions {
                     files: true,
                     directories: true,
                     multiple: true,
                     prompt: None,
                 },
-                DirectoryLister::Local(
-                    workspace.project().clone(),
-                    workspace.app_state().fs.clone(),
-                ),
                 window,
                 cx,
             );
-
-            cx.spawn_in(window, async move |this, cx| {
-                let Some(paths) = paths.await.log_err().flatten() else {
-                    return;
-                };
-
-                if let Some(task) = this
-                    .update_in(cx, |this, window, cx| {
-                        this.open_workspace_for_paths(false, paths, window, cx)
-                    })
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-            })
-            .detach()
+        })
+        .register_action(|workspace, _: &workspace::OpenFiles, window, cx| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
+                PathPromptOptions {
+                    files: true,
+                    directories,
+                    multiple: true,
+                    prompt: None,
+                },
+                window,
+                cx,
+            );
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {

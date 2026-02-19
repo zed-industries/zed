@@ -1,6 +1,6 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
-use acp_thread::{AcpThread, AgentSessionInfo};
+use acp_thread::{AcpThread, AgentSessionInfo, MentionUri};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -12,7 +12,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
@@ -268,6 +268,47 @@ pub fn init(cx: &mut App) {
                             panel.load_thread_from_clipboard(window, cx);
                         });
                     }
+                })
+                .register_action(|workspace, action: &ReviewBranchDiff, window, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+
+                    let mention_uri = MentionUri::GitDiff {
+                        base_ref: action.base_ref.to_string(),
+                    };
+                    let diff_uri = mention_uri.to_uri().to_string();
+
+                    let content_blocks = vec![
+                        acp::ContentBlock::Text(acp::TextContent::new(
+                            "Please review this branch diff carefully. Point out any issues, \
+                             potential bugs, or improvement opportunities you find.\n\n"
+                                .to_string(),
+                        )),
+                        acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                            acp::EmbeddedResourceResource::TextResourceContents(
+                                acp::TextResourceContents::new(
+                                    action.diff_text.to_string(),
+                                    diff_uri,
+                                ),
+                            ),
+                        )),
+                    ];
+
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+
+                    panel.update(cx, |panel, cx| {
+                        panel.external_thread(
+                            None,
+                            None,
+                            Some(AgentInitialContent::ContentBlock {
+                                blocks: content_blocks,
+                                auto_submit: true,
+                            }),
+                            window,
+                            cx,
+                        );
+                    });
                 });
         },
     )
@@ -3389,34 +3430,6 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
                     });
                 }
             });
-        });
-    }
-
-    fn new_thread_with_content(
-        &self,
-        workspace: &mut Workspace,
-        blocks: Vec<acp::ContentBlock>,
-        auto_submit: bool,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
-            return;
-        };
-
-        workspace.focus_panel::<AgentPanel>(window, cx);
-
-        panel.update(cx, |panel, cx| {
-            panel.external_thread(
-                None,
-                None,
-                Some(AgentInitialContent::ContentBlock {
-                    blocks,
-                    auto_submit,
-                }),
-                window,
-                cx,
-            );
         });
     }
 }

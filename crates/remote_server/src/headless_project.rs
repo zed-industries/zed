@@ -40,6 +40,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -62,6 +63,7 @@ pub struct HeadlessProject {
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
     pub environment: Entity<ProjectEnvironment>,
+    pub profiling_collector: gpui::ProfilingCollector,
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
@@ -74,6 +76,7 @@ pub struct HeadlessAppState {
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
+    pub startup_time: Instant,
 }
 
 impl HeadlessProject {
@@ -90,6 +93,7 @@ impl HeadlessProject {
             node_runtime,
             languages,
             extension_host_proxy: proxy,
+            startup_time,
         }: HeadlessAppState,
         init_worktree_trust: bool,
         cx: &mut Context<Self>,
@@ -286,6 +290,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
@@ -344,6 +349,7 @@ impl HeadlessProject {
             extensions,
             git_store,
             environment,
+            profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
         }
     }
@@ -1099,6 +1105,53 @@ impl HeadlessProject {
         processes.sort_by_key(|p| p.name.clone());
 
         Ok(proto::GetProcessesResponse { processes })
+    }
+
+    async fn handle_get_remote_profiling_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetRemoteProfilingData>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetRemoteProfilingDataResponse> {
+        let foreground_only = envelope.payload.foreground_only;
+
+        let (deltas, now_nanos) = cx.update(|cx| {
+            let dispatcher = cx.foreground_executor().dispatcher();
+            let timings = if foreground_only {
+                vec![dispatcher.get_current_thread_timings()]
+            } else {
+                dispatcher.get_all_timings()
+            };
+            this.update(cx, |this, _cx| {
+                let deltas = this.profiling_collector.collect_unseen(timings);
+                let now_nanos = Instant::now()
+                    .duration_since(this.profiling_collector.startup_time())
+                    .as_nanos() as u64;
+                (deltas, now_nanos)
+            })
+        });
+
+        let threads = deltas
+            .into_iter()
+            .map(|delta| proto::RemoteProfilingThread {
+                thread_name: delta.thread_name,
+                thread_id: delta.thread_id,
+                timings: delta
+                    .new_timings
+                    .into_iter()
+                    .map(|t| proto::RemoteProfilingTiming {
+                        location: Some(proto::RemoteProfilingLocation {
+                            file: t.location.file.to_string(),
+                            line: t.location.line,
+                            column: t.location.column,
+                        }),
+                        start_nanos: t.start as u64,
+                        duration_nanos: t.duration as u64,
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        Ok(proto::GetRemoteProfilingDataResponse { threads, now_nanos })
     }
 
     async fn handle_get_directory_environment(

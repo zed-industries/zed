@@ -1978,8 +1978,8 @@ impl BufferDiff {
         cx.emit(BufferDiffEvent::DiffChanged(change));
     }
 
-    pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
-        self.inner.base_text.clone()
+    pub fn base_text_buffer(&self) -> &Entity<language::Buffer> {
+        &self.inner.base_text
     }
 }
 

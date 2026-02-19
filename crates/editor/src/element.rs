@@ -12228,9 +12228,6 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
-        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
-
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(
@@ -12267,9 +12264,6 @@ mod tests {
     #[gpui::test]
     async fn test_soft_wrap_editor_width_full_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-        // Ensure wrap completes synchronously by giving block_with_timeout enough ticks
-        cx.dispatcher.scheduler().set_timeout_ticks(1000..=1000);
-
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&"a ".to_string().repeat(100), cx);
             let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);

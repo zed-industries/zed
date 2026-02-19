@@ -1366,6 +1366,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "ui",
  "util",
  "workspace",
 ]
@@ -7138,10 +7139,7 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
- "acp_thread",
- "agent-client-protocol",
  "agent_settings",
- "agent_ui",
  "anyhow",
  "askpass",
  "buffer_diff",
@@ -10188,8 +10186,10 @@ name = "miniprofiler_ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "rpc",
  "serde_json",
  "smol",
+ "theme",
  "util",
  "workspace",
  "zed_actions",

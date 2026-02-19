@@ -1603,14 +1603,6 @@ impl NativeThreadEnvironment {
             ));
         }
 
-        let running_count = parent_thread.running_subagent_count();
-        if running_count >= MAX_PARALLEL_SUBAGENTS {
-            return Err(anyhow!(
-                "Maximum parallel subagents ({}) reached. Wait for existing subagents to complete.",
-                MAX_PARALLEL_SUBAGENTS
-            ));
-        }
-
         let allowed_tools = match allowed_tools {
             Some(tools) => {
                 let parent_tool_names: std::collections::HashSet<&str> =
