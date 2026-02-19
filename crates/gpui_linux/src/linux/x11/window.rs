@@ -243,7 +243,7 @@ unsafe impl Sync for RawWindow {}
 #[derive(Default)]
 pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
+    input: Option<Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -1328,7 +1328,7 @@ impl PlatformWindow for X11Window {
             .unwrap_or_default()
     }
 
-    fn capslock(&self) -> crate::Capslock {
+    fn capslock(&self) -> gpui::Capslock {
         self.0
             .state
             .borrow()
@@ -1523,7 +1523,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
@@ -1613,7 +1613,7 @@ impl PlatformWindow for X11Window {
         self.send_moveresize(edge.to_moveresize()).log_err();
     }
 
-    fn window_decorations(&self) -> crate::Decorations {
+    fn window_decorations(&self) -> gpui::Decorations {
         let state = self.0.state.borrow();
 
         // Client window decorations require compositor support
@@ -1689,16 +1689,16 @@ impl PlatformWindow for X11Window {
         }
     }
 
-    fn request_decorations(&self, mut decorations: crate::WindowDecorations) {
+    fn request_decorations(&self, mut decorations: gpui::WindowDecorations) {
         let mut state = self.0.state.borrow_mut();
 
-        if matches!(decorations, crate::WindowDecorations::Client)
+        if matches!(decorations, gpui::WindowDecorations::Client)
             && !state.client_side_decorations_supported
         {
             log::info!(
                 "x11: no compositor present, falling back to server-side window decorations"
             );
-            decorations = crate::WindowDecorations::Server;
+            decorations = gpui::WindowDecorations::Server;
         }
 
         // https://github.com/rust-windowing/winit/blob/master/src/platform_impl/linux/x11/util/hint.rs#L53-L87

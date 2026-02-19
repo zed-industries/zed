@@ -880,7 +880,7 @@ impl X11Client {
                         .collect();
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
-                        paths: crate::ExternalPaths(paths),
+                        paths: gpui::ExternalPaths(paths),
                     });
                     drop(state);
                     window.handle_input(input);
@@ -1010,7 +1010,7 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let mut keystroke = gpui::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1034,7 +1034,7 @@ impl X11Client {
                                 keystroke.key_char = None;
                                 state.pre_edit_text = compose_state
                                     .utf8()
-                                    .or(crate::Keystroke::underlying_dead_key(keysym));
+                                    .or(gpui::Keystroke::underlying_dead_key(keysym));
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
                                 drop(state);
@@ -1060,7 +1060,7 @@ impl X11Client {
                     keystroke
                 };
                 drop(state);
-                window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
+                window.handle_input(PlatformInput::KeyDown(gpui::KeyDownEvent {
                     keystroke,
                     is_held: false,
                     prefer_character_input: false,
@@ -1080,7 +1080,7 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let keystroke = gpui::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
                     if keysym.is_modifier_key() {
@@ -1093,7 +1093,7 @@ impl X11Client {
                     keystroke
                 };
                 drop(state);
-                window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
+                window.handle_input(PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }));
             }
             Event::XinputButtonPress(event) => {
                 let window = self.get_window(event.event)?;
@@ -1140,7 +1140,7 @@ impl X11Client {
                         let current_count = state.current_count;
 
                         drop(state);
-                        window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
+                        window.handle_input(PlatformInput::MouseDown(gpui::MouseDownEvent {
                             button,
                             position,
                             modifiers,
@@ -1186,7 +1186,7 @@ impl X11Client {
                     Some(ButtonOrScroll::Button(button)) => {
                         let click_count = state.current_count;
                         drop(state);
-                        window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
+                        window.handle_input(PlatformInput::MouseUp(gpui::MouseUpEvent {
                             button,
                             position,
                             modifiers,
@@ -1237,7 +1237,7 @@ impl X11Client {
                 drop(state);
 
                 if event.valuator_mask[0] & 3 != 0 {
-                    window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                    window.handle_input(PlatformInput::MouseMove(gpui::MouseMoveEvent {
                         position,
                         pressed_button,
                         modifiers,
@@ -1279,7 +1279,7 @@ impl X11Client {
                 drop(state);
 
                 let window = self.get_window(event.event)?;
-                window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
+                window.handle_input(PlatformInput::MouseExited(gpui::MouseExitEvent {
                     pressed_button,
                     position,
                     modifiers,
@@ -1489,7 +1489,7 @@ impl LinuxClient for X11Client {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
     {
         gpui::scap_screen_capture::scap_screen_sources(&self.0.borrow().common.foreground_executor)
     }
@@ -2264,7 +2264,7 @@ fn make_scroll_wheel_event(
     position: Point<Pixels>,
     scroll_delta: Point<f32>,
     modifiers: Modifiers,
-) -> crate::ScrollWheelEvent {
+) -> gpui::ScrollWheelEvent {
     // When shift is held down, vertical scrolling turns into horizontal scrolling.
     let delta = if modifiers.shift {
         Point {
@@ -2274,7 +2274,7 @@ fn make_scroll_wheel_event(
     } else {
         scroll_delta
     };
-    crate::ScrollWheelEvent {
+    gpui::ScrollWheelEvent {
         position,
         delta: ScrollDelta::Lines(delta),
         modifiers,
