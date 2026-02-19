@@ -105,7 +105,7 @@ A few examples:
     "cmd-k cmd-s": "zed::OpenKeymap", // matches ⌘-k then ⌘-s
     "space e": "editor::ShowCompletions", // type space then e
     "ç": "editor::ShowCompletions", // matches ⌥-c
-    "shift shift": "file_finder::Toggle", // matches pressing and releasing shift twice
+    "shift shift": "file_finder::Toggle" // matches pressing and releasing shift twice
   }
 }
 ```

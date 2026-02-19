@@ -1980,7 +1980,12 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 ```json [settings]
 {
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "**/.vscode/**/*.json"
+    ],
     "Shell Script": [".env.*"]
   }
 }

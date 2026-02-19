@@ -485,11 +485,11 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
 ```json [settings]
 {
   "agent": {
-    "enabled": true,        // Enable/disable the agent
-    "button": true,         // Show/hide the icon in the status bar
-    "dock": "right",        // Where to dock: left, right, bottom
-    "default_width": 640,   // Default width (left/right docked)
-    "default_height": 320   // Default height (bottom docked)
+    "enabled": true, // Enable/disable the agent
+    "button": true, // Show/hide the icon in the status bar
+    "dock": "right", // Where to dock: left, right, bottom
+    "default_width": 640, // Default width (left/right docked)
+    "default_height": 320 // Default height (bottom docked)
   },
   // Controls the font size for agent responses in the agent panel.
   // If not specified, it falls back to the UI font size.
