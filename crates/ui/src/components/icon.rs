@@ -1,9 +1,6 @@
 mod decorated_icon;
 mod icon_decoration;
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 pub use decorated_icon::*;
 use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation, img, svg};
 pub use icon_decoration::*;
@@ -121,7 +118,7 @@ enum IconSource {
     /// Currently our SVG renderer is missing support for rendering polychrome SVGs.
     ///
     /// In order to support icon themes, we render the icons as images instead.
-    External(Arc<Path>),
+    External(SharedString),
     /// An SVG not embedded in the Zed binary.
     ExternalSvg(SharedString),
 }
@@ -152,7 +149,7 @@ impl Icon {
         let source = if path.starts_with("icons/") {
             IconSource::Embedded(path)
         } else {
-            IconSource::External(Arc::from(PathBuf::from(path.as_ref())))
+            IconSource::External(path)
         };
         Self {
             source,
@@ -214,11 +211,26 @@ impl RenderOnce for Icon {
                 .flex_none()
                 .text_color(self.color.color(cx))
                 .into_any_element(),
-            IconSource::External(path) => img(path)
-                .size(self.size)
-                .flex_none()
-                .text_color(self.color.color(cx))
-                .into_any_element(),
+            IconSource::External(path) => {
+                // TODO: support monochrome rendering for non-SVG icons
+                if theme::GlobalTheme::icon_theme(cx).appearance.is_monochrome()
+                    && path.ends_with(".svg")
+                {
+                    svg()
+                        .external_path(path)
+                        .with_transformation(self.transformation)
+                        .size(self.size)
+                        .flex_none()
+                        .text_color(self.color.color(cx))
+                        .into_any_element()
+                } else {
+                    img(path)
+                        .size(self.size)
+                        .flex_none()
+                        .text_color(self.color.color(cx))
+                        .into_any_element()
+                }
+            }
         }
     }
 }

@@ -3,7 +3,32 @@ use std::sync::{Arc, LazyLock};
 use collections::HashMap;
 use gpui::SharedString;
 
-use crate::Appearance;
+/// The appearance of an icon theme.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum IconAppearance {
+    /// A light appearance.
+    Light,
+    /// A dark appearance.
+    Dark,
+    /// A monochrome theme where icons are rendered with the theme's text color.
+    Monochrome,
+}
+
+impl IconAppearance {
+    /// Returns whether the icon theme is monochrome.
+    pub fn is_monochrome(&self) -> bool {
+        matches!(self, Self::Monochrome)
+    }
+
+    /// Icon sort order: monochrome > dark > light.
+    pub fn sort_order(&self) -> u8 {
+        match self {
+            Self::Monochrome => 0,
+            Self::Dark => 1,
+            Self::Light => 2,
+        }
+    }
+}
 
 /// A family of icon themes.
 pub struct IconThemeFamily {
@@ -24,8 +49,8 @@ pub struct IconTheme {
     pub id: String,
     /// The name of the icon theme.
     pub name: SharedString,
-    /// The appearance of the icon theme (e.g., light or dark).
-    pub appearance: Appearance,
+    /// The appearance of the icon theme (e.g., light, dark, or monochrome).
+    pub appearance: IconAppearance,
     /// The icons used for directories.
     pub directory_icons: DirectoryIcons,
     /// The icons used for named directories.
@@ -395,7 +420,7 @@ static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
     Arc::new(IconTheme {
         id: "zed".into(),
         name: DEFAULT_ICON_THEME_NAME.into(),
-        appearance: Appearance::Dark,
+        appearance: IconAppearance::Dark,
         directory_icons: DirectoryIcons {
             collapsed: Some("icons/file_icons/folder.svg".into()),
             expanded: Some("icons/file_icons/folder_open.svg".into()),

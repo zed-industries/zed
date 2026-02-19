@@ -13,7 +13,7 @@ There are two important directories for an icon theme extension:
 - `icon_themes`: This directory will contain one or more JSON files containing the icon theme definitions.
 - `icons`: This directory contains the icon assets that will be distributed with the extension. You can created subdirectories in this directory, if so desired.
 
-Each icon theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/icon_themes/v0.3.0.json`](https://zed.dev/schema/icon_themes/v0.3.0.json).
+Each icon theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/icon_themes/v0.4.0.json`](https://zed.dev/schema/icon_themes/v0.4.0.json).
 
 Here is an example of the structure of an icon theme:
 
@@ -76,3 +76,10 @@ icons/
   folder.svg
   rust.svg
 ```
+### Appearance
+
+The `appearance` field controls grouping and how the icon theme is displayed:
+
+  * `dark`: The icon theme is intended to be used with dark themes.
+  * `light`: The icon theme is intended to be used with light themes.
+  * `monochrome`: The icon theme will be treated as monochromatic, and icons will display with the same color as `text.muted` for the current theme (.svg only)
