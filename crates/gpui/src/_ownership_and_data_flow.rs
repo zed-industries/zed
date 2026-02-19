@@ -114,7 +114,7 @@
 //! #     increment: usize,
 //! # }
 //! # impl EventEmitter<CounterChangeEvent> for Counter {}
-//! Application::new().run(|cx: &mut App| {
+//! application().run(|cx: &mut App| {
 //!     let first_counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!
 //!     let second_counter = cx.new(|cx: &mut Context<Counter>| {
