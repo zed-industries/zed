@@ -713,7 +713,26 @@ impl AgentPanel {
                             panel.selected_agent = selected_agent;
                         }
                         if let Some(thread_target) = serialized_panel.thread_target.clone() {
-                            panel.thread_target = thread_target;
+                            let is_valid = match &thread_target {
+                                ThreadTarget::LocalProject => true,
+                                ThreadTarget::NewWorktree => {
+                                    let project = panel.project.read(cx);
+                                    !project.is_via_collab()
+                                        && !project.repositories(cx).is_empty()
+                                }
+                                ThreadTarget::ExistingWorktree { path, .. } => {
+                                    !panel.project.read(cx).is_via_collab()
+                                        && path.exists()
+                                }
+                            };
+                            if is_valid {
+                                panel.thread_target = thread_target;
+                            } else {
+                                log::info!(
+                                    "deserialized thread target {:?} is no longer valid, falling back to LocalProject",
+                                    thread_target,
+                                );
+                            }
                         }
                         cx.notify();
                     });
