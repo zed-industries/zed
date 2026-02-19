@@ -2334,11 +2334,7 @@ impl AcpThread {
                     text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
-                            (
-                                snapshot.anchor_after(range.start)
-                                    ..snapshot.anchor_before(range.end),
-                                replacement,
-                            )
+                            (snapshot.anchor_range_between(range), replacement)
                         })
                         .collect::<Vec<_>>()
                 })

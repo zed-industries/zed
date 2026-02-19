@@ -2401,10 +2401,22 @@ impl BufferSnapshot {
         }
     }
 
+    /// Returns an anchor range for the given input position range that is anchored to the text inbetween.
+    pub fn anchor_range_around<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor range for the given input position range that is anchored to the text before the start position and after the end position.
+    pub fn anchor_range_between<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor for the given input position that is anchored to the text before the position.
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
 
+    /// Returns an anchor for the given input position that is anchored to the text after the position.
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
