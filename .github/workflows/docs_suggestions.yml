@@ -95,7 +95,8 @@ jobs:
         id: analyze
         run: |
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
-          echo "$GH_TOKEN" | gh auth login --with-token
+          # Unset GH_TOKEN first to allow gh auth login to store credentials
+          echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
           
           OUTPUT_FILE=$(mktemp)
           
@@ -268,7 +269,8 @@ jobs:
         id: analyze
         run: |
           # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
-          echo "$GH_TOKEN" | gh auth login --with-token
+          # Unset GH_TOKEN first to allow gh auth login to store credentials
+          echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
           
           OUTPUT_FILE=$(mktemp)
           
