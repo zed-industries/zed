@@ -70,7 +70,20 @@ jobs:
 
       - name: Install Droid CLI
         run: |
-          curl -fsSL https://app.factory.ai/cli | sh
+          # Retry with exponential backoff for transient network/auth issues
+          MAX_RETRIES=3
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            echo "Attempt $i of $MAX_RETRIES to install Droid CLI..."
+            if curl -fsSL https://app.factory.ai/cli | sh; then
+              echo "Droid CLI installed successfully"
+              break
+            fi
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "Failed to install Droid CLI after $MAX_RETRIES attempts"
+              exit 1
+            fi
+            sleep $((i * 5))
+          done
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
@@ -100,12 +113,26 @@ jobs:
           
           OUTPUT_FILE=$(mktemp)
           
-          ./script/docs-suggest \
-            --pr "${{ steps.pr.outputs.number }}" \
-            --immediate \
-            --preview \
-            --output "$OUTPUT_FILE" \
-            --verbose
+          # Retry with exponential backoff for transient Factory API failures
+          MAX_RETRIES=3
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            echo "Attempt $i of $MAX_RETRIES to analyze PR..."
+            if ./script/docs-suggest \
+              --pr "${{ steps.pr.outputs.number }}" \
+              --immediate \
+              --preview \
+              --output "$OUTPUT_FILE" \
+              --verbose; then
+              echo "Analysis completed successfully"
+              break
+            fi
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "Analysis failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+            echo "Retrying in $((i * 5)) seconds..."
+            sleep $((i * 5))
+          done
           
           # Check if we got actionable suggestions (not "no updates needed")
           if grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
@@ -251,7 +278,20 @@ jobs:
 
       - name: Install Droid CLI
         run: |
-          curl -fsSL https://app.factory.ai/cli | sh
+          # Retry with exponential backoff for transient network/auth issues
+          MAX_RETRIES=3
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            echo "Attempt $i of $MAX_RETRIES to install Droid CLI..."
+            if curl -fsSL https://app.factory.ai/cli | sh; then
+              echo "Droid CLI installed successfully"
+              break
+            fi
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "Failed to install Droid CLI after $MAX_RETRIES attempts"
+              exit 1
+            fi
+            sleep $((i * 5))
+          done
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
@@ -275,12 +315,26 @@ jobs:
           OUTPUT_FILE=$(mktemp)
           
           # Cherry-picks don't get preview callout
-          ./script/docs-suggest \
-            --pr "${{ steps.pr.outputs.number }}" \
-            --immediate \
-            --no-preview \
-            --output "$OUTPUT_FILE" \
-            --verbose
+          # Retry with exponential backoff for transient Factory API failures
+          MAX_RETRIES=3
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            echo "Attempt $i of $MAX_RETRIES to analyze PR..."
+            if ./script/docs-suggest \
+              --pr "${{ steps.pr.outputs.number }}" \
+              --immediate \
+              --no-preview \
+              --output "$OUTPUT_FILE" \
+              --verbose; then
+              echo "Analysis completed successfully"
+              break
+            fi
+            if [ "$i" -eq "$MAX_RETRIES" ]; then
+              echo "Analysis failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+            echo "Retrying in $((i * 5)) seconds..."
+            sleep $((i * 5))
+          done
           
           # Check if we got actionable suggestions
           if [ -s "$OUTPUT_FILE" ] && \
