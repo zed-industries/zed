@@ -56,7 +56,7 @@ impl LlmApiToken {
             }
             Err(err) => match err {
                 ClientApiError::Unauthorized => {
-                    // client.sign_out(cx);
+                    client.request_sign_out();
                     Err(err).context("failed to create LLM token")
                 }
                 ClientApiError::Other(err) => Err(err),
