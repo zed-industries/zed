@@ -940,6 +940,7 @@ impl Render for PanelButtons {
                 };
 
                 let focus_handle = dock.focus_handle(cx);
+                let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
                     right_click_menu(name)
@@ -970,10 +971,10 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active, _window, _cx| {
+                        .trigger(move |is_active, _window, cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            IconButton::new((name, is_active_button as u64), icon)
+                            let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -987,6 +988,31 @@ impl Render for PanelButtons {
                                     this.tooltip(move |_window, cx| {
                                         Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
+                                });
+
+                            div()
+                                .relative()
+                                .child(button)
+                                .when_some(icon_label.clone(), |this, label| {
+                                    this.child(
+                                        div()
+                                            .absolute()
+                                            .top(px(0.))
+                                            .right(px(0.))
+                                            .min_w(rems_from_px(14.))
+                                            .h(rems_from_px(14.))
+                                            .px(px(2.))
+                                            .rounded_full()
+                                            .bg(cx.theme().colors().version_control_added)
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                Label::new(label)
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Default),
+                                            ),
+                                    )
                                 })
                         }),
                 )
