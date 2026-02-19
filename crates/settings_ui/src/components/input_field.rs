@@ -19,6 +19,7 @@ pub struct SettingsInputField {
     clear_on_confirm: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
+    min_width_px: Option<f32>,
 }
 
 impl SettingsInputField {
@@ -35,6 +36,7 @@ impl SettingsInputField {
             clear_on_confirm: false,
             action_slot: None,
             color: None,
+            min_width_px: None,
         }
     }
 
@@ -93,6 +95,11 @@ impl SettingsInputField {
 
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
+        self
+    }
+
+    pub fn with_min_width_px(mut self, min_width_px: f32) -> Self {
+        self.min_width_px = Some(min_width_px);
         self
     }
 }
@@ -164,6 +171,7 @@ impl RenderOnce for SettingsInputField {
 
         let clear_on_confirm = self.clear_on_confirm;
         let clear_on_confirm_for_button = self.clear_on_confirm;
+        let min_width_px = self.min_width_px;
 
         let theme_colors = cx.theme().colors();
 
@@ -179,7 +187,10 @@ impl RenderOnce for SettingsInputField {
             .py_1()
             .px_2()
             .h_8()
-            .min_w_64()
+            .when_some(min_width_px, |this, min_width_px| {
+                this.min_w(gpui::px(min_width_px))
+            })
+            .when(min_width_px.is_none(), |this| this.min_w_64())
             .rounded_md()
             .border_1()
             .border_color(theme_colors.border)

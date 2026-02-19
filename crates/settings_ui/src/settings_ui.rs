@@ -61,6 +61,8 @@ const HEADER_GROUP_TAB_INDEX: isize = 3;
 
 const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
 const CONTENT_GROUP_TAB_INDEX: isize = 5;
+const CURSOR_TAIL_PRESET_JSON_PATH: &str = "cursor_tail.profile";
+const CURSOR_TAIL_COLOR_JSON_PATH: &str = "cursor_tail.color";
 
 actions!(
     settings_editor,
@@ -382,9 +384,22 @@ impl Focusable for NonFocusableHandle {
 }
 
 #[derive(Default)]
+struct NumberFieldMetadata {
+    mode: Option<NumberFieldMode>,
+    min: Option<f64>,
+    max: Option<f64>,
+    step: Option<f64>,
+    small_step: Option<f64>,
+    large_step: Option<f64>,
+    apply_on_focus_lost: Option<bool>,
+}
+
+#[derive(Default)]
 struct SettingsFieldMetadata {
     placeholder: Option<&'static str>,
     should_do_titlecase: Option<bool>,
+    number: Option<NumberFieldMetadata>,
+    input_min_width_px: Option<f32>,
 }
 
 pub fn init(cx: &mut App) {
@@ -756,6 +771,7 @@ pub struct SettingsWindow {
     files_focus_handle: FocusHandle,
     search_index: Option<Arc<SearchIndex>>,
     list_state: ListState,
+    cached_cursor_tail_enabled_for_current_file: bool,
     shown_errors: HashSet<String>,
     pub(crate) regex_validation_error: Option<String>,
 }
@@ -897,9 +913,11 @@ impl SettingsPageItem {
 
                 let field_renderer =
                     renderers.get(&AnySettingField::type_id(setting_item.field.as_ref()));
+                let is_cursor_tail_color_field =
+                    setting_item.field.json_path() == Some(CURSOR_TAIL_COLOR_JSON_PATH);
                 let field_renderer_or_warning =
                     field_renderer.ok_or("NO RENDERER").and_then(|renderer| {
-                        if cfg!(debug_assertions) && !found {
+                        if cfg!(debug_assertions) && !found && !is_cursor_tail_color_field {
                             Err("NO DEFAULT")
                         } else {
                             Ok(renderer)
@@ -1171,13 +1189,9 @@ fn render_settings_item(
                         .gap_1()
                         .child(Label::new(SharedString::new_static(setting_item.title)))
                         .when_some(
-                            if sub_field {
-                                None
-                            } else {
-                                setting_item
-                                    .field
-                                    .reset_to_default_fn(&file, &found_in_file, cx)
-                            },
+                            setting_item
+                                .field
+                                .reset_to_default_fn(&file, &found_in_file, cx),
                             |this, reset_to_default| {
                                 this.child(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
@@ -1504,6 +1518,12 @@ impl SettingsWindow {
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
 
+            let cursor_tail_enabled = this.cursor_tail_enabled_for_current_file(cx);
+            if cursor_tail_enabled != this.cached_cursor_tail_enabled_for_current_file {
+                this.cached_cursor_tail_enabled_for_current_file = cursor_tail_enabled;
+                this.update_matches(cx);
+            }
+
             // Whenever settings are changed, it's possible that the changed
             // settings affects the rendering of the `SettingsWindow`, like is
             // the case with `ui_font_size`. When that happens, we need to
@@ -1667,6 +1687,7 @@ impl SettingsWindow {
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
             search_index: None,
+            cached_cursor_tail_enabled_for_current_file: false,
             shown_errors: HashSet::default(),
             regex_validation_error: None,
             list_state,
@@ -1808,6 +1829,8 @@ impl SettingsWindow {
 
     fn filter_matches_to_file(&mut self) {
         let current_file = self.current_file.mask();
+        let cursor_tail_enabled = self.cached_cursor_tail_enabled_for_current_file;
+
         for (page, page_filter) in std::iter::zip(&self.pages, &mut self.filter_table) {
             let mut header_index = 0;
             let mut any_found_since_last_header = true;
@@ -1827,7 +1850,10 @@ impl SettingsWindow {
                         discriminant: SettingItem { files, .. },
                         ..
                     }) => {
-                        if !files.contains(current_file) {
+                        let item_hidden_for_current_settings =
+                            Self::item_hidden_for_current_settings(item, cursor_tail_enabled);
+
+                        if !files.contains(current_file) || item_hidden_for_current_settings {
                             page_filter[index] = false;
                         } else {
                             any_found_since_last_header = true;
@@ -1848,6 +1874,33 @@ impl SettingsWindow {
                 *last_header = false;
             }
         }
+    }
+
+    fn cursor_tail_enabled_for_current_file(&self, cx: &App) -> bool {
+        SettingsStore::global(cx)
+            .get_value_from_file(self.current_file.to_settings(), |settings_content| {
+                settings_content
+                    .editor
+                    .cursor_tail
+                    .as_ref()
+                    .and_then(|cursor_tail| cursor_tail.enabled.as_ref())
+            })
+            .1
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn item_hidden_for_current_settings(
+        item: &SettingsPageItem,
+        cursor_tail_enabled: bool,
+    ) -> bool {
+        matches!(
+            item,
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem { field, .. },
+                ..
+            }) if field.json_path() == Some(CURSOR_TAIL_PRESET_JSON_PATH)
+        ) && !cursor_tail_enabled
     }
 
     fn filter_by_json_path(&self, query: &str) -> Vec<usize> {
@@ -2135,6 +2188,8 @@ impl SettingsWindow {
         self.sub_page_stack.clear();
         // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
         self.build_filter_table();
+        self.cached_cursor_tail_enabled_for_current_file =
+            self.cursor_tail_enabled_for_current_file(cx);
         self.reset_list_state();
         self.update_matches(cx);
 
@@ -4028,14 +4083,24 @@ fn render_rgba_field(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    const DEFAULT_COLOR_SENTINEL: &str = "default";
+
     let (_, initial_value) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let initial_text = initial_value.map(|value| {
-        serde_json::to_string(value)
-            .unwrap_or_else(|_| format!("#{:08x}", u32::from(*value)))
-            .trim_matches('"')
-            .to_string()
-    });
+    let use_default_color_sentinel = metadata
+        .and_then(|metadata| metadata.placeholder)
+        .is_some_and(|placeholder| placeholder.eq_ignore_ascii_case(DEFAULT_COLOR_SENTINEL));
+    let initial_value = initial_value.copied();
+    let initial_text = match initial_value {
+        Some(value) => Some(
+            serde_json::to_string(&value)
+                .unwrap_or_else(|_| format!("#{:08x}", u32::from(value)))
+                .trim_matches('"')
+                .to_string(),
+        ),
+        None if use_default_color_sentinel => Some(String::new()),
+        None => None,
+    };
 
     SettingsInputField::new()
         .tab_index(0)
@@ -4044,23 +4109,37 @@ fn render_rgba_field(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
+        .when_some(
+            metadata.and_then(|metadata| metadata.input_min_width_px),
+            |editor, min_width_px| editor.with_min_width_px(min_width_px),
+        )
         .on_confirm({
             move |new_text, window, cx| {
                 let parsed_value = match new_text {
                     Some(text) if !text.trim().is_empty() => {
-                        match gpui::Rgba::try_from(text.trim()) {
-                            Ok(value) => Some(value),
-                            Err(error) => {
-                                log::error!(
-                                    "invalid color value for {:?}: {error}",
-                                    field.json_path
-                                );
-                                return;
+                        let trimmed = text.trim();
+                        if use_default_color_sentinel
+                            && trimmed.eq_ignore_ascii_case(DEFAULT_COLOR_SENTINEL)
+                        {
+                            None
+                        } else {
+                            match gpui::Rgba::try_from(trimmed) {
+                                Ok(value) => Some(value),
+                                Err(error) => {
+                                    log::error!(
+                                        "invalid color value for {:?}: {error}",
+                                        field.json_path
+                                    );
+                                    return;
+                                }
                             }
                         }
                     }
                     _ => None,
                 };
+                if parsed_value == initial_value {
+                    return;
+                }
 
                 update_settings_file(
                     file.clone(),
@@ -4108,75 +4187,123 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .into_any_element()
 }
 
+fn build_number_field<T: NumberFieldType>(
+    field: &SettingField<T>,
+    value: T,
+    default_mode: NumberFieldMode,
+    number_metadata: Option<&NumberFieldMetadata>,
+    window: &mut Window,
+    cx: &mut App,
+) -> NumberField<T> {
+    let id = field
+        .json_path
+        .map(|path| format!("numeric_stepper_{}", path))
+        .unwrap_or_else(|| "numeric_stepper".to_string());
+
+    let mode = number_metadata
+        .and_then(|number_metadata| number_metadata.mode)
+        .unwrap_or(default_mode);
+
+    let mut number_field = NumberField::new(id, value, window, cx)
+        .mode(mode, cx)
+        .tab_index(0_isize);
+
+    if let Some(number_metadata) = number_metadata {
+        if let Some(min) = number_metadata.min.and_then(T::try_from_f64) {
+            number_field = number_field.min(min);
+        }
+        if let Some(max) = number_metadata.max.and_then(T::try_from_f64) {
+            number_field = number_field.max(max);
+        }
+        if let Some(step) = number_metadata.step.and_then(T::try_from_f64) {
+            number_field = number_field.step(step);
+        }
+        if let Some(small_step) = number_metadata.small_step.and_then(T::try_from_f64) {
+            number_field = number_field.small_step(small_step);
+        }
+        if let Some(large_step) = number_metadata.large_step.and_then(T::try_from_f64) {
+            number_field = number_field.large_step(large_step);
+        }
+        if let Some(apply_on_focus_lost) = number_metadata.apply_on_focus_lost {
+            number_field = number_field.apply_on_focus_lost(apply_on_focus_lost);
+        }
+    }
+
+    number_field
+}
+
 fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or_else(T::min_value);
+    let number_metadata = metadata.and_then(|metadata| metadata.number.as_ref());
 
-    let id = field
-        .json_path
-        .map(|p| format!("numeric_stepper_{}", p))
-        .unwrap_or_else(|| "numeric_stepper".to_string());
-
-    NumberField::new(id, value, window, cx)
-        .tab_index(0_isize)
-        .on_change({
-            move |value, window, cx| {
-                let value = *value;
-                update_settings_file(
-                    file.clone(),
-                    field.json_path,
-                    window,
-                    cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
-                    },
-                )
-                .log_err(); // todo(settings_ui) don't log err
-            }
-        })
-        .into_any_element()
+    build_number_field(
+        &field,
+        value,
+        NumberFieldMode::Read,
+        number_metadata,
+        window,
+        cx,
+    )
+    .on_change({
+        move |value, window, cx| {
+            let value = *value;
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                },
+            )
+            .log_err(); // todo(settings_ui) don't log err
+        }
+    })
+    .into_any_element()
 }
 
 fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or_else(T::min_value);
+    let number_metadata = metadata.and_then(|metadata| metadata.number.as_ref());
 
-    let id = field
-        .json_path
-        .map(|p| format!("numeric_stepper_{}", p))
-        .unwrap_or_else(|| "numeric_stepper".to_string());
-
-    NumberField::new(id, value, window, cx)
-        .mode(NumberFieldMode::Edit, cx)
-        .tab_index(0_isize)
-        .on_change({
-            move |value, window, cx| {
-                let value = *value;
-                update_settings_file(
-                    file.clone(),
-                    field.json_path,
-                    window,
-                    cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
-                    },
-                )
-                .log_err(); // todo(settings_ui) don't log err
-            }
-        })
-        .into_any_element()
+    build_number_field(
+        &field,
+        value,
+        NumberFieldMode::Edit,
+        number_metadata,
+        window,
+        cx,
+    )
+    .on_change({
+        move |value, window, cx| {
+            let value = *value;
+            update_settings_file(
+                file.clone(),
+                field.json_path,
+                window,
+                cx,
+                move |settings, _cx| {
+                    (field.write)(settings, Some(value));
+                },
+            )
+            .log_err(); // todo(settings_ui) don't log err
+        }
+    })
+    .into_any_element()
 }
 
 fn render_dropdown<T>(
@@ -4441,6 +4568,7 @@ pub mod test {
                 files_focus_handle: cx.focus_handle(),
                 search_index: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+                cached_cursor_tail_enabled_for_current_file: false,
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
             }
@@ -4566,6 +4694,7 @@ pub mod test {
             files_focus_handle: cx.focus_handle(),
             search_index: None,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
+            cached_cursor_tail_enabled_for_current_file: false,
             shown_errors: HashSet::default(),
             regex_validation_error: None,
         };

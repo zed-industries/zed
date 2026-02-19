@@ -847,9 +847,11 @@ pub struct SearchSettingsContent {
     Deserialize,
     JsonSchema,
     MergeFrom,
+    strum::EnumDiscriminants,
     strum::VariantArray,
     strum::VariantNames,
 )]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum CursorTailProfile {
     #[default]
