@@ -12,7 +12,7 @@ on:
   - cron: 0 7 * * *
 jobs:
   check_style:
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-14
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -147,7 +147,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    runs-on: ubuntu-latest-arm64
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -193,7 +193,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-32x64-ubuntu-2004
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -239,16 +239,11 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-14
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -290,16 +285,11 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-14
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
-      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
-      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -446,7 +436,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    runs-on: namespace-profile-32x64-ubuntu-2004
+    runs-on: ubuntu-latest
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
@@ -457,10 +447,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_nix_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: nix
     - name: nix_build::build_nix::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
@@ -479,7 +465,7 @@ jobs:
     needs:
     - check_style
     - run_tests_windows
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-14
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
@@ -490,10 +476,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_nix_store_macos
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        path: ~/nix-cache
     - name: nix_build::build_nix::install_nix
       uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
       with:
@@ -531,7 +513,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -574,7 +556,7 @@ jobs:
         git config user.name github-actions
         git config user.email github-actions@github.com
         git tag -f nightly
-        git push origin nightly --force
+        git push fork nightly --force
     - name: release::create_sentry_release
       uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c
       with:
@@ -593,7 +575,7 @@ jobs:
     - bundle_windows_aarch64
     - bundle_windows_x86_64
     if: failure()
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: release::send_slack_message
       run: |
