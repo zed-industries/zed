@@ -747,10 +747,8 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
-            // If this is the first buffer, ensure split view is active
-            if was_empty {
-                editor.split(window, cx);
-            }
+            // Ensure split view is active for git diff
+            editor.split(window, cx);
             (was_empty, is_newly_added)
         });
 
