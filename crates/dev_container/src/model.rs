@@ -622,31 +622,15 @@ pub(crate) async fn spawn_dev_container_v2(
                     remote_workspace_folder: remote_folder,
                 });
             } else {
-                let Some(devcontainer_image) = &devcontainer.image else {
-                    log::error!(
-                        "Problem parsing devcontainer. Type listed as image, but image is none"
-                    );
-                    return Err(RenameMeError::UnmappedError);
-                };
                 let docker_image_inspect = inspect_image(&devcontainer).await?;
                 let built_docker_image =
                     build_image(http_client, &devcontainer, &docker_image_inspect).await?;
-
-                // Me
-                let features_image_tag = if let Some(features) = &devcontainer.features
-                    && !features.is_empty()
-                {
-                    Some(generate_features_image_tag(&devcontainer_image))
-                } else {
-                    None
-                };
 
                 let running_container = run_docker_image(
                     &devcontainer,
                     &built_docker_image,
                     &labels,
                     &local_project_path,
-                    features_image_tag.as_deref(),
                 )
                 .await?;
 
@@ -684,20 +668,18 @@ pub(crate) async fn spawn_dev_container_v2(
     // Err(RenameMeError::UnmappedError)
 }
 
-// TODO can't this image name override just come from the built_docker_image?
 async fn run_docker_image(
     devcontainer: &DevContainer,
     built_docker_image: &DockerInspect,
     labels: &Vec<(&str, String)>,
     local_project_path: &Arc<&Path>,
-    image_name_override: Option<&str>,
 ) -> Result<DockerInspect, RenameMeError> {
     let mut docker_run_command = create_docker_run_command(
         &devcontainer,
         local_project_path,
         &built_docker_image.config.labels,
         Some(labels),
-        image_name_override,
+        &built_docker_image.id,
     )?;
 
     if let Err(e) = docker_run_command.output().await {
@@ -792,28 +774,6 @@ fn prepare_features_build_info(
 /// Mirrors the CLI's `FEATURES_CONTAINER_TEMP_DEST_FOLDER`.
 // TODO does this need to be more generalized
 const FEATURES_CONTAINER_TEMP_DEST_FOLDER: &str = "/tmp/dev-container-features";
-
-/// Recursively lists all files under `dir`, returning paths relative to `dir`.
-// TODO is there not something already usable in this code base?
-fn list_dir_recursive(dir: &PathBuf) -> Result<Vec<String>, std::io::Error> {
-    let mut results = Vec::new();
-    fn walk(base: &Path, current: &Path, results: &mut Vec<String>) -> Result<(), std::io::Error> {
-        for entry in std::fs::read_dir(current)? {
-            let entry = entry?;
-            let path = entry.path();
-            if let Ok(relative) = path.strip_prefix(base) {
-                results.push(relative.display().to_string());
-            }
-            if path.is_dir() {
-                walk(base, &path, results)?;
-            }
-        }
-        Ok(())
-    }
-    walk(dir, dir, &mut results)?;
-    results.sort();
-    Ok(results)
-}
 
 /// Escapes single quotes for use inside shell single-quoted strings.
 ///
@@ -1215,24 +1175,6 @@ async fn construct_features_build_resources(
                 RenameMeError::UnmappedError
             })?;
 
-        // Log all files in the feature directory after extraction so we can
-        // verify the tarball contents landed correctly.
-        match list_dir_recursive(&feature_dir) {
-            Ok(files) => {
-                log::info!(
-                    "Feature '{}' directory contents after extraction ({} files): {:?}",
-                    feature_ref,
-                    files.len(),
-                    files,
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "Could not list feature '{}' directory contents: {e}",
-                    feature_ref
-                );
-            }
-        }
         log::info!("Downloaded OCI feature content for '{}'", feature_ref);
 
         // --- Now that the tarball is extracted, read option defaults from
@@ -1504,12 +1446,9 @@ fn create_docker_run_command(
     local_project_directory: &Arc<&Path>,
     image_labels: &DockerConfigLabels,
     labels: Option<&Vec<(&str, String)>>,
-    image_name_override: Option<&str>,
+    image_id: &str,
 ) -> Result<Command, RenameMeError> {
-    let Some(base_image) = &devcontainer.image else {
-        return Err(RenameMeError::UnmappedError);
-    };
-    let image = image_name_override.unwrap_or(base_image);
+    let image = image_id;
     // let remote_user = get_remote_user_from_config(config)?;
 
     let Some(project_directory) = local_project_directory.file_name() else {
@@ -2616,7 +2555,6 @@ mod test {
             assert!(aws_wrapper.contains("./install.sh"));
             assert!(aws_wrapper.contains("../devcontainer-features.builtin.env"));
 
-            // install.sh should come from the OCI tarball, not a stub
             let aws_install =
                 std::fs::read_to_string(features_dir.join("aws-cli_0/install.sh")).unwrap();
             assert!(
@@ -2871,7 +2809,7 @@ mod test {
             &Arc::new(Path::new("/local/project_app")),
             &image_labels,
             Some(&labels),
-            None,
+            "mcr.microsoft.com/devcontainers/base:ubuntu",
         );
 
         assert!(docker_run_command.is_ok());
