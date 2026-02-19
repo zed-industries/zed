@@ -642,13 +642,7 @@ impl<'a> Iterator for TabChunks<'a> {
             }
         }
 
-        let first_tab_ix = if self.chunk.tabs != 0 {
-            self.chunk.tabs.trailing_zeros() as usize
-        } else {
-            self.chunk.text.len()
-        };
-
-        if first_tab_ix == 0 {
+        if self.chunk.tabs & 1 != 0 {
             self.chunk.text = &self.chunk.text[1..];
             self.chunk.tabs >>= 1;
             self.chunk.chars >>= 1;
@@ -679,12 +673,46 @@ impl<'a> Iterator for TabChunks<'a> {
             });
         }
 
-        let prefix_len = first_tab_ix;
+        // Fast path: no tabs in the remaining chunk, return it directly
+        if self.chunk.tabs == 0 {
+            let chunk = self.chunk.clone();
+            self.chunk.text = "";
+            self.chunk.tabs = 0;
+            self.chunk.chars = 0;
+            self.chunk.newlines = 0;
+            let chunk_len = chunk.text.len() as u32;
+
+            let newline_count = chunk.newlines.count_ones();
+            if newline_count > 0 {
+                let last_newline_bit = 128 - chunk.newlines.leading_zeros();
+                let chars_after_last_newline =
+                    chunk.chars.unbounded_shr(last_newline_bit).count_ones();
+                let bytes_after_last_newline = chunk_len - last_newline_bit;
+
+                self.column = chars_after_last_newline;
+                self.input_column = bytes_after_last_newline;
+                self.output_position = Point::new(
+                    self.output_position.row + newline_count,
+                    bytes_after_last_newline,
+                );
+            } else {
+                let char_count = chunk.chars.count_ones();
+                self.column += char_count;
+                if !self.inside_leading_tab {
+                    self.input_column += chunk_len;
+                }
+                self.output_position.column += chunk_len;
+            }
+
+            return Some(chunk);
+        }
+
+        // Split at the next tab position
+        let prefix_len = self.chunk.tabs.trailing_zeros() as usize;
         let (prefix, suffix) = self.chunk.text.split_at(prefix_len);
 
         let mask = 1u128.unbounded_shl(prefix_len as u32).wrapping_sub(1);
         let prefix_chars = self.chunk.chars & mask;
-        let prefix_tabs = self.chunk.tabs & mask;
         let prefix_newlines = self.chunk.newlines & mask;
 
         self.chunk.text = suffix;
@@ -717,7 +745,7 @@ impl<'a> Iterator for TabChunks<'a> {
         Some(Chunk {
             text: prefix,
             chars: prefix_chars,
-            tabs: prefix_tabs,
+            tabs: 0,
             newlines: prefix_newlines,
             ..self.chunk.clone()
         })
