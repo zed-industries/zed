@@ -1,6 +1,6 @@
 ---
 title: AI Models and Pricing - Zed
-description: AI models available via Zed Pro including Claude, GPT-5.2, Gemini, and Grok. Pricing, context windows, and tool call support.
+description: AI models available via Zed Pro including Claude, GPT-5.2, Gemini 3.1 Pro, and Grok. Pricing, context windows, and tool call support.
 ---
 
 # Models
@@ -41,6 +41,8 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | GPT-5 nano             | OpenAI    | Input               | $0.05                        | $0.055                  |
 |                        | OpenAI    | Output              | $0.40                        | $0.44                   |
 |                        | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
+| Gemini 3.1 Pro         | Google    | Input               | $2.00                        | $2.20                   |
+|                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3 Pro           | Google    | Input               | $2.00                        | $2.20                   |
 |                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3 Flash         | Google    | Input               | $0.30                        | $0.33                   |
@@ -90,10 +92,11 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5.2 Codex     | OpenAI    | 400k                      |
 | GPT-5 mini        | OpenAI    | 400k                      |
 | GPT-5 nano        | OpenAI    | 400k                      |
+| Gemini 3.1 Pro    | Google    | 200k                      |
 | Gemini 3 Pro      | Google    | 200k                      |
 | Gemini 3 Flash    | Google    | 200k                      |
 
-> Context window limits for hosted Sonnet 4.5/4.6 and Gemini 3 Pro/Flash may increase in future releases.
+> Context window limits for hosted Sonnet 4.5/4.6 and Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
 
 Each Agent thread and text thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.
