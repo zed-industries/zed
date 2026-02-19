@@ -110,6 +110,9 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::enable_git_long_paths
+      run: git config --global core.longpaths true
+      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
@@ -130,6 +133,18 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
+    - name: steps::cache_cargo_nextest
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/bin/cargo-nextest
+        key: cargo-nextest-${{ runner.os }}-v0
+      continue-on-error: true
+    - name: steps::install_cargo_nextest
+      run: |
+        if (-not (Test-Path ~/.cargo/bin/cargo-nextest)) {
+          cargo install cargo-nextest
+        }
+      shell: pwsh
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
@@ -211,6 +226,9 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::enable_git_long_paths
+      run: git config --global core.longpaths true
+      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
