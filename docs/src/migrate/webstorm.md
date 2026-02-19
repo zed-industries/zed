@@ -37,11 +37,11 @@ This opens the current directory in Zed.
 
 If you're coming from WebStorm, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
 
-1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+1. Open Settings with `Cmd + ,` (macOS) or `Ctrl + ,` (Linux/Windows)
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
+This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd + O` for Go to Class, and `Cmd + Shift + A` for Find Action.
 
 ## Set Up Editor Preferences
 
@@ -63,7 +63,7 @@ Zed also supports per-project settings. Create a `.zed/settings.json` file in yo
 
 ## Open or Create a Project
 
-After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. Unlike WebStorm, there's no project configuration wizard, no framework selection dialog, and no project structure setup required.
+After setup, press `Cmd + Shift + O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. Unlike WebStorm, there's no project configuration wizard, no framework selection dialog, and no project structure setup required.
 
 To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project. For new projects, you'd typically run `npm init`, `pnpm create`, or your framework's CLI tool first, then open the resulting folder in Zed.
 
@@ -72,11 +72,11 @@ You can also launch Zed from the terminal inside any folder with:
 
 Once inside a project:
 
-- Use `Cmd+Shift+O` or `Cmd+E` to jump between files quickly (like WebStorm's "Recent Files")
-- Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like WebStorm's "Search Everywhere")
-- Use `Cmd+O` to search for symbols (like WebStorm's "Go to Symbol")
+- Use `Cmd + Shift + O` or `Cmd + E` to jump between files quickly (like WebStorm's "Recent Files")
+- Use `Cmd + Shift + A` or `Shift Shift` to open the Command Palette (like WebStorm's "Search Everywhere")
+- Use `Cmd + O` (`Ctrl + Shift + O on Windows/Linux) to search for symbols (like WebStorm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like WebStorm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd + 1` (just like WebStorm's Project tool window).
 
 ## Differences in Keybindings
 
@@ -84,33 +84,33 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings
 
-| Action                        | Shortcut                |
-| ----------------------------- | ----------------------- |
-| Search Everywhere             | `Shift Shift`           |
-| Find Action / Command Palette | `Cmd + Shift + A`       |
-| Go to File                    | `Cmd + Shift + O`       |
-| Go to Symbol                  | `Cmd + O`               |
-| Recent Files                  | `Cmd + E`               |
-| Go to Definition              | `Cmd + B`               |
-| Find Usages                   | `Alt + F7`              |
-| Rename Symbol                 | `Shift + F6`            |
-| Reformat Code                 | `Cmd + Alt + L`         |
-| Toggle Project Panel          | `Cmd + 1`               |
-| Toggle Terminal               | `Alt + F12`             |
-| Duplicate Line                | `Cmd + D`               |
-| Delete Line                   | `Cmd + Backspace`       |
-| Move Line Up/Down             | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection       | `Alt + Up/Down`         |
-| Comment Line                  | `Cmd + /`               |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
-| Toggle Breakpoint             | `Ctrl + F8`             |
+| Action                        | macOS Shortcut          | Linux / Windows shortcut                   |
+| ----------------------------- | ----------------------- |--------------------------------------------|
+| Search Everywhere             | `Shift Shift`           |                                            |
+| Find Action / Command Palette | `Cmd + Shift + A`       | `Ctrl + Shift + A`                         |
+| Go to File                    | `Cmd + Shift + O`       | `Shift Shift`                              |
+| Go to Symbol                  | `Cmd + O`               | `Ctrl + Shift + O`                         |
+| Recent Files                  | `Cmd + E`               | `Ctrl + E`                                 |
+| Go to Definition              | `Cmd + B`               | `Ctrl + B`                                 |
+| Find Usages                   | `Alt + F7`              | `Alt + F7`                                 |
+| Rename Symbol                 | `Shift + F6`            | `Shift + F6`                               |
+| Reformat Code                 | `Cmd + Alt + L`         | `Ctrl + Alt + L`                           |
+| Toggle Project Panel          | `Cmd + 1`               | `Alt + 1`                                  |
+| Toggle Terminal               | `Alt + F12`             | `Alt + F12`                                |
+| Duplicate Line                | `Cmd + D`               | `Ctrl + D`                                 |
+| Delete Line                   | `Cmd + Backspace`       | `Ctrl + Y`                                 |
+| Move Line Up/Down             | `Shift + Alt + Up/Down` | `Alt + Up/Down`                            |
+| Expand/Shrink Selection       | `Alt + Up/Down`         | `Ctrl + W` / `Ctrl + Shift + W`            |
+| Comment Line                  | `Cmd + /`               | `Ctrl + /`                                 |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   | `Ctrl + Alt + Left` / `Ctrl + Alt + Right` |
+| Toggle Breakpoint             | `Ctrl + F8`             | `Ctrl + F8`                                |
+| Navigate to Next Error        | `F2`                    | `F2`                                       |
 
 ### Different Keybindings (WebStorm → Zed)
 
 | Action                 | WebStorm    | Zed (JetBrains keymap)   |
 | ---------------------- | ----------- | ------------------------ |
 | File Structure         | `Cmd + F12` | `Cmd + F12` (outline)    |
-| Navigate to Next Error | `F2`        | `F2`                     |
 | Run                    | `Ctrl + R`  | `Ctrl + Alt + R` (tasks) |
 | Debug                  | `Ctrl + D`  | `Alt + Shift + F9`       |
 | Stop                   | `Cmd + F2`  | `Ctrl + F2`              |
@@ -124,7 +124,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### How to Customize Keybindings
 
-- Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
+- Open the Command Palette (`Cmd + Shift + A` or `Shift Shift` or `Ctrl + Shift + P`)
 - Run `Zed: Open Keymap Editor`
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
@@ -143,9 +143,9 @@ WebStorm's index enables features like finding all usages across your entire cod
 
 **How to adapt:**
 
-- Search symbols across the project with `Cmd+O` (powered by the TypeScript language server)
-- Find files by name with `Cmd+Shift+O`
-- Use `Cmd+Shift+F` for text search—it stays fast even in large monorepos
+- Search symbols across the project with `Cmd + O` (`Ctrl + Shift + O` on Linux/Windows) (powered by the TypeScript language server)
+- Find files by name with `Cmd + Shift + O` (`Ctrl + E`)
+- Use `Cmd + Shift + F` (`Ctrl + Shift + E`) for text search—it stays fast even in large monorepos
 - Run `tsc --noEmit` or `eslint .` from the terminal when you need deeper project-wide analysis
 
 ### LSP vs. Native Language Intelligence
@@ -169,10 +169,10 @@ Where you might notice differences:
 
 **How to adapt:**
 
-- Use `Alt+Enter` for available code actions—the list will vary by language server
+- Use `Alt + Enter` (Ctrl + `.`) for available code actions—the list will vary by language server
 - Ensure your `tsconfig.json` is properly configured so the language server understands your project structure
 - Use Prettier for consistent formatting (it's enabled by default for JS/TS)
-- For code inspection similar to WebStorm's "Inspect Code," check the Diagnostics panel (`Cmd+6`)—ESLint and TypeScript together catch many of the same issues
+- For code inspection similar to WebStorm's "Inspect Code," check the Diagnostics panel (`Cmd + 6`)—ESLint and TypeScript together catch many of the same issues
 
 ### No Project Model
 
@@ -212,8 +212,8 @@ What this means in practice:
 ]
 ```
 
-- Use `Ctrl+Alt+R` to run tasks quickly
-- Lean on your terminal (`Alt+F12`) for anything tasks don't cover
+- Use `Ctrl + Alt + R` to run tasks quickly
+- Lean on your terminal (`Alt + F12`) for anything tasks don't cover
 
 ### No Framework Integration
 
@@ -223,8 +223,8 @@ Zed has none of this built-in. The TypeScript language server sees your code as 
 
 **How to adapt:**
 
-- Use grep and file search liberally. `Cmd+Shift+F` with a regex can find component definitions, route configurations, or API endpoints.
-- Rely on your language server's "find references" (`Alt+F7`) for navigation—it works, just without framework context
+- Use grep and file search liberally. `Cmd + Shift + F` with a regex can find component definitions, route configurations, or API endpoints.
+- Rely on your language server's "find references" (`Alt + F7`) for navigation—it works, just without framework context
 - Consider using framework-specific CLI tools (`ng`, `next`, `vite`) from Zed's terminal
 - For React, JSX/TSX syntax and TypeScript types still provide good intelligence
 
@@ -232,16 +232,16 @@ Zed has none of this built-in. The TypeScript language server sees your code as 
 
 ### Tool Windows vs. Docks
 
-WebStorm organizes auxiliary views into numbered tool windows (Project = 1, npm = Alt+F11, Terminal = Alt+F12, etc.). Zed uses a similar concept called "docks":
+WebStorm organizes auxiliary views into numbered tool windows (Project = `Alt + 1`, npm = `Alt + F11`, Terminal = `Alt + F12`, etc.). Zed uses a similar concept called "docks":
 
-| WebStorm Tool Window | Zed Equivalent | Shortcut (JetBrains keymap) |
-| -------------------- | -------------- | --------------------------- |
-| Project (1)          | Project Panel  | `Cmd + 1`                   |
-| Git (9 or Cmd+0)     | Git Panel      | `Cmd + 0`                   |
-| Terminal (Alt+F12)   | Terminal Panel | `Alt + F12`                 |
-| Structure (7)        | Outline Panel  | `Cmd + 7`                   |
-| Problems (6)         | Diagnostics    | `Cmd + 6`                   |
-| Debug (5)            | Debug Panel    | `Cmd + 5`                   |
+| WebStorm Tool Window | Zed Equivalent | macOS Shortcut (JetBrains keymap) | Linux/Windows |
+| -------------------- | -------------- | ----------------------------------|---------------|
+| Project (1)          | Project Panel  | `Cmd + 1`                         | `Alt + 1`     |
+| Git (9 or Cmd+0)     | Git Panel      | `Cmd + 0`                         | `Alt + 0`     |
+| Terminal (Alt+F12)   | Terminal Panel | `Alt + F12`                       | `Alt + F12`   |
+| Structure (7)        | Outline Panel  | `Cmd + 7`                         | `Alt + 7`     |
+| Problems (6)         | Diagnostics    | `Cmd + 6`                         | `Alt + 6`     |
+| Debug (5)            | Debug Panel    | `Cmd + 5`                         | `Alt + 5`     |
 
 Zed has three dock positions: left, bottom, and right. Panels can be moved between docks by dragging or through settings.
 
@@ -252,9 +252,9 @@ Note that there's no dedicated npm tool window in Zed. Use the terminal or defin
 Both WebStorm and Zed offer integrated debugging for JavaScript and TypeScript:
 
 - Zed uses `vscode-js-debug` (the same debug adapter that VS Code uses)
-- Set breakpoints with `Ctrl+F8`
-- Start debugging with `Alt+Shift+F9` or press `F4` and select a debug target
-- Step through code with `F7` (step into), `F8` (step over), `Shift+F8` (step out)
+- Set breakpoints with `Ctrl + F8`
+- Start debugging with `Alt + Shift + F9` or press `F4` and select a debug target
+- Step through code with `F7` (step into), `F8` (step over), `Shift + F8` (step out)
 - Continue execution with `F9`
 
 Zed can debug:
@@ -359,7 +359,7 @@ If you're used to AI assistants in WebStorm (like GitHub Copilot, JetBrains AI A
 
 ### Configuring GitHub Copilot
 
-1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+1. Open Settings with `Cmd + ,` (macOS) or `Ctrl + ,` (Linux/Windows)
 2. Navigate to **AI → Edit Predictions**
 3. Click **Configure** next to "Configure Providers"
 4. Under **GitHub Copilot**, click **Sign in to GitHub**
