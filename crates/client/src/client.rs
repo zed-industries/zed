@@ -552,10 +552,12 @@ impl Client {
             rpc_url: RwLock::default(),
         });
         this._handle_sign_out.lock().replace(cx.spawn({
-            let client = this.clone();
+            let weak_client = Arc::downgrade(&this);
             async move |cx| {
                 while sign_out_rx.next().await.is_some() {
-                    client.sign_out(&cx).await;
+                    if let Some(client) = weak_client.upgrade() {
+                        client.sign_out(&cx).await;
+                    }
                 }
             }
         }));
