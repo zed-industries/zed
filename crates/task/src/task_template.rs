@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use util::schemars::{AllowTrailingCommas, DefaultDenyUnknownFields};
 use util::serde::default_true;
 use util::{ResultExt, truncate_and_remove_front};
@@ -365,6 +365,164 @@ pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) ->
         &mut substituted_variables,
     )
 }
+
+/// Substitutes `$ZED_*` / `${ZED_VAR:default}` variables in a template string
+/// using a plain `HashMap<String, String>`. Unlike [`substitute_variables_in_str`],
+/// this does not track which `VariableName`s were substituted.
+///
+/// Semantics:
+/// - Known variable (in map) → substitute its value, ignore any default
+/// - Unknown `ZED_*` with `${ZED_VAR:default}` → use default
+/// - Unknown `ZED_*` without default → return `None` (substitution failure)
+/// - Non-`ZED_*` variables → left as-is (passthrough)
+/// - `ZED_SEPARATOR` is special: it acts as a conditional separator that only
+///   renders when both adjacent sides have non-empty content. Use
+///   `${ZED_SEPARATOR: — }` to specify the separator value (defaults to ` — `).
+pub fn substitute_template_variables(
+    template_str: &str,
+    variables: &HashMap<String, String>,
+) -> Option<String> {
+    const SEPARATOR_VARIABLE: &str = "ZED_SEPARATOR";
+    const SENTINEL_START: char = '\x01';
+    const SENTINEL_END: char = '\x02';
+    const DEFAULT_SEPARATOR: &str = " \u{2014} ";
+
+    let mut has_separator = false;
+    let substituted = shellexpand::env_with_context(template_str, |var| {
+        let colon_position = var.find(':').unwrap_or(var.len());
+        let (variable_name, default) = var.split_at(colon_position);
+        if variable_name == SEPARATOR_VARIABLE {
+            has_separator = true;
+            let sep_value = if !default.is_empty() {
+                &default[1..]
+            } else {
+                DEFAULT_SEPARATOR
+            };
+            return Ok(Some(format!("{SENTINEL_START}{sep_value}{SENTINEL_END}")));
+        }
+        if let Some(value) = variables.get(variable_name) {
+            return Ok(Some(value.clone()));
+        } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
+            if !default.is_empty() {
+                return Ok(Some(default[1..].to_owned()));
+            } else {
+                bail!("Unknown variable name: {variable_name}");
+            }
+        }
+        if !default.is_empty() {
+            return Ok(Some(format!("${{{var}}}")));
+        }
+        Ok(None)
+    })
+    .ok()?;
+
+    let result = substituted.into_owned();
+    if !has_separator {
+        return Some(result);
+    }
+    Some(collapse_conditional_separators(&result))
+}
+
+fn collapse_conditional_separators(input: &str) -> String {
+    const SENTINEL_START: char = '\x01';
+    const SENTINEL_END: char = '\x02';
+
+    let mut segments: Vec<&str> = Vec::new();
+    let mut separators: Vec<&str> = Vec::new();
+    let mut rest = input;
+
+    while let Some(start) = rest.find(SENTINEL_START) {
+        segments.push(&rest[..start]);
+        rest = &rest[start + SENTINEL_START.len_utf8()..];
+        if let Some(end) = rest.find(SENTINEL_END) {
+            separators.push(&rest[..end]);
+            rest = &rest[end + SENTINEL_END.len_utf8()..];
+        }
+    }
+    segments.push(rest);
+
+    // Collect non-empty segments paired with the separator that preceded them.
+    // When multiple empty segments are skipped, the first separator crossing
+    // from a non-empty segment to the next non-empty segment is used.
+    let mut kept: Vec<(&str, Option<&str>)> = Vec::new();
+    let mut pending_sep: Option<&str> = None;
+    for (i, segment) in segments.iter().enumerate() {
+        if !segment.trim().is_empty() {
+            kept.push((segment, pending_sep));
+            pending_sep = None;
+        }
+        if i < separators.len() && pending_sep.is_none() {
+            pending_sep = Some(separators[i]);
+        }
+    }
+
+    let mut result = String::new();
+    for (i, (segment, sep)) in kept.iter().enumerate() {
+        if i > 0 {
+            if let Some(sep) = sep {
+                result.push_str(sep);
+            }
+        }
+        result.push_str(segment);
+    }
+    result
+}
+
+/// Returns `true` if the template string references the given variable name.
+/// Checks for `$VAR_NAME`, `${VAR_NAME}`, and `${VAR_NAME:...}` patterns.
+pub fn template_references_variable(template: &str, var_name: &str) -> bool {
+    if let Some(pos) = template.find(var_name) {
+        if pos > 0 {
+            let before = template.as_bytes()[pos - 1];
+            return before == b'$' || before == b'{';
+        }
+    }
+    false
+}
+
+/// Computes file-related template variables from path components.
+/// Returns a `HashMap` with keys: `ZED_FILE`, `ZED_FILENAME`, `ZED_STEM`,
+/// `ZED_DIRNAME`, `ZED_RELATIVE_FILE`, `ZED_RELATIVE_DIR`, `ZED_WORKTREE_ROOT`.
+pub fn file_template_variables(
+    abs_file: &Path,
+    worktree_root: &Path,
+    relative_path: &Path,
+) -> HashMap<String, String> {
+    let mut variables = HashMap::default();
+    variables.insert(
+        "ZED_WORKTREE_ROOT".to_string(),
+        worktree_root.to_string_lossy().into_owned(),
+    );
+    variables.insert(
+        "ZED_RELATIVE_FILE".to_string(),
+        relative_path.to_string_lossy().into_owned(),
+    );
+    if let Some(relative_dir) = relative_path.parent() {
+        variables.insert(
+            "ZED_RELATIVE_DIR".to_string(),
+            if relative_dir.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                relative_dir.to_string_lossy().into_owned()
+            },
+        );
+    }
+    if let Some(filename) = abs_file.file_name().and_then(|f| f.to_str()) {
+        variables.insert("ZED_FILENAME".to_string(), filename.to_string());
+    }
+    if let Some(stem) = abs_file.file_stem().and_then(|s| s.to_str()) {
+        variables.insert("ZED_STEM".to_string(), stem.to_string());
+    }
+    if let Some(dirname) = abs_file.parent().and_then(|p| p.to_str()) {
+        variables.insert("ZED_DIRNAME".to_string(), dirname.to_string());
+    }
+    variables.insert(
+        "ZED_FILE".to_string(),
+        abs_file.to_string_lossy().into_owned(),
+    );
+    variables
+}
+
 fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
@@ -1073,5 +1231,106 @@ mod tests {
         };
 
         assert!(task.unknown_variables().is_empty());
+    }
+    #[test]
+    fn test_file_template_variables_and_substitution() {
+        let worktree_root = Path::new("/projects/app");
+        // On Windows, paths use backslashes, so to make this test robust across platforms
+        // (since it might run on Windows), we should be careful with path separators.
+        // However, `Path::new` creates platform-native paths.
+        // Let's use `join` to construct paths properly.
+        let relative_path = Path::new("src").join("main.rs");
+        let abs_file = worktree_root.join(&relative_path);
+
+        let variables = file_template_variables(&abs_file, worktree_root, &relative_path);
+
+        // We check for presence of keys and some content without relying on strict string equality
+        // for paths that might vary by OS separator.
+        assert!(variables.contains_key("ZED_WORKTREE_ROOT"));
+        assert!(variables.contains_key("ZED_RELATIVE_FILE"));
+        assert_eq!(variables.get("ZED_RELATIVE_DIR").unwrap(), "src");
+        assert_eq!(variables.get("ZED_FILENAME").unwrap(), "main.rs");
+        assert_eq!(variables.get("ZED_STEM").unwrap(), "main");
+
+        let template = "File: ${ZED_FILENAME} | Stem: $ZED_STEM";
+        let substituted = substitute_template_variables(template, &variables).unwrap();
+
+        assert_eq!(substituted, "File: main.rs | Stem: main");
+
+        // Test check for references
+        assert!(template_references_variable(template, "ZED_FILENAME"));
+        assert!(template_references_variable(template, "ZED_STEM"));
+        assert!(!template_references_variable(template, "ZED_NONEXISTENT"));
+
+        // Test default values
+
+        let template_default = "${ZED_UNKNOWN:default_val}";
+        let variables_empty = HashMap::default();
+        let substituted_default =
+            substitute_template_variables(template_default, &variables_empty).unwrap();
+        assert_eq!(substituted_default, "default_val");
+    }
+
+    #[test]
+    fn test_conditional_separator() {
+        let mut vars = HashMap::default();
+        vars.insert("ZED_PROJECTS".to_string(), "my-project".to_string());
+        vars.insert("ZED_FILENAME".to_string(), "main.rs".to_string());
+        vars.insert("ZED_COLLAB".to_string(), "↙".to_string());
+
+        // All variables present — separators render
+        let template =
+            "${ZED_PROJECTS}${ZED_SEPARATOR: — }${ZED_FILENAME}${ZED_SEPARATOR: — }${ZED_COLLAB}";
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project — main.rs — ↙"
+        );
+
+        // Empty right side — trailing separator removed
+        vars.insert("ZED_COLLAB".to_string(), String::new());
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project — main.rs"
+        );
+
+        // Empty middle — both adjacent separators removed, outer segments joined
+        vars.insert("ZED_FILENAME".to_string(), String::new());
+        vars.insert("ZED_COLLAB".to_string(), "↙".to_string());
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project — ↙"
+        );
+
+        // Only first variable has content — all separators removed
+        vars.insert("ZED_FILENAME".to_string(), String::new());
+        vars.insert("ZED_COLLAB".to_string(), String::new());
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project"
+        );
+
+        // Different separator values per occurrence
+        let template =
+            "${ZED_PROJECTS}${ZED_SEPARATOR: | }${ZED_FILENAME}${ZED_SEPARATOR: - }${ZED_COLLAB}";
+        vars.insert("ZED_FILENAME".to_string(), "main.rs".to_string());
+        vars.insert("ZED_COLLAB".to_string(), "↙".to_string());
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project | main.rs - ↙"
+        );
+
+        // No separator in template — no behavior change
+        let template = "${ZED_PROJECTS} — ${ZED_FILENAME}";
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project — main.rs"
+        );
+
+        // Default separator value (no custom value specified)
+        let template = "${ZED_PROJECTS}${ZED_SEPARATOR}${ZED_FILENAME}";
+        assert_eq!(
+            substitute_template_variables(template, &vars).unwrap(),
+            "my-project \u{2014} main.rs"
+        );
     }
 }

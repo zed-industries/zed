@@ -1417,9 +1417,18 @@ pub mod test {
 
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            Self::new_with_worktree(id, path, WorktreeId::from_usize(0), cx)
+        }
+
+        pub fn new_with_worktree(
+            id: u64,
+            path: &str,
+            worktree_id: WorktreeId,
+            cx: &mut App,
+        ) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0),
+                worktree_id,
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {
@@ -1551,14 +1560,13 @@ pub mod test {
         }
 
         fn tab_content_text(&self, detail: usize, _cx: &App) -> SharedString {
-            self.tab_descriptions
-                .as_ref()
-                .and_then(|descriptions| {
-                    let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
-                    description.into()
-                })
-                .unwrap_or_default()
-                .into()
+            if let Some(descriptions) = &self.tab_descriptions {
+                if let Some(description) = descriptions.get(detail).or_else(|| descriptions.last())
+                {
+                    return (*description).into();
+                }
+            }
+            self.label.clone().into()
         }
 
         fn telemetry_event_text(&self) -> Option<&'static str> {

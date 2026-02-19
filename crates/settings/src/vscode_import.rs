@@ -989,6 +989,7 @@ impl VsCodeSettings {
                 }
             }),
             zoomed_padding: None,
+            window_title_template: None,
         }
     }
 

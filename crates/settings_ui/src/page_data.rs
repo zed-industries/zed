@@ -4118,7 +4118,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn window_section() -> [SettingsPageItem; 3] {
+    fn window_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Window"),
             // todo(settings_ui): Should we filter by platform.as_ref()?
@@ -4148,6 +4148,24 @@ fn window_and_layout_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Window Title Template",
+                description: "The template used to generate the window title. Supported variables: $ZED_PROJECTS, $ZED_TAB_TITLE, $ZED_COLLAB, $ZED_FILE, $ZED_FILENAME, $ZED_STEM, $ZED_DIRNAME, $ZED_RELATIVE_FILE, $ZED_RELATIVE_DIR, $ZED_WORKTREE_ROOT.",
+                field: Box::new(SettingField {
+                    json_path: Some("window_title_template"),
+                    pick: |settings_content| {
+                        settings_content.workspace.window_title_template.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.window_title_template = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("${ZED_PROJECTS} — ${ZED_TAB_TITLE}${ZED_COLLAB}"),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
         ]

@@ -24,7 +24,8 @@ pub use debug_format::{
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
-    substitute_variables_in_map, substitute_variables_in_str,
+    file_template_variables, substitute_template_variables, substitute_variables_in_map,
+    substitute_variables_in_str, template_references_variable,
 };
 pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;

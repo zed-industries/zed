@@ -122,6 +122,29 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// A template string for the window title.
+    ///
+    /// Available variables:
+    /// - `$ZED_TAB_TITLE` — Active tab's title text (empty string if none)
+    /// - `$ZED_PROJECTS` — Comma-separated project names
+    /// - `$ZED_COLLAB` — Collab indicator (` ↙` for remote, ` ↗` for shared, or empty)
+    /// - `$ZED_FILE` — Absolute path of the currently opened file
+    /// - `$ZED_FILENAME` — Name of the currently opened file
+    /// - `$ZED_STEM` — Filename without extension
+    /// - `$ZED_DIRNAME` — Absolute path of the file's parent directory
+    /// - `$ZED_RELATIVE_FILE` — File path relative to worktree root
+    /// - `$ZED_RELATIVE_DIR` — Directory path relative to worktree root
+    /// - `$ZED_WORKTREE_ROOT` — Absolute path of the active worktree root
+    /// - `$ZED_SEPARATOR` — A conditional separator that only renders when both
+    ///   adjacent sides have non-empty content. Use `${ZED_SEPARATOR: — }` to
+    ///   specify the separator value (defaults to ` — `).
+    ///
+    /// File-related variables are only set when a file is active.
+    /// Use `${VAR:default}` syntax for fallback values,
+    /// e.g. `${ZED_PROJECTS:empty project}`.
+    ///
+    /// Default: `${ZED_PROJECTS:empty project}${ZED_SEPARATOR: — }$ZED_FILENAME${ZED_SEPARATOR: — }${ZED_COLLAB}`
+    pub window_title_template: Option<String>,
 }
 
 #[with_fallible_options]

@@ -122,6 +122,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
+use task::{file_template_variables, substitute_template_variables, template_references_variable};
 use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -1327,6 +1328,11 @@ impl Workspace {
             })
             .detach();
         }
+
+        cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
+            this.update_window_title(window, cx);
+        })
+        .detach();
 
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
@@ -5115,53 +5121,99 @@ impl Workspace {
     }
 
     fn update_window_title(&mut self, window: &mut Window, cx: &mut App) {
+        let template = WorkspaceSettings::get_global(cx)
+            .window_title_template
+            .clone();
+
         let project = self.project().read(cx);
-        let mut title = String::new();
+        let mut variables = HashMap::default();
 
-        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
-            let name = {
-                let settings_location = SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path: RelPath::empty(),
+        let needs_projects = template_references_variable(&template, "ZED_PROJECTS");
+        if needs_projects {
+            let mut projects = String::new();
+            for (i, worktree) in project.visible_worktrees(cx).enumerate() {
+                let name = {
+                    let settings_location = SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: RelPath::empty(),
+                    };
+                    let settings = WorktreeSettings::get(Some(settings_location), cx);
+                    match &settings.project_name {
+                        Some(name) => name.as_str(),
+                        None => worktree.read(cx).root_name_str(),
+                    }
                 };
-
-                let settings = WorktreeSettings::get(Some(settings_location), cx);
-                match &settings.project_name {
-                    Some(name) => name.as_str(),
-                    None => worktree.read(cx).root_name_str(),
+                if i > 0 {
+                    projects.push_str(", ");
                 }
+                projects.push_str(name);
+            }
+            variables.insert("ZED_PROJECTS".to_string(), projects);
+        }
+
+        if template_references_variable(&template, "ZED_TAB_TITLE") {
+            let tab_title = self
+                .active_item(cx)
+                .map(|item| item.tab_content_text(0, cx).to_string())
+                .unwrap_or_default();
+            variables.insert("ZED_TAB_TITLE".to_string(), tab_title);
+        }
+
+        if template_references_variable(&template, "ZED_COLLAB") {
+            let collab = if project.is_via_collab() {
+                "↙"
+            } else if project.is_shared() {
+                "↗"
+            } else {
+                ""
             };
-            if i > 0 {
-                title.push_str(", ");
+            variables.insert("ZED_COLLAB".to_string(), collab.to_string());
+        }
+
+        let needs_file_vars = [
+            "ZED_FILE",
+            "ZED_FILENAME",
+            "ZED_STEM",
+            "ZED_DIRNAME",
+            "ZED_RELATIVE_FILE",
+            "ZED_RELATIVE_DIR",
+            "ZED_WORKTREE_ROOT",
+        ]
+        .iter()
+        .any(|var| template_references_variable(&template, var));
+
+        let file_var_names = [
+            "ZED_FILE",
+            "ZED_FILENAME",
+            "ZED_STEM",
+            "ZED_DIRNAME",
+            "ZED_RELATIVE_FILE",
+            "ZED_RELATIVE_DIR",
+            "ZED_WORKTREE_ROOT",
+        ];
+        if needs_file_vars {
+            if let Some(project_path) = self.active_item(cx).and_then(|item| item.project_path(cx))
+            {
+                if let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) {
+                    let worktree = worktree.read(cx);
+                    let abs_worktree = worktree.abs_path();
+                    let abs_file = abs_worktree.join(project_path.path.as_std_path());
+                    variables.extend(file_template_variables(
+                        &abs_file,
+                        &abs_worktree,
+                        project_path.path.as_std_path(),
+                    ));
+                }
             }
-            title.push_str(name);
-        }
-
-        if title.is_empty() {
-            title = "empty project".to_string();
-        }
-
-        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-            let filename = path.path.file_name().or_else(|| {
-                Some(
-                    project
-                        .worktree_for_id(path.worktree_id, cx)?
-                        .read(cx)
-                        .root_name_str(),
-                )
-            });
-
-            if let Some(filename) = filename {
-                title.push_str(" — ");
-                title.push_str(filename.as_ref());
+            for var in &file_var_names {
+                variables.entry(var.to_string()).or_default();
             }
         }
 
-        if project.is_via_collab() {
-            title.push_str(" ↙");
-        } else if project.is_shared() {
-            title.push_str(" ↗");
-        }
+        let title = substitute_template_variables(&template, &variables)
+            .unwrap_or_else(|| "Zed".into())
+            .trim()
+            .to_string();
 
         if let Some(last_title) = self.last_window_title.as_ref()
             && &title == last_title
@@ -13162,5 +13214,89 @@ mod tests {
             );
             assert!(panel.is_zoomed(window, cx));
         });
+    }
+
+    #[gpui::test]
+    async fn test_window_title_updates(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        // "root" matches the project name we expect in default title
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Wait for usage of default title
+        cx.run_until_parked();
+
+        // 1. Check default title (with just "root" project, no file open)
+        let initial_title = cx.window_title().unwrap();
+        // Default template: "${ZED_PROJECTS:empty project}${ZED_SEPARATOR: — }${ZED_FILENAME:}${ZED_SEPARATOR: — }${ZED_COLLAB}"
+        // ZED_PROJECTS -> "root", ZED_FILENAME -> "" (default), ZED_COLLAB -> ""
+        // Separators collapse because adjacent content is empty
+        assert_eq!(
+            initial_title, "root",
+            "Default title with no file should have no trailing separator"
+        );
+
+        // 2. Change the template to something simple
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.window_title_template =
+                    Some("Title: ${ZED_PROJECTS} | Item: ${ZED_TAB_TITLE}".to_string());
+            });
+        });
+        cx.run_until_parked();
+
+        // 3. Open a file to set the tab title
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("my_file.txt")
+                .with_project_items(&[TestProjectItem::new_with_worktree(
+                    1,
+                    "my_file.txt",
+                    worktree_id,
+                    cx,
+                )])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.window_title().unwrap(),
+            "Title: root | Item: my_file.txt"
+        );
+
+        // 4. Test file variable: ZED_FILENAME
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.window_title_template =
+                    Some("File: ${ZED_FILENAME}".to_string());
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().unwrap(), "File: my_file.txt");
+
+        // 5. Test file variable: ZED_WORKTREE_ROOT
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.window_title_template = Some("${ZED_WORKTREE_ROOT}".to_string());
+            });
+        });
+        cx.run_until_parked();
+        let title = cx.window_title().unwrap();
+        // The fake fs root might be slightly different depending on platform/internal implementation
+        // but it should contain "root"
+        assert!(
+            title.contains("root") || title.contains("/root"),
+            "Title '{}' should contain root path",
+            title
+        );
     }
 }
