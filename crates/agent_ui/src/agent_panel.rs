@@ -2142,6 +2142,10 @@ impl Panel for AgentPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active
             && matches!(self.active_view, ActiveView::Uninitialized)
+            // TODO: When worktree creation is fully implemented, the completion
+            // path must either call new_agent_thread directly or re-trigger
+            // set_active, because this guard suppresses thread creation with no
+            // automatic recovery.
             && !matches!(
                 self.worktree_creation_status,
                 Some(WorktreeCreationStatus::Creating)
@@ -4174,6 +4178,78 @@ mod tests {
                 *panel.thread_target(),
                 ThreadTarget::NewWorktree,
                 "thread target should survive serialization round-trip"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_active_blocked_during_worktree_creation(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Simulate worktree creation in progress and reset to Uninitialized
+        panel.update_in(cx, |panel, window, cx| {
+            panel.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+            panel.active_view = ActiveView::Uninitialized;
+            Panel::set_active(panel, true, window, cx);
+            assert!(
+                matches!(panel.active_view, ActiveView::Uninitialized),
+                "set_active should not create a thread while worktree is being created"
+            );
+        });
+
+        // Clear the creation status and try again
+        panel.update_in(cx, |panel, window, cx| {
+            panel.worktree_creation_status = None;
+            Panel::set_active(panel, true, window, cx);
+        });
+
+        // The thread is created asynchronously, so let the executor run.
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                !matches!(panel.active_view, ActiveView::Uninitialized),
+                "set_active should create a thread once worktree creation is cleared"
             );
         });
     }
