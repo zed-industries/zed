@@ -24061,8 +24061,10 @@ impl Editor {
     }
 
     pub(crate) fn prune_cursor_tail_states(&mut self, now: Instant, max_age: Duration) {
-        self.cursor_tail_states
-            .retain(|_, state| now.duration_since(state.last_seen) <= max_age);
+        self.cursor_tail_states.retain(|_, state| {
+            now.checked_duration_since(state.last_seen)
+                .is_none_or(|age| age <= max_age)
+        });
     }
 
     pub(crate) fn clear_cursor_tail_states(&mut self) {

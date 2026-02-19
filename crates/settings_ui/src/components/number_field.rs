@@ -526,7 +526,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 }
 
                                 update_editor_text(new_value, window, cx);
-                                on_change(&new_value, window, cx);
+                                if !(apply_on_focus_lost && is_edit_mode) {
+                                    on_change(&new_value, window, cx);
+                                }
                             }
                         };
 
@@ -761,7 +763,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 }
 
                                 update_editor_text(new_value, window, cx);
-                                on_change(&new_value, window, cx);
+                                if !(apply_on_focus_lost && is_edit_mode) {
+                                    on_change(&new_value, window, cx);
+                                }
                             }
                         };
 
