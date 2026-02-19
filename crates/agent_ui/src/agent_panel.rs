@@ -1918,6 +1918,7 @@ impl AgentPanel {
             }
         };
         self.thread_target = new_target;
+        self.serialize(cx);
         cx.notify();
     }
 
@@ -4097,6 +4098,97 @@ mod tests {
             assert!(
                 panel.worktree_creation_status.is_none(),
                 "no worktree creation should have occurred"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_target_serialization_round_trip(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Wait for the project to discover the git repository.
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Default should be LocalProject.
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(*panel.thread_target(), ThreadTarget::LocalProject);
+        });
+
+        // Change thread target to NewWorktree.
+        panel.update(cx, |panel, cx| {
+            panel.set_thread_target(&SetThreadTarget::new_worktree(), cx);
+        });
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                *panel.thread_target(),
+                ThreadTarget::NewWorktree,
+                "thread target should be NewWorktree after set_thread_target"
+            );
+        });
+
+        // Let serialization complete.
+        cx.run_until_parked();
+
+        // Load a fresh panel from the serialized data.
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel =
+            AgentPanel::load(workspace.downgrade(), prompt_builder.clone(), async_cx)
+                .await
+                .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                *panel.thread_target(),
+                ThreadTarget::NewWorktree,
+                "thread target should survive serialization round-trip"
             );
         });
     }
