@@ -312,7 +312,7 @@ jobs:
           # Unset GH_TOKEN first to allow gh auth login to store credentials
           echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
           
-          OUTPUT_FILE=$(mktemp)
+          OUTPUT_FILE="${RUNNER_TEMP}/suggestions.md"
           
           # Cherry-picks don't get preview callout
           # Retry with exponential backoff for transient Factory API failures
@@ -341,11 +341,7 @@ jobs:
              grep -q "Documentation Suggestions" "$OUTPUT_FILE" && \
              ! grep -q "No Documentation Updates Needed" "$OUTPUT_FILE"; then
             echo "has_suggestions=true" >> "$GITHUB_OUTPUT"
-            {
-              echo 'suggestions<<EOF'
-              cat "$OUTPUT_FILE"
-              echo 'EOF'
-            } >> "$GITHUB_OUTPUT"
+            echo "suggestions_file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
           else
             echo "has_suggestions=false" >> "$GITHUB_OUTPUT"
           fi
@@ -356,9 +352,12 @@ jobs:
       - name: Post suggestions as PR comment
         if: steps.analyze.outputs.has_suggestions == 'true'
         uses: actions/github-script@v7
+        env:
+          SUGGESTIONS_FILE: ${{ steps.analyze.outputs.suggestions_file }}
         with:
           script: |
-            const suggestions = `${{ steps.analyze.outputs.suggestions }}`;
+            const fs = require('fs');
+            const suggestions = fs.readFileSync(process.env.SUGGESTIONS_FILE, 'utf8');
             
             const body = `## 📚 Documentation Suggestions
 
@@ -413,7 +412,7 @@ jobs:
             if [ "${{ steps.analyze.outputs.has_suggestions }}" == "true" ]; then
               echo "Suggestions posted as PR comment."
               echo ""
-              echo "${{ steps.analyze.outputs.suggestions }}"
+              cat "${{ steps.analyze.outputs.suggestions_file }}"
             else
               echo "No documentation suggestions for this cherry-pick."
             fi
