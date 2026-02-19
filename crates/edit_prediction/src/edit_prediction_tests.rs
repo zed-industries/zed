@@ -1406,6 +1406,14 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
         ep_store.register_buffer(&buffer, &project, cx);
     });
 
+    // First edit request - no prior edit, so not throttled.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    let (_edit_request, edit_response_tx) = requests.predict.next().await.unwrap();
+    edit_response_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
     let diagnostic = lsp::Diagnostic {
         range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
         severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -1413,6 +1421,7 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
         ..Default::default()
     };
 
+    // First jump request triggered by diagnostic event on buffer - no prior jump, so not throttled (independent from edit).
     project.update(cx, |project, cx| {
         project.lsp_store().update(cx, |lsp_store, cx| {
             lsp_store
@@ -1430,23 +1439,6 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
                 )
                 .unwrap();
         });
-    });
-
-    // First edit request - no prior edit, so not throttled.
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
-    });
-    let (_edit_request, edit_response_tx) = requests.predict.next().await.unwrap();
-    edit_response_tx.send(empty_response()).unwrap();
-    cx.run_until_parked();
-
-    // First jump request - no prior jump, so not throttled (independent from edit).
-    ep_store.update(cx, |ep_store, cx| {
-        ep_store.refresh_prediction_from_diagnostics(
-            project.clone(),
-            DiagnosticSearchScope::Global,
-            cx,
-        );
     });
     let (_jump_request, jump_response_tx) = requests.predict.next().await.unwrap();
     jump_response_tx.send(empty_response()).unwrap();
