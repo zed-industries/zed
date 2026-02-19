@@ -2037,7 +2037,7 @@ impl LhsEditor {
             base_text_buffer_snapshot = base_text_buffer.snapshot();
             remote_id = base_text_buffer.remote_id();
         }
-        let new = rhs_multibuffer
+        let excerpt_ranges = rhs_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), lhs_cx)
             .into_iter()
             .filter(|(id, _)| rhs_excerpt_ids.contains(&id))
@@ -2062,13 +2062,26 @@ impl LhsEditor {
                     context: point_range_to_base_text_point_range(context),
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        let lhs_result = lhs_multibuffer.update_path_excerpts(
+        let (new, counts) = MultiBuffer::merge_excerpt_ranges(&excerpt_ranges);
+        let mut total = 0;
+        let rhs_merge_groups = counts
+            .iter()
+            .copied()
+            .map(|count| {
+                let group = rhs_excerpt_ids[total..total + count].to_vec();
+                total += count;
+                group
+            })
+            .collect();
+        let lhs_result = lhs_multibuffer.set_merged_excerpt_ranges_for_path(
             path_key,
             diff.read(lhs_cx).base_text_buffer().clone(),
+            excerpt_ranges,
             &base_text_buffer_snapshot,
             new,
+            counts,
             lhs_cx,
         );
         if !lhs_result.excerpt_ids.is_empty()
@@ -2081,28 +2094,6 @@ impl LhsEditor {
                 .expect("main buffer should exist in rhs_multibuffer");
             lhs_multibuffer.add_inverted_diff(diff, main_buffer_entity, lhs_cx);
         }
-
-        let rhs_merge_groups: Vec<Vec<ExcerptId>> = {
-            let mut groups = Vec::new();
-            let mut current_group = Vec::new();
-            let mut last_id = None;
-
-            for (lhs_id, rhs_id) in lhs_result.excerpt_ids.iter().zip(rhs_excerpt_ids) {
-                if last_id == Some(lhs_id) {
-                    current_group.push(rhs_id);
-                } else {
-                    if !current_group.is_empty() {
-                        groups.push(current_group);
-                    }
-                    current_group = vec![rhs_id];
-                    last_id = Some(lhs_id);
-                }
-            }
-            if !current_group.is_empty() {
-                groups.push(current_group);
-            }
-            groups
-        };
 
         let deduplicated_lhs_ids: Vec<ExcerptId> =
             lhs_result.excerpt_ids.iter().dedup().copied().collect();

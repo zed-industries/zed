@@ -14920,6 +14920,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "serde",
