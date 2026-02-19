@@ -310,7 +310,8 @@ struct ProjectState {
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
-    last_prediction_refresh: Option<(EntityId, Instant)>,
+    last_edit_prediction_refresh: Option<(EntityId, Instant)>,
+    last_jump_prediction_refresh: Option<(EntityId, Instant)>,
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
@@ -442,6 +443,14 @@ impl PredictionRequestedBy {
             PredictionRequestedBy::Buffer(buffer_id) => Some(*buffer_id),
         }
     }
+}
+
+const DIAGNOSTIC_LINES_RANGE: u32 = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiagnosticSearchScope {
+    Local,
+    Global,
 }
 
 #[derive(Debug)]
@@ -899,7 +908,8 @@ impl EditPredictionStore {
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
                 next_pending_prediction_id: 0,
-                last_prediction_refresh: None,
+                last_edit_prediction_refresh: None,
+                last_jump_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
                 user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
                 _subscriptions: [
@@ -1014,7 +1024,11 @@ impl EditPredictionStore {
             }
             project::Event::DiagnosticsUpdated { .. } => {
                 if cx.has_flag::<Zeta2FeatureFlag>() {
-                    self.refresh_prediction_from_diagnostics(project, cx);
+                    self.refresh_prediction_from_diagnostics(
+                        project,
+                        DiagnosticSearchScope::Global,
+                        cx,
+                    );
                 }
             }
             _ => (),
@@ -1458,38 +1472,45 @@ impl EditPredictionStore {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        self.queue_prediction_refresh(project.clone(), buffer.entity_id(), cx, move |this, cx| {
-            let Some(request_task) = this
-                .update(cx, |this, cx| {
-                    this.request_prediction(
-                        &project,
-                        &buffer,
-                        position,
-                        PredictEditsRequestTrigger::Other,
-                        cx,
-                    )
-                })
-                .log_err()
-            else {
-                return Task::ready(anyhow::Ok(None));
-            };
-
-            cx.spawn(async move |_cx| {
-                request_task.await.map(|prediction_result| {
-                    prediction_result.map(|prediction_result| {
-                        (
-                            prediction_result,
-                            PredictionRequestedBy::Buffer(buffer.entity_id()),
+        self.queue_prediction_refresh(
+            project.clone(),
+            PredictEditsRequestTrigger::Other,
+            buffer.entity_id(),
+            cx,
+            move |this, cx| {
+                let Some(request_task) = this
+                    .update(cx, |this, cx| {
+                        this.request_prediction(
+                            &project,
+                            &buffer,
+                            position,
+                            PredictEditsRequestTrigger::Other,
+                            cx,
                         )
                     })
+                    .log_err()
+                else {
+                    return Task::ready(anyhow::Ok(None));
+                };
+
+                cx.spawn(async move |_cx| {
+                    request_task.await.map(|prediction_result| {
+                        prediction_result.map(|prediction_result| {
+                            (
+                                prediction_result,
+                                PredictionRequestedBy::Buffer(buffer.entity_id()),
+                            )
+                        })
+                    })
                 })
-            })
-        })
+            },
+        )
     }
 
     pub fn refresh_prediction_from_diagnostics(
         &mut self,
         project: Entity<Project>,
+        scope: DiagnosticSearchScope,
         cx: &mut Context<Self>,
     ) {
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
@@ -1499,79 +1520,96 @@ impl EditPredictionStore {
         // Prefer predictions from buffer
         if project_state.current_prediction.is_some() {
             return;
-        };
+        }
 
-        self.queue_prediction_refresh(project.clone(), project.entity_id(), cx, move |this, cx| {
-            let Some((active_buffer, snapshot, cursor_point)) = this
-                .read_with(cx, |this, cx| {
-                    let project_state = this.projects.get(&project.entity_id())?;
-                    let (buffer, position) = project_state.active_buffer(&project, cx)?;
-                    let snapshot = buffer.read(cx).snapshot();
+        self.queue_prediction_refresh(
+            project.clone(),
+            PredictEditsRequestTrigger::Diagnostics,
+            project.entity_id(),
+            cx,
+            move |this, cx| {
+                let Some((active_buffer, snapshot, cursor_point)) = this
+                    .read_with(cx, |this, cx| {
+                        let project_state = this.projects.get(&project.entity_id())?;
+                        let (buffer, position) = project_state.active_buffer(&project, cx)?;
+                        let snapshot = buffer.read(cx).snapshot();
 
-                    if !Self::predictions_enabled_at(&snapshot, position, cx) {
-                        return None;
-                    }
+                        if !Self::predictions_enabled_at(&snapshot, position, cx) {
+                            return None;
+                        }
 
-                    let cursor_point = position
-                        .map(|pos| pos.to_point(&snapshot))
-                        .unwrap_or_default();
+                        let cursor_point = position
+                            .map(|pos| pos.to_point(&snapshot))
+                            .unwrap_or_default();
 
-                    Some((buffer, snapshot, cursor_point))
-                })
-                .log_err()
-                .flatten()
-            else {
-                return Task::ready(anyhow::Ok(None));
-            };
-
-            cx.spawn(async move |cx| {
-                let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
-                    active_buffer,
-                    &snapshot,
-                    Default::default(),
-                    cursor_point,
-                    &project,
-                    cx,
-                )
-                .await?
+                        Some((buffer, snapshot, cursor_point))
+                    })
+                    .log_err()
+                    .flatten()
                 else {
-                    return anyhow::Ok(None);
+                    return Task::ready(anyhow::Ok(None));
                 };
 
-                let Some(prediction_result) = this
-                    .update(cx, |this, cx| {
-                        this.request_prediction(
-                            &project,
-                            &jump_buffer,
-                            jump_position,
-                            PredictEditsRequestTrigger::Diagnostics,
-                            cx,
-                        )
-                    })?
+                cx.spawn(async move |cx| {
+                    let diagnostic_search_range = match scope {
+                        DiagnosticSearchScope::Local => {
+                            let diagnostic_search_start =
+                                cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
+                            let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
+                            Point::new(diagnostic_search_start, 0)
+                                ..Point::new(diagnostic_search_end, 0)
+                        }
+                        DiagnosticSearchScope::Global => Default::default(),
+                    };
+
+                    let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
+                        active_buffer,
+                        &snapshot,
+                        diagnostic_search_range,
+                        cursor_point,
+                        &project,
+                        cx,
+                    )
                     .await?
-                else {
-                    return anyhow::Ok(None);
-                };
+                    else {
+                        return anyhow::Ok(None);
+                    };
 
-                this.update(cx, |this, cx| {
-                    Some((
-                        if this
-                            .get_or_init_project(&project, cx)
-                            .current_prediction
-                            .is_none()
-                        {
-                            prediction_result
-                        } else {
-                            EditPredictionResult {
-                                id: prediction_result.id,
-                                prediction: Err(EditPredictionRejectReason::CurrentPreferred),
-                            }
-                        },
-                        PredictionRequestedBy::DiagnosticsUpdate,
-                    ))
+                    let Some(prediction_result) = this
+                        .update(cx, |this, cx| {
+                            this.request_prediction(
+                                &project,
+                                &jump_buffer,
+                                jump_position,
+                                PredictEditsRequestTrigger::Diagnostics,
+                                cx,
+                            )
+                        })?
+                        .await?
+                    else {
+                        return anyhow::Ok(None);
+                    };
+
+                    this.update(cx, |this, cx| {
+                        Some((
+                            if this
+                                .get_or_init_project(&project, cx)
+                                .current_prediction
+                                .is_none()
+                            {
+                                prediction_result
+                            } else {
+                                EditPredictionResult {
+                                    id: prediction_result.id,
+                                    prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                }
+                            },
+                            PredictionRequestedBy::DiagnosticsUpdate,
+                        ))
+                    })
                 })
-            })
-        });
+            },
+        );
     }
 
     fn predictions_enabled_at(
@@ -1605,14 +1643,12 @@ impl EditPredictionStore {
         true
     }
 
-    #[cfg(not(test))]
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
-    #[cfg(test)]
-    pub const THROTTLE_TIMEOUT: Duration = Duration::ZERO;
 
     fn queue_prediction_refresh(
         &mut self,
         project: Entity<Project>,
+        request_trigger: PredictEditsRequestTrigger,
         throttle_entity: EntityId,
         cx: &mut Context<Self>,
         do_refresh: impl FnOnce(
@@ -1622,20 +1658,34 @@ impl EditPredictionStore {
             -> Task<Result<Option<(EditPredictionResult, PredictionRequestedBy)>>>
         + 'static,
     ) {
+        fn select_throttle(
+            project_state: &mut ProjectState,
+            request_trigger: PredictEditsRequestTrigger,
+        ) -> &mut Option<(EntityId, Instant)> {
+            match request_trigger {
+                PredictEditsRequestTrigger::Diagnostics => {
+                    &mut project_state.last_jump_prediction_refresh
+                }
+                _ => &mut project_state.last_edit_prediction_refresh,
+            }
+        }
+
         let is_ollama = self.edit_prediction_model == EditPredictionModel::Ollama;
         let drop_on_cancel = is_ollama;
         let max_pending_predictions = if is_ollama { 1 } else { 2 };
+        let throttle_timeout = Self::THROTTLE_TIMEOUT;
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
         project_state.next_pending_prediction_id += 1;
-        let last_request = project_state.last_prediction_refresh;
+        let last_request = *select_throttle(project_state, request_trigger);
 
         let task = cx.spawn(async move |this, cx| {
-            if let Some((last_entity, last_timestamp)) = last_request
-                && throttle_entity == last_entity
-                && let Some(timeout) =
-                    (last_timestamp + Self::THROTTLE_TIMEOUT).checked_duration_since(Instant::now())
-            {
+            if let Some(timeout) = last_request.and_then(|(last_entity, last_timestamp)| {
+                if throttle_entity != last_entity {
+                    return None;
+                }
+                (last_timestamp + throttle_timeout).checked_duration_since(Instant::now())
+            }) {
                 cx.background_executor().timer(timeout).await;
             }
 
@@ -1644,11 +1694,12 @@ impl EditPredictionStore {
             let mut is_cancelled = true;
             this.update(cx, |this, cx| {
                 let project_state = this.get_or_init_project(&project, cx);
-                if !project_state
+                let was_cancelled = project_state
                     .cancelled_predictions
-                    .remove(&pending_prediction_id)
-                {
-                    project_state.last_prediction_refresh = Some((throttle_entity, Instant::now()));
+                    .remove(&pending_prediction_id);
+                if !was_cancelled {
+                    let new_refresh = (throttle_entity, Instant::now());
+                    *select_throttle(project_state, request_trigger) = Some(new_refresh);
                     is_cancelled = false;
                 }
             })
@@ -1785,8 +1836,6 @@ impl EditPredictionStore {
         allow_jump: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        const DIAGNOSTIC_LINES_RANGE: u32 = 20;
-
         self.get_or_init_project(&project, cx);
         let project_state = self.projects.get(&project.entity_id()).unwrap();
         let stored_events = project_state.events(cx);
@@ -1828,14 +1877,14 @@ impl EditPredictionStore {
 
         let inputs = EditPredictionModelInput {
             project: project.clone(),
-            buffer: active_buffer.clone(),
-            snapshot: snapshot.clone(),
+            buffer: active_buffer,
+            snapshot: snapshot,
             position,
             events,
             related_files,
             recent_paths: project_state.recent_paths.clone(),
             trigger,
-            diagnostic_search_range: diagnostic_search_range.clone(),
+            diagnostic_search_range: diagnostic_search_range,
             debug_tx,
             user_actions,
         };
@@ -1861,33 +1910,14 @@ impl EditPredictionStore {
         cx.spawn(async move |this, cx| {
             let prediction = task.await?;
 
-            if prediction.is_none() && allow_jump {
-                let cursor_point = position.to_point(&snapshot);
-                if has_events
-                    && let Some((jump_buffer, jump_position)) = Self::next_diagnostic_location(
-                        active_buffer.clone(),
-                        &snapshot,
-                        diagnostic_search_range,
-                        cursor_point,
-                        &project,
+            if prediction.is_none() && allow_jump && has_events {
+                this.update(cx, |this, cx| {
+                    this.refresh_prediction_from_diagnostics(
+                        project,
+                        DiagnosticSearchScope::Local,
                         cx,
-                    )
-                    .await?
-                {
-                    return this
-                        .update(cx, |this, cx| {
-                            this.request_prediction_internal(
-                                project,
-                                jump_buffer,
-                                jump_position,
-                                trigger,
-                                false,
-                                cx,
-                            )
-                        })?
-                        .await;
-                }
-
+                    );
+                })?;
                 return anyhow::Ok(None);
             }
 

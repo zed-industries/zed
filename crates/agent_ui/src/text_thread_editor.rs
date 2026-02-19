@@ -167,15 +167,6 @@ pub trait AgentPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
-
-    fn new_thread_with_content(
-        &self,
-        workspace: &mut Workspace,
-        blocks: Vec<agent_client_protocol::ContentBlock>,
-        auto_submit: bool,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    );
 }
 
 impl dyn AgentPanelDelegate {

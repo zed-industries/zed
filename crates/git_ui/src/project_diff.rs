@@ -5,10 +5,7 @@ use crate::{
     remote_button::{render_publish_button, render_push_button},
     resolve_active_repository,
 };
-use acp_thread::MentionUri;
-use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
-use agent_ui::AgentPanelDelegate;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -52,6 +49,7 @@ use workspace::{
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
+use zed_actions::agent::ReviewBranchDiff;
 use ztracing::instrument;
 
 actions!(
@@ -187,34 +185,15 @@ impl ProjectDiff {
             .spawn(cx, async move |cx| {
                 let diff_text = diff_receiver.await??;
 
-                let mention_uri = MentionUri::GitDiff {
-                    base_ref: base_ref.into(),
-                };
-                let diff_uri = mention_uri.to_uri().to_string();
-
-                let content_blocks = vec![
-                    acp::ContentBlock::Text(acp::TextContent::new(
-                        "Please review this branch diff carefully. Point out any issues, potential bugs, \
-                         or improvement opportunities you find.\n\n"
-                            .to_string(),
-                    )),
-                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                        acp::EmbeddedResourceResource::TextResourceContents(
-                            acp::TextResourceContents::new(diff_text, diff_uri),
-                        ),
-                    )),
-                ];
-
-                workspace_handle.update_in(cx, |workspace, window, cx| {
-                    if let Some(delegate) = <dyn AgentPanelDelegate>::try_global(cx) {
-                        delegate.new_thread_with_content(
-                            workspace,
-                            content_blocks,
-                            true,
-                            window,
-                            cx,
-                        );
-                    }
+                workspace_handle.update_in(cx, |_workspace, window, cx| {
+                    window.dispatch_action(
+                        ReviewBranchDiff {
+                            diff_text: diff_text.into(),
+                            base_ref: base_ref.to_string().into(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
                 })?;
 
                 anyhow::Ok(())
@@ -1647,8 +1626,7 @@ impl Render for BranchDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
-        let show_review_button = AgentSettings::get_global(cx).enabled(cx)
-            && <dyn AgentPanelDelegate>::try_global(cx).is_some();
+        let show_review_button = AgentSettings::get_global(cx).enabled(cx);
 
         h_group_xl()
             .my_neg_1()

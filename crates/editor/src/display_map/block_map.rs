@@ -4591,7 +4591,7 @@ mod tests {
         let diff = cx.new(|cx| {
             BufferDiff::new_with_base_text(base_text, &rhs_buffer.read(cx).text_snapshot(), cx)
         });
-        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+        let lhs_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);

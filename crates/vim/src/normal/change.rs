@@ -89,7 +89,7 @@ impl Vim {
                 });
                 if let Some(kind) = motion_kind {
                     vim.copy_selections_content(editor, kind, window, cx);
-                    editor.insert("", window, cx);
+                    editor.delete_selections_with_linked_edits(window, cx);
                     editor.refresh_edit_prediction(true, false, window, cx);
                 }
             });
@@ -126,7 +126,7 @@ impl Vim {
                         _ => MotionKind::Exclusive,
                     };
                     vim.copy_selections_content(editor, kind, window, cx);
-                    editor.insert("", window, cx);
+                    editor.delete_selections_with_linked_edits(window, cx);
                     editor.refresh_edit_prediction(true, false, window, cx);
                 }
             });

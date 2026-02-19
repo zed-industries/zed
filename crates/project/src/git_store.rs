@@ -303,7 +303,7 @@ pub struct Repository {
     git_store: WeakEntity<GitStore>,
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
     // and that should be examined during the next status scan.
-    paths_needing_status_update: BTreeSet<RepoPath>,
+    paths_needing_status_update: Vec<Vec<RepoPath>>,
     job_sender: mpsc::UnboundedSender<GitJob>,
     active_jobs: HashMap<JobId, JobInfo>,
     pending_ops: SumTree<PendingOps>,
@@ -6197,14 +6197,16 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        self.paths_needing_status_update.extend(paths);
+        if !paths.is_empty() {
+            self.paths_needing_status_update.push(paths);
+        }
 
         let this = cx.weak_entity();
         let _ = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
             |state, mut cx| async move {
-                let (prev_snapshot, mut changed_paths) = this.update(&mut cx, |this, _| {
+                let (prev_snapshot, changed_paths) = this.update(&mut cx, |this, _| {
                     (
                         this.snapshot.clone(),
                         mem::take(&mut this.paths_needing_status_update),
@@ -6214,15 +6216,18 @@ impl Repository {
                     bail!("not a local repository")
                 };
 
-                let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
-                if paths.is_empty() {
+                if changed_paths.is_empty() {
                     return Ok(());
                 }
-                let statuses = backend.status(&paths).await?;
-                let stash_entries = backend.stash_entries().await?;
 
+                let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
+                        let mut changed_paths =
+                            changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
+                        let statuses = backend
+                            .status(&changed_paths.iter().cloned().collect::<Vec<_>>())
+                            .await?;
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -6247,9 +6252,9 @@ impl Repository {
                                     .push(Edit::Remove(PathKey(path.as_ref().clone())));
                             }
                         }
-                        changed_path_statuses
+                        anyhow::Ok(changed_path_statuses)
                     })
-                    .await;
+                    .await?;
 
                 this.update(&mut cx, |this, cx| {
                     if this.snapshot.stash_entries != stash_entries {
