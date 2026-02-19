@@ -43,7 +43,7 @@ By default, Zed uses Prettier for formatting YAML files.
 
 You can customize the formatting behavior of Prettier. For example to use single-quotes in yaml files add the following to your `.prettierrc` configuration file:
 
-```json [settings]
+```json
 {
   "overrides": [
     {

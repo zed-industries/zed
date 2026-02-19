@@ -48,7 +48,7 @@ Ensure your credentials have the following permissions set up:
 
 Your IAM policy should look similar to:
 
-```json [settings]
+```json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -214,7 +214,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it) by changing the mode in your model's configuration to `thinking`, for example:
 
-```json [settings]
+```json
 {
   "name": "claude-sonnet-4-latest",
   "display_name": "claude-sonnet-4-thinking",
@@ -762,7 +762,7 @@ The Zed agent comes pre-configured with common Grok models. If you wish to use a
 You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
 To do so, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
 
-```json [settings]
+```json
 {
   "language_models": {
     "some-provider": {

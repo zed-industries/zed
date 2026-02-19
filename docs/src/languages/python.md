@@ -153,7 +153,7 @@ basedpyright reads project-specific configuration from the `pyrightconfig.json` 
 
 Here's an example `pyrightconfig.json` file that configures basedpyright to use the `strict` type-checking mode and not to issue diagnostics for any files in `__pycache__` directories:
 
-```json [settings]
+```json
 {
   "typeCheckingMode": "strict",
   "ignore": ["**/__pycache__"]

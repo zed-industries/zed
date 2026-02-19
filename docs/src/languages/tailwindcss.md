@@ -69,7 +69,7 @@ The `tailwindcss-intellisense-css` language server serves as an alternative to t
 
 Zed supports Prettier out of the box, which means that if you have the [Tailwind CSS Prettier plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) installed, adding it to your Prettier configuration will make it work automatically:
 
-```json [settings]
+```json
 // .prettierrc
 {
   "plugins": ["prettier-plugin-tailwindcss"]

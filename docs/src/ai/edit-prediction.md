@@ -18,9 +18,11 @@ Once signed in, predictions appear as you type.
 You can confirm that Zeta is properly configured either by verifying whether you have the following code in your settings file:
 
 ```json [settings]
-"edit_predictions": {
-  "provider": "zed"
-},
+{
+  "edit_predictions": {
+    "provider": "zed"
+  }
+}
 ```
 
 The Z icon in the status bar also indicates Zeta is active.
@@ -68,7 +70,7 @@ On Linux, `alt-tab` is often used by the window manager for switching windows, s
 
 By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction",
   "bindings": {
@@ -81,7 +83,7 @@ By default, `tab` is used to accept edit predictions. You can use another keybin
 When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different key context to accept keybindings (`edit_prediction_conflict`).
 If you want to use a different one, you can insert this in your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -95,7 +97,7 @@ If your keybinding contains a modifier (`ctrl` in the example above), it will al
 You can also bind this action to keybind without a modifier.
 In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict",
   "bindings": {
@@ -108,7 +110,7 @@ In that case, Zed will use the default modifier (`alt`) to preview the edit pred
 
 To maintain the use of the modifier key for accepting predictions when there is a language server completions menu, but allow `tab` to accept predictions regardless of cursor position, you can specify the context further with `showing_completions`:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor && edit_prediction_conflict && !showing_completions",
   "bindings": {
@@ -261,8 +263,8 @@ To not have predictions appear automatically as you type when working with a spe
 
 ```json [settings]
 {
-  "language": {
-    "python": {
+  "languages": {
+    "Python": {
       "show_edit_predictions": false
     }
   }
@@ -286,9 +288,11 @@ To disable edit predictions for specific directories or files, set this in your 
 To completely turn off edit prediction across all providers, explicitly set the settings to `none`, like so:
 
 ```json [settings]
-"features": {
-  "edit_prediction_provider": "none"
-},
+{
+  "edit_predictions": {
+    "provider": "none"
+  }
+}
 ```
 
 ## Configuring Other Providers {#other-providers}
@@ -301,8 +305,8 @@ To use GitHub Copilot as your provider, set this in your settings file ([how to 
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "copilot"
+  "edit_predictions": {
+    "provider": "copilot"
   }
 }
 ```
@@ -372,8 +376,8 @@ After adding your API key, Mercury Coder will appear in the provider dropdown in
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "mercury"
+  "edit_predictions": {
+    "provider": "mercury"
   }
 }
 ```
@@ -394,8 +398,8 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "codestral"
+  "edit_predictions": {
+    "provider": "codestral"
   }
 }
 ```

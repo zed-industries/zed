@@ -88,7 +88,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude" }]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
     }
   }
 ]

@@ -49,7 +49,7 @@ You can add this to Zed project settings (`.zed/settings.json`) or via your Zed 
 
 Sql-formatter also allows more precise control by providing [sql-formatter configuration options](https://github.com/sql-formatter-org/sql-formatter#configuration-options). To provide these, create a `.sql-formatter.json` file in your project:
 
-```json [settings]
+```json
 {
   "language": "postgresql",
   "tabWidth": 2,
@@ -61,6 +61,7 @@ Sql-formatter also allows more precise control by providing [sql-formatter confi
 When using a `.sql-formatter.json` file you can use a simplified Zed settings configuration:
 
 ```json [settings]
+{
   "languages": {
     "SQL": {
       "formatter": {
@@ -69,5 +70,6 @@ When using a `.sql-formatter.json` file you can use a simplified Zed settings co
         }
       }
     }
-  },
+  }
+}
 ```
