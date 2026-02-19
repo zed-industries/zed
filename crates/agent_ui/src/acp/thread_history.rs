@@ -2,7 +2,7 @@ use crate::acp::AcpServerView;
 use crate::{AgentPanel, RemoveHistory, RemoveSelectedThread};
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
-use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -40,6 +40,20 @@ fn worktree_branch_from_meta(entry: &AgentSessionInfo) -> Option<&str> {
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|branch| !branch.is_empty())
+}
+
+fn format_relative_time(timestamp: DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(timestamp);
+    if duration.num_days() > 0 {
+        format!("{}d", duration.num_days())
+    } else if duration.num_hours() > 0 {
+        format!("{}h ago", duration.num_hours())
+    } else if duration.num_minutes() > 0 {
+        format!("{}m ago", duration.num_minutes())
+    } else {
+        "Just now".to_string()
+    }
 }
 
 fn render_worktree_branch_row(branch: String) -> impl IntoElement {
@@ -676,20 +690,7 @@ impl AcpThreadHistory {
         let hovered = Some(ix) == self.hovered_index;
         let entry_time = entry.updated_at;
         let display_text = match (format, entry_time) {
-            (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
-                let now = Utc::now();
-                let duration = now.signed_duration_since(entry_time);
-
-                if duration.num_days() > 0 {
-                    format!("{}d", duration.num_days())
-                } else if duration.num_hours() > 0 {
-                    format!("{}h ago", duration.num_hours())
-                } else if duration.num_minutes() > 0 {
-                    format!("{}m ago", duration.num_minutes())
-                } else {
-                    "Just now".to_string()
-                }
-            }
+            (EntryTimeFormat::DateAndTime, Some(entry_time)) => format_relative_time(entry_time),
             (EntryTimeFormat::TimeOnly, Some(entry_time)) => {
                 format.format_timestamp(entry_time.timestamp(), self.local_timezone)
             }
@@ -957,21 +958,8 @@ impl RenderOnce for AcpHistoryEntryElement {
         let formatted_time = self
             .entry
             .updated_at
-            .map(|timestamp| {
-                let now = chrono::Utc::now();
-                let duration = now.signed_duration_since(timestamp);
-
-                if duration.num_days() > 0 {
-                    format!("{}d", duration.num_days())
-                } else if duration.num_hours() > 0 {
-                    format!("{}h ago", duration.num_hours())
-                } else if duration.num_minutes() > 0 {
-                    format!("{}m ago", duration.num_minutes())
-                } else {
-                    "Just now".to_string()
-                }
-            })
-            .unwrap_or_else(|| "Unknown".to_string());
+            .map(format_relative_time)
+            .unwrap_or_else(|| "—".to_string());
 
         let branch = worktree_branch_from_meta(&self.entry).map(|b| b.to_string());
 
