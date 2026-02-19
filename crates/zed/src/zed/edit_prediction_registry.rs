@@ -172,7 +172,7 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
         "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
-        "codestral" | "mistral" => EditPredictionPromptFormat::CodeStral,
+        "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
         "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
         _ => {
             return None;

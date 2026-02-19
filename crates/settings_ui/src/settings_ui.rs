@@ -505,6 +505,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
         .add_basic_renderer::<f32>(render_number_field)
         .add_basic_renderer::<u32>(render_number_field)
         .add_basic_renderer::<u64>(render_number_field)

@@ -225,7 +225,18 @@ pub struct CustomEditPredictionProviderSettingsContent {
 }
 
 #[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionPromptFormat {
@@ -237,7 +248,7 @@ pub enum EditPredictionPromptFormat {
     DeepseekCoder,
     Qwen,
     CodeGemma,
-    CodeStral,
+    Codestral,
     Glm,
 }
 

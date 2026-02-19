@@ -1582,7 +1582,7 @@
       "max_output_tokens": 64,
     },
     "open_ai_compatible_api": {
-      "api_url": "http://localhost:11434",
+      "api_url": "",
       "model": "",
       "prompt_format": "infer",
       "max_output_tokens": 64,
