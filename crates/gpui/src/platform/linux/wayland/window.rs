@@ -54,6 +54,19 @@ pub(crate) struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
+fn dispatch_input_callback(
+    callbacks: &RefCell<Callbacks>,
+    input: PlatformInput,
+) -> Option<crate::DispatchEventResult> {
+    let mut callback = callbacks.borrow_mut().input.take()?;
+    let result = callback(input);
+    let mut callbacks = callbacks.borrow_mut();
+    if callbacks.input.is_none() {
+        callbacks.input = Some(callback);
+    }
+    Some(result)
+}
+
 struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
@@ -972,10 +985,10 @@ impl WaylandWindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
-            && !fun(input.clone()).propagate
-        {
-            return;
+        if let Some(result) = dispatch_input_callback(&self.callbacks, input.clone()) {
+            if !result.propagate {
+                return;
+            }
         }
         if let PlatformInput::KeyDown(event) = input
             && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
@@ -1521,4 +1534,61 @@ fn inset_by_tiling(mut bounds: Bounds<Pixels>, inset: Pixels, tiling: Tiling) ->
     }
 
     bounds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+
+    #[test]
+    fn input_callback_can_mutate_callbacks_without_borrow_conflict() {
+        let callbacks = Rc::new(RefCell::new(Callbacks::default()));
+        let callbacks_for_input = callbacks.clone();
+        callbacks.borrow_mut().input = Some(Box::new(move |_| {
+            callbacks_for_input.borrow_mut().should_close = Some(Box::new(|| true));
+            crate::DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            }
+        }));
+
+        let result = dispatch_input_callback(
+            callbacks.as_ref(),
+            PlatformInput::ModifiersChanged(Default::default()),
+        );
+
+        assert!(result.is_some_and(|result| result.propagate));
+        let callbacks = callbacks.borrow();
+        assert!(callbacks.input.is_some());
+        assert!(callbacks.should_close.is_some());
+    }
+
+    #[test]
+    fn input_callback_replacement_inside_callback_is_preserved() {
+        let callbacks = Rc::new(RefCell::new(Callbacks::default()));
+        let callbacks_for_input = callbacks.clone();
+        callbacks.borrow_mut().input = Some(Box::new(move |_| {
+            callbacks_for_input.borrow_mut().input = Some(Box::new(|_| crate::DispatchEventResult {
+                propagate: false,
+                default_prevented: false,
+            }));
+            crate::DispatchEventResult {
+                propagate: true,
+                default_prevented: false,
+            }
+        }));
+
+        let first = dispatch_input_callback(
+            callbacks.as_ref(),
+            PlatformInput::ModifiersChanged(Default::default()),
+        );
+        assert!(first.is_some_and(|result| result.propagate));
+
+        let second = dispatch_input_callback(
+            callbacks.as_ref(),
+            PlatformInput::ModifiersChanged(Default::default()),
+        );
+        assert!(second.is_some_and(|result| !result.propagate));
+    }
 }
