@@ -6,9 +6,7 @@ use edit_prediction::{
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
-use language::language_settings::{
-    AllLanguageSettings, EditPredictionSettings, OpenAiCompatibleEditPredictionSettings,
-};
+use language::language_settings::AllLanguageSettings;
 
 use settings::Settings as _;
 use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
