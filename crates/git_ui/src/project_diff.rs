@@ -416,6 +416,16 @@ impl ProjectDiff {
             });
             diff_display_editor
         });
+        // Ensure split view is enabled for git diff
+        let editor_weak = editor.downgrade();
+        window.defer(cx, {
+            let editor = editor_weak.clone();
+            move |window, cx| {
+                let _ = editor.update(cx, |editor, cx| {
+                    editor.split(window, cx);
+                });
+            }
+        });
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
 
         let primary_editor = editor.read(cx).rhs_editor().clone();
