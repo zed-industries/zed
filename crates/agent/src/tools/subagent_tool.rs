@@ -10,14 +10,6 @@ use std::{rc::Rc, time::Duration};
 
 use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 
-// - By default: same tools
-// - Params:
-//   - label / task name / title
-//   - Prompt
-//   - (optional) session id to prompt the same thread again
-//   - optional timeout
-// - Return: last assistant message
-
 /// Spawns an agent to perform a delegated task.
 ///
 /// Use this tool when you want to do any of the following:
