@@ -342,7 +342,7 @@ impl NativeAgent {
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
-        allowed_tool_names: Option<Vec<&str>>,
+        allowed_tool_names: Option<Vec<SharedString>>,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
@@ -1590,7 +1590,6 @@ impl NativeThreadEnvironment {
         label: String,
         initial_prompt: String,
         timeout: Option<Duration>,
-        allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let parent_thread = parent_thread_entity.read(cx);
@@ -1602,20 +1601,7 @@ impl NativeThreadEnvironment {
                 MAX_SUBAGENT_DEPTH
             ));
         }
-
-        let allowed_tools = match allowed_tools {
-            Some(tools) => {
-                let parent_tool_names: std::collections::HashSet<&str> =
-                    parent_thread.tools.keys().map(|s| s.as_str()).collect();
-                Some(
-                    tools
-                        .into_iter()
-                        .filter(|t| parent_tool_names.contains(t.as_str()))
-                        .collect::<Vec<_>>(),
-                )
-            }
-            None => Some(parent_thread.tools.keys().map(|s| s.to_string()).collect()),
-        };
+        let allowed_tool_names = Some(parent_thread.tools.keys().cloned().collect::<Vec<_>>());
 
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
@@ -1626,13 +1612,7 @@ impl NativeThreadEnvironment {
         let session_id = subagent_thread.read(cx).id().clone();
 
         let acp_thread = agent.update(cx, |agent, cx| {
-            agent.register_session(
-                subagent_thread.clone(),
-                allowed_tools
-                    .as_ref()
-                    .map(|v| v.iter().map(|s| s.as_str()).collect()),
-                cx,
-            )
+            agent.register_session(subagent_thread.clone(), allowed_tool_names, cx)
         })?;
 
         parent_thread_entity.update(cx, |parent_thread, _cx| {
@@ -1722,7 +1702,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         label: String,
         initial_prompt: String,
         timeout: Option<Duration>,
-        allowed_tools: Option<Vec<String>>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         Self::create_subagent_thread(
@@ -1731,7 +1710,6 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             label,
             initial_prompt,
             timeout,
-            allowed_tools,
             cx,
         )
     }

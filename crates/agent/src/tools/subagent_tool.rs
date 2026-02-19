@@ -1,7 +1,7 @@
 use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,14 @@ use std::sync::Arc;
 use std::{rc::Rc, time::Duration};
 
 use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
+
+// - By default: same tools
+// - Params:
+//   - label / task name / title
+//   - Prompt
+//   - (optional) session id to prompt the same thread again
+//   - optional timeout
+// - Return: last assistant message
 
 /// Spawns a subagent with its own context window to perform a delegated task.
 ///
@@ -51,12 +59,6 @@ pub struct SubagentToolInput {
     /// asked to summarize and return. No timeout by default.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-
-    /// Optional: List of tool names the subagent is allowed to use.
-    /// If not provided, the subagent can use all tools available to the parent.
-    /// Tools listed here must be a subset of the parent's available tools.
-    #[serde(default)]
-    pub allowed_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -83,32 +85,6 @@ impl SubagentTool {
             parent_thread,
             environment,
         }
-    }
-
-    fn validate_allowed_tools(
-        allowed_tools: &Option<Vec<String>>,
-        parent_thread: &Entity<Thread>,
-        cx: &App,
-    ) -> Result<()> {
-        let Some(allowed_tools) = allowed_tools else {
-            return Ok(());
-        };
-
-        let thread = parent_thread.read(cx);
-        let invalid_tools: Vec<_> = allowed_tools
-            .iter()
-            .filter(|tool| !thread.tools.contains_key(tool.as_str()))
-            .map(|s| format!("'{s}'"))
-            .collect::<Vec<_>>();
-
-        if !invalid_tools.is_empty() {
-            return Err(anyhow!(
-                "The following tools do not exist: {}",
-                invalid_tools.join(", ")
-            ));
-        }
-
-        Ok(())
     }
 }
 
@@ -142,18 +118,11 @@ impl AgentTool for SubagentTool {
             return Task::ready(Err(anyhow!("Parent thread no longer exists")));
         };
 
-        if let Err(e) =
-            Self::validate_allowed_tools(&input.allowed_tools, &parent_thread_entity, cx)
-        {
-            return Task::ready(Err(e));
-        }
-
         let subagent = match self.environment.create_subagent(
             parent_thread_entity,
             input.label,
             input.task_prompt,
             input.timeout_ms.map(|ms| Duration::from_millis(ms)),
-            input.allowed_tools,
             cx,
         ) {
             Ok(subagent) => subagent,
@@ -192,95 +161,5 @@ impl AgentTool for SubagentTool {
         )]);
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ContextServerRegistry, Templates, Thread};
-    use fs::FakeFs;
-    use gpui::{AppContext as _, TestAppContext};
-    use project::Project;
-    use prompt_store::ProjectContext;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use util::path;
-
-    async fn create_thread_with_tools(cx: &mut TestAppContext) -> Entity<Thread> {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({})).await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-        let project_context = cx.new(|_cx| ProjectContext::default());
-        let context_server_store =
-            project.read_with(cx, |project, _| project.context_server_store());
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-
-        cx.new(|cx| {
-            let mut thread = Thread::new(
-                project,
-                project_context,
-                context_server_registry,
-                Templates::new(),
-                None,
-                cx,
-            );
-            thread.add_tool(crate::NowTool, None);
-            thread.add_tool(crate::WebSearchTool, None);
-            thread
-        })
-    }
-
-    #[gpui::test]
-    async fn test_validate_allowed_tools_succeeds_for_valid_tools(cx: &mut TestAppContext) {
-        let thread = create_thread_with_tools(cx).await;
-
-        cx.update(|cx| {
-            assert!(SubagentTool::validate_allowed_tools(&None, &thread, cx).is_ok());
-
-            let valid_tools = Some(vec!["now".to_string()]);
-            assert!(SubagentTool::validate_allowed_tools(&valid_tools, &thread, cx).is_ok());
-
-            let both_tools = Some(vec!["now".to_string(), "web_search".to_string()]);
-            assert!(SubagentTool::validate_allowed_tools(&both_tools, &thread, cx).is_ok());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_validate_allowed_tools_fails_for_unknown_tools(cx: &mut TestAppContext) {
-        let thread = create_thread_with_tools(cx).await;
-
-        cx.update(|cx| {
-            let unknown_tools = Some(vec!["nonexistent_tool".to_string()]);
-            let result = SubagentTool::validate_allowed_tools(&unknown_tools, &thread, cx);
-            assert!(result.is_err());
-            let error_message = result.unwrap_err().to_string();
-            assert!(
-                error_message.contains("'nonexistent_tool'"),
-                "Expected error to mention the invalid tool name, got: {error_message}"
-            );
-
-            let mixed_tools = Some(vec![
-                "now".to_string(),
-                "fake_tool_a".to_string(),
-                "fake_tool_b".to_string(),
-            ]);
-            let result = SubagentTool::validate_allowed_tools(&mixed_tools, &thread, cx);
-            assert!(result.is_err());
-            let error_message = result.unwrap_err().to_string();
-            assert!(
-                error_message.contains("'fake_tool_a'") && error_message.contains("'fake_tool_b'"),
-                "Expected error to mention both invalid tool names, got: {error_message}"
-            );
-            assert!(
-                !error_message.contains("'now'"),
-                "Expected error to not mention valid tool 'now', got: {error_message}"
-            );
-        });
     }
 }
