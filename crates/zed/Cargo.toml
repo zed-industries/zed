@@ -30,6 +30,7 @@ test-support = [
 visual-tests = [
     "gpui/test-support",
     "gpui_platform/screen-capture",
+    "gpui_platform/test-support",
     "dep:image",
     "dep:semver",
     "dep:tempfile",

@@ -14,7 +14,7 @@ path = "src/gpui_platform.rs"
 [features]
 default = []
 font-kit = ["gpui_macos/font-kit"]
-test-support = ["gpui/test-support"]
+test-support = ["gpui/test-support", "gpui_macos/test-support"]
 screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
 wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]
