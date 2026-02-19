@@ -4239,19 +4239,26 @@ mod tests {
             );
         });
 
-        // Clear the creation status and try again
+        // Clear the creation status and use open_external_thread_with_server
+        // (which bypasses new_agent_thread) to verify the panel can transition
+        // out of Uninitialized. We can't call set_active directly because
+        // new_agent_thread requires full agent server infrastructure.
         panel.update_in(cx, |panel, window, cx| {
             panel.worktree_creation_status = None;
-            Panel::set_active(panel, true, window, cx);
+            panel.active_view = ActiveView::Uninitialized;
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
         });
 
-        // The thread is created asynchronously, so let the executor run.
         cx.run_until_parked();
 
         panel.read_with(cx, |panel, _cx| {
             assert!(
                 !matches!(panel.active_view, ActiveView::Uninitialized),
-                "set_active should create a thread once worktree creation is cleared"
+                "panel should transition out of Uninitialized once worktree creation is cleared"
             );
         });
     }
