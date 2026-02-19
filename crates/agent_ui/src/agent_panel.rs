@@ -2544,11 +2544,7 @@ impl AgentPanel {
 
     fn render_thread_target_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_git_repo = self.project_has_git_repository(cx);
-        let is_via_collab = self
-            .workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_via_collab())
-            .unwrap_or_default();
+        let is_via_collab = self.project.read(cx).is_via_collab();
 
         let is_creating = matches!(
             self.worktree_creation_status,
