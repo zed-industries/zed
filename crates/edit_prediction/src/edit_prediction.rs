@@ -1691,10 +1691,21 @@ impl EditPredictionStore {
             }
         }
 
-        let is_ollama = all_language_settings(None, cx).edit_predictions.provider
-            == EditPredictionProvider::Ollama;
-        let drop_on_cancel = is_ollama;
-        let max_pending_predictions = if is_ollama { 1 } else { 2 };
+        let (needs_acceptance_tracking, max_pending_predictions) =
+            match all_language_settings(None, cx).edit_predictions.provider {
+                EditPredictionProvider::Zed
+                | EditPredictionProvider::Sweep
+                | EditPredictionProvider::Mercury
+                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Ollama => (false, 1),
+                EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
+                EditPredictionProvider::None
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral => unreachable!(),
+            };
+
+        let drop_on_cancel = !needs_acceptance_tracking;
         let throttle_timeout = Self::THROTTLE_TIMEOUT;
         let project_state = self.get_or_init_project(&project, cx);
         let pending_prediction_id = project_state.next_pending_prediction_id;
