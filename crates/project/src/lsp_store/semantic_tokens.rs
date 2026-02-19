@@ -9,7 +9,6 @@ use futures::{
     future::{Shared, join_all},
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
-use itertools::Itertools;
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
 use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
@@ -169,7 +168,13 @@ impl LspStore {
                             (semantic_tokens_data.raw_tokens.clone(), buffer_snapshot)
                         })
                         .map_err(Arc::new)?;
-                    Some(raw_to_buffer_semantic_tokens(raw_tokens, &buffer_snapshot).await)
+                    Some(
+                        cx.background_spawn(raw_to_buffer_semantic_tokens(
+                            raw_tokens,
+                            buffer_snapshot.text.clone(),
+                        ))
+                        .await,
+                    )
                 } else {
                     lsp_store.update(cx, |lsp_store, cx| {
                         if let Some(current_lsp_data) =
@@ -524,7 +529,7 @@ impl SemanticTokenStylizer {
 
 async fn raw_to_buffer_semantic_tokens(
     raw_tokens: RawSemanticTokens,
-    buffer_snapshot: &text::BufferSnapshot,
+    buffer_snapshot: text::BufferSnapshot,
 ) -> HashMap<LanguageServerId, Arc<[BufferSemanticToken]>> {
     let mut res = HashMap::default();
     for (&server_id, server_tokens) in &raw_tokens.servers {
@@ -532,46 +537,58 @@ async fn raw_to_buffer_semantic_tokens(
         // We don't do `collect` here due to the filter map not pre-allocating
         // we'd rather over allocate here than not since we have to re-allocate into an arc slice anyways
         let mut buffer_tokens = Vec::with_capacity(server_tokens.data.len() / 5);
+        let mut tokens = server_tokens.tokens();
         // 5000 was chosen by profiling, on a decent machine this will take about 1ms per chunk
         // This is to avoid blocking the main thread for hundreds of milliseconds at a time for very big files
         // If we every change the below code to not query the underlying rope 6 times per token we can bump this up
-        for chunk in server_tokens.tokens().chunks(5000).into_iter() {
-            buffer_tokens.extend(chunk.filter_map(|token| {
-                let start = Unclipped(PointUtf16::new(token.line, token.start));
-                let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
-                let start_offset = buffer_snapshot
-                    .as_rope()
-                    .point_utf16_to_offset_utf16(clipped_start);
-                let end_offset = start_offset + OffsetUtf16(token.length as usize);
+        const CHUNK_LEN: usize = 5000;
+        loop {
+            let mut changed = false;
+            let chunk = tokens
+                .by_ref()
+                .take(CHUNK_LEN)
+                .inspect(|_| changed = true)
+                .filter_map(|token| {
+                    let start = Unclipped(PointUtf16::new(token.line, token.start));
+                    let clipped_start = buffer_snapshot.clip_point_utf16(start, Bias::Left);
+                    let start_offset = buffer_snapshot
+                        .as_rope()
+                        .point_utf16_to_offset_utf16(clipped_start);
+                    let end_offset = start_offset + OffsetUtf16(token.length as usize);
 
-                let start = buffer_snapshot
-                    .as_rope()
-                    .offset_utf16_to_offset(start_offset);
-                if start < last {
-                    return None;
-                }
+                    let start = buffer_snapshot
+                        .as_rope()
+                        .offset_utf16_to_offset(start_offset);
+                    if start < last {
+                        return None;
+                    }
 
-                let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
-                if end < last {
-                    return None;
-                }
-                last = end;
+                    let end = buffer_snapshot.as_rope().offset_utf16_to_offset(end_offset);
+                    if end < last {
+                        return None;
+                    }
+                    last = end;
 
-                if start == end {
-                    return None;
-                }
+                    if start == end {
+                        return None;
+                    }
 
-                Some(BufferSemanticToken {
-                    range: buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_after(end),
-                    token_type: token.token_type,
-                    token_modifiers: token.token_modifiers,
-                })
-            }));
+                    Some(BufferSemanticToken {
+                        range: buffer_snapshot.anchor_before(start)
+                            ..buffer_snapshot.anchor_after(end),
+                        token_type: token.token_type,
+                        token_modifiers: token.token_modifiers,
+                    })
+                });
+            buffer_tokens.extend(chunk);
+
+            if !changed {
+                break;
+            }
             yield_now().await;
         }
 
         res.insert(server_id, buffer_tokens.into());
-        yield_now().await;
     }
     res
 }

@@ -1151,6 +1151,32 @@ mod tests {
     }
 
     #[test]
+    fn dev_null_redirect_does_not_cause_false_negative() {
+        // Redirects to /dev/null are known-safe and should be skipped during
+        // command extraction, so they don't prevent auto-allow from matching.
+        t(r#"git log --oneline -20 2>/dev/null || echo "not a git repo or no commits""#)
+            .allow(&[r"^git\s+(status|diff|log|show)\b", "^echo"])
+            .is_allow();
+    }
+
+    #[test]
+    fn redirect_to_real_file_still_causes_confirm() {
+        // Redirects to real files (not /dev/null) should still be included in
+        // the extracted commands, so they prevent auto-allow when unmatched.
+        t("echo hello > /etc/passwd").allow(&["^echo"]).is_confirm();
+    }
+
+    #[test]
+    fn pipe_does_not_cause_false_negative_when_all_commands_match() {
+        // A piped command like `echo "y\ny" | git add -p file` produces two commands:
+        // "echo y\ny" and "git add -p file". Both should match their respective allow
+        // patterns, so the overall command should be auto-allowed.
+        t(r#"echo "y\ny" | git add -p crates/acp_thread/src/acp_thread.rs"#)
+            .allow(&[r"^git\s+(--no-pager\s+)?(fetch|status|diff|log|show|add|commit|push|checkout\s+-b)\b", "^echo"])
+            .is_allow();
+    }
+
+    #[test]
     fn deny_triggers_on_any_matching_command() {
         t("ls && rm file").allow(&["^ls"]).deny(&["^rm"]).is_deny();
     }

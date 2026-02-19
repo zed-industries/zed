@@ -162,6 +162,7 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
+            git_worktree_info: None,
         }
     }
 

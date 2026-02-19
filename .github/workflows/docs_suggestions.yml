@@ -94,6 +94,10 @@ jobs:
       - name: Analyze PR for documentation needs
         id: analyze
         run: |
+          # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
+          # Unset GH_TOKEN first to allow gh auth login to store credentials
+          echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
+          
           OUTPUT_FILE=$(mktemp)
           
           ./script/docs-suggest \
@@ -119,12 +123,12 @@ jobs:
 
       - name: Commit suggestions to queue branch
         if: steps.analyze.outputs.has_suggestions == 'true'
+        env:
+          PR_NUM: ${{ steps.pr.outputs.number }}
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          OUTPUT_FILE: ${{ steps.analyze.outputs.output_file }}
         run: |
           set -euo pipefail
-          
-          PR_NUM="${{ steps.pr.outputs.number }}"
-          PR_TITLE="${{ steps.pr.outputs.title }}"
-          OUTPUT_FILE="${{ steps.analyze.outputs.output_file }}"
           
           # Configure git
           git config user.name "github-actions[bot]"
@@ -264,6 +268,10 @@ jobs:
       - name: Analyze PR for documentation needs
         id: analyze
         run: |
+          # Ensure gh CLI is authenticated (GH_TOKEN may not be auto-detected)
+          # Unset GH_TOKEN first to allow gh auth login to store credentials
+          echo "$GH_TOKEN" | (unset GH_TOKEN && gh auth login --with-token)
+          
           OUTPUT_FILE=$(mktemp)
           
           # Cherry-picks don't get preview callout

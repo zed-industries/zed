@@ -71,12 +71,12 @@ use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall, ClearMessageQueue,
-    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, EditFirstQueuedMessage,
-    ExpandMessageEditor, ExternalAgentInitialContent, Follow, KeepAll, NewThread,
-    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
-    RemoveFirstQueuedMessage, SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage,
-    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
+    AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce, AuthorizeToolCall,
+    ClearMessageQueue, CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort,
+    EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread, OpenAddContextMenu,
+    OpenAgentDiff, OpenHistory, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
+    SelectPermissionGranularity, SendImmediately, SendNextQueuedMessage, ToggleProfileSelector,
+    ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -307,7 +307,7 @@ impl AcpServerView {
     pub fn new(
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
@@ -408,7 +408,7 @@ impl AcpServerView {
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
         project: Entity<Project>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -625,7 +625,7 @@ impl AcpServerView {
         thread: Entity<AcpThread>,
         resumed_without_history: bool,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThreadView> {

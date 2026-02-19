@@ -893,125 +893,134 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({".git": {}, "file.txt": "content"}))
-            .await;
-        let repo = fs
-            .open_repo(Path::new("/project/.git"), None)
-            .expect("should open fake repo");
+        let worktree_dir_settings = &["../worktrees", ".git/zed-worktrees", "my-worktrees/"];
 
-        // Initially no worktrees
-        let worktrees = repo.worktrees().await.unwrap();
-        assert!(worktrees.is_empty());
+        for worktree_dir_setting in worktree_dir_settings {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree("/project", json!({".git": {}, "file.txt": "content"}))
+                .await;
+            let repo = fs
+                .open_repo(Path::new("/project/.git"), None)
+                .expect("should open fake repo");
 
-        // Create a worktree
-        repo.create_worktree(
-            "feature-branch".to_string(),
-            PathBuf::from("/worktrees"),
-            Some("abc123".to_string()),
-        )
-        .await
-        .unwrap();
+            // Initially no worktrees
+            let worktrees = repo.worktrees().await.unwrap();
+            assert!(worktrees.is_empty());
 
-        // List worktrees — should have one
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].path, Path::new("/worktrees/feature-branch"));
-        assert_eq!(worktrees[0].ref_name.as_ref(), "refs/heads/feature-branch");
-        assert_eq!(worktrees[0].sha.as_ref(), "abc123");
+            let expected_dir = git::repository::resolve_worktree_directory(
+                Path::new("/project"),
+                worktree_dir_setting,
+            );
 
-        // Directory should exist in FakeFs after create
-        assert!(
-            fs.is_dir(Path::new("/worktrees/feature-branch")).await,
-            "worktree directory should be created in FakeFs"
-        );
-
-        // Create a second worktree (without explicit commit)
-        repo.create_worktree(
-            "bugfix-branch".to_string(),
-            PathBuf::from("/worktrees"),
-            None,
-        )
-        .await
-        .unwrap();
-
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 2);
-        assert!(
-            fs.is_dir(Path::new("/worktrees/bugfix-branch")).await,
-            "second worktree directory should be created in FakeFs"
-        );
-
-        // Rename the first worktree
-        repo.rename_worktree(
-            PathBuf::from("/worktrees/feature-branch"),
-            PathBuf::from("/worktrees/renamed-branch"),
-        )
-        .await
-        .unwrap();
-
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 2);
-        assert!(
-            worktrees
-                .iter()
-                .any(|w| w.path == Path::new("/worktrees/renamed-branch")),
-            "renamed worktree should exist at new path"
-        );
-        assert!(
-            worktrees
-                .iter()
-                .all(|w| w.path != Path::new("/worktrees/feature-branch")),
-            "old path should no longer exist"
-        );
-
-        // Directory should be moved in FakeFs after rename
-        assert!(
-            !fs.is_dir(Path::new("/worktrees/feature-branch")).await,
-            "old worktree directory should not exist after rename"
-        );
-        assert!(
-            fs.is_dir(Path::new("/worktrees/renamed-branch")).await,
-            "new worktree directory should exist after rename"
-        );
-
-        // Rename a nonexistent worktree should fail
-        let result = repo
-            .rename_worktree(PathBuf::from("/nonexistent"), PathBuf::from("/somewhere"))
-            .await;
-        assert!(result.is_err());
-
-        // Remove a worktree
-        repo.remove_worktree(PathBuf::from("/worktrees/renamed-branch"), false)
+            // Create a worktree
+            repo.create_worktree(
+                "feature-branch".to_string(),
+                expected_dir.clone(),
+                Some("abc123".to_string()),
+            )
             .await
             .unwrap();
 
-        let worktrees = repo.worktrees().await.unwrap();
-        assert_eq!(worktrees.len(), 1);
-        assert_eq!(worktrees[0].path, Path::new("/worktrees/bugfix-branch"));
+            // List worktrees — should have one
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 1);
+            assert_eq!(
+                worktrees[0].path,
+                expected_dir.join("feature-branch"),
+                "failed for worktree_directory setting: {worktree_dir_setting:?}"
+            );
+            assert_eq!(worktrees[0].ref_name.as_ref(), "refs/heads/feature-branch");
+            assert_eq!(worktrees[0].sha.as_ref(), "abc123");
 
-        // Directory should be removed from FakeFs after remove
-        assert!(
-            !fs.is_dir(Path::new("/worktrees/renamed-branch")).await,
-            "worktree directory should be removed from FakeFs"
-        );
+            // Directory should exist in FakeFs after create
+            assert!(
+                fs.is_dir(&expected_dir.join("feature-branch")).await,
+                "worktree directory should be created in FakeFs for setting {worktree_dir_setting:?}"
+            );
 
-        // Remove a nonexistent worktree should fail
-        let result = repo
-            .remove_worktree(PathBuf::from("/nonexistent"), false)
-            .await;
-        assert!(result.is_err());
+            // Create a second worktree (without explicit commit)
+            repo.create_worktree("bugfix-branch".to_string(), expected_dir.clone(), None)
+                .await
+                .unwrap();
 
-        // Remove the last worktree
-        repo.remove_worktree(PathBuf::from("/worktrees/bugfix-branch"), false)
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 2);
+            assert!(
+                fs.is_dir(&expected_dir.join("bugfix-branch")).await,
+                "second worktree directory should be created in FakeFs for setting {worktree_dir_setting:?}"
+            );
+
+            // Rename the first worktree
+            repo.rename_worktree(
+                expected_dir.join("feature-branch"),
+                expected_dir.join("renamed-branch"),
+            )
             .await
             .unwrap();
 
-        let worktrees = repo.worktrees().await.unwrap();
-        assert!(worktrees.is_empty());
-        assert!(
-            !fs.is_dir(Path::new("/worktrees/bugfix-branch")).await,
-            "last worktree directory should be removed from FakeFs"
-        );
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 2);
+            assert!(
+                worktrees
+                    .iter()
+                    .any(|w| w.path == expected_dir.join("renamed-branch")),
+                "renamed worktree should exist at new path for setting {worktree_dir_setting:?}"
+            );
+            assert!(
+                worktrees
+                    .iter()
+                    .all(|w| w.path != expected_dir.join("feature-branch")),
+                "old path should no longer exist for setting {worktree_dir_setting:?}"
+            );
+
+            // Directory should be moved in FakeFs after rename
+            assert!(
+                !fs.is_dir(&expected_dir.join("feature-branch")).await,
+                "old worktree directory should not exist after rename for setting {worktree_dir_setting:?}"
+            );
+            assert!(
+                fs.is_dir(&expected_dir.join("renamed-branch")).await,
+                "new worktree directory should exist after rename for setting {worktree_dir_setting:?}"
+            );
+
+            // Rename a nonexistent worktree should fail
+            let result = repo
+                .rename_worktree(PathBuf::from("/nonexistent"), PathBuf::from("/somewhere"))
+                .await;
+            assert!(result.is_err());
+
+            // Remove a worktree
+            repo.remove_worktree(expected_dir.join("renamed-branch"), false)
+                .await
+                .unwrap();
+
+            let worktrees = repo.worktrees().await.unwrap();
+            assert_eq!(worktrees.len(), 1);
+            assert_eq!(worktrees[0].path, expected_dir.join("bugfix-branch"));
+
+            // Directory should be removed from FakeFs after remove
+            assert!(
+                !fs.is_dir(&expected_dir.join("renamed-branch")).await,
+                "worktree directory should be removed from FakeFs for setting {worktree_dir_setting:?}"
+            );
+
+            // Remove a nonexistent worktree should fail
+            let result = repo
+                .remove_worktree(PathBuf::from("/nonexistent"), false)
+                .await;
+            assert!(result.is_err());
+
+            // Remove the last worktree
+            repo.remove_worktree(expected_dir.join("bugfix-branch"), false)
+                .await
+                .unwrap();
+
+            let worktrees = repo.worktrees().await.unwrap();
+            assert!(worktrees.is_empty());
+            assert!(
+                !fs.is_dir(&expected_dir.join("bugfix-branch")).await,
+                "last worktree directory should be removed from FakeFs for setting {worktree_dir_setting:?}"
+            );
+        }
     }
 }
