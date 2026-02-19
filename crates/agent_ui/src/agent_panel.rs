@@ -184,7 +184,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.external_thread(action.agent.clone(), None, None, window, cx)
+                            panel.external_thread(
+                                action.agent.clone(),
+                                None,
+                                None,
+                                true,
+                                window,
+                                cx,
+                            )
                         });
                     }
                 })
@@ -321,6 +328,7 @@ pub fn init(cx: &mut App) {
                                 blocks: content_blocks,
                                 auto_submit: true,
                             }),
+                            true,
                             window,
                             cx,
                         );
@@ -656,7 +664,7 @@ impl AgentPanel {
                             updated_at: None,
                             meta: None,
                         };
-                        panel.load_agent_thread(session_info, window, cx);
+                        panel.load_agent_thread_inner(session_info, false, window, cx);
                     })?;
                 } else {
                     log::error!(
@@ -888,6 +896,7 @@ impl AgentPanel {
             Some(crate::ExternalAgent::NativeAgent),
             Some(thread),
             None,
+            true,
             window,
             cx,
         );
@@ -946,6 +955,7 @@ impl AgentPanel {
             Some(ExternalAgent::NativeAgent),
             None,
             Some(AgentInitialContent::ThreadSummary(thread)),
+            true,
             window,
             cx,
         );
@@ -999,6 +1009,7 @@ impl AgentPanel {
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1064,6 +1075,7 @@ impl AgentPanel {
                     workspace,
                     project,
                     ext_agent,
+                    focus,
                     window,
                     cx,
                 );
@@ -1805,6 +1817,7 @@ impl AgentPanel {
                 blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
                 auto_submit: false,
             }),
+            true,
             window,
             cx,
         );
@@ -1824,12 +1837,18 @@ impl AgentPanel {
                 Some(crate::ExternalAgent::NativeAgent),
                 None,
                 None,
+                true,
                 window,
                 cx,
             ),
-            AgentType::Gemini => {
-                self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
-            }
+            AgentType::Gemini => self.external_thread(
+                Some(crate::ExternalAgent::Gemini),
+                None,
+                None,
+                true,
+                window,
+                cx,
+            ),
             AgentType::ClaudeAgent => {
                 self.selected_agent = AgentType::ClaudeAgent;
                 self.serialize(cx);
@@ -1837,6 +1856,7 @@ impl AgentPanel {
                     Some(crate::ExternalAgent::ClaudeCode),
                     None,
                     None,
+                    true,
                     window,
                     cx,
                 )
@@ -1844,12 +1864,20 @@ impl AgentPanel {
             AgentType::Codex => {
                 self.selected_agent = AgentType::Codex;
                 self.serialize(cx);
-                self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
+                self.external_thread(
+                    Some(crate::ExternalAgent::Codex),
+                    None,
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
             }
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
                 None,
                 None,
+                true,
                 window,
                 cx,
             ),
@@ -1862,10 +1890,20 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.load_agent_thread_inner(thread, true, window, cx);
+    }
+
+    fn load_agent_thread_inner(
+        &mut self,
+        thread: AgentSessionInfo,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(agent) = self.selected_external_agent() else {
             return;
         };
-        self.external_thread(Some(agent), Some(thread), None, window, cx);
+        self.external_thread(Some(agent), Some(thread), None, focus, window, cx);
     }
 
     fn _external_thread(
@@ -1876,6 +1914,7 @@ impl AgentPanel {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         ext_agent: ExternalAgent,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1905,7 +1944,7 @@ impl AgentPanel {
             )
         });
 
-        self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
+        self.set_active_view(ActiveView::AgentThread { server_view }, focus, window, cx);
     }
 }
 
@@ -3466,7 +3505,7 @@ impl AgentPanel {
         };
 
         self._external_thread(
-            server, None, None, workspace, project, ext_agent, window, cx,
+            server, None, None, workspace, project, ext_agent, true, window, cx,
         );
     }
 
