@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
-use language::{BufferSnapshot, Language, LanguageName, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point, ToOffset};
 use project::{ProjectItem as _, WorktreeId};
 use workspace::{Workspace, notifications::NotificationId};
 
@@ -281,6 +281,48 @@ pub fn run(
     }
 
     anyhow::Ok(())
+}
+
+/// Find the enclosing top-level block at the cursor position using treesitter.
+/// Returns the range of the block, or the selection if non-empty.
+fn block_range(buffer: &BufferSnapshot, selection: Range<Point>) -> Option<Range<Point>> {
+    let start_offset = selection.start.to_offset(buffer);
+    let end_offset = selection.end.to_offset(buffer);
+
+    // If user has non-empty selection, use it
+    if start_offset != end_offset {
+        return Some(selection);
+    }
+
+    // Get syntax layer at cursor position
+    let layer = buffer.syntax_layer_at(start_offset)?;
+    let root_node = layer.node();
+    let mut cursor = root_node.walk();
+
+    // Descend to the deepest node containing the cursor position
+    while cursor.goto_first_child_for_byte(start_offset).is_some() {}
+
+    // Walk up until we find a node whose parent is the root
+    loop {
+        let node = cursor.node();
+        if let Some(parent) = node.parent() {
+            let parent_kind = parent.kind();
+            // Common root node kinds across languages:
+            // Python: module, JavaScript/TypeScript: program, Rust/Go: source_file, Lua: chunk
+            if matches!(
+                parent_kind,
+                "module" | "program" | "source_file" | "chunk" | "translation_unit"
+            ) {
+                let start = buffer.offset_to_point(node.start_byte());
+                let end = buffer.offset_to_point(node.end_byte());
+                return Some(start..end);
+            }
+        }
+        if !cursor.goto_parent() {
+            break;
+        }
+    }
+    None
 }
 
 pub enum SessionSupport {
@@ -561,17 +603,40 @@ fn runnable_ranges(
     range: Range<Point>,
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
+    // Priority 1: Markdown files use injection ranges for code blocks
     if let Some(language) = buffer.language()
         && language.name() == "Markdown"
     {
         return (markdown_code_blocks(buffer, range, cx), None);
     }
 
+    // Priority 2: Jupytext cells (# %% markers)
     let (jupytext_snippets, next_cursor) = jupytext_cells(buffer, range.clone());
     if !jupytext_snippets.is_empty() {
         return (jupytext_snippets, next_cursor);
     }
 
+    // Check if this is an empty selection (cursor position only)
+    let is_empty_selection = range.start == range.end;
+
+    // Priority 3: For empty selections, use treesitter-based block detection
+    // to find the enclosing top-level block at the cursor
+    if is_empty_selection {
+        if let Some(block) = block_range(buffer, range.clone()) {
+            let start_language = buffer.language_at(block.start);
+            let end_language = buffer.language_at(block.end);
+
+            if start_language
+                .zip(end_language)
+                .is_some_and(|(start, end)| start == end)
+            {
+                return (vec![block], None);
+            }
+        }
+    }
+
+    // Priority 4: Use the selection's row range (expands to full lines)
+    // This handles non-empty selections and languages without treesitter grammars
     let snippet_range = cell_range(buffer, range.start.row, range.end.row);
 
     // Check if the snippet range is entirely blank, if so, skip forward to find code
@@ -1062,5 +1127,158 @@ mod tests {
 
         let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
         assert!(snippets.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_block_range_python(cx: &mut App) {
+        let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
+
+        // Test function detection
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local("def times_two(x):\n    print(x*2)\ntimes_two(3)\n", cx);
+            buffer.set_language(Some(python.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside function body should select entire function
+        let range = block_range(&snapshot, Point::new(1, 4)..Point::new(1, 4));
+        assert!(range.is_some());
+        let range = range.unwrap();
+        let text: String = snapshot.text_for_range(range).collect();
+        assert_eq!(text, "def times_two(x):\n    print(x*2)");
+
+        // Cursor on standalone statement should select just that statement
+        let range = block_range(&snapshot, Point::new(2, 0)..Point::new(2, 0));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "times_two(3)");
+
+        // Test for-loop detection
+        let buffer = cx.new(|cx| {
+            let mut buffer =
+                Buffer::local("for i in range(3):\n    print(i)\nprint(\"done\")\n", cx);
+            buffer.set_language(Some(python.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside for-loop body should select entire for-loop
+        let range = block_range(&snapshot, Point::new(1, 4)..Point::new(1, 4));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "for i in range(3):\n    print(i)");
+
+        // Test class detection
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "class Foo:\n    def bar(self):\n        pass\nx = Foo()\n",
+                cx,
+            );
+            buffer.set_language(Some(python.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside nested method should select entire class (top-level)
+        let range = block_range(&snapshot, Point::new(2, 8)..Point::new(2, 8));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "class Foo:\n    def bar(self):\n        pass");
+
+        // Test selection override - when user has a selection, use that instead
+        let range = block_range(&snapshot, Point::new(1, 0)..Point::new(2, 12));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        // Selection is respected, not expanded to top-level block
+        assert_eq!(text, "    def bar(self):\n        pass");
+    }
+
+    #[gpui::test]
+    fn test_block_range_typescript(cx: &mut App) {
+        let typescript = languages::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+
+        // Test function declaration
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "function greet(name: string) {\n  console.log(`Hello, ${name}`);\n}\ngreet(\"world\");\n",
+                cx,
+            );
+            buffer.set_language(Some(typescript.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside function body should select entire function
+        let range = block_range(&snapshot, Point::new(1, 2)..Point::new(1, 2));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(
+            text,
+            "function greet(name: string) {\n  console.log(`Hello, ${name}`);\n}"
+        );
+
+        // Test arrow function with const
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "const double = (x: number) => {\n  return x * 2;\n};\nconsole.log(double(5));\n",
+                cx,
+            );
+            buffer.set_language(Some(typescript.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside arrow function should select entire const declaration
+        let range = block_range(&snapshot, Point::new(1, 2)..Point::new(1, 2));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "const double = (x: number) => {\n  return x * 2;\n};");
+
+        // Test class with method
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "class Counter {\n  count = 0;\n  increment() {\n    this.count++;\n  }\n}\nconst c = new Counter();\n",
+                cx,
+            );
+            buffer.set_language(Some(typescript.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside method should select entire class (top-level)
+        let range = block_range(&snapshot, Point::new(3, 4)..Point::new(3, 4));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(
+            text,
+            "class Counter {\n  count = 0;\n  increment() {\n    this.count++;\n  }\n}"
+        );
+
+        // Test for-loop
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(
+                "for (let i = 0; i < 10; i++) {\n  console.log(i);\n}\nconsole.log(\"done\");\n",
+                cx,
+            );
+            buffer.set_language(Some(typescript.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside for-loop should select entire loop
+        let range = block_range(&snapshot, Point::new(1, 2)..Point::new(1, 2));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "for (let i = 0; i < 10; i++) {\n  console.log(i);\n}");
+
+        // Test standalone expression statement
+        let range = block_range(&snapshot, Point::new(3, 0)..Point::new(3, 0));
+        assert!(range.is_some());
+        let text: String = snapshot.text_for_range(range.unwrap()).collect();
+        assert_eq!(text, "console.log(\"done\");");
     }
 }
