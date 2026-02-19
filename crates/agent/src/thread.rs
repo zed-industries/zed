@@ -61,7 +61,6 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 4;
-pub const MAX_PARALLEL_SUBAGENTS: usize = 8;
 
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2614,13 +2613,6 @@ impl Thread {
             .iter()
             .filter_map(|s| s.upgrade().map(|s| s.read(cx).id().clone()))
             .collect()
-    }
-
-    pub fn running_subagent_count(&self) -> usize {
-        self.running_subagents
-            .iter()
-            .filter(|s| s.upgrade().is_some())
-            .count()
     }
 
     pub fn is_subagent(&self) -> bool {
