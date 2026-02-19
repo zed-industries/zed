@@ -1734,7 +1734,7 @@ impl MultiBuffer {
     }
 
     #[instrument(skip_all)]
-    pub fn merge_excerpt_ranges<'a>(
+    fn merge_excerpt_ranges<'a>(
         expanded_ranges: impl IntoIterator<Item = &'a ExcerptRange<Point>> + 'a,
     ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
         let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();

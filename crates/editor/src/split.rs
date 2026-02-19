@@ -2037,7 +2037,7 @@ impl LhsEditor {
             base_text_buffer_snapshot = base_text_buffer.snapshot();
             remote_id = base_text_buffer.remote_id();
         }
-        let excerpt_ranges = rhs_multibuffer
+        let new = rhs_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), lhs_cx)
             .into_iter()
             .map(|(_, excerpt_range)| {
@@ -2061,26 +2061,13 @@ impl LhsEditor {
                     context: point_range_to_base_text_point_range(context),
                 }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        let (new, counts) = MultiBuffer::merge_excerpt_ranges(&excerpt_ranges);
-        let mut total = 0;
-        let rhs_merge_groups = counts
-            .iter()
-            .copied()
-            .map(|count| {
-                let group = rhs_excerpt_ids[total..total + count].to_vec();
-                total += count;
-                group
-            })
-            .collect::<Vec<_>>();
-        let lhs_result = lhs_multibuffer.set_merged_excerpt_ranges_for_path(
+        let lhs_result = lhs_multibuffer.update_path_excerpts(
             path_key,
             diff.read(lhs_cx).base_text_buffer().clone(),
-            excerpt_ranges,
             &base_text_buffer_snapshot,
             new,
-            counts,
             lhs_cx,
         );
         if !lhs_result.excerpt_ids.is_empty()
@@ -2090,7 +2077,33 @@ impl LhsEditor {
         {
             lhs_multibuffer.add_inverted_diff(diff, lhs_cx);
         }
-        Some((lhs_result.excerpt_ids, rhs_merge_groups))
+
+        let rhs_merge_groups: Vec<Vec<ExcerptId>> = {
+            let mut groups = Vec::new();
+            let mut current_group = Vec::new();
+            let mut last_id = None;
+
+            for (i, &lhs_id) in lhs_result.excerpt_ids.iter().enumerate() {
+                if last_id == Some(lhs_id) {
+                    current_group.push(rhs_excerpt_ids[i]);
+                } else {
+                    if !current_group.is_empty() {
+                        groups.push(current_group);
+                    }
+                    current_group = vec![rhs_excerpt_ids[i]];
+                    last_id = Some(lhs_id);
+                }
+            }
+            if !current_group.is_empty() {
+                groups.push(current_group);
+            }
+            groups
+        };
+
+        let deduplicated_lhs_ids: Vec<ExcerptId> =
+            lhs_result.excerpt_ids.iter().dedup().copied().collect();
+
+        Some((deduplicated_lhs_ids, rhs_merge_groups))
     }
 
     fn sync_path_excerpts(
