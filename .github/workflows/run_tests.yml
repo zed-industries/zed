@@ -143,7 +143,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -241,7 +241,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -583,6 +583,7 @@ jobs:
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
     - name: run_tests::check_scripts::check_xtask_workflows
+      if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
       run: |
         cargo xtask workflows
         if ! git diff --exit-code .github; then
