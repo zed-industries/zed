@@ -3815,6 +3815,17 @@ impl AgentPanel {
     pub fn open_history_for_tests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_history(window, cx);
     }
+
+    /// Opens the thread target selector popover menu.
+    ///
+    /// This is a test-only helper for visual tests.
+    pub fn open_thread_target_menu_for_tests(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread_target_menu_handle.show(window, cx);
+    }
 }
 
 #[cfg(test)]

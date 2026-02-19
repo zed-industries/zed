@@ -3242,6 +3242,26 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
+    // ---- Screenshot 1b: Dropdown open showing entries ----
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_thread_target_menu_for_tests(window, cx);
+        });
+    })?;
+    cx.run_until_parked();
+
+    cx.update_window(workspace_window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+    cx.run_until_parked();
+
+    let result_open_dropdown = run_visual_test(
+        "thread_target_selector_open",
+        workspace_window.into(),
+        cx,
+        update_baseline,
+    );
+
     // ---- Screenshot 2: "New Worktree" selected ----
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
@@ -3424,6 +3444,7 @@ fn run_thread_target_selector_visual_tests(
 
     let results = [
         ("default", result_default),
+        ("open_dropdown", result_open_dropdown),
         ("new_worktree", result_new_worktree),
         ("creating", result_creating),
         ("error", result_error),
