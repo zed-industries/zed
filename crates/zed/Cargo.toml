@@ -120,6 +120,7 @@ go_to_line.workspace = true
 system_specs.workspace = true
 gpui = { workspace = true, features = [
     "wayland",
+    "windows-manifest",
     "x11",
 ] }
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
