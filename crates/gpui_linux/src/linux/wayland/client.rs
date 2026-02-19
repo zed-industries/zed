@@ -81,6 +81,7 @@ use crate::linux::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
         serial::{SerialKind, SerialTracker},
+        to_shape,
         window::WaylandWindow,
     },
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -749,7 +750,7 @@ impl LinuxClient for WaylandClient {
                     .expect("window is focused by pointer");
                 wl_pointer.set_cursor(serial, None, 0, 0);
             } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                cursor_shape_device.set_shape(serial, style.to_shape());
+                cursor_shape_device.set_shape(serial, to_shape(style));
             } else if let Some(focused_window) = &state.mouse_focused_window {
                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                 let wl_pointer = state
@@ -1611,7 +1612,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                                 .expect("window is focused by pointer");
                             wl_pointer.set_cursor(serial, None, 0, 0);
                         } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                            cursor_shape_device.set_shape(serial, style.to_shape());
+                            cursor_shape_device.set_shape(serial, to_shape(style));
                         } else {
                             let scale = window.primary_output_scale();
                             state
@@ -1657,7 +1658,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             state.cursor_style = Some(default_style);
 
                             if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                                cursor_shape_device.set_shape(serial, default_style.to_shape());
+                                cursor_shape_device.set_shape(serial, to_shape(default_style));
                             } else {
                                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                                 let wl_pointer = state
