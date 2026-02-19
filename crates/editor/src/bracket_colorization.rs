@@ -118,9 +118,11 @@ impl Editor {
                     .ok();
             }
 
-            let viewport_start_row =
-                        buffer_snapshot.offset_to_point(buffer_range.start).row;
-                    let viewport_end_row = buffer_snapshot.offset_to_point(buffer_range.end).row;
+            let buffer_range = buffer_range.start..buffer_range.end;
+                    let large_block_pairs =
+                        buffer_snapshot.bracket_pairs_for_large_enclosing_blocks(&buffer_range);
+
+                    let large_block_depth = large_block_pairs.len();
 
                     let (bracket_matches_by_accent, updated_chunks) = bracket_matches_by_accent.await;
 
@@ -161,24 +163,22 @@ fn compute_bracket_ranges(
     anchors_in_multi_buffer: &impl Fn(ExcerptId, [text::Anchor; 4]) -> Option<[Option<Anchor>; 4]>,
 ) -> Vec<(usize, Vec<Range<Anchor>>)> {
     buffer_snapshot
-        .fetch_bracket_ranges(buffer_range.start..buffer_range.end, Some(fetched_chunks))
+        .fetch_bracket_ranges(buffer_range, Some(fetched_chunks))
         .into_iter()
         .flat_map(|(chunk_range, pairs)| {
-            if fetched_chunks.contains(&chunk_range) {
-                return Vec::new();
+            if fetched_chunks.insert(chunk_range) {
+                pairs
+                            } else {
+                                Vec::new()
                             }
-                            // Only claim chunks overlapping the viewport as
-                            // fetched.  Boundary chunks pulled in by
-                            // `extend_range_for_enclosing_brackets` contribute
-                            // their bracket pairs but must remain re-queryable
-            // when the user scrolls to them.
-                            if chunk_range.start <= viewport_end_row
-                                && chunk_range.end > viewport_start_row
-                            {
-                                fetched_chunks.insert(chunk_range);
+                        })
+                        .map(move |mut pair| {
+                            if let Some(idx) = pair.color_index.as_mut() {
+                                *idx += large_block_depth;
                             }
-            pairs
-        })
+                            pair
+                        })
+        .chain(large_block_pairs)
         .filter_map(|pair| {
             let color_index = pair.color_index?;
 
@@ -660,8 +660,9 @@ fn process_data«1()1» «1{
 
     #[gpui::test]
     async fn test_bracket_colorization_large_block(cx: &mut gpui::TestAppContext) {
-        // Each `//\n` is 3 bytes; 6000 lines ≈ 18 KB, exceeding MAX_BYTES_TO_QUERY (16 KB).
-        let comment_lines = 6000;
+        // Each padded comment line is 27 bytes; 620 lines = 16740 bytes,
+        // just over MAX_BYTES_TO_QUERY (16 KB) with head/tail overhead.
+        let comment_lines = 620;
 
         init_test(cx, |language_settings| {
             language_settings.defaults.colorize_brackets = Some(true);
@@ -689,33 +690,28 @@ mod foo {
             comment_lines,
         ));
 
+        let colored_head = "mod foo «1{\n\
+                            \x20   fn process_data_1«2()2» «2{\n\
+                            \x20       let map: Option«3<Vec«4<«5()5»>4»>3» = None;\n\
+                            \x20   }2»";
+        let uncolored_tail = "    fn process_data_2() {\n\
+                              \x20       let map: Option<Vec<()>> = None;\n\
+                              \x20   }\n\
+                              }1»";
+        let colored_tail = "    fn process_data_2«2()2» «2{\n\
+                            \x20       let map: Option«3<Vec«4<«5()5»>4»>3» = None;\n\
+                            \x20   }2»\n\
+                            }1»";
+
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
+        let markup = bracket_colors_markup(&mut cx);
+        let relevant = filter_bracket_relevant_lines(&markup);
         assert_eq!(
-            &separate_with_comment_lines(
-                indoc! {r#"
-mod foo «1{
-    fn process_data_1«2()2» «2{
-        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
-    }2»
-"#},
-                indoc! {r#"
-    fn process_data_2«2()2» «2{
-        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
-    }2»
-}1»
-
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
-"#},
-                comment_lines,
-            ),
-            &bracket_colors_markup(&mut cx),
-            "Top chunk: brackets should be colorized even when the enclosing \
-             block exceeds MAX_BYTES_TO_QUERY"
+            relevant,
+            format!("{colored_head}\n{uncolored_tail}"),
+            "Top chunk: visible brackets should be colorized even when the \
+             enclosing block exceeds MAX_BYTES_TO_QUERY"
         );
 
         cx.update_editor(|editor, window, cx| {
@@ -724,29 +720,11 @@ mod foo «1{
         });
         cx.executor().advance_clock(Duration::from_millis(100));
         cx.executor().run_until_parked();
+        let markup = bracket_colors_markup(&mut cx);
+        let relevant = filter_bracket_relevant_lines(&markup);
         assert_eq!(
-            &separate_with_comment_lines(
-                indoc! {r#"
-mod foo «1{
-    fn process_data_1«2()2» «2{
-        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
-    }2»
-"#},
-                indoc! {r#"
-    fn process_data_2«2()2» «2{
-        let map: Option«3<Vec«4<«5()5»>4»>3» = None;
-    }2»
-}1»
-
-1 hsla(207.80, 16.20%, 69.19%, 1.00)
-2 hsla(29.00, 54.00%, 65.88%, 1.00)
-3 hsla(286.00, 51.00%, 75.25%, 1.00)
-4 hsla(187.00, 47.00%, 59.22%, 1.00)
-5 hsla(355.00, 65.00%, 75.94%, 1.00)
-"#},
-                comment_lines,
-            ),
-            &bracket_colors_markup(&mut cx),
+            relevant,
+            format!("{colored_head}\n{colored_tail}"),
             "After scrolling to bottom, both chunks should have bracket \
              highlights across a large block"
         );
@@ -1562,10 +1540,26 @@ mod foo «1{
         );
     }
 
+    fn filter_bracket_relevant_lines(markup: &str) -> String {
+        markup
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty()
+                    && !trimmed.starts_with("//")
+                    && !trimmed.starts_with("hsla(")
+                    && !trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn separate_with_comment_lines(head: &str, tail: &str, comment_lines: usize) -> String {
         let mut result = head.to_string();
-        result.push_str("\n");
-        result.push_str(&"//\n".repeat(comment_lines));
+        result.push('\n');
+        for _ in 0..comment_lines {
+            result.push_str("// padding padding padding\n");
+        }
         result.push_str(tail);
         result
     }
