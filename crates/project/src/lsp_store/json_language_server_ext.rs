@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity};
 use lsp::LanguageServer;
-use util::ResultExt;
 
 use crate::LspStore;
 
@@ -65,9 +64,14 @@ pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: String, cx: &App)
     });
     for server in servers {
         zlog::trace!(LOGGER => "Notifying server {:?} of schema change for URI: {:?}", server.server_id(), &uri);
-        server
-            .notify::<SchemaContentsChanged>(uri.clone())
-            .log_err();
+        if let Err(error) = server.notify::<SchemaContentsChanged>(uri.clone()) {
+            zlog::warn!(
+                LOGGER => "Failed to notify server {:?} of schema change for URI {:?}: {}",
+                server.server_id(),
+                &uri,
+                error
+            );
+        }
     }
 }
 
