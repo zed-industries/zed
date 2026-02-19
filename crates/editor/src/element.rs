@@ -1833,10 +1833,17 @@ impl EditorElement {
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
+                    let should_show_trail =
+                        Self::should_show_cursor_tail(selection.cursor_shape, cursor_tail_settings);
+                    let hide_local_cursor_body = selection.is_local && !show_local_cursors;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !show_local_cursors)
-                        || !in_range
+                    if (!Self::should_layout_cursor(
+                        selection.is_local,
+                        show_local_cursors,
+                        selection.cursor_shape,
+                        cursor_tail_settings,
+                    )) || !in_range
                         || row_block_types.get(&cursor_position.row()) == Some(&true)
                     {
                         continue;
@@ -1967,7 +1974,7 @@ impl EditorElement {
                     }
 
                     let mut trail = None;
-                    if Self::should_show_cursor_tail(selection.cursor_shape, cursor_tail_settings) {
+                    if should_show_trail {
                         let key = CursorTrailKey {
                             source: selection.cursor_source,
                             selection_id: selection.selection_id,
@@ -2007,13 +2014,18 @@ impl EditorElement {
                         shape: selection.cursor_shape,
                         trail,
                         block_text,
+                        show_body: !hide_local_cursor_body,
                         cursor_name: None,
                     };
-                    let cursor_name = selection.user_name.clone().map(|name| CursorName {
-                        string: name,
-                        color: self.style.background,
-                        is_top_row: cursor_position.row().0 == 0,
-                    });
+                    let cursor_name = if hide_local_cursor_body {
+                        None
+                    } else {
+                        selection.user_name.clone().map(|name| CursorName {
+                            string: name,
+                            color: self.style.background,
+                            is_top_row: cursor_position.row().0 == 0,
+                        })
+                    };
                     cursor.layout(content_origin, cursor_name, window, cx);
                     cursors.push(cursor);
                 }
@@ -6836,6 +6848,18 @@ impl EditorElement {
 
     fn should_show_cursor_tail(shape: CursorShape, settings: CursorTailSettings) -> bool {
         settings.enabled && shape == CursorShape::Block
+    }
+
+    fn should_layout_cursor(
+        is_local: bool,
+        show_local_cursors: bool,
+        shape: CursorShape,
+        settings: CursorTailSettings,
+    ) -> bool {
+        if !is_local || show_local_cursors {
+            return true;
+        }
+        Self::should_show_cursor_tail(shape, settings)
     }
 
     fn cursor_tail_color(
@@ -12103,6 +12127,7 @@ pub struct CursorLayout {
     shape: CursorShape,
     trail: Option<CursorTailLayout>,
     block_text: Option<ShapedLine>,
+    show_body: bool,
     cursor_name: Option<AnyElement>,
 }
 
@@ -12170,6 +12195,7 @@ impl CursorLayout {
             shape,
             trail: None,
             block_text,
+            show_body: true,
             cursor_name: None,
         }
     }
@@ -12241,11 +12267,14 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
-        let bounds = self.bounds(origin);
-
         if let Some(trail) = self.trail {
             trail.paint(origin, window);
         }
+        if !self.show_body {
+            return;
+        }
+
+        let bounds = self.bounds(origin);
 
         //Draw background or border quad
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
@@ -13856,6 +13885,29 @@ mod tests {
 
         settings.enabled = false;
         assert!(!EditorElement::should_show_cursor_tail(
+            CursorShape::Block,
+            settings,
+        ));
+    }
+
+    #[test]
+    fn test_cursor_tail_keeps_layout_when_local_cursor_is_hidden_by_blink() {
+        let settings = cursor_tail_settings_for_tests();
+        assert!(EditorElement::should_layout_cursor(
+            true,
+            false,
+            CursorShape::Block,
+            settings,
+        ));
+        assert!(!EditorElement::should_layout_cursor(
+            true,
+            false,
+            CursorShape::Bar,
+            settings,
+        ));
+        assert!(EditorElement::should_layout_cursor(
+            false,
+            false,
             CursorShape::Block,
             settings,
         ));

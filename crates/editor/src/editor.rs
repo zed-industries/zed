@@ -23909,7 +23909,12 @@ impl Editor {
     }
 
     pub(crate) fn cursor_tail_state_max_age(duration: Duration) -> Duration {
-        duration.saturating_mul(2).max(Duration::from_millis(300))
+        // Keep state alive long enough to survive cursor blink-off phases, otherwise
+        // movement during blink invisibility can look like a cold start with no trail.
+        duration
+            .saturating_mul(2)
+            .max(Duration::from_millis(300))
+            .max(CURSOR_BLINK_INTERVAL + Duration::from_millis(100))
     }
 
     fn cursor_tail_rebind_candidate_key(
@@ -26527,6 +26532,13 @@ mod tests {
         );
 
         assert_eq!(candidate, None);
+    }
+
+    #[test]
+    fn test_cursor_tail_state_max_age_survives_blink_off_window() {
+        let short_animation_duration = Duration::from_millis(90);
+        let max_age = Editor::cursor_tail_state_max_age(short_animation_duration);
+        assert!(max_age >= CURSOR_BLINK_INTERVAL + Duration::from_millis(100));
     }
 }
 
