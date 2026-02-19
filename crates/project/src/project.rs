@@ -2374,6 +2374,16 @@ impl Project {
                 let is_subdir = relative_path
                     .as_ref()
                     .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                // If this subdirectory is itself a git repository root (e.g. a
+                // git worktree), it should get its own workspace rather than
+                // being claimed by this one.
+                if is_subdir
+                    && relative_path
+                        .as_ref()
+                        .is_some_and(|rel| worktree.contains_git_repo_at(rel))
+                {
+                    return None;
+                }
                 let contains =
                     relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
                 contains.then(|| worktree.is_visible())
