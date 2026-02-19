@@ -435,7 +435,7 @@ impl SplittableEditor {
     }
 
     pub fn new(
-        style: DiffViewStyle,
+        _style: DiffViewStyle,
         rhs_multibuffer: Entity<MultiBuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -470,7 +470,7 @@ impl SplittableEditor {
             }),
         ];
 
-        let this = cx.weak_entity();
+        let _this = cx.weak_entity();
         window.defer(cx, {
             let workspace = workspace.downgrade();
             let rhs_editor = rhs_editor.downgrade();
@@ -505,6 +505,7 @@ impl SplittableEditor {
             return;
         }
         let Some(workspace) = self.workspace.upgrade() else {
+            eprintln!("SplittableEditor::split: workspace upgrade failed");
             return;
         };
         let project = workspace.read(cx).project().clone();
@@ -637,6 +638,7 @@ impl SplittableEditor {
             was_last_focused: false,
             _subscriptions: subscriptions,
         };
+        cx.notify();
         let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
         let lhs_display_map = lhs.editor.read(cx).display_map.clone();
         let rhs_display_map_id = rhs_display_map.entity_id();
@@ -651,7 +653,7 @@ impl SplittableEditor {
 
         let path_diffs: Vec<_> = {
             let rhs_multibuffer = self.rhs_multibuffer.read(cx);
-            rhs_multibuffer
+            let diffs: Vec<_> = rhs_multibuffer
                 .paths()
                 .filter_map(|path| {
                     let excerpt_id = rhs_multibuffer.excerpts_for_path(path).next()?;
@@ -660,7 +662,9 @@ impl SplittableEditor {
                     let diff = rhs_multibuffer.diff_for(buffer.remote_id())?;
                     Some((path.clone(), diff))
                 })
-                .collect()
+                .collect();
+            eprintln!("SplittableEditor::split: path_diffs.len={}", diffs.len());
+            diffs
         };
 
         let mut companion = Companion::new(
@@ -758,6 +762,7 @@ impl SplittableEditor {
         });
 
         self.lhs = Some(lhs);
+        eprintln!("SplittableEditor::split: lhs set to Some, lhs.is_some={}", self.lhs.is_some());
 
         cx.notify();
     }
@@ -1909,6 +1914,7 @@ impl Render for SplittableEditor {
         _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
+        eprintln!("SplittableEditor::render: lhs.is_some={}", self.lhs.is_some());
         let inner = if self.lhs.is_some() {
             let style = self.rhs_editor.read(cx).create_style(cx);
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
