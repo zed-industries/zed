@@ -118,6 +118,23 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::cache_cargo_registry
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/registry
+        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: steps::cache_cargo_git
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/git
+        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: steps::cache_cargo_index
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/git/db
+        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-index-${{ runner.os }}-
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -234,6 +251,23 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::cache_cargo_registry
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/registry
+        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: steps::cache_cargo_git
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/git
+        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: steps::cache_cargo_index
+      uses: actions/cache@6849112085fbc442f7628365f7db7f2ae6b3f68a
+      with:
+        path: ~/.cargo/git/db
+        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-index-${{ runner.os }}-
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
       shell: pwsh
