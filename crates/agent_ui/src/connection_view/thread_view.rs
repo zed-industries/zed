@@ -6214,66 +6214,58 @@ impl ThreadView {
                             );
                         }
 
-                        // "Select options..." radio entry — when active, shows per-command checkboxes
                         let select_options_index = options.len();
+
+                        menu = menu.separator().header("Select Options…");
+
                         let select_options_active = current_selected_index == select_options_index;
-                        {
+
+                        for (pattern_index, label) in patterns.iter() {
+                            let label = label.clone();
+                            let pattern_index = *pattern_index;
+                            let tool_call_id_for_pattern = tool_call_id.clone();
+                            let is_checked =
+                                select_options_active && checked.contains(&pattern_index);
+
                             let view = view.clone();
-                            let tool_call_id_for_select = tool_call_id.clone();
-                            menu = menu.entry("Select options…", None, move |_window, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.selected_permission_granularity.insert(
-                                        tool_call_id_for_select.clone(),
-                                        select_options_index,
-                                    );
-                                    cx.notify();
-                                })
-                                .log_err();
-                            });
-                        }
+                            menu = menu.toggleable_entry(
+                                label,
+                                is_checked,
+                                IconPosition::End,
+                                None,
+                                move |_window, cx| {
+                                    view.update(cx, |this, cx| {
+                                        // Auto-switch to pattern-based granularity
+                                        // so downstream authorization uses the
+                                        // checked patterns instead of a fixed choice.
+                                        this.selected_permission_granularity.insert(
+                                            tool_call_id_for_pattern.clone(),
+                                            select_options_index,
+                                        );
 
-                        // Per-command pattern checkboxes (only shown when "Select options" is active)
-                        if select_options_active {
-                            menu = menu.separator();
-
-                            for (pattern_index, label) in patterns.iter() {
-                                let label = label.clone();
-                                let pattern_index = *pattern_index;
-                                let tool_call_id_for_pattern = tool_call_id.clone();
-                                let is_checked = checked.contains(&pattern_index);
-
-                                let view = view.clone();
-                                menu = menu.toggleable_entry(
-                                    label,
-                                    is_checked,
-                                    IconPosition::End,
-                                    None,
-                                    move |_window, cx| {
-                                        view.update(cx, |this, cx| {
-                                            if !this
-                                                .selected_command_patterns
-                                                .contains_key(&tool_call_id_for_pattern)
-                                            {
-                                                this.selected_command_patterns.insert(
-                                                    tool_call_id_for_pattern.clone(),
-                                                    (0..pattern_count).collect(),
-                                                );
-                                            }
-                                            let patterns = this
-                                                .selected_command_patterns
-                                                .get_mut(&tool_call_id_for_pattern)
-                                                .expect("just inserted above");
-                                            if patterns.contains(&pattern_index) {
-                                                patterns.remove(&pattern_index);
-                                            } else {
-                                                patterns.insert(pattern_index);
-                                            }
-                                            cx.notify();
-                                        })
-                                        .log_err();
-                                    },
-                                );
-                            }
+                                        if !this
+                                            .selected_command_patterns
+                                            .contains_key(&tool_call_id_for_pattern)
+                                        {
+                                            this.selected_command_patterns.insert(
+                                                tool_call_id_for_pattern.clone(),
+                                                (0..pattern_count).collect(),
+                                            );
+                                        }
+                                        let patterns = this
+                                            .selected_command_patterns
+                                            .get_mut(&tool_call_id_for_pattern)
+                                            .expect("just inserted above");
+                                        if patterns.contains(&pattern_index) {
+                                            patterns.remove(&pattern_index);
+                                        } else {
+                                            patterns.insert(pattern_index);
+                                        }
+                                        cx.notify();
+                                    })
+                                    .log_err();
+                                },
+                            );
                         }
 
                         // Apply button — closes the dropdown, confirming the selection.
