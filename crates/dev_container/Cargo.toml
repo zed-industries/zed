@@ -5,6 +5,7 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
+async-tar.workspace = true
 serde.workspace = true
 serde_json_lenient.workspace = true
 http_client.workspace = true

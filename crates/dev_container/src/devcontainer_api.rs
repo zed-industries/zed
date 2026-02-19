@@ -287,6 +287,10 @@ pub async fn start_dev_container_with_config(
     check_for_docker(use_podman).await?;
 
     // let (path_to_devcontainer_cli, found_in_path) = ensure_devcontainer_cli(&node_runtime).await?;
+    let http_client = cx.update(|_, cx| cx.http_client().clone()).map_err(|e| {
+        log::error!("Unable to retrieve http client from context: {e}");
+        DevContainerError::NodeRuntimeNotAvailable // TODO
+    })?;
 
     let Some(directory) = project_directory(cx) else {
         return Err(DevContainerError::NotInValidProject);
@@ -298,8 +302,12 @@ pub async fn start_dev_container_with_config(
 
     // let config_path = config.map(|c| directory.join(&c.config_path));
 
-    match spawn_dev_container_v2(actual_config.clone(), Arc::new(directory.as_ref())) // TODO reffing here is gross
-        .await
+    match spawn_dev_container_v2(
+        http_client,
+        actual_config.clone(),
+        Arc::new(directory.as_ref()),
+    ) // TODO reffing here is gross
+    .await
     {
         Ok(DevContainerUp {
             container_id,

@@ -6,11 +6,15 @@ use std::{
     sync::Arc,
 };
 
+use http_client::HttpClient;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use smol::process::Command;
 
-use crate::{DevContainerConfig, devcontainer_api::DevContainerUp};
+use crate::{
+    DevContainerConfig, devcontainer_api::DevContainerUp, download_and_extract_oci_feature,
+    fetch_oci_feature_manifest, get_oci_token_for_repo, parse_oci_feature_ref,
+};
 
 /**
  * What to do, and in what order:
@@ -190,6 +194,68 @@ impl std::fmt::Display for FeatureOptionValue {
             FeatureOptionValue::String(s) => write!(f, "{}", s),
         }
     }
+}
+
+/// Minimal representation of a `devcontainer-feature.json` file, used to
+/// extract option default values after the feature tarball is downloaded.
+///
+/// See: https://containers.dev/implementors/features/#devcontainer-featurejson-properties
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DevContainerFeatureJson {
+    id: Option<String>,
+    #[serde(default)]
+    options: HashMap<String, FeatureOptionDefinition>,
+}
+
+/// A single option definition inside `devcontainer-feature.json`.
+/// We only need the `default` field to populate env variables.
+#[derive(Debug, Deserialize)]
+struct FeatureOptionDefinition {
+    default: Option<Value>,
+}
+
+/// Reads `devcontainer-feature.json` from a feature's staging directory and
+/// returns a map of option-name → default-value (as strings).
+///
+/// Mirrors the CLI's `getFeatureValueDefaults` in
+/// `containerFeaturesConfiguration.ts`.
+fn read_feature_option_defaults(
+    feature_dir: &Path,
+) -> Result<HashMap<String, String>, RenameMeError> {
+    let json_path = feature_dir.join("devcontainer-feature.json");
+    if !json_path.exists() {
+        log::info!(
+            "No devcontainer-feature.json found in {:?}, no defaults to apply",
+            feature_dir
+        );
+        return Ok(HashMap::new());
+    }
+
+    let contents = std::fs::read_to_string(&json_path).map_err(|e| {
+        log::error!("Failed to read devcontainer-feature.json: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    let feature_json: DevContainerFeatureJson =
+        serde_json_lenient::from_str(&contents).map_err(|e| {
+            log::error!("Failed to parse devcontainer-feature.json: {e}");
+            RenameMeError::UnmappedError
+        })?;
+
+    let mut defaults = HashMap::new();
+    for (name, definition) in &feature_json.options {
+        if let Some(default_value) = &definition.default {
+            let value_str = match default_value {
+                Value::Bool(b) => b.to_string(),
+                Value::String(s) => s.to_string(),
+                Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            };
+            defaults.insert(name.clone(), value_str);
+        }
+    }
+    Ok(defaults)
 }
 
 /// Holds all the information needed to construct a `docker buildx build` command
@@ -496,6 +562,7 @@ pub(crate) fn read_devcontainer_configuration(
 /// 6. If docker-compose config
 ///     1. TODO - this is the next thing
 pub(crate) async fn spawn_dev_container_v2(
+    http_client: Arc<dyn HttpClient>,
     config: DevContainerConfig,
     local_project_path: Arc<&Path>,
 ) -> Result<DevContainerUp, RenameMeError> {
@@ -524,7 +591,7 @@ pub(crate) async fn spawn_dev_container_v2(
         ),
         (
             "devcontainer.config_file",
-            config.config_path.display().to_string(),
+            config_path.display().to_string(),
         ),
     ];
 
@@ -555,16 +622,31 @@ pub(crate) async fn spawn_dev_container_v2(
                     remote_workspace_folder: remote_folder,
                 });
             } else {
-                // let docker_build_thing = build_image(&devcontainer).await?;
+                let Some(devcontainer_image) = &devcontainer.image else {
+                    log::error!(
+                        "Problem parsing devcontainer. Type listed as image, but image is none"
+                    );
+                    return Err(RenameMeError::UnmappedError);
+                };
                 let docker_image_inspect = inspect_image(&devcontainer).await?;
-                log::error!("Not yet implemented, exiting");
-                let built_docker_image = build_image(&devcontainer, &docker_image_inspect).await?;
+                let built_docker_image =
+                    build_image(http_client, &devcontainer, &docker_image_inspect).await?;
+
+                // Me
+                let features_image_tag = if let Some(features) = &devcontainer.features
+                    && !features.is_empty()
+                {
+                    Some(generate_features_image_tag(&devcontainer_image))
+                } else {
+                    None
+                };
 
                 let running_container = run_docker_image(
                     &devcontainer,
                     &built_docker_image,
                     &labels,
                     &local_project_path,
+                    features_image_tag.as_deref(),
                 )
                 .await?;
 
@@ -602,17 +684,20 @@ pub(crate) async fn spawn_dev_container_v2(
     // Err(RenameMeError::UnmappedError)
 }
 
+// TODO can't this image name override just come from the built_docker_image?
 async fn run_docker_image(
     devcontainer: &DevContainer,
     built_docker_image: &DockerInspect,
     labels: &Vec<(&str, String)>,
     local_project_path: &Arc<&Path>,
+    image_name_override: Option<&str>,
 ) -> Result<DockerInspect, RenameMeError> {
     let mut docker_run_command = create_docker_run_command(
         &devcontainer,
         local_project_path,
         &built_docker_image.config.labels,
         Some(labels),
+        image_name_override,
     )?;
 
     if let Err(e) = docker_run_command.output().await {
@@ -703,7 +788,504 @@ fn prepare_features_build_info(
     })
 }
 
+/// Destination folder inside the container where feature content is staged during build.
+/// Mirrors the CLI's `FEATURES_CONTAINER_TEMP_DEST_FOLDER`.
+// TODO does this need to be more generalized
+const FEATURES_CONTAINER_TEMP_DEST_FOLDER: &str = "/tmp/dev-container-features";
+
+/// Recursively lists all files under `dir`, returning paths relative to `dir`.
+// TODO is there not something already usable in this code base?
+fn list_dir_recursive(dir: &PathBuf) -> Result<Vec<String>, std::io::Error> {
+    let mut results = Vec::new();
+    fn walk(base: &Path, current: &Path, results: &mut Vec<String>) -> Result<(), std::io::Error> {
+        for entry in std::fs::read_dir(current)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Ok(relative) = path.strip_prefix(base) {
+                results.push(relative.display().to_string());
+            }
+            if path.is_dir() {
+                walk(base, &path, results)?;
+            }
+        }
+        Ok(())
+    }
+    walk(dir, dir, &mut results)?;
+    results.sort();
+    Ok(results)
+}
+
+/// Escapes single quotes for use inside shell single-quoted strings.
+///
+/// Ends the current single-quoted string, inserts an escaped single quote,
+/// and reopens the string: `'` → `'\''`.
+fn escape_single_quotes(input: &str) -> String {
+    input.replace('\'', "'\\''")
+}
+
+/// Escapes regex special characters in a string.
+fn escape_regex_chars(input: &str) -> String {
+    let mut result = String::with_capacity(input.len() * 2);
+    for c in input.chars() {
+        if ".*+?^${}()|[]\\".contains(c) {
+            result.push('\\');
+        }
+        result.push(c);
+    }
+    result
+}
+
+/// Converts a string to a safe environment variable name.
+///
+/// Mirrors the CLI's `getSafeId` in `containerFeatures.ts`:
+/// replaces non-alphanumeric/underscore characters with `_`, replaces a
+/// leading sequence of digits/underscores with a single `_`, and uppercases.
+fn get_safe_id(input: &str) -> String {
+    let replaced: String = input
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let without_leading = replaced.trim_start_matches(|c: char| c.is_ascii_digit() || c == '_');
+    let result = if without_leading.len() < replaced.len() {
+        format!("_{}", without_leading)
+    } else {
+        replaced
+    };
+    result.to_uppercase()
+}
+
+/// Extracts the short feature ID from a full feature reference string.
+///
+/// Examples:
+/// - `ghcr.io/devcontainers/features/aws-cli:1` → `aws-cli`
+/// - `ghcr.io/user/repo/go` → `go`
+/// - `ghcr.io/devcontainers/features/rust@sha256:abc` → `rust`
+/// - `./myFeature` → `myFeature`
+fn extract_feature_id(feature_ref: &str) -> &str {
+    let without_version = if let Some(at_idx) = feature_ref.rfind('@') {
+        &feature_ref[..at_idx]
+    } else {
+        let last_slash = feature_ref.rfind('/');
+        let last_colon = feature_ref.rfind(':');
+        match (last_slash, last_colon) {
+            (Some(slash), Some(colon)) if colon > slash => &feature_ref[..colon],
+            _ => feature_ref,
+        }
+    };
+    match without_version.rfind('/') {
+        Some(idx) => &without_version[idx + 1..],
+        None => without_version,
+    }
+}
+
+/// Generates a shell command that looks up a user's passwd entry.
+///
+/// Mirrors the CLI's `getEntPasswdShellCommand` in `commonUtils.ts`.
+/// Tries `getent passwd` first, then falls back to grepping `/etc/passwd`.
+// TODO fairly sure this exists elsewhere, we should deduplicate
+fn get_ent_passwd_shell_command(user: &str) -> String {
+    let escaped_for_shell = user.replace('\\', "\\\\").replace('\'', "\\'");
+    let escaped_for_regex = escape_regex_chars(user).replace('\'', "\\'");
+    format!(
+        " (command -v getent >/dev/null 2>&1 && getent passwd '{shell}' || grep -E '^{re}|^[^:]*:[^:]*:{re}:' /etc/passwd || true)",
+        shell = escaped_for_shell,
+        re = escaped_for_regex,
+    )
+}
+
+/// Determines feature installation order, respecting `overrideFeatureInstallOrder`.
+///
+/// Features listed in the override come first (in the specified order), followed
+/// by any remaining features sorted lexicographically by their full reference ID.
+fn resolve_feature_order<'a>(
+    features: &'a HashMap<String, FeatureOptions>,
+    override_order: &Option<Vec<String>>,
+) -> Vec<(&'a String, &'a FeatureOptions)> {
+    if let Some(order) = override_order {
+        let mut ordered: Vec<(&'a String, &'a FeatureOptions)> = Vec::new();
+        for ordered_id in order {
+            if let Some((key, options)) = features.get_key_value(ordered_id) {
+                ordered.push((key, options));
+            }
+        }
+        let mut remaining: Vec<_> = features
+            .iter()
+            .filter(|(id, _)| !order.iter().any(|o| o == *id))
+            .collect();
+        remaining.sort_by_key(|(id, _)| id.as_str());
+        ordered.extend(remaining);
+        ordered
+    } else {
+        let mut entries: Vec<_> = features.iter().collect();
+        entries.sort_by_key(|(id, _)| id.as_str());
+        entries
+    }
+}
+
+/// Generates the `devcontainer-features.env` content for a single feature by
+/// merging user-provided options on top of defaults from
+/// `devcontainer-feature.json`.
+///
+/// Mirrors the CLI's `getFeatureValueObject` + `getFeatureEnvVariables`
+/// pipeline in `containerFeaturesConfiguration.ts` and
+/// `containerFeatures.ts`.
+fn generate_feature_env(options: &FeatureOptions, defaults: &HashMap<String, String>) -> String {
+    let mut merged: HashMap<String, String> = defaults
+        .iter()
+        .map(|(k, v)| (get_safe_id(k), v.clone()))
+        .collect();
+
+    match options {
+        FeatureOptions::Bool(_) => {} // TODO what?
+        FeatureOptions::String(version) => {
+            merged.insert("VERSION".to_string(), version.clone());
+        }
+        FeatureOptions::Options(map) => {
+            for (key, value) in map {
+                merged.insert(get_safe_id(key), value.to_string());
+            }
+        }
+    }
+
+    if merged.is_empty() {
+        return String::new();
+    }
+
+    let mut lines: Vec<String> = merged
+        .iter()
+        .map(|(key, value)| format!("{}=\"{}\"", key, value))
+        .collect();
+    lines.sort();
+    lines.join("\n") + "\n"
+}
+
+/// Generates the `devcontainer-features-install.sh` wrapper script for one feature.
+///
+/// Mirrors the CLI's `getFeatureInstallWrapperScript` in
+/// `containerFeaturesConfiguration.ts`.
+fn generate_install_wrapper(feature_ref: &str, feature_id: &str, env_variables: &str) -> String {
+    let escaped_id = escape_single_quotes(feature_ref);
+    let escaped_name = escape_single_quotes(feature_id);
+    let options_indented: String = env_variables
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("    {}", l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let escaped_options = escape_single_quotes(&options_indented);
+
+    let mut script = String::new();
+    script.push_str("#!/bin/sh\n");
+    script.push_str("set -e\n");
+    script.push_str("\n");
+    script.push_str("on_exit () {\n");
+    script.push_str("    [ $? -eq 0 ] && exit\n");
+    script.push_str("    echo 'ERROR: Feature \"");
+    script.push_str(&escaped_name);
+    script.push_str("\" (");
+    script.push_str(&escaped_id);
+    script.push_str(") failed to install!'\n");
+    script.push_str("}\n");
+    script.push_str("\n");
+    script.push_str("trap on_exit EXIT\n");
+    script.push_str("\n");
+    script.push_str(
+        "echo ===========================================================================\n",
+    );
+    script.push_str("echo 'Feature       : ");
+    script.push_str(&escaped_name);
+    script.push_str("'\n");
+    script.push_str("echo 'Id            : ");
+    script.push_str(&escaped_id);
+    script.push_str("'\n");
+    script.push_str("echo 'Options       :'\n");
+    script.push_str("echo '");
+    script.push_str(&escaped_options);
+    script.push_str("'\n");
+    script.push_str(
+        "echo ===========================================================================\n",
+    );
+    script.push_str("\n");
+    script.push_str("set -a\n");
+    script.push_str(". ../devcontainer-features.builtin.env\n");
+    script.push_str(". ./devcontainer-features.env\n");
+    script.push_str("set +a\n");
+    script.push_str("\n");
+    script.push_str("chmod +x ./install.sh\n");
+    script.push_str("./install.sh\n");
+    script
+}
+
+/// Generates a single Dockerfile `RUN` instruction that installs one feature
+/// using a BuildKit bind mount.
+///
+/// Mirrors the v2 BuildKit branch of `getFeatureLayers` in
+/// `containerFeaturesConfiguration.ts`.
+fn generate_feature_layer(consecutive_id: &str) -> String {
+    format!(
+        r#"
+RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./{id},target=/tmp/build-features-src/{id} \
+    cp -ar /tmp/build-features-src/{id} {dest} \
+ && chmod -R 0755 {dest}/{id} \
+ && cd {dest}/{id} \
+ && chmod +x ./devcontainer-features-install.sh \
+ && ./devcontainer-features-install.sh \
+ && rm -rf {dest}/{id}
+"#,
+        id = consecutive_id,
+        dest = FEATURES_CONTAINER_TEMP_DEST_FOLDER,
+    )
+}
+
+/// Generates the full `Dockerfile.extended` content that extends a base image
+/// with dev container features.
+///
+/// Mirrors the CLI's `getContainerFeaturesBaseDockerFile` combined with
+/// `getFeatureLayers` (both in `containerFeaturesConfiguration.ts`), using
+/// the BuildKit path (named build contexts, `--mount` bind mounts).
+fn generate_dockerfile_extended(
+    feature_layers: &str,
+    container_user: &str,
+    remote_user: &str,
+) -> String {
+    let container_home_cmd = get_ent_passwd_shell_command(container_user);
+    let remote_home_cmd = get_ent_passwd_shell_command(remote_user);
+    let dest = FEATURES_CONTAINER_TEMP_DEST_FOLDER;
+
+    format!(
+        r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+
+FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
+USER root
+COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
+RUN chmod -R 0755 /tmp/build-features/
+
+FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
+
+USER root
+
+RUN mkdir -p {dest}
+COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ {dest}
+
+RUN \
+echo "_CONTAINER_USER_HOME=$({container_home_cmd} | cut -d: -f6)" >> {dest}/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$({remote_home_cmd} | cut -d: -f6)" >> {dest}/devcontainer-features.builtin.env
+
+{feature_layers}
+
+ARG _DEV_CONTAINERS_IMAGE_USER=root
+USER $_DEV_CONTAINERS_IMAGE_USER
+"#
+    )
+}
+
+/// Stages all feature build resources required by [`create_docker_build`]:
+/// per-feature environment files, install wrapper scripts, and the
+/// generated `Dockerfile.extended`.
+///
+/// This combines the work of the CLI's `generateFeaturesConfig`,
+/// `fetchFeatures`, and `getFeaturesBuildOptions` pipeline (spread across
+/// `containerFeatures.ts` and `containerFeaturesConfiguration.ts`).
+///
+/// The resulting directory layout is:
+/// ```text
+/// <features_content_dir>/
+/// ├── devcontainer-features.builtin.env
+/// ├── Dockerfile.extended
+/// ├── <featureId>_0/
+/// │   ├── devcontainer-features.env
+/// │   ├── devcontainer-features-install.sh
+/// │   └── install.sh
+/// └── <featureId>_1/
+///     └── …
+/// ```
+///
+/// **OCI feature download:** For each feature that references an OCI
+/// artifact (e.g. `ghcr.io/devcontainers/features/aws-cli:1`) the
+/// function fetches a bearer token, resolves the OCI manifest, and
+/// downloads the feature tarball into the feature's staging directory.
+/// If any step of the download fails the function returns an error
+/// immediately.
+async fn construct_features_build_resources(
+    dev_container: &DevContainer,
+    build_info: &FeaturesBuildInfo,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<(), RenameMeError> {
+    let features = match &dev_container.features {
+        Some(features) if !features.is_empty() => features,
+        _ => return Ok(()),
+    };
+
+    let container_user = dev_container
+        .container_user
+        .as_deref()
+        .unwrap_or(&build_info.image_user);
+    let remote_user = dev_container
+        .remote_user
+        .as_deref()
+        .unwrap_or(container_user);
+
+    // --- 1. Write devcontainer-features.builtin.env ---
+    let builtin_env_content = format!(
+        "_CONTAINER_USER={}\n_REMOTE_USER={}\n",
+        container_user, remote_user
+    );
+    let builtin_env_path = build_info
+        .features_content_dir
+        .join("devcontainer-features.builtin.env");
+    std::fs::write(&builtin_env_path, &builtin_env_content).map_err(|e| {
+        log::error!("Failed to write builtin env file: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    // --- 2. Determine installation order ---
+    let ordered_features =
+        resolve_feature_order(features, &dev_container.override_feature_install_order);
+
+    // --- 3. Stage each feature's directory and files ---
+    let mut feature_layers = String::new();
+
+    for (index, (feature_ref, options)) in ordered_features.iter().enumerate() {
+        if matches!(options, FeatureOptions::Bool(false)) {
+            log::info!(
+                "Feature '{}' is disabled (set to false), skipping",
+                feature_ref
+            );
+            continue;
+        }
+
+        let feature_id = extract_feature_id(feature_ref);
+        let consecutive_id = format!("{}_{}", feature_id, index);
+        let feature_dir = build_info.features_content_dir.join(&consecutive_id);
+
+        std::fs::create_dir_all(&feature_dir).map_err(|e| {
+            log::error!(
+                "Failed to create feature directory for {}: {e}",
+                feature_ref
+            );
+            RenameMeError::UnmappedError
+        })?;
+
+        // --- Download the feature's OCI tarball first, so we can read
+        // devcontainer-feature.json for option defaults before writing the
+        // env file.
+        let oci_ref = parse_oci_feature_ref(feature_ref).ok_or_else(|| {
+            log::error!(
+                "Feature '{}' is not a supported OCI feature reference",
+                feature_ref
+            );
+            RenameMeError::UnmappedError
+        })?;
+        let token = get_oci_token_for_repo(&oci_ref.registry, &oci_ref.path, http_client)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to get OCI token for feature '{}': {e}", feature_ref);
+                RenameMeError::UnmappedError
+            })?;
+        let manifest = fetch_oci_feature_manifest(&oci_ref, &token, http_client)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to fetch OCI manifest for feature '{}': {e}",
+                    feature_ref
+                );
+                RenameMeError::UnmappedError
+            })?;
+        let digest = &manifest
+            .layers
+            .first()
+            .ok_or_else(|| {
+                log::error!(
+                    "OCI manifest for feature '{}' contains no layers",
+                    feature_ref
+                );
+                RenameMeError::UnmappedError
+            })?
+            .digest;
+        download_and_extract_oci_feature(&oci_ref, digest, &token, &feature_dir, http_client)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to download OCI feature '{}': {e}", feature_ref);
+                RenameMeError::UnmappedError
+            })?;
+
+        // Log all files in the feature directory after extraction so we can
+        // verify the tarball contents landed correctly.
+        match list_dir_recursive(&feature_dir) {
+            Ok(files) => {
+                log::info!(
+                    "Feature '{}' directory contents after extraction ({} files): {:?}",
+                    feature_ref,
+                    files.len(),
+                    files,
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "Could not list feature '{}' directory contents: {e}",
+                    feature_ref
+                );
+            }
+        }
+        log::info!("Downloaded OCI feature content for '{}'", feature_ref);
+
+        // --- Now that the tarball is extracted, read option defaults from
+        // the feature's devcontainer-feature.json and merge with user options.
+        let defaults = read_feature_option_defaults(&feature_dir)?;
+        if !defaults.is_empty() {
+            log::info!(
+                "Feature '{}': read {} option default(s) from devcontainer-feature.json",
+                feature_ref,
+                defaults.len(),
+            );
+        }
+
+        let env_content = generate_feature_env(options, &defaults);
+        std::fs::write(feature_dir.join("devcontainer-features.env"), &env_content).map_err(
+            |e| {
+                log::error!("Failed to write feature env for {}: {e}", feature_ref);
+                RenameMeError::UnmappedError
+            },
+        )?;
+
+        // Write devcontainer-features-install.sh (wrapper that sources env + runs install.sh)
+        let wrapper_content = generate_install_wrapper(feature_ref, feature_id, &env_content);
+        std::fs::write(
+            feature_dir.join("devcontainer-features-install.sh"),
+            &wrapper_content,
+        )
+        .map_err(|e| {
+            log::error!("Failed to write install wrapper for {}: {e}", feature_ref);
+            RenameMeError::UnmappedError
+        })?;
+
+        feature_layers.push_str(&generate_feature_layer(&consecutive_id));
+    }
+
+    // --- 4. Generate and write Dockerfile.extended ---
+    let dockerfile_content =
+        generate_dockerfile_extended(&feature_layers, container_user, remote_user);
+    std::fs::write(&build_info.dockerfile_path, &dockerfile_content).map_err(|e| {
+        log::error!("Failed to write Dockerfile.extended: {e}");
+        RenameMeError::UnmappedError
+    })?;
+
+    log::info!(
+        "Features build resources written to {:?}",
+        build_info.features_content_dir
+    );
+
+    Ok(())
+}
+
 async fn build_image(
+    http_client: Arc<dyn HttpClient>,
     dev_container: &DevContainer,
     base_image: &DockerInspect,
 ) -> Result<DockerInspect, RenameMeError> {
@@ -724,14 +1306,8 @@ async fn build_image(
 
             let build_info = prepare_features_build_info(dev_container, image_user)?;
 
-            // TODO: Stage feature content (download OCI features, write env files,
-            // generate install wrapper scripts) into build_info.features_content_dir
-            // before building. This is the equivalent of the CLI's `generateFeaturesConfig`
-            // + `fetchFeatures` + `getFeaturesBuildOptions` pipeline.
-
-            // TODO: Write the Dockerfile.extended into build_info.dockerfile_path.
-            // This is generated by the CLI's `getContainerFeaturesBaseDockerFile` +
-            // `getFeatureLayers` and contains the feature installation layers.
+            // Use http_client to do the actual OCI retrieval here
+            construct_features_build_resources(dev_container, &build_info, &http_client).await?;
 
             let mut command = create_docker_build(&build_info)?;
 
@@ -896,6 +1472,8 @@ fn create_docker_build(build_info: &FeaturesBuildInfo) -> Result<Command, Rename
     // The actual feature content is supplied via the BuildKit build context above.
     command.arg(build_info.empty_context_dir.display().to_string());
 
+    dbg!(&command);
+
     Ok(command)
 }
 
@@ -926,10 +1504,12 @@ fn create_docker_run_command(
     local_project_directory: &Arc<&Path>,
     image_labels: &DockerConfigLabels,
     labels: Option<&Vec<(&str, String)>>,
+    image_name_override: Option<&str>,
 ) -> Result<Command, RenameMeError> {
-    let Some(image) = &devcontainer.image else {
+    let Some(base_image) = &devcontainer.image else {
         return Err(RenameMeError::UnmappedError);
     };
+    let image = image_name_override.unwrap_or(base_image);
     // let remote_user = get_remote_user_from_config(config)?;
 
     let Some(project_directory) = local_project_directory.file_name() else {
@@ -1042,15 +1622,84 @@ mod test {
 
     use serde_json_lenient::{Value, json};
 
+    use http_client::{FakeHttpClient, HttpClient};
+
     use crate::model::{
         ContainerBuild, DevContainer, DevContainerBuildType, DockerConfigLabels, DockerInspect,
-        DockerInspectConfig, DockerPs, FeatureOptions, FeaturesBuildInfo, ForwardPort,
-        HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
-        PortAttributeProtocol, PortAttributes, RenameMeError, ShutdownAction, UserEnvProbe,
-        create_docker_build, create_docker_inspect, create_docker_run_command,
-        deserialize_devcontainer_json, deserialize_json_output, get_remote_dir_from_config,
-        get_remote_user_from_config,
+        DockerInspectConfig, DockerPs, FeatureOptionValue, FeatureOptions, FeaturesBuildInfo,
+        ForwardPort, HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition,
+        OnAutoForward, PortAttributeProtocol, PortAttributes, RenameMeError, ShutdownAction,
+        UserEnvProbe, construct_features_build_resources, create_docker_build,
+        create_docker_inspect, create_docker_run_command, deserialize_devcontainer_json,
+        deserialize_json_output, extract_feature_id, get_remote_dir_from_config,
+        get_remote_user_from_config, get_safe_id,
     };
+
+    fn fake_http_client() -> Arc<dyn HttpClient> {
+        FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(404)
+                .body(http_client::AsyncBody::default())
+                .unwrap())
+        })
+    }
+
+    fn build_feature_tarball(install_sh_content: &str) -> Vec<u8> {
+        smol::block_on(async {
+            let buffer = futures::io::Cursor::new(Vec::new());
+            let mut builder = async_tar::Builder::new(buffer);
+
+            let data = install_sh_content.as_bytes();
+            let mut header = async_tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_entry_type(async_tar::EntryType::Regular);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "install.sh", data)
+                .await
+                .unwrap();
+
+            let buffer = builder.into_inner().await.unwrap();
+            buffer.into_inner()
+        })
+    }
+
+    fn fake_oci_http_client() -> Arc<dyn HttpClient> {
+        let tarball = Arc::new(build_feature_tarball(
+            "#!/bin/sh\nset -e\necho 'Test feature installed'\n",
+        ));
+        FakeHttpClient::create(move |request| {
+            let tarball = tarball.clone();
+            async move {
+                let uri = request.uri().to_string();
+                if uri.contains("/token?") {
+                    let body: Vec<u8> = br#"{"token":"fake-test-token"}"#.to_vec();
+                    Ok(http::Response::builder()
+                        .status(200)
+                        .body(body.into())
+                        .unwrap())
+                } else if uri.contains("/manifests/") {
+                    let body: Vec<u8> = br#"{"layers":[{"digest":"sha256:deadbeef"}]}"#.to_vec();
+                    Ok(http::Response::builder()
+                        .status(200)
+                        .body(body.into())
+                        .unwrap())
+                } else if uri.contains("/blobs/") {
+                    let body: Vec<u8> = (*tarball).clone();
+                    Ok(http::Response::builder()
+                        .status(200)
+                        .body(body.into())
+                        .unwrap())
+                } else {
+                    Ok(http::Response::builder()
+                        .status(404)
+                        .body(http_client::AsyncBody::default())
+                        .unwrap())
+                }
+            }
+        })
+    }
 
     // Tests needed as I come across them
     // - portsAttributes should reference ports defined in forwardPorts
@@ -1075,76 +1724,6 @@ mod test {
             result.expect_err("err"),
             RenameMeError::DevContainerParseFailed
         );
-
-        // COMMON
-        // name (done)
-        // forwardPorts (done)
-        // portsAttributes (done)
-        // otherPortsAttributes (done)
-        // remoteUser (done)
-        // update_remote_user_uid (done)
-        // remote_env (done)
-        // initialize_command (done)
-        // on_create_command: (done)
-        // update_content_command (done)
-        // post_create_command (done)
-        // post_start_command (done)
-        // post_attach_command (done)
-        // wait_for (done)
-        // user_env_probe: (done)
-        // features (done) (for now)
-        // override_feature_install_order (done)
-        // host_requirements (done)
-
-        // NONCOMPOSE_BASE
-        // app_port (done)
-        // container_env (done)
-        // container_user (done)
-        // mounts (done)
-        // run_args (done)
-        // shutdown_action (done)
-        // override_command (done)
-        // workspace_folder: (done)
-        // workspace_mount: (done)
-
-        // DOCKERFILECONTAINER (this is complicated so needs to be subdivided)
-        // build: Option<ContainerBuild>,
-        // dockerfile (TODO)
-        // context (TODO)
-        //
-
-        // BUILD_OPTIONS
-        // target (todo)
-        // args: (TODO)
-        // cacheFrom (TODO)
-
-        // IMAGE_CONTAINER
-        // image (done)
-
-        // COMPOSE_CONTAINER
-        // docker_compose_file: Option<Vec<String>>, // TODO this can be a string or array of strings
-        // service: Option<String>,
-        // run_services: Option<Vec<String>>,
-        // workspace_folder: Option<String>, (Note this is in non-compose base too, but just means different things in that context)
-        // shutdownAction (TODO)
-        // overrideCommand (TODO)
-
-        // TODO What are these? Why aren't they in the spec json?
-        // init: Option<bool>, // Bro what
-        // privileged: Option<bool>, // what
-        // cap_add: Option<Vec<String>>, // What
-        // security_opt: Option<Vec<String>>, // What
-        //
-        //
-        // Ok so the overall json is either:
-        // _just_ devcontainer commmon
-        // OR
-        // devcontainer common + ( (composeContainer) OR (noncomposebase + (dockerfilecontainer OR imageContainer)))
-        //
-        // Ok so my test cases:
-        // common container + composecontainer (done)
-        // common container + noncomposebase + dockerfilecontainer
-        // common container + noncomposebase + imageContainer (done)
 
         let given_image_container_json = r#"
             // These are some external comments. serde_lenient should handle them
@@ -1924,6 +2503,319 @@ mod test {
     }
 
     #[test]
+    fn should_extract_feature_id_from_references() {
+        assert_eq!(
+            extract_feature_id("ghcr.io/devcontainers/features/aws-cli:1"),
+            "aws-cli"
+        );
+        assert_eq!(
+            extract_feature_id("ghcr.io/devcontainers/features/go"),
+            "go"
+        );
+        assert_eq!(extract_feature_id("ghcr.io/user/repo/node:18.0.0"), "node");
+        assert_eq!(extract_feature_id("./myFeature"), "myFeature");
+        assert_eq!(
+            extract_feature_id("ghcr.io/devcontainers/features/rust@sha256:abc123"),
+            "rust"
+        );
+    }
+
+    #[test]
+    fn should_get_safe_id() {
+        assert_eq!(get_safe_id("version"), "VERSION");
+        assert_eq!(get_safe_id("aws-cli"), "AWS_CLI");
+        assert_eq!(get_safe_id("optionA"), "OPTIONA");
+        assert_eq!(get_safe_id("123abc"), "_ABC");
+        assert_eq!(get_safe_id("___test"), "_TEST");
+    }
+
+    #[test]
+    fn should_construct_features_build_resources() {
+        let client = fake_oci_http_client();
+        smol::block_on(async {
+            let temp_dir = std::env::temp_dir().join("devcontainer-test-features-build");
+            let features_dir = temp_dir.join("features-content");
+            let empty_dir = temp_dir.join("empty");
+            let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            std::fs::create_dir_all(&features_dir).unwrap();
+            std::fs::create_dir_all(&empty_dir).unwrap();
+
+            let build_info = FeaturesBuildInfo {
+                dockerfile_path: dockerfile_path.clone(),
+                features_content_dir: features_dir.clone(),
+                empty_context_dir: empty_dir,
+                base_image: "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+                image_user: "root".to_string(),
+                image_tag: "vsc-test-features".to_string(),
+            };
+
+            let dev_container = DevContainer {
+                image: Some("mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string()),
+                features: Some(HashMap::from([
+                    (
+                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                        FeatureOptions::Options(HashMap::new()),
+                    ),
+                    (
+                        "ghcr.io/devcontainers/features/node:1".to_string(),
+                        FeatureOptions::String("18".to_string()),
+                    ),
+                ])),
+                remote_user: Some("vscode".to_string()),
+                ..Default::default()
+            };
+
+            let result =
+                construct_features_build_resources(&dev_container, &build_info, &client).await;
+            assert!(
+                result.is_ok(),
+                "construct_features_build_resources failed: {:?}",
+                result
+            );
+
+            // Verify builtin env file
+            let builtin_env =
+                std::fs::read_to_string(features_dir.join("devcontainer-features.builtin.env"))
+                    .unwrap();
+            assert!(builtin_env.contains("_CONTAINER_USER=root"));
+            assert!(builtin_env.contains("_REMOTE_USER=vscode"));
+
+            // Verify Dockerfile.extended exists and contains expected structures
+            let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+            assert!(
+                dockerfile
+                    .contains("FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage")
+            );
+            assert!(dockerfile.contains("dev_containers_feature_content_source"));
+            assert!(dockerfile.contains("devcontainer-features-install.sh"));
+            assert!(dockerfile.contains("_DEV_CONTAINERS_IMAGE_USER"));
+
+            // Verify feature directories (sorted: aws-cli at index 0, node at index 1)
+            assert!(features_dir.join("aws-cli_0").exists());
+            assert!(features_dir.join("node_1").exists());
+
+            // Verify aws-cli feature files — env should contain defaults from the
+            // fake tarball's devcontainer-feature.json (which has none since our
+            // test tarball doesn't include one), so it will be empty.
+            let aws_env =
+                std::fs::read_to_string(features_dir.join("aws-cli_0/devcontainer-features.env"))
+                    .unwrap();
+            assert!(
+                aws_env.is_empty(),
+                "aws-cli with empty options and no feature json defaults should produce an empty env file, got: {}",
+                aws_env,
+            );
+
+            let aws_wrapper = std::fs::read_to_string(
+                features_dir.join("aws-cli_0/devcontainer-features-install.sh"),
+            )
+            .unwrap();
+            assert!(aws_wrapper.contains("#!/bin/sh"));
+            assert!(aws_wrapper.contains("./install.sh"));
+            assert!(aws_wrapper.contains("../devcontainer-features.builtin.env"));
+
+            // install.sh should come from the OCI tarball, not a stub
+            let aws_install =
+                std::fs::read_to_string(features_dir.join("aws-cli_0/install.sh")).unwrap();
+            assert!(
+                aws_install.contains("Test feature installed"),
+                "install.sh should contain content from the OCI tarball, got: {}",
+                aws_install
+            );
+
+            // Verify node feature files (String("18") → VERSION="18")
+            let node_env =
+                std::fs::read_to_string(features_dir.join("node_1/devcontainer-features.env"))
+                    .unwrap();
+            assert!(
+                node_env.contains("VERSION=\"18\""),
+                "Expected VERSION=\"18\" in node env, got: {}",
+                node_env
+            );
+
+            // Verify Dockerfile layers reference both features
+            assert!(dockerfile.contains("aws-cli_0"));
+            assert!(dockerfile.contains("node_1"));
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
+    fn should_construct_features_with_override_order() {
+        let client = fake_oci_http_client();
+        smol::block_on(async {
+            let temp_dir = std::env::temp_dir().join("devcontainer-test-features-order");
+            let features_dir = temp_dir.join("features-content");
+            let empty_dir = temp_dir.join("empty");
+            let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            std::fs::create_dir_all(&features_dir).unwrap();
+            std::fs::create_dir_all(&empty_dir).unwrap();
+
+            let build_info = FeaturesBuildInfo {
+                dockerfile_path: dockerfile_path.clone(),
+                features_content_dir: features_dir.clone(),
+                empty_context_dir: empty_dir,
+                base_image: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+                image_user: "root".to_string(),
+                image_tag: "vsc-test-order".to_string(),
+            };
+
+            let dev_container = DevContainer {
+                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                features: Some(HashMap::from([
+                    (
+                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                        FeatureOptions::Options(HashMap::new()),
+                    ),
+                    (
+                        "ghcr.io/devcontainers/features/node:1".to_string(),
+                        FeatureOptions::Options(HashMap::from([(
+                            "version".to_string(),
+                            FeatureOptionValue::String("20".to_string()),
+                        )])),
+                    ),
+                ])),
+                override_feature_install_order: Some(vec![
+                    "ghcr.io/devcontainers/features/node:1".to_string(),
+                    "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                ]),
+                ..Default::default()
+            };
+
+            let result =
+                construct_features_build_resources(&dev_container, &build_info, &client).await;
+            assert!(result.is_ok());
+
+            // With override order: node first (index 0), aws-cli second (index 1)
+            assert!(features_dir.join("node_0").exists());
+            assert!(features_dir.join("aws-cli_1").exists());
+
+            let node_env =
+                std::fs::read_to_string(features_dir.join("node_0/devcontainer-features.env"))
+                    .unwrap();
+            assert!(
+                node_env.contains("VERSION=\"20\""),
+                "Expected VERSION=\"20\" in node env, got: {}",
+                node_env
+            );
+
+            // Verify the Dockerfile layers appear in the right order
+            let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+            let node_pos = dockerfile.find("node_0").expect("node_0 layer missing");
+            let aws_pos = dockerfile
+                .find("aws-cli_1")
+                .expect("aws-cli_1 layer missing");
+            assert!(
+                node_pos < aws_pos,
+                "node should appear before aws-cli in the Dockerfile"
+            );
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
+    fn should_skip_disabled_features() {
+        let client = fake_oci_http_client();
+        smol::block_on(async {
+            let temp_dir = std::env::temp_dir().join("devcontainer-test-features-disabled");
+            let features_dir = temp_dir.join("features-content");
+            let empty_dir = temp_dir.join("empty");
+            let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            std::fs::create_dir_all(&features_dir).unwrap();
+            std::fs::create_dir_all(&empty_dir).unwrap();
+
+            let build_info = FeaturesBuildInfo {
+                dockerfile_path: dockerfile_path.clone(),
+                features_content_dir: features_dir.clone(),
+                empty_context_dir: empty_dir,
+                base_image: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+                image_user: "root".to_string(),
+                image_tag: "vsc-test-disabled".to_string(),
+            };
+
+            let dev_container = DevContainer {
+                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                features: Some(HashMap::from([
+                    (
+                        "ghcr.io/devcontainers/features/aws-cli:1".to_string(),
+                        FeatureOptions::Bool(false),
+                    ),
+                    (
+                        "ghcr.io/devcontainers/features/node:1".to_string(),
+                        FeatureOptions::Bool(true),
+                    ),
+                ])),
+                ..Default::default()
+            };
+
+            let result =
+                construct_features_build_resources(&dev_container, &build_info, &client).await;
+            assert!(result.is_ok());
+
+            // aws-cli is disabled (false) — its directory should not exist
+            assert!(!features_dir.join("aws-cli_0").exists());
+            // node is enabled (true) — its directory should exist
+            assert!(features_dir.join("node_1").exists());
+
+            let dockerfile = std::fs::read_to_string(&dockerfile_path).unwrap();
+            assert!(!dockerfile.contains("aws-cli_0"));
+            assert!(dockerfile.contains("node_1"));
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
+    fn should_fail_when_oci_download_fails() {
+        let client = fake_http_client();
+        smol::block_on(async {
+            let temp_dir = std::env::temp_dir().join("devcontainer-test-features-fail");
+            let features_dir = temp_dir.join("features-content");
+            let empty_dir = temp_dir.join("empty");
+            let dockerfile_path = features_dir.join("Dockerfile.extended");
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            std::fs::create_dir_all(&features_dir).unwrap();
+            std::fs::create_dir_all(&empty_dir).unwrap();
+
+            let build_info = FeaturesBuildInfo {
+                dockerfile_path: dockerfile_path.clone(),
+                features_content_dir: features_dir.clone(),
+                empty_context_dir: empty_dir,
+                base_image: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
+                image_user: "root".to_string(),
+                image_tag: "vsc-test-fail".to_string(),
+            };
+
+            let dev_container = DevContainer {
+                image: Some("mcr.microsoft.com/devcontainers/base:ubuntu".to_string()),
+                features: Some(HashMap::from([(
+                    "ghcr.io/devcontainers/features/go:1".to_string(),
+                    FeatureOptions::Options(HashMap::new()),
+                )])),
+                ..Default::default()
+            };
+
+            let result =
+                construct_features_build_resources(&dev_container, &build_info, &client).await;
+            assert!(
+                result.is_err(),
+                "Expected error when OCI download fails, but got Ok"
+            );
+
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
     fn should_create_correct_docker_run_command() {
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -1979,6 +2871,7 @@ mod test {
             &Arc::new(Path::new("/local/project_app")),
             &image_labels,
             Some(&labels),
+            None,
         );
 
         assert!(docker_run_command.is_ok());

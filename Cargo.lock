@@ -4927,6 +4927,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 name = "dev_container"
 version = "0.1.0"
 dependencies = [
+ "async-tar",
  "fs",
  "futures 0.3.31",
  "gpui",
