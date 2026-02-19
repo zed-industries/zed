@@ -1,6 +1,6 @@
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use gpui::{Corner, List};
-use language_model::LanguageModelEffortLevel;
+use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
 
@@ -2526,6 +2526,7 @@ impl ThreadView {
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
                             .child(self.render_follow_toggle(cx))
+                            .children(self.render_fast_mode_control(cx))
                             .children(self.render_thinking_control(cx)),
                     )
                     .child(
@@ -2948,6 +2949,49 @@ impl ThreadView {
                     .into_any_element(),
             )
         }
+    }
+
+    fn fast_mode_available(&self, cx: &Context<Self>) -> bool {
+        if !cx.is_staff() {
+            return false;
+        }
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .map(|model| model.supports_fast_mode())
+            .unwrap_or(false)
+    }
+
+    fn render_fast_mode_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.fast_mode_available(cx) {
+            return None;
+        }
+
+        let thread = self.as_native_thread(cx)?.read(cx);
+
+        let (tooltip_label, color, icon) = if matches!(thread.speed(), Some(Speed::Fast)) {
+            ("Disable Fast Mode", Color::Muted, IconName::FastForward)
+        } else {
+            (
+                "Enable Fast Mode",
+                Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
+                IconName::FastForwardOff,
+            )
+        };
+
+        let focus_handle = self.message_editor.focus_handle(cx);
+
+        Some(
+            IconButton::new("fast-mode", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(color)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in(tooltip_label, &ToggleFastMode, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.toggle_fast_mode(cx);
+                }))
+                .into_any_element(),
+        )
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -7089,6 +7133,24 @@ impl ThreadView {
         });
     }
 
+    fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
+        if !self.fast_mode_available(cx) {
+            return;
+        }
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+        thread.update(cx, |thread, cx| {
+            thread.set_speed(
+                thread
+                    .speed()
+                    .map(|speed| speed.toggle())
+                    .unwrap_or(Speed::Fast),
+                cx,
+            );
+        });
+    }
+
     fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
@@ -7193,6 +7255,9 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::handle_select_permission_granularity))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(Self::open_add_context_menu))
+            .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
+                this.toggle_fast_mode(cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
