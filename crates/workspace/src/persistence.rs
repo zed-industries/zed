@@ -2153,6 +2153,14 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub(crate) async fn set_session_binding(workspace_id: WorkspaceId, session_id: Option<String>, window_id: Option<u64>) -> Result<()> {
+            UPDATE workspaces
+            SET session_id = ?2, window_id = ?3
+            WHERE workspace_id = ?1
+        }
+    }
+
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
@@ -3933,5 +3941,422 @@ mod tests {
         assert_eq!(group_none.workspaces.len(), 1);
         assert_eq!(group_none.state.active_workspace_id, None);
         assert_eq!(group_none.state.sidebar_open, false);
+    }
+
+    #[gpui::test]
+    async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // Assign a database_id so serialization will actually persist.
+        let workspace_id = DB.next_id().await.unwrap();
+        workspace.update(cx, |ws, _cx| {
+            ws.set_database_id(workspace_id);
+        });
+
+        // Mutate some workspace state.
+        DB.set_centered_layout(workspace_id, true).await.unwrap();
+
+        // Call flush_serialization and await the returned task directly
+        // (without run_until_parked — the point is that awaiting the task
+        // alone is sufficient).
+        let task = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.workspace()
+                .update(cx, |ws, cx| ws.flush_serialization(window, cx))
+        });
+        task.await;
+
+        // Read the workspace back from the DB and verify serialization happened.
+        let serialized = DB.workspace_for_id(workspace_id);
+        assert!(
+            serialized.is_some(),
+            "flush_serialization should have persisted the workspace to DB"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_workspace_serializes_active_workspace_id_after_db_id_assigned(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::multi_workspace::MultiWorkspace;
+        use crate::persistence::read_multi_workspace_state;
+        use feature_flags::FeatureFlagAppExt;
+
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Give the first workspace a database_id.
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        let window_id =
+            multi_workspace.update_in(cx, |_, window, _cx| window.window_handle().window_id());
+
+        // Create a new workspace via the MultiWorkspace API (triggers next_id()).
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+
+        // Let the async next_id() and re-serialization tasks complete.
+        cx.run_until_parked();
+
+        // Read back the multi-workspace state.
+        let state = read_multi_workspace_state(window_id);
+
+        // The new workspace should now have a database_id, and the multi-workspace
+        // state should record it as the active workspace.
+        let new_workspace_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        assert!(
+            new_workspace_db_id.is_some(),
+            "New workspace should have a database_id after run_until_parked"
+        );
+        assert_eq!(
+            state.active_workspace_id, new_workspace_db_id,
+            "Serialized active_workspace_id should match the new workspace's database_id"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_workspace_individual_serialization(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        // Create a new workspace.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.create_workspace(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Get the new workspace's database_id.
+        let new_db_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).database_id());
+        assert!(
+            new_db_id.is_some(),
+            "New workspace should have a database_id"
+        );
+
+        let workspace_id = new_db_id.unwrap();
+
+        // The workspace should have been serialized to the DB with real data
+        // (not just the bare DEFAULT VALUES row from next_id).
+        let serialized = DB.workspace_for_id(workspace_id);
+        assert!(
+            serialized.is_some(),
+            "Newly created workspace should be fully serialized in the DB after database_id assignment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_workspace_deletes_db_row(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use gpui::AppContext as _;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project1 = Project::test(fs.clone(), [], cx).await;
+        let project2 = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        // Get a real DB id for workspace2 so the row actually exists.
+        let workspace2_db_id = DB.next_id().await.unwrap();
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
+            workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
+                ws.set_database_id(workspace2_db_id)
+            });
+            mw.activate(workspace.clone(), cx);
+        });
+
+        // Save a full workspace row to the DB directly.
+        DB.save_workspace(SerializedWorkspace {
+            id: workspace2_db_id,
+            paths: PathList::new(&["/tmp/remove_test"]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("remove-test-session".to_owned()),
+            breakpoints: Default::default(),
+            window_id: Some(99),
+            user_toolchains: Default::default(),
+        })
+        .await;
+
+        assert!(
+            DB.workspace_for_id(workspace2_db_id).is_some(),
+            "Workspace2 should exist in DB before removal"
+        );
+
+        // Remove workspace at index 1 (the second workspace).
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_workspace(1, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The row should be deleted, not just have session_id cleared.
+        assert!(
+            DB.workspace_for_id(workspace2_db_id).is_none(),
+            "Removed workspace's DB row should be deleted entirely"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use gpui::AppContext as _;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir1 = tempfile::TempDir::with_prefix("zombie_test1").unwrap();
+        let dir2 = tempfile::TempDir::with_prefix("zombie_test2").unwrap();
+        fs.insert_tree(dir1.path(), json!({})).await;
+        fs.insert_tree(dir2.path(), json!({})).await;
+
+        let project1 = Project::test(fs.clone(), [], cx).await;
+        let project2 = Project::test(fs.clone(), [], cx).await;
+
+        // Get real DB ids so the rows actually exist.
+        let ws1_id = DB.next_id().await.unwrap();
+        let ws2_id = DB.next_id().await.unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.workspace().update(cx, |ws, _cx| {
+                ws.set_database_id(ws1_id);
+            });
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
+            workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
+                ws.set_database_id(ws2_id)
+            });
+            mw.activate(workspace.clone(), cx);
+        });
+
+        let session_id = "test-zombie-session";
+        let window_id_val: u64 = 42;
+
+        DB.save_workspace(SerializedWorkspace {
+            id: ws1_id,
+            paths: PathList::new(&[dir1.path()]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some(session_id.to_owned()),
+            breakpoints: Default::default(),
+            window_id: Some(window_id_val),
+            user_toolchains: Default::default(),
+        })
+        .await;
+
+        DB.save_workspace(SerializedWorkspace {
+            id: ws2_id,
+            paths: PathList::new(&[dir2.path()]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some(session_id.to_owned()),
+            breakpoints: Default::default(),
+            window_id: Some(window_id_val),
+            user_toolchains: Default::default(),
+        })
+        .await;
+
+        // Remove workspace2 (index 1).
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_workspace(1, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The removed workspace should NOT appear in session restoration.
+        let locations = DB
+            .last_session_workspace_locations(session_id, None, fs.as_ref())
+            .await
+            .unwrap();
+
+        let restored_ids: Vec<WorkspaceId> = locations.iter().map(|sw| sw.workspace_id).collect();
+        assert!(
+            !restored_ids.contains(&ws2_id),
+            "Removed workspace should not appear in session restoration list. Found: {:?}",
+            restored_ids
+        );
+        assert!(
+            restored_ids.contains(&ws1_id),
+            "Remaining workspace should still appear in session restoration list"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
+        use crate::multi_workspace::MultiWorkspace;
+        use feature_flags::FeatureFlagAppExt;
+        use gpui::AppContext as _;
+        use project::Project;
+
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let project1 = Project::test(fs.clone(), [], cx).await;
+        let project2 = Project::test(fs.clone(), [], cx).await;
+
+        // Get a real DB id for workspace2 so the row actually exists.
+        let workspace2_db_id = DB.next_id().await.unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            mw.set_random_database_id(cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
+            workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
+                ws.set_database_id(workspace2_db_id)
+            });
+            mw.activate(workspace.clone(), cx);
+        });
+
+        // Save a full workspace row to the DB directly and let it settle.
+        DB.save_workspace(SerializedWorkspace {
+            id: workspace2_db_id,
+            paths: PathList::new(&["/tmp/pending_removal_test"]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("pending-removal-session".to_owned()),
+            breakpoints: Default::default(),
+            window_id: Some(88),
+            user_toolchains: Default::default(),
+        })
+        .await;
+        cx.run_until_parked();
+
+        // Remove workspace2 — this pushes a task to pending_removal_tasks.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_workspace(1, window, cx);
+        });
+
+        // Simulate the quit handler pattern: collect flush tasks + pending
+        // removal tasks and await them all.
+        let all_tasks = multi_workspace.update_in(cx, |mw, window, cx| {
+            let mut tasks: Vec<Task<()>> = mw
+                .workspaces()
+                .iter()
+                .map(|workspace| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.flush_serialization(window, cx)
+                    })
+                })
+                .collect();
+            let mut removal_tasks = mw.take_pending_removal_tasks();
+            // Note: removal_tasks may be empty if the background task already
+            // completed (take_pending_removal_tasks filters out ready tasks).
+            tasks.append(&mut removal_tasks);
+            tasks.push(mw.flush_serialization());
+            tasks
+        });
+        futures::future::join_all(all_tasks).await;
+
+        // After awaiting, the DB row should be deleted.
+        assert!(
+            DB.workspace_for_id(workspace2_db_id).is_none(),
+            "Pending removal task should have deleted the workspace row when awaited"
+        );
     }
 }

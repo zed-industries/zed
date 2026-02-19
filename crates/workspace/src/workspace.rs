@@ -612,35 +612,58 @@ impl From<WorkspaceId> for i64 {
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
-    let paths = cx.prompt_for_paths(options);
-    cx.spawn(
-        async move |cx| match paths.await.anyhow().and_then(|res| res) {
-            Ok(Some(paths)) => {
-                cx.update(|cx| {
-                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
+    if let Some(workspace_window) = local_workspace_windows(cx).into_iter().next() {
+        workspace_window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
                 });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                util::log_err(&err);
-                cx.update(|cx| {
-                    if let Some(workspace_window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<MultiWorkspace>())
-                    {
-                        workspace_window
-                            .update(cx, |multi_workspace, _, cx| {
-                                let workspace = multi_workspace.workspace().clone();
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.show_portal_error(err.to_string(), cx);
-                                });
-                            })
-                            .ok();
-                    }
+            })
+            .ok();
+    } else {
+        let task = Workspace::new_local(Vec::new(), app_state.clone(), None, None, None, cx);
+        cx.spawn(async move |cx| {
+            let (window, _) = task.await?;
+            window.update(cx, |multi_workspace, window, cx| {
+                window.activate_window();
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    prompt_for_open_path_and_open(workspace, app_state, options, window, cx);
                 });
-            }
-        },
-    )
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+}
+
+pub fn prompt_for_open_path_and_open(
+    workspace: &mut Workspace,
+    app_state: Arc<AppState>,
+    options: PathPromptOptions,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let paths = workspace.prompt_for_open_path(
+        options,
+        DirectoryLister::Local(workspace.project().clone(), app_state.fs.clone()),
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |this, cx| {
+        let Some(paths) = paths.await.log_err().flatten() else {
+            return;
+        };
+        if let Some(task) = this
+            .update_in(cx, |this, window, cx| {
+                this.open_workspace_for_paths(false, paths, window, cx)
+            })
+            .log_err()
+        {
+            task.await.log_err();
+        }
+    })
     .detach();
 }
 
@@ -1244,6 +1267,7 @@ pub struct Workspace {
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize_workspace: Option<Task<()>>,
+    _serialize_workspace_task: Option<Task<()>>,
     _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
@@ -1667,6 +1691,7 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
+            _serialize_workspace_task: None,
             _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
@@ -5823,8 +5848,22 @@ impl Workspace {
         self.database_id
     }
 
+    pub(crate) fn set_database_id(&mut self, id: WorkspaceId) {
+        self.database_id = Some(id);
+    }
+
     pub fn session_id(&self) -> Option<String> {
         self.session_id.clone()
+    }
+
+    /// Bypass the 200ms serialization throttle and write workspace state to
+    /// the DB immediately. Returns a task the caller can await to ensure the
+    /// write completes. Used by the quit handler so the most recent state
+    /// isn't lost to a pending throttle timer when the process exits.
+    pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
+        self._schedule_serialize_workspace.take();
+        self._serialize_workspace_task.take();
+        self.serialize_workspace_internal(window, cx)
     }
 
     pub fn root_paths(&self, cx: &App) -> Vec<Arc<Path>> {
@@ -5883,7 +5922,8 @@ impl Workspace {
                         .timer(SERIALIZATION_THROTTLE_TIME)
                         .await;
                     this.update_in(cx, |this, window, cx| {
-                        this.serialize_workspace_internal(window, cx).detach();
+                        this._serialize_workspace_task =
+                            Some(this.serialize_workspace_internal(window, cx));
                         this._schedule_serialize_workspace.take();
                     })
                     .log_err();
@@ -7906,11 +7946,16 @@ pub async fn last_session_workspace_locations(
         .log_err()
 }
 
+pub struct MultiWorkspaceRestoreResult {
+    pub window_handle: WindowHandle<MultiWorkspace>,
+    pub errors: Vec<anyhow::Error>,
+}
+
 pub async fn restore_multiworkspace(
     multi_workspace: SerializedMultiWorkspace,
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
+) -> anyhow::Result<MultiWorkspaceRestoreResult> {
     let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
     let mut group_iter = workspaces.into_iter();
     let first = group_iter
@@ -7936,8 +7981,10 @@ pub async fn restore_multiworkspace(
         window
     };
 
+    let mut errors = Vec::new();
+
     for session_workspace in group_iter {
-        if session_workspace.paths.is_empty() {
+        let error = if session_workspace.paths.is_empty() {
             cx.update(|cx| {
                 open_workspace_by_id(
                     session_workspace.workspace_id,
@@ -7946,7 +7993,8 @@ pub async fn restore_multiworkspace(
                     cx,
                 )
             })
-            .await?;
+            .await
+            .err()
         } else {
             cx.update(|cx| {
                 Workspace::new_local(
@@ -7958,7 +8006,12 @@ pub async fn restore_multiworkspace(
                     cx,
                 )
             })
-            .await?;
+            .await
+            .err()
+        };
+
+        if let Some(error) = error {
+            errors.push(error);
         }
     }
 
@@ -8000,7 +8053,10 @@ pub async fn restore_multiworkspace(
         })
         .ok();
 
-    Ok(window_handle)
+    Ok(MultiWorkspaceRestoreResult {
+        window_handle,
+        errors,
+    })
 }
 
 actions!(

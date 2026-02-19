@@ -96,6 +96,7 @@ impl Settings for ProjectPanelSettings {
             git_status: project_panel.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()

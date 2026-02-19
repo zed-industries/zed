@@ -27,13 +27,12 @@ use crate::{
     ui::EndTrialUpsell,
 };
 use crate::{
+    AgentInitialContent, ExternalAgent, NewExternalAgentThread, NewNativeAgentThreadFromSummary,
+};
+use crate::{
     ExpandMessageEditor,
     acp::{AcpThreadHistory, ThreadHistoryEvent},
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
-};
-use crate::{
-    ExternalAgent, ExternalAgentInitialContent, NewExternalAgentThread,
-    NewNativeAgentThreadFromSummary,
 };
 use crate::{ManageProfiles, acp::thread_view::AcpThreadView};
 use agent_settings::AgentSettings;
@@ -879,7 +878,7 @@ impl AgentPanel {
         self.external_thread(
             Some(ExternalAgent::NativeAgent),
             None,
-            Some(ExternalAgentInitialContent::ThreadSummary(thread)),
+            Some(AgentInitialContent::ThreadSummary(thread)),
             window,
             cx,
         );
@@ -932,7 +931,7 @@ impl AgentPanel {
         &mut self,
         agent_choice: Option<crate::ExternalAgent>,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1765,7 +1764,10 @@ impl AgentPanel {
         self.external_thread(
             None,
             None,
-            initial_text.map(ExternalAgentInitialContent::Text),
+            initial_text.map(|text| AgentInitialContent::ContentBlock {
+                blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
+                auto_submit: false,
+            }),
             window,
             cx,
         );
@@ -1833,7 +1835,7 @@ impl AgentPanel {
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
-        initial_content: Option<ExternalAgentInitialContent>,
+        initial_content: Option<AgentInitialContent>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         ext_agent: ExternalAgent,
@@ -3387,6 +3389,34 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
                     });
                 }
             });
+        });
+    }
+
+    fn new_thread_with_content(
+        &self,
+        workspace: &mut Workspace,
+        blocks: Vec<acp::ContentBlock>,
+        auto_submit: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+            return;
+        };
+
+        workspace.focus_panel::<AgentPanel>(window, cx);
+
+        panel.update(cx, |panel, cx| {
+            panel.external_thread(
+                None,
+                None,
+                Some(AgentInitialContent::ContentBlock {
+                    blocks,
+                    auto_submit,
+                }),
+                window,
+                cx,
+            );
         });
     }
 }

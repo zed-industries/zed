@@ -105,6 +105,7 @@ pub async fn fetch_captured_examples_after(
             FROM events
             WHERE event_type = ?
                 AND time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND event_properties:can_collect_data = true
             ORDER BY time ASC
             LIMIT ?
             OFFSET ?
@@ -516,6 +517,7 @@ pub async fn fetch_rejected_examples_after(
                 AND rej.event_type = ?
                 AND req.event_properties:version = 'V3'
                 AND rej.event_properties:was_shown = true
+                AND req.event_properties:can_collect_data = true
                 AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
@@ -669,6 +671,7 @@ pub async fn fetch_requested_examples_after(
             FROM events req
             WHERE req.event_type = ?
                 AND req.event_properties:version = 'V3'
+                AND req.event_properties:can_collect_data = true
                 AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
@@ -840,6 +843,7 @@ pub async fn fetch_rated_examples_after(
                 AND rated.event_properties:inputs IS NOT NULL
                 AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
                 AND rated.event_properties:output IS NOT NULL
+                AND rated.event_properties:can_collect_data = true
                 AND (? IS NULL OR (
                     TRY_CAST(SPLIT_PART(rated.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
                     OR (

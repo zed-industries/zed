@@ -3279,13 +3279,7 @@ Non-negative `integer` values
 
 - Description: Whether to search on input in project search.
 - Setting: `search_on_input`
-- Default: `false`
-
-### Search On Input Debounce Ms
-
-- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
-- Setting: `search_on_input_debounce_ms`
-- Default: `200`
+- Default: `true`
 
 ### Center On Match
 

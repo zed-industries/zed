@@ -60,7 +60,7 @@
 /crates/open_router/ @zed-industries/ai-team
 /crates/prompt_store/ @zed-industries/ai-team
 /crates/rules_library/ @zed-industries/ai-team
-# SUGGESTED: Review needed - based on Richard Feldman (1 commits)
+# SUGGESTED: Review needed - based on Richard Feldman (2 commits)
 /crates/shell_command_parser/ @zed-industries/ai-team
 /crates/supermaven/ @zed-industries/ai-team
 /crates/supermaven_api/ @zed-industries/ai-team
@@ -178,8 +178,6 @@
 
 /crates/aws_http_client/ @zed-industries/infrastructure-team
 /crates/clock/ @zed-industries/infrastructure-team
-/crates/cloud_api_client/ @zed-industries/infrastructure-team
-/crates/cloud_api_types/ @zed-industries/infrastructure-team
 /crates/collections/ @zed-industries/infrastructure-team
 /crates/crashes/ @zed-industries/infrastructure-team
 /crates/credentials_provider/ @zed-industries/infrastructure-team
@@ -247,6 +245,8 @@
 /crates/settings_macros/ @zed-industries/platform-team
 /crates/settings_profile_selector/ @zed-industries/platform-team
 /crates/settings_ui/ @zed-industries/platform-team
+# SUGGESTED: Review needed - based on Finn Evers (2 commits)
+/crates/sidebar/ @zed-industries/platform-team
 /crates/system_specs/ @zed-industries/platform-team
 /crates/zed/ @zed-industries/platform-team
 /crates/zed_actions/ @zed-industries/platform-team
@@ -312,8 +312,6 @@
 /crates/panel/ @zed-industries/ui-team
 /crates/picker/ @zed-industries/ui-team
 /crates/refineable/ @zed-industries/ui-team
-# SUGGESTED: Review needed - based on Danilo Leal (1 commits)
-/crates/sidebar/ @zed-industries/ui-team
 /crates/story/ @zed-industries/ui-team
 /crates/storybook/ @zed-industries/ui-team
 /crates/svg_preview/ @zed-industries/ui-team
@@ -343,4 +341,6 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 /.cloudflare/ @zed-industries/cloud-team
+/crates/cloud_api_client/ @zed-industries/cloud-team
+/crates/cloud_api_types/ @zed-industries/cloud-team
 /legal/ @zed-industries/bizops-team
