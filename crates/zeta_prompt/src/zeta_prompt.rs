@@ -1073,9 +1073,10 @@ pub mod zeta1 {
 
         let mut result = String::with_capacity(extracted.len() + super::CURSOR_MARKER.len());
         if let Some(offset) = cursor_offset {
-            result.push_str(&extracted[..offset]);
+            let safe_offset = extracted.floor_char_boundary(offset);
+            result.push_str(&extracted[..safe_offset]);
             result.push_str(super::CURSOR_MARKER);
-            result.push_str(&extracted[offset..]);
+            result.push_str(&extracted[safe_offset..]);
         } else {
             result.push_str(extracted);
         }
@@ -1668,5 +1669,27 @@ mod tests {
         let output = "<|editable_region_start|>\n<|editable_region_end|>\n";
         let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
         assert_eq!(cleaned, "");
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_multibyte_cursor() {
+        let output = indoc! {"
+            <|editable_region_start|>
+            история
+            <|user_cursor_is_here|>баланс
+            <|editable_region_end|>
+        "};
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert!(cleaned.contains("история"));
+        assert!(cleaned.contains("баланс"));
+        assert!(cleaned.contains("<|user_cursor|>"));
+    }
+
+    #[test]
+    fn test_clean_zeta1_model_output_multibyte_cursor_midchar() {
+        let output = "<|editable_region_start|>\nприветчик<|user_cursor_is_here|>\n<|editable_region_end|>\n";
+        let cleaned = zeta1::clean_zeta1_model_output(output).unwrap();
+        assert!(cleaned.contains("привет"));
+        assert!(cleaned.contains("<|user_cursor|>"));
     }
 }
