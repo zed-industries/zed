@@ -1239,6 +1239,7 @@ impl GitPanel {
             let git_repo = self.active_repository.as_ref()?;
 
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+                && !project_diff.read(cx).is_non_diffable()
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo

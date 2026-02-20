@@ -77,6 +77,8 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    non_diffable_path: Option<Arc<RelPath>>,
+    initial_refresh_complete: bool,
     review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
@@ -221,9 +223,12 @@ impl ProjectDiff {
             .items_of_type::<Self>(cx)
             .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
         let project_diff = if let Some(existing) = existing {
-            existing.update(cx, |project_diff, cx| {
-                project_diff.move_to_beginning(window, cx);
-            });
+            if entry.is_none() {
+                existing.update(cx, |project_diff, cx| {
+                    project_diff.non_diffable_path = None;
+                    project_diff.move_to_beginning(window, cx);
+                });
+            }
 
             workspace.activate_item(&existing, true, true, window, cx);
             existing
@@ -455,6 +460,8 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            non_diffable_path: None,
+            initial_refresh_complete: false,
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
@@ -474,14 +481,22 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.non_diffable_path = None;
+
         let Some(git_repo) = self.branch_diff.read(cx).repo() else {
             return;
         };
         let repo = git_repo.read(cx);
         let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+        let repo_path: Arc<RelPath> = entry.repo_path.as_ref().clone();
 
-        self.move_to_path(path_key, window, cx)
+        self.move_to_path(path_key, window, cx);
+
+        if self.pending_scroll.is_some() && self.initial_refresh_complete {
+            self.non_diffable_path = Some(repo_path);
+            cx.notify();
+        }
     }
 
     pub fn move_to_project_path(
@@ -532,6 +547,8 @@ impl ProjectDiff {
 
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+            self.non_diffable_path = None;
+            self.pending_scroll = None;
             self.editor.update(cx, |editor, cx| {
                 editor.rhs_editor().update(cx, |editor, cx| {
                     editor.change_selections(
@@ -544,9 +561,14 @@ impl ProjectDiff {
                     )
                 })
             });
+            cx.notify();
         } else {
             self.pending_scroll = Some(path_key);
         }
+    }
+
+    pub fn is_non_diffable(&self) -> bool {
+        self.non_diffable_path.is_some()
     }
 
     /// Returns the total count of review comments across all hunks/files.
@@ -870,7 +892,10 @@ impl ProjectDiff {
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
                 });
             }
-            this.pending_scroll.take();
+            this.initial_refresh_complete = true;
+            if let Some(pending) = this.pending_scroll.take() {
+                this.non_diffable_path = Some(pending.path);
+            }
             cx.notify();
         })?;
 
@@ -884,6 +909,11 @@ impl ProjectDiff {
             .paths()
             .map(|key| key.path.clone())
             .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn non_diffable_path(&self) -> Option<&Arc<RelPath>> {
+        self.non_diffable_path.as_ref()
     }
 }
 
@@ -905,7 +935,7 @@ impl EventEmitter<EditorEvent> for ProjectDiff {}
 
 impl Focusable for ProjectDiff {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.multibuffer.read(cx).is_empty() {
+        if self.multibuffer.read(cx).is_empty() || self.non_diffable_path.is_some() {
             self.focus_handle.clone()
         } else {
             self.editor.focus_handle(cx)
@@ -1101,16 +1131,28 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let is_non_diffable = self.non_diffable_path.is_some();
 
         div()
             .track_focus(&self.focus_handle)
-            .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
+            .key_context(if is_empty && !is_non_diffable {
+                "EmptyPane"
+            } else {
+                "GitDiff"
+            })
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
             .justify_center()
             .size_full()
-            .when(is_empty, |el| {
+            .when(is_non_diffable, |el| {
+                el.child(
+                    v_flex().gap_1().child(h_flex().justify_around().child(
+                        Label::new("Binary file — cannot display diff").color(Color::Muted),
+                    )),
+                )
+            })
+            .when(is_empty && !is_non_diffable, |el| {
                 let remote_button = if let Some(panel) = self
                     .workspace
                     .upgrade()
@@ -1157,7 +1199,9 @@ impl Render for ProjectDiff {
                         ),
                 )
             })
-            .when(!is_empty, |el| el.child(self.editor.clone()))
+            .when(!is_empty && !is_non_diffable, |el| {
+                el.child(self.editor.clone())
+            })
     }
 }
 
