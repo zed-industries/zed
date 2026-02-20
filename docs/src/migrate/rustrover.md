@@ -63,7 +63,7 @@ Zed also supports per-project settings. Create a `.zed/settings.json` file in yo
 
 ## Open or Create a Project
 
-After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. Unlike RustRover, there's no project configuration wizard, no toolchain selection dialog, and no Cargo project setup screen.
+After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. There's no project configuration wizard; just open a folder and start coding.
 
 To start a new project, use Cargo from the terminal:
 
@@ -146,38 +146,21 @@ Zed also supports key sequences (multi-key shortcuts).
 
 ## Differences in User Interfaces
 
-### No Indexing
+### Different Analysis Engines
 
-RustRover indexes your project when you first open it to build a model of your codebase. This process runs whenever you open a project or when dependencies change via Cargo.
-
-Zed skips the indexing step. You open a folder and start working right away. Since both editors rely on rust-analyzer for Rust intelligence, the analysis still happens—but in Zed it runs in the background without blocking the UI or showing modal progress dialogs.
-
-**How to adapt:**
-
-- Use `Cmd+O` to search symbols across your crate (rust-analyzer handles this)
-- Jump to files by name with `Cmd+Shift+O`
-- `Cmd+Shift+F` gives you fast text search across the entire project
-- For linting and deeper checks, run `cargo clippy` in the terminal
-
-### rust-analyzer: Shared Foundation, Different Integration
-
-Here's what makes the RustRover-to-Zed transition unique: **both editors use rust-analyzer** for Rust language intelligence. This means the core code analysis (completions, go-to-definition, find references, type inference) is fundamentally the same.
-
-RustRover integrates rust-analyzer into its JetBrains platform, adding a GUI layer, additional refactorings, and its own indexing on top. Zed uses rust-analyzer more directly through the Language Server Protocol (LSP).
+RustRover uses its own proprietary code analysis engine for Rust intelligence. Zed uses rust-analyzer via the Language Server Protocol (LSP).
 
 What this means for you:
 
-- **Completions** — Same quality, powered by rust-analyzer
-- **Type inference** — Identical, it's the same engine
-- **Go to definition / Find usages** — Works the same way
+- **Completions, go-to-definition, find usages, type inference** — All available in Zed via rust-analyzer
 - **Macro expansion** — Available in both (use `Cmd+Shift+M` in Zed)
 - **Inlay hints** — Both support type hints, parameter hints, and chaining hints
 
 Where you might notice differences:
 
 - Some refactorings available in RustRover may not have rust-analyzer equivalents
-- RustRover's GUI for configuring rust-analyzer is replaced by JSON configuration in Zed
 - RustRover-specific inspections (beyond Clippy) won't exist in Zed
+- rust-analyzer is configured via JSON in Zed, not through a GUI
 
 **How to adapt:**
 
@@ -187,9 +170,9 @@ Where you might notice differences:
 
 ### No Project Model
 
-RustRover manages projects through `.idea` folders containing XML configuration files, toolchain assignments, and run configurations. The Cargo tool window provides a visual interface for your project structure, targets, and dependencies.
+RustRover manages projects through `.idea` folders containing XML configuration files, toolchain assignments, and run configurations (though this folder is hidden from the project view). The Cargo tool window provides a visual interface for your project structure, targets, and dependencies.
 
-Zed keeps it simpler: a project is a folder with a `Cargo.toml`. No project wizard, no toolchain dialogs, no visual Cargo management layer.
+Zed uses a different approach: a project is a folder with a `Cargo.toml`. Project-specific settings live in `.zed/settings.json`. There's no visual Cargo management layer.
 
 In practice:
 
@@ -310,8 +293,6 @@ For more control, create a `.zed/debug.json` file:
 ]
 ```
 
-> **Note:** Some users have reported that RustRover's debugger can have issues with variable inspection and breakpoints in certain scenarios. CodeLLDB in Zed provides a solid alternative, though debugging Rust can be challenging in any editor due to optimizations and macro-generated code.
-
 ### Running Tests
 
 RustRover has a dedicated test runner with a visual interface showing pass/fail status for each test. Zed provides test running through:
@@ -328,7 +309,7 @@ The test output appears in the terminal panel. For more detailed output, use:
 
 ### Extensions vs. Plugins
 
-RustRover has a plugin catalog, though it's more limited than other JetBrains IDEs since Rust support is built-in.
+RustRover has a full JetBrains plugin catalog.
 
 Zed's extension catalog is smaller and more focused:
 
@@ -350,8 +331,7 @@ Several features that might require plugins in other editors are built into Zed:
 
 To set expectations clearly, here's what RustRover offers that Zed doesn't have:
 
-- **Cargo.toml GUI editor** — Edit the file directly (rust-analyzer helps with completions)
-- **Visual dependency management** — Use `cargo add`, `cargo remove`, or edit `Cargo.toml`
+- **Cargo GUI** — No visual Cargo tool window; use `cargo add`, `cargo remove`, or edit `Cargo.toml` directly
 - **Profiler integration** — Use `cargo flamegraph`, `perf`, or external profiling tools
 - **Database tools** — Use DataGrip, DBeaver, or TablePlus
 - **HTTP Client** — Use tools like `curl`, `httpie`, or Postman
@@ -363,7 +343,7 @@ If you're moving from RustRover partly due to licensing concerns or telemetry po
 
 - **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
 - **Telemetry is optional** and can be disabled during onboarding or in settings
-- **No license tiers**: All features are available to everyone
+- **No feature-gated license tiers**: All Zed features are available to all users
 
 ## Collaboration in Zed vs. RustRover
 
