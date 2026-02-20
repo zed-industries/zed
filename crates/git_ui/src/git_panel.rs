@@ -20,6 +20,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use editor::{EditorStyle, RewrapOptions};
+use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -716,6 +717,11 @@ impl GitPanel {
                 }
                 was_sort_by_path = sort_by_path;
                 was_tree_view = tree_view;
+            })
+            .detach();
+
+            cx.observe_global::<FileIcons>(|_, cx| {
+                cx.notify();
             })
             .detach();
 
@@ -5013,6 +5019,7 @@ impl GitPanel {
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
+        let file_icon = FileIcons::get_icon(entry.repo_path.as_std_path(), cx);
 
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
@@ -5089,6 +5096,11 @@ impl GitPanel {
             .min_w_0()
             .flex_1()
             .gap_1()
+            .child(
+                file_icon
+                    .map(|file_icon| Icon::from_path(file_icon).color(Color::Muted))
+                    .unwrap_or_else(|| Icon::new(IconName::File).color(Color::Muted)),
+            )
             .child(git_status_icon(status))
             .map(|this| {
                 if tree_view {
@@ -5245,7 +5257,9 @@ impl GitPanel {
             )
         };
 
-        let folder_icon = if entry.expanded {
+        let folder_icon =
+            FileIcons::get_folder_icon(entry.expanded, entry.key.path.as_std_path(), cx);
+        let fallback_folder_icon = if entry.expanded {
             IconName::FolderOpen
         } else {
             IconName::Folder
@@ -5271,9 +5285,13 @@ impl GitPanel {
             .gap_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
             .child(
-                Icon::new(folder_icon)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
+                folder_icon
+                    .map(|folder_icon| Icon::from_path(folder_icon).color(Color::Muted))
+                    .unwrap_or_else(|| {
+                        Icon::new(fallback_folder_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                    }),
             )
             .child(self.entry_label(entry.name.clone(), label_color).truncate());
 
