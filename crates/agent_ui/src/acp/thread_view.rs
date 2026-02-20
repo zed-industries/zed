@@ -230,6 +230,49 @@ impl Conversation {
         }
     }
 
+    pub fn pending_tool_call<'a>(
+        &'a self,
+        session_id: &acp::SessionId,
+        cx: &'a App,
+    ) -> Option<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
+        let thread = self.threads.get(session_id)?;
+        let is_subagent = thread.read(cx).parent_session_id().is_some();
+
+        let (thread, tool_id) = if is_subagent {
+            let id = self.permission_requests.get(session_id)?.iter().next()?;
+            (thread, id)
+        } else {
+            let (id, tool_calls) = self.permission_requests.first()?;
+            let thread = self.threads.get(id)?;
+            let id = tool_calls.iter().next()?;
+            (thread, id)
+        };
+        let (_, tool_call) = thread.read(cx).tool_call(tool_id)?;
+
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        Some((session_id.clone(), tool_id.clone(), options))
+    }
+
+    pub fn authorize_pending_tool_call(
+        &mut self,
+        session_id: &acp::SessionId,
+        kind: acp::PermissionOptionKind,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let (_, tool_call_id, options) = self.pending_tool_call(session_id, cx)?;
+        let option = options.first_option_of_kind(kind)?;
+        self.authorize_tool_call(
+            session_id.clone(),
+            tool_call_id,
+            option.option_id.clone(),
+            option.kind,
+            cx,
+        );
+        Some(())
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         session_id: acp::SessionId,

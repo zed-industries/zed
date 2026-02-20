@@ -1249,24 +1249,15 @@ impl AcpThreadView {
 
     pub fn authorize_tool_call(
         &mut self,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         option_id: acp::PermissionOptionId,
         option_kind: acp::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = &self.thread;
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-
-        telemetry::event!(
-            "Agent Tool Call Authorized",
-            agent = agent_telemetry_id,
-            session = thread.read(cx).session_id(),
-            option = option_kind
-        );
-
-        thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.authorize_tool_call(session_id, tool_call_id, option_id, option_kind, cx);
         });
         if self.should_be_following {
             self.workspace
@@ -1296,21 +1287,17 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let thread = self.thread.read(cx);
-        let tool_call = thread.first_tool_awaiting_confirmation()?;
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
-            return None;
-        };
-        let option = options.first_option_of_kind(kind)?;
-
-        self.authorize_tool_call(
-            tool_call.id.clone(),
-            option.option_id.clone(),
-            option.kind,
-            window,
-            cx,
-        );
-
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.authorize_pending_tool_call(&self.id, kind, cx)
+        })?;
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
+        }
+        cx.notify();
         Some(())
     }
 
@@ -1330,7 +1317,14 @@ impl AcpThreadView {
             _ => acp::PermissionOptionKind::AllowOnce,
         };
 
-        self.authorize_tool_call(tool_call_id, option_id, option_kind, window, cx);
+        self.authorize_tool_call(
+            self.id.clone(),
+            tool_call_id,
+            option_id,
+            option_kind,
+            window,
+            cx,
+        );
     }
 
     pub fn handle_select_permission_granularity(
@@ -1384,6 +1378,7 @@ impl AcpThreadView {
         };
 
         self.authorize_tool_call(
+            self.id.clone(),
             tool_call_id,
             selected_option.option_id.clone(),
             selected_option.kind,
@@ -4783,6 +4778,8 @@ impl AcpThreadView {
             })
             .when_some(confirmation_options, |this, options| {
                 this.child(self.render_permission_buttons(
+                    self.id.clone(),
+                    false, //todo
                     options,
                     entry_ix,
                     tool_call.id.clone(),
@@ -4944,6 +4941,8 @@ impl AcpThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
+                        self.id.clone(),
+                        false, //todo
                         options,
                         entry_ix,
                         tool_call.id.clone(),
@@ -5160,34 +5159,42 @@ impl AcpThreadView {
 
     fn render_permission_buttons(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         options: &PermissionOptions,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
         match options {
-            PermissionOptions::Flat(options) => {
-                self.render_permission_buttons_flat(options, entry_ix, tool_call_id, cx)
-            }
-            PermissionOptions::Dropdown(options) => {
-                self.render_permission_buttons_dropdown(options, entry_ix, tool_call_id, cx)
-            }
+            PermissionOptions::Flat(options) => self.render_permission_buttons_flat(
+                session_id,
+                is_first,
+                options,
+                entry_ix,
+                tool_call_id,
+                cx,
+            ),
+            PermissionOptions::Dropdown(options) => self.render_permission_buttons_dropdown(
+                session_id,
+                is_first,
+                options,
+                entry_ix,
+                tool_call_id,
+                cx,
+            ),
         }
     }
 
     fn render_permission_buttons_dropdown(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         choices: &[PermissionOptionChoice],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self
-            .thread
-            .read(cx)
-            .first_tool_awaiting_confirmation()
-            .is_some_and(|call| call.id == tool_call_id);
-
         // Get the selected granularity index, defaulting to the last option ("Only this time")
         let selected_index = self
             .selected_permission_granularity
@@ -5246,11 +5253,13 @@ impl AcpThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
                                 let tool_call_id = tool_call_id.clone();
                                 let option_id = allow_option_id;
                                 let option_kind = allow_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
+                                        session_id.clone(),
                                         tool_call_id.clone(),
                                         option_id.clone(),
                                         option_kind,
@@ -5278,11 +5287,13 @@ impl AcpThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
                                 let tool_call_id = tool_call_id.clone();
                                 let option_id = deny_option_id;
                                 let option_kind = deny_option_kind;
                                 move |this, _, window, cx| {
                                     this.authorize_tool_call(
+                                        session_id.clone(),
                                         tool_call_id.clone(),
                                         option_id.clone(),
                                         option_kind,
@@ -5378,16 +5389,13 @@ impl AcpThreadView {
 
     fn render_permission_buttons_flat(
         &self,
+        session_id: acp::SessionId,
+        is_first: bool,
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
         cx: &Context<Self>,
     ) -> Div {
-        let is_first = self
-            .thread
-            .read(cx)
-            .first_tool_awaiting_confirmation()
-            .is_some_and(|call| call.id == tool_call_id);
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
 
         div()
@@ -5438,11 +5446,13 @@ impl AcpThreadView {
                     .icon_size(IconSize::XSmall)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
+                        let session_id = session_id.clone();
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.option_id.clone();
                         let option_kind = option.kind;
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
+                                session_id.clone(),
                                 tool_call_id.clone(),
                                 option_id.clone(),
                                 option_kind,
@@ -6238,25 +6248,18 @@ impl AcpThreadView {
                     )
                 })
                 .children(
-                    thread
+                    self.conversation
                         .read(cx)
-                        .first_tool_awaiting_confirmation()
-                        .and_then(|tc| {
-                            if let ToolCallStatus::WaitingForConfirmation { options, .. } =
-                                &tc.status
-                            {
-                                Some(self.render_subagent_pending_tool_call(
-                                    entry_ix,
-                                    context_ix,
-                                    thread.clone(),
-                                    tc,
-                                    options,
-                                    window,
-                                    cx,
-                                ))
-                            } else {
-                                None
-                            }
+                        .pending_tool_call(thread.read(cx).session_id(), cx)
+                        .map(|(session_id, tool_call_id, options)| {
+                            self.render_permission_buttons(
+                                session_id,
+                                false, //todo
+                                &options,
+                                entry_ix,
+                                tool_call_id,
+                                cx,
+                            )
                         }),
                 )
             })
@@ -6334,7 +6337,7 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
+        session_id: acp::SessionId,
         tool_call: &ToolCall,
         options: &PermissionOptions,
         window: &Window,
@@ -6380,7 +6383,7 @@ impl AcpThreadView {
             .child(self.render_subagent_permission_buttons(
                 entry_ix,
                 context_ix,
-                subagent_thread,
+                session_id,
                 tool_call_id,
                 options,
                 cx,
@@ -6391,7 +6394,7 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         options: &PermissionOptions,
         cx: &Context<Self>,
@@ -6400,7 +6403,7 @@ impl AcpThreadView {
             PermissionOptions::Flat(options) => self.render_subagent_permission_buttons_flat(
                 entry_ix,
                 context_ix,
-                subagent_thread,
+                session_id,
                 tool_call_id,
                 options,
                 cx,
@@ -6409,7 +6412,7 @@ impl AcpThreadView {
                 .render_subagent_permission_buttons_dropdown(
                     entry_ix,
                     context_ix,
-                    subagent_thread,
+                    session_id,
                     tool_call_id,
                     options,
                     cx,
@@ -6421,7 +6424,7 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         options: &[acp::PermissionOption],
         cx: &Context<Self>,
@@ -6454,13 +6457,13 @@ impl AcpThreadView {
                     .icon_size(IconSize::XSmall)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
-                        let subagent_thread = subagent_thread.clone();
+                        let session_id = session_id.clone();
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.option_id.clone();
                         let option_kind = option.kind;
                         move |this, _, window, cx| {
-                            this.authorize_subagent_tool_call(
-                                subagent_thread.clone(),
+                            this.authorize_tool_call(
+                                session_id.clone(),
                                 tool_call_id.clone(),
                                 option_id.clone(),
                                 option_kind,
@@ -6472,25 +6475,11 @@ impl AcpThreadView {
             }))
     }
 
-    fn authorize_subagent_tool_call(
-        &mut self,
-        subagent_thread: Entity<AcpThread>,
-        tool_call_id: acp::ToolCallId,
-        option_id: acp::PermissionOptionId,
-        option_kind: acp::PermissionOptionKind,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        subagent_thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
-        });
-    }
-
     fn render_subagent_permission_buttons_dropdown(
         &self,
         entry_ix: usize,
         context_ix: usize,
-        subagent_thread: Entity<AcpThread>,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         choices: &[PermissionOptionChoice],
         cx: &Context<Self>,
@@ -6551,13 +6540,13 @@ impl AcpThreadView {
                         .icon_size(IconSize::XSmall)
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener({
-                            let subagent_thread = subagent_thread.clone();
+                            let session_id = session_id.clone();
                             let tool_call_id = tool_call_id.clone();
                             let option_id = allow_option_id;
                             let option_kind = allow_option_kind;
                             move |this, _, window, cx| {
-                                this.authorize_subagent_tool_call(
-                                    subagent_thread.clone(),
+                                this.authorize_tool_call(
+                                    session_id.clone(),
                                     tool_call_id.clone(),
                                     option_id.clone(),
                                     option_kind,
@@ -6584,12 +6573,13 @@ impl AcpThreadView {
                         .icon_size(IconSize::XSmall)
                         .label_size(LabelSize::Small)
                         .on_click(cx.listener({
+                            let session_id = session_id.clone();
                             let tool_call_id = tool_call_id.clone();
                             let option_id = deny_option_id;
                             let option_kind = deny_option_kind;
                             move |this, _, window, cx| {
-                                this.authorize_subagent_tool_call(
-                                    subagent_thread.clone(),
+                                this.authorize_tool_call(
+                                    session_id.clone(),
                                     tool_call_id.clone(),
                                     option_id.clone(),
                                     option_kind,
