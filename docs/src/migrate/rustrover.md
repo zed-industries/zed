@@ -63,7 +63,7 @@ Zed also supports per-project settings. Create a `.zed/settings.json` file in yo
 
 ## Open or Create a Project
 
-After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. There's no project configuration wizard; just open a folder and start coding.
+After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed.
 
 To start a new project, use Cargo from the terminal:
 
@@ -168,17 +168,17 @@ Where you might notice differences:
 - Configure rust-analyzer settings in `.zed/settings.json` for project-specific needs
 - Run `cargo clippy` for linting (it integrates with rust-analyzer diagnostics)
 
-### No Project Model
+### Project Configuration
 
-RustRover manages projects through `.idea` folders containing XML configuration files, toolchain assignments, and run configurations (though this folder is hidden from the project view). The Cargo tool window provides a visual interface for your project structure, targets, and dependencies.
+Both editors store per-project configuration in a hidden folder. RustRover uses `.idea` (with XML files), Zed uses `.zed` (with JSON files). The main differences are in what each editor manages for you and how you interact with project settings.
 
-Zed uses a different approach: a project is a folder with a `Cargo.toml`. Project-specific settings live in `.zed/settings.json`. There's no visual Cargo management layer.
+**Run configurations don't transfer.** RustRover stores run/debug configurations in `.idea`. These have no automatic migration path. You'll recreate them as Zed [tasks](../tasks.md) in `.zed/tasks.json` and debug configurations in `.zed/debug.json`.
 
-In practice:
+**No Cargo tool window.** RustRover provides a visual tree of your workspace members, targets, features, and dependencies. Zed doesn't have this. You work with `Cargo.toml` and the Cargo CLI directly.
 
-- Run configurations don't carry over. Your `.idea/` setup stays behind—define the commands you need in `tasks.json` instead.
-- Toolchains are managed externally via `rustup`.
-- Dependencies live in `Cargo.toml`. Edit the file directly; rust-analyzer provides completions for crate names and versions.
+**Toolchain management is external.** RustRover lets you select and switch toolchains in its settings UI. In Zed, you manage toolchains through `rustup`.
+
+**Configuration is opt-in.** RustRover auto-generates `.idea` when you open a project. Zed doesn't generate anything. You create `.zed/settings.json`, `tasks.json`, and `debug.json` as needed.
 
 **How to adapt:**
 
@@ -343,7 +343,6 @@ If you're moving from RustRover partly due to licensing concerns or telemetry po
 
 - **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
 - **Telemetry is optional** and can be disabled during onboarding or in settings
-- **No feature-gated license tiers**: All Zed features are available to all users
 
 ## Collaboration in Zed vs. RustRover
 
