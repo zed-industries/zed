@@ -162,6 +162,7 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
+            workspace_id: None,
         }
     }
 

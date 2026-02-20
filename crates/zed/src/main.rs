@@ -887,8 +887,12 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_multi_workspace(app_state.clone(), cx.clone())
                             .await?;
 
-                    let workspace =
-                        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
+                    let (workspace, workspace_id) = multi_workspace.read_with(cx, |mw, cx| {
+                        let workspace = mw.workspace().clone();
+                        let workspace_id = workspace.read(cx).database_id();
+
+                        (workspace, workspace_id)
+                    })?;
 
                     let (client, thread_store) =
                         multi_workspace.update(cx, |_, _window, cx| {
@@ -913,7 +917,8 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         .context("Failed to fetch shared thread")?;
 
                     let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
-                    let db_thread = shared_thread.to_db_thread();
+
+                    let db_thread = shared_thread.to_db_thread(workspace_id.map(i64::from));
                     let session_id = agent_client_protocol::SessionId::new(session_id);
 
                     let save_session_id = session_id.clone();

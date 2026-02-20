@@ -1204,6 +1204,7 @@ impl Thread {
             profile: Some(self.profile_id.clone()),
             imported: self.imported,
             subagent_context: self.subagent_context.clone(),
+            workspace_id: None,
         };
 
         cx.background_spawn(async move {

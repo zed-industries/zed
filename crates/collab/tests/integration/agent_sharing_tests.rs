@@ -55,7 +55,7 @@ async fn test_share_and_retrieve_thread(
     assert_eq!(imported_shared_thread.title, original_thread.title);
     assert_eq!(imported_shared_thread.version, SharedThread::VERSION);
 
-    let db_thread = imported_shared_thread.to_db_thread();
+    let db_thread = imported_shared_thread.to_db_thread(None);
 
     assert!(
         db_thread.title.starts_with("🔗"),

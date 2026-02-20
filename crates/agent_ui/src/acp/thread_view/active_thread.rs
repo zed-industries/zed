@@ -1505,7 +1505,7 @@ impl AcpThreadView {
 
             let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
 
-            let db_thread = shared_thread.to_db_thread();
+            let db_thread = shared_thread.to_db_thread(None);
 
             thread_store
                 .update(&mut cx.clone(), |store, cx| {

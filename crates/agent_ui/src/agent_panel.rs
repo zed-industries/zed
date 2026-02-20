@@ -1432,7 +1432,7 @@ impl AgentPanel {
             }
         };
 
-        let db_thread = shared_thread.to_db_thread();
+        let db_thread = shared_thread.to_db_thread(self.workspace_id.map(i64::from));
         let session_id = acp::SessionId::new(uuid::Uuid::new_v4().to_string());
         let thread_store = self.thread_store.clone();
         let title = db_thread.title.clone();

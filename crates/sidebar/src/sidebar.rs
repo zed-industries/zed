@@ -17,7 +17,7 @@ use util::maybe;
 
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
-    SidebarEvent, ToggleWorkspaceSidebar,
+    SidebarEvent, ToggleWorkspaceSidebar, WorkspaceId,
 };
 
 const DEFAULT_WIDTH: Pixels = px(320.0);
@@ -33,6 +33,7 @@ pub struct AgentThreadInfo {
 }
 
 struct AgentThreadsPickerDelegate {
+    multi_workspace: Entity<MultiWorkspace>,
     thread_ids: Vec<acp::SessionId>,
     threads: HashMap<acp::SessionId, AgentThreadInfo>,
     historic_threads: Vec<DbThreadMetadata>,
@@ -40,8 +41,12 @@ struct AgentThreadsPickerDelegate {
 }
 
 impl AgentThreadsPickerDelegate {
-    fn new(historic_threads: Vec<DbThreadMetadata>) -> Self {
+    fn new(
+        multi_workspace: Entity<MultiWorkspace>,
+        historic_threads: Vec<DbThreadMetadata>,
+    ) -> Self {
         Self {
+            multi_workspace,
             thread_ids: Vec::new(),
             threads: HashMap::new(),
             historic_threads,
@@ -117,6 +122,32 @@ impl PickerDelegate for AgentThreadsPickerDelegate {
                 .historic_threads
                 .get(index.saturating_sub(self.thread_ids.len()))?;
 
+            let worktree_label: SharedString = historic_thread
+                .workspace_id
+                .and_then(|id| {
+                    let workspace_id = WorkspaceId::from_i64(id);
+                    self.multi_workspace
+                        .read(_cx)
+                        .workspaces()
+                        .iter()
+                        .find(|ws| ws.read(_cx).database_id() == Some(workspace_id))
+                        .map(|ws| {
+                            ws.read(_cx)
+                                .visible_worktrees(_cx)
+                                .filter_map(|worktree| {
+                                    worktree
+                                        .read(_cx)
+                                        .abs_path()
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().to_string())
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                })
+                .unwrap_or_default()
+                .into();
+
             Some(
                 ThreadItem::new(
                     ("historic_agent_thread", index),
@@ -124,6 +155,7 @@ impl PickerDelegate for AgentThreadsPickerDelegate {
                 )
                 .icon(IconName::ZedAgent)
                 .selected(selected)
+                .worktree(worktree_label)
                 .into_any_element(),
             )
         })
@@ -171,8 +203,9 @@ impl Sidebar {
         let picker = cx.new(|cx| {
             let thread_store = ThreadStore::global(cx);
             let mut historic_threads: Vec<_> = thread_store.read(cx).entries().collect();
-            historic_threads.sort_by(|this, other| this.updated_at.cmp(&other.updated_at));
-            let delegate = AgentThreadsPickerDelegate::new(historic_threads);
+            historic_threads.sort_by(|this, other| other.updated_at.cmp(&this.updated_at));
+            let delegate =
+                AgentThreadsPickerDelegate::new(multi_workspace.clone(), historic_threads);
 
             cx.observe(
                 &thread_store,

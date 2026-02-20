@@ -30,6 +30,7 @@ pub struct DbThreadMetadata {
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +54,8 @@ pub struct DbThread {
     pub imported: bool,
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,7 +81,7 @@ impl SharedThread {
         }
     }
 
-    pub fn to_db_thread(self) -> DbThread {
+    pub fn to_db_thread(self, workspace_id: Option<i64>) -> DbThread {
         DbThread {
             title: format!("🔗 {}", self.title).into(),
             messages: self.messages,
@@ -91,6 +94,7 @@ impl SharedThread {
             profile: None,
             imported: true,
             subagent_context: None,
+            workspace_id,
         }
     }
 
@@ -265,6 +269,7 @@ impl DbThread {
             profile: thread.profile,
             imported: false,
             subagent_context: None,
+            workspace_id: None,
         })
     }
 }
@@ -369,6 +374,13 @@ impl ThreadsDatabase {
             s().ok();
         }
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN workspace_id INTEGER
+        "})
+        {
+            s().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -397,6 +409,7 @@ impl ThreadsDatabase {
             .subagent_context
             .as_ref()
             .map(|ctx| ctx.parent_thread_id.0.clone());
+        let workspace_id = thread.workspace_id;
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -408,11 +421,19 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<i64>, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, parent_id, workspace_id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, parent_id, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            parent_id,
+            workspace_id,
+            title,
+            updated_at,
+            data_type,
+            data,
+        ))?;
 
         Ok(())
     }
@@ -424,19 +445,20 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, String, String)>(indoc! {"
-                SELECT id, parent_id, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<i64>, String, String)>(indoc! {"
+                SELECT id, parent_id, workspace_id, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, summary, updated_at) in rows {
+            for (id, parent_id, workspace_id, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    workspace_id,
                 });
             }
 
@@ -568,6 +590,7 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
+            workspace_id: None,
             imported: false,
             subagent_context: None,
         }
