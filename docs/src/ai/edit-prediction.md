@@ -311,18 +311,6 @@ To use GitHub Copilot as your provider, set this in your settings file ([how to 
 
 To sign in to GitHub Copilot, click on the Copilot icon in the status bar. A popup window appears displaying a device code. Click the copy button to copy the code, then click "Connect to GitHub" to open the GitHub verification page in your browser. Paste the code when prompted. The popup window closes automatically after successful authorization.
 
-#### Disabling Copilot
-
-To disable GitHub Copilot, set `disable_ai` to `true` in your settings. When enabled, this setting stops any running Copilot server and prevents it from starting:
-
-```json [settings]
-{
-  "disable_ai": true
-}
-```
-
-The Copilot server will stop immediately when you enable this setting. Re-enable AI features by setting `disable_ai` to `false` (or removing the setting).
-
 #### Using GitHub Copilot Enterprise
 
 If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your settings file ([how to edit](../configuring-zed.md#settings-files)):
