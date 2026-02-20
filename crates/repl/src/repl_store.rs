@@ -1,16 +1,18 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, prelude::*};
+use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, prelude::*};
 use jupyter_websocket_client::RemoteServer;
-use language::Language;
-use project::{Fs, Project, WorktreeId};
+use language::{Language, LanguageName};
+use project::{Fs, Project, ProjectPath, WorktreeId};
 use settings::{Settings, SettingsStore};
+use util::rel_path::RelPath;
 
 use crate::kernels::{
-    list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -25,6 +27,7 @@ pub struct ReplStore {
     kernel_specifications: Vec<KernelSpecification>,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
+    active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -47,9 +50,12 @@ impl ReplStore {
     }
 
     pub fn new(fs: Arc<dyn Fs>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.set_enabled(JupyterSettings::enabled(cx), cx);
-        })];
+        let subscriptions = vec![
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                this.set_enabled(JupyterSettings::enabled(cx), cx);
+            }),
+            cx.on_app_quit(Self::shutdown_all_sessions),
+        ];
 
         let this = Self {
             fs,
@@ -59,6 +65,7 @@ impl ReplStore {
             _subscriptions: subscriptions,
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
+            active_python_toolchain_for_worktree: HashMap::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -70,6 +77,11 @@ impl ReplStore {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn has_python_kernelspecs(&self, worktree_id: WorktreeId) -> bool {
+        self.kernel_specifications_for_worktree
+            .contains_key(&worktree_id)
     }
 
     pub fn kernel_specifications_for_worktree(
@@ -123,14 +135,29 @@ impl ReplStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
+        let active_toolchain = project.read(cx).active_toolchain(
+            ProjectPath {
+                worktree_id,
+                path: RelPath::empty().into(),
+            },
+            LanguageName::new_static("Python"),
+            cx,
+        );
+
         cx.spawn(async move |this, cx| {
             let kernel_specifications = kernel_specifications
                 .await
                 .context("getting python kernelspecs")?;
 
+            let active_toolchain_path = active_toolchain.await.map(|toolchain| toolchain.path);
+
             this.update(cx, |this, cx| {
                 this.kernel_specifications_for_worktree
                     .insert(worktree_id, kernel_specifications);
+                if let Some(path) = active_toolchain_path {
+                    this.active_python_toolchain_for_worktree
+                        .insert(worktree_id, path);
+                }
                 cx.notify();
             })
         })
@@ -206,21 +233,65 @@ impl ReplStore {
             .insert(worktree_id, kernelspec);
     }
 
+    pub fn active_python_toolchain_path(&self, worktree_id: WorktreeId) -> Option<&SharedString> {
+        self.active_python_toolchain_for_worktree.get(&worktree_id)
+    }
+
+    pub fn is_recommended_kernel(
+        &self,
+        worktree_id: WorktreeId,
+        spec: &KernelSpecification,
+    ) -> bool {
+        if let Some(active_path) = self.active_python_toolchain_path(worktree_id) {
+            spec.path().as_ref() == active_path.as_ref()
+        } else {
+            false
+        }
+    }
+
     pub fn active_kernelspec(
         &self,
         worktree_id: WorktreeId,
         language_at_cursor: Option<Arc<Language>>,
         cx: &App,
     ) -> Option<KernelSpecification> {
-        let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
-
-        if let Some(language_at_cursor) = language_at_cursor {
-            selected_kernelspec.or_else(|| {
-                self.kernelspec_legacy_by_lang_only(worktree_id, language_at_cursor, cx)
-            })
-        } else {
-            selected_kernelspec
+        if let Some(selected) = self.selected_kernel_for_worktree.get(&worktree_id).cloned() {
+            return Some(selected);
         }
+
+        let language_at_cursor = language_at_cursor?;
+        let language_name = language_at_cursor.code_fence_block_name().to_lowercase();
+
+        // Prefer the recommended (active toolchain) kernel if it has ipykernel
+        if let Some(active_path) = self.active_python_toolchain_path(worktree_id) {
+            let recommended = self
+                .kernel_specifications_for_worktree(worktree_id)
+                .find(|spec| {
+                    spec.has_ipykernel()
+                        && spec.language().as_ref().to_lowercase() == language_name
+                        && spec.path().as_ref() == active_path.as_ref()
+                })
+                .cloned();
+            if recommended.is_some() {
+                return recommended;
+            }
+        }
+
+        // Then try the first PythonEnv with ipykernel matching the language
+        let python_env = self
+            .kernel_specifications_for_worktree(worktree_id)
+            .find(|spec| {
+                matches!(spec, KernelSpecification::PythonEnv(_))
+                    && spec.has_ipykernel()
+                    && spec.language().as_ref().to_lowercase() == language_name
+            })
+            .cloned();
+        if python_env.is_some() {
+            return python_env;
+        }
+
+        // Fall back to legacy name-based and language-based matching
+        self.kernelspec_legacy_by_lang_only(worktree_id, language_at_cursor, cx)
     }
 
     fn kernelspec_legacy_by_lang_only(
@@ -240,7 +311,6 @@ impl ReplStore {
                 if let (Some(selected), KernelSpecification::Jupyter(runtime_specification)) =
                     (selected_kernel, runtime_specification)
                 {
-                    // Top priority is the selected kernel
                     return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
                 false
@@ -251,20 +321,10 @@ impl ReplStore {
             return Some(found_by_name);
         }
 
+        let language_name = language_at_cursor.code_fence_block_name().to_lowercase();
         self.kernel_specifications_for_worktree(worktree_id)
-            .find(|kernel_option| match kernel_option {
-                KernelSpecification::Jupyter(runtime_specification) => {
-                    runtime_specification.kernelspec.language.to_lowercase()
-                        == language_at_cursor.code_fence_block_name().to_lowercase()
-                }
-                KernelSpecification::PythonEnv(runtime_specification) => {
-                    runtime_specification.kernelspec.language.to_lowercase()
-                        == language_at_cursor.code_fence_block_name().to_lowercase()
-                }
-                KernelSpecification::Remote(remote_spec) => {
-                    remote_spec.kernelspec.language.to_lowercase()
-                        == language_at_cursor.code_fence_block_name().to_lowercase()
-                }
+            .find(|spec| {
+                spec.has_ipykernel() && spec.language().as_ref().to_lowercase() == language_name
             })
             .cloned()
     }
@@ -279,6 +339,23 @@ impl ReplStore {
 
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
+    }
+
+    fn shutdown_all_sessions(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        for session in self.sessions.values() {
+            session.update(cx, |session, _cx| {
+                if let Kernel::RunningKernel(mut kernel) =
+                    std::mem::replace(&mut session.kernel, Kernel::Shutdown)
+                {
+                    kernel.kill();
+                }
+            });
+        }
+        self.sessions.clear();
+        futures::future::ready(())
     }
 
     #[cfg(test)]

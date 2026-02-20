@@ -44,9 +44,18 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
+            let author_email = blame_entry.author_mail.as_ref().map(|email| {
+                SharedString::from(
+                    email
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .to_string(),
+                )
+            });
             Some(
                 CommitAvatar::new(
                     &blame_entry.sha.to_string().into(),
+                    author_email,
                     details.as_ref().and_then(|it| it.remote.as_ref()),
                 )
                 .render(window, cx),
@@ -186,8 +195,20 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or("<no name>".to_string())
             .into();
         let author_email = blame.author_mail.as_deref().unwrap_or_default();
-        let avatar = CommitAvatar::new(&sha, details.as_ref().and_then(|it| it.remote.as_ref()))
-            .render(window, cx);
+        let author_email_for_avatar = blame.author_mail.as_ref().map(|email| {
+            SharedString::from(
+                email
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string(),
+            )
+        });
+        let avatar = CommitAvatar::new(
+            &sha,
+            author_email_for_avatar,
+            details.as_ref().and_then(|it| it.remote.as_ref()),
+        )
+        .render(window, cx);
 
         let short_commit_id = sha
             .get(..8)

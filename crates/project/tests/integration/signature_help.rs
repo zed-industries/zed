@@ -42,7 +42,7 @@ fn test_create_signature_help_markdown_string_1(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test(foo: u8, bar: &str)"),
+            SharedString::new_static("fn test(foo: u8, bar: &str)"),
             vec![(8..15, current_parameter())]
         )
     );
@@ -88,7 +88,7 @@ fn test_create_signature_help_markdown_string_2(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test(foo: u8, bar: &str)"),
+            SharedString::new_static("fn test(foo: u8, bar: &str)"),
             vec![(17..26, current_parameter())]
         )
     );
@@ -148,7 +148,7 @@ fn test_create_signature_help_markdown_string_3(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test1(foo: u8, bar: &str)"),
+            SharedString::new_static("fn test1(foo: u8, bar: &str)"),
             vec![(9..16, current_parameter())]
         )
     );
@@ -201,7 +201,7 @@ fn test_create_signature_help_markdown_string_4(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test2(hoge: String, fuga: bool)"),
+            SharedString::new_static("fn test2(hoge: String, fuga: bool)"),
             vec![(9..21, current_parameter())]
         )
     );
@@ -254,7 +254,7 @@ fn test_create_signature_help_markdown_string_5(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test2(hoge: String, fuga: bool)"),
+            SharedString::new_static("fn test2(hoge: String, fuga: bool)"),
             vec![(23..33, current_parameter())]
         )
     );
@@ -307,7 +307,7 @@ fn test_create_signature_help_markdown_string_6(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test2(hoge: String, fuga: bool)"),
+            SharedString::new_static("fn test2(hoge: String, fuga: bool)"),
             vec![(9..21, current_parameter())]
         )
     );
@@ -375,7 +375,7 @@ fn test_create_signature_help_markdown_string_7(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test3(one: usize, two: u32)"),
+            SharedString::new_static("fn test3(one: usize, two: u32)"),
             vec![(21..29, current_parameter())]
         )
     );
@@ -422,7 +422,7 @@ fn test_create_signature_help_markdown_string_9(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test(foo: u8, bar: &str)"),
+            SharedString::new_static("fn test(foo: u8, bar: &str)"),
             vec![(8..15, current_parameter())]
         )
     );
@@ -510,7 +510,7 @@ fn test_create_signature_help_implements_utf16_spec(cx: &mut TestAppContext) {
     assert_eq!(
         markdown,
         (
-            SharedString::new("fn test(🦀: u8, 🦀: &str)"),
+            SharedString::new_static("fn test(🦀: u8, 🦀: &str)"),
             vec![(8..12, current_parameter())]
         )
     );

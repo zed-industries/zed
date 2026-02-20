@@ -1,3 +1,8 @@
+---
+title: Tailwind CSS
+description: "Configure Tailwind CSS language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Tailwind CSS
 
 Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previews.
@@ -6,17 +11,17 @@ Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previ
 
 Languages which can be used with Tailwind CSS in Zed:
 
-- [Astro](./astro.md)
+- [Astro](./astro.md#using-the-tailwind-css-language-server-with-astro)
 - [CSS](./css.md)
-- [ERB](./ruby.md)
+- [ERB](./ruby.md#using-the-tailwind-css-language-server-with-ruby)
 - [Gleam](./gleam.md)
-- [HEEx](./elixir.md#heex)
-- [HTML](./html.md)
-- [TypeScript](./typescript.md)
-- [JavaScript](./javascript.md)
-- [PHP](./php.md)
-- [Svelte](./svelte.md)
-- [Vue](./vue.md)
+- [HEEx](./elixir.md#using-the-tailwind-css-language-server-with-heex)
+- [HTML](./html.md#using-the-tailwind-css-language-server-with-html)
+- [TypeScript](./typescript.md#using-the-tailwind-css-language-server-with-typescript)
+- [JavaScript](./javascript.md#using-the-tailwind-css-language-server-with-javascript)
+- [PHP](./php.md#using-the-tailwind-css-language-server-with-php)
+- [Svelte](./svelte.md#using-the-tailwind-css-language-server-with-svelte)
+- [Vue](./vue.md#using-the-tailwind-css-language-server-with-vue)
 
 ## Configuration
 
@@ -42,7 +47,7 @@ Refer to [the Tailwind CSS language server settings docs](https://github.com/tai
 ### Using Tailwind CSS Mode in CSS Files
 
 Zed includes support for the Tailwind CSS language mode, which provides full CSS IntelliSense support even when using Tailwind-specific at-rules like `@apply`, `@layer`, and `@theme`.
-To use the Tailwind CSS language mode for CSS files, add the following to `languages` section of your `settings.json`:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > CSS, or add to your settings file:
 
 ```json [settings]
 {
@@ -64,7 +69,7 @@ The `tailwindcss-intellisense-css` language server serves as an alternative to t
 
 Zed supports Prettier out of the box, which means that if you have the [Tailwind CSS Prettier plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) installed, adding it to your Prettier configuration will make it work automatically:
 
-```json [settings]
+```json
 // .prettierrc
 {
   "plugins": ["prettier-plugin-tailwindcss"]

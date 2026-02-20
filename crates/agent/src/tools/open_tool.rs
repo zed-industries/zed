@@ -1,8 +1,12 @@
+use super::tool_permissions::{
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    resolve_project_path,
+};
 use crate::AgentTool;
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result};
 use futures::FutureExt as _;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,9 +42,7 @@ impl AgentTool for OpenTool {
     type Input = OpenToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "open"
-    }
+    const NAME: &'static str = "open";
 
     fn kind() -> ToolKind {
         ToolKind::Execute
@@ -66,13 +68,51 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
-        let context = crate::ToolPermissionContext {
-            tool_name: "open".to_string(),
-            input_value: input.path_or_url.clone(),
-        };
-        let authorize =
-            event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
-        cx.background_spawn(async move {
+        let initial_title = self.initial_title(Ok(input.clone()), cx);
+
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
+
+            // Symlink escape authorization replaces (rather than supplements)
+            // the normal tool-permission prompt. The symlink prompt already
+            // requires explicit user approval with the canonical target shown,
+            // which is strictly more security-relevant than a generic confirm.
+            let symlink_escape = project.read_with(cx, |project, cx| {
+                match resolve_project_path(
+                    project,
+                    PathBuf::from(&input.path_or_url),
+                    &canonical_roots,
+                    cx,
+                ) {
+                    Ok(ResolvedProjectPath::SymlinkEscape {
+                        canonical_target, ..
+                    }) => Some(canonical_target),
+                    _ => None,
+                }
+            });
+
+            let authorize = if let Some(canonical_target) = symlink_escape {
+                cx.update(|cx| {
+                    authorize_symlink_access(
+                        Self::NAME,
+                        &input.path_or_url,
+                        &canonical_target,
+                        &event_stream,
+                        cx,
+                    )
+                })
+            } else {
+                cx.update(|cx| {
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.path_or_url.clone()],
+                    );
+                    event_stream.authorize(initial_title, context, cx)
+                })
+            };
+
             futures::select! {
                 result = authorize.fuse() => result?,
                 _ = event_stream.cancelled_by_user().fuse() => {
@@ -80,11 +120,15 @@ impl AgentTool for OpenTool {
                 }
             }
 
-            match abs_path {
-                Some(path) => open::that(path),
-                None => open::that(&input.path_or_url),
-            }
-            .context("Failed to open URL or file path")?;
+            let path_or_url = input.path_or_url.clone();
+            cx.background_spawn(async move {
+                match abs_path {
+                    Some(path) => open::that(path),
+                    None => open::that(path_or_url),
+                }
+                .context("Failed to open URL or file path")
+            })
+            .await?;
 
             Ok(format!("Successfully opened {}", input.path_or_url))
         })

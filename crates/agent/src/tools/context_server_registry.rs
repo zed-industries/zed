@@ -247,31 +247,29 @@ impl ContextServerRegistry {
     fn handle_context_server_store_event(
         &mut self,
         _: Entity<ContextServerStore>,
-        event: &project::context_server_store::Event,
+        event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-                match status {
-                    ContextServerStatus::Starting => {}
-                    ContextServerStatus::Running => {
-                        self.reload_tools_for_server(server_id.clone(), cx);
-                        self.reload_prompts_for_server(server_id.clone(), cx);
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Starting => {}
+            ContextServerStatus::Running => {
+                self.reload_tools_for_server(server_id.clone(), cx);
+                self.reload_prompts_for_server(server_id.clone(), cx);
+            }
+            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                if let Some(registered_server) = self.registered_servers.remove(server_id) {
+                    if !registered_server.tools.is_empty() {
+                        cx.emit(ContextServerRegistryEvent::ToolsChanged);
                     }
-                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        if let Some(registered_server) = self.registered_servers.remove(server_id) {
-                            if !registered_server.tools.is_empty() {
-                                cx.emit(ContextServerRegistryEvent::ToolsChanged);
-                            }
-                            if !registered_server.prompts.is_empty() {
-                                cx.emit(ContextServerRegistryEvent::PromptsChanged);
-                            }
-                        }
-                        cx.notify();
+                    if !registered_server.prompts.is_empty() {
+                        cx.emit(ContextServerRegistryEvent::PromptsChanged);
                     }
                 }
+                cx.notify();
             }
-        }
+        };
     }
 }
 
@@ -381,6 +379,12 @@ impl AnyAgentTool for ContextServerTool {
                     anyhow::bail!("MCP tool cancelled by user");
                 }
             };
+
+            if response.is_error == Some(true) {
+                let error_message: String =
+                    response.content.iter().filter_map(|c| c.text()).collect();
+                anyhow::bail!(error_message);
+            }
 
             let mut result = String::new();
             for content in response.content {

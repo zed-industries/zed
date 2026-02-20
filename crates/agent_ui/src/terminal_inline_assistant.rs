@@ -275,6 +275,7 @@ impl TerminalInlineAssistant {
                 stop: Vec::new(),
                 temperature,
                 thinking_allowed: false,
+                thinking_effort: None,
             }
         }))
     }

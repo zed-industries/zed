@@ -22,6 +22,7 @@ use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
+use gpui_platform;
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -54,8 +55,8 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
-    AppState, PathList, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceId,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId,
+    AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -98,7 +99,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
@@ -297,7 +298,8 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app = Application::new().with_assets(Assets);
+    let app =
+        Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
 
     let system_id = app.background_executor().spawn(system_id());
     let installation_id = app.background_executor().spawn(installation_id());
@@ -511,15 +513,13 @@ fn main() {
                 let workspace_store = workspace_store.clone();
                 Arc::new(move |cx: &mut App| {
                     workspace_store.update(cx, |workspace_store, cx| {
-                        workspace_store
+                        Ok(workspace_store
                             .workspaces()
-                            .iter()
-                            .map(|workspace| {
-                                workspace.update(cx, |workspace, _, cx| {
-                                    workspace.project().read(cx).lsp_store()
-                                })
+                            .filter_map(|weak| weak.upgrade())
+                            .map(|workspace: gpui::Entity<workspace::Workspace>| {
+                                workspace.read(cx).project().read(cx).lsp_store()
                             })
-                            .collect()
+                            .collect())
                     })
                 })
             }),
@@ -623,7 +623,11 @@ fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        project::AgentRegistryStore::init_global(cx);
+        project::AgentRegistryStore::init_global(
+            cx,
+            app_state.fs.clone(),
+            app_state.client.http_client(),
+        );
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -632,7 +636,7 @@ fn main() {
             false,
             cx,
         );
-        agent_ui_v2::agents_panel::init(cx);
+
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
         dev_container::init(cx);
@@ -659,6 +663,15 @@ fn main() {
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
+        cx.set_global(workspace::PaneSearchBarCallbacks {
+            setup_search_bar: |languages, toolbar, window, cx| {
+                let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar, window, cx);
+                });
+            },
+            wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+        });
         vim::init(cx);
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
@@ -765,6 +778,12 @@ fn main() {
             .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
+        // Check if any diff paths are directories to determine diff_all mode
+        let diff_all_mode = args
+            .diff
+            .chunks(2)
+            .any(|pair| Path::new(&pair[0]).is_dir() || Path::new(&pair[1]).is_dir());
+
         let diff_paths: Vec<[String; 2]> = args
             .diff
             .chunks(2)
@@ -781,6 +800,7 @@ fn main() {
                 urls,
                 diff_paths,
                 wsl,
+                diff_all: diff_all_mode,
             })
         }
 
@@ -833,7 +853,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             OpenRequestKind::Extension { extension_id } => {
                 cx.spawn(async move |cx| {
                     let workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
                     workspace.update(cx, |_, window, cx| {
                         window.dispatch_action(
                             Box::new(zed_actions::Extensions {
@@ -846,31 +866,42 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
-            OpenRequestKind::AgentPanel => {
+            OpenRequestKind::AgentPanel { initial_prompt } => {
                 cx.spawn(async move |cx| {
-                    let workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                    workspace.update(cx, |workspace, window, cx| {
-                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.focus_handle(cx).focus(window, cx);
-                        }
+                    let multi_workspace =
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+
+                    multi_workspace.update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
+                                panel.update(cx, |panel, cx| {
+                                    panel.new_external_thread_with_text(initial_prompt, window, cx);
+                                });
+                            }
+                        });
                     })
                 })
                 .detach_and_log_err(cx);
             }
             OpenRequestKind::SharedAgentThread { session_id } => {
                 cx.spawn(async move |cx| {
+                    let multi_workspace =
+                        workspace::get_any_active_multi_workspace(app_state.clone(), cx.clone())
+                            .await?;
+
                     let workspace =
-                        workspace::get_any_active_workspace(app_state.clone(), cx.clone()).await?;
+                        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
                     let (client, thread_store) =
-                        workspace.update(cx, |workspace, _window, cx| {
-                            let client = workspace.project().read(cx).client();
-                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
-                                .panel::<AgentPanel>(cx)
-                                .map(|panel| panel.read(cx).thread_store().clone());
-                            (client, thread_store)
-                        })?;
+                        multi_workspace.update(cx, |_, _window, cx| {
+                            workspace.update(cx, |workspace, cx| {
+                                let client = workspace.project().read(cx).client();
+                                let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
+                                    .panel::<AgentPanel>(cx)
+                                    .map(|panel| panel.read(cx).thread_store().clone());
+                                anyhow::Ok((client, thread_store))
+                            })
+                        })??;
 
                     let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");
@@ -903,25 +934,27 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         meta: None,
                     };
 
-                    workspace.update(cx, |workspace, window, cx| {
-                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.update(cx, |panel, cx| {
-                                panel.open_thread(thread_metadata, window, cx);
-                            });
-                            panel.focus_handle(cx).focus(window, cx);
-                        }
-                    })?;
+                    let sharer_username = response.sharer_username.clone();
 
-                    workspace.update(cx, |workspace, _window, cx| {
-                        struct ImportedThreadToast;
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<ImportedThreadToast>(),
-                                format!("Imported shared thread from {}", response.sharer_username),
-                            )
-                            .autohide(),
-                            cx,
-                        );
+                    multi_workspace.update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                panel.update(cx, |panel, cx| {
+                                    panel.open_thread(thread_metadata, window, cx);
+                                });
+                                panel.focus_handle(cx).focus(window, cx);
+                            }
+
+                            struct ImportedThreadToast;
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<ImportedThreadToast>(),
+                                    format!("Imported shared thread from {}", sharer_username),
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        });
                     })?;
 
                     anyhow::Ok(())
@@ -996,7 +1029,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 // [ languages $(language) tab_size]
                 cx.spawn(async move |cx| {
                     let workspace =
-                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
                     workspace.update(cx, |_, window, cx| match setting_path {
                         None => window.dispatch_action(Box::new(zed_actions::OpenSettings), cx),
@@ -1050,6 +1083,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let (workspace, _results) = open_paths_with_positions(
                         &paths_with_position,
                         &[],
+                        false,
                         app_state,
                         workspace::OpenOptions::default(),
                         cx,
@@ -1057,23 +1091,29 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     .await?;
 
                     workspace
-                        .update(cx, |workspace, window, cx| {
-                            let Some(repo) = workspace.project().read(cx).active_repository(cx)
-                            else {
-                                log::error!("no active repository found for commit view");
-                                return Err(anyhow::anyhow!("no active repository found"));
-                            };
+                        .update(cx, |multi_workspace, window, cx| {
+                            multi_workspace
+                                .workspace()
+                                .clone()
+                                .update(cx, |workspace, cx| {
+                                    let Some(repo) =
+                                        workspace.project().read(cx).active_repository(cx)
+                                    else {
+                                        log::error!("no active repository found for commit view");
+                                        return Err(anyhow::anyhow!("no active repository found"));
+                                    };
 
-                            git_ui::commit_view::CommitView::open(
-                                sha,
-                                repo.downgrade(),
-                                workspace.weak_handle(),
-                                None,
-                                None,
-                                window,
-                                cx,
-                            );
-                            Ok(())
+                                    git_ui::commit_view::CommitView::open(
+                                        sha,
+                                        repo.downgrade(),
+                                        workspace.weak_handle(),
+                                        None,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                                    Ok(())
+                                })
                         })
                         .log_err();
 
@@ -1111,6 +1151,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             let (_window, results) = open_paths_with_positions(
                 &paths_with_position,
                 &request.diff_paths,
+                request.diff_all,
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -1142,6 +1183,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             client::ChannelId(channel_id),
                             app_state.clone(),
                             None,
+                            None,
                             cx,
                         )
                     })
@@ -1149,8 +1191,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 }
 
                 let workspace_window =
-                    workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let workspace = workspace_window.entity(cx)?;
+                    workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
+
+                let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {
@@ -1240,78 +1283,57 @@ async fn installation_id() -> Result<IdType> {
     Ok(IdType::New(installation_id))
 }
 
-async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        let use_system_window_tabs =
-            cx.update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs);
+pub(crate) async fn restore_or_create_workspace(
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    if let Some((multi_workspaces, remote_workspaces)) = restorable_workspaces(cx, &app_state).await
+    {
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        for (index, (workspace_id, location, paths)) in locations.into_iter().enumerate() {
-            match location {
-                SerializedWorkspaceLocation::Local if paths.is_empty() => {
-                    // Restore empty workspace by ID (has items like drafts but no folders)
-                    let app_state = app_state.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
-                            workspace::open_workspace_by_id(workspace_id, app_state, cx)
-                        });
-                        open_task.await.map(|_| ())
-                    });
-
-                    if use_system_window_tabs && index == 0 {
-                        results.push(task.await);
-                    } else {
-                        tasks.push(task);
+        for multi_workspace in multi_workspaces {
+            match restore_multiworkspace(multi_workspace, app_state.clone(), cx).await {
+                Ok(result) => {
+                    for error in result.errors {
+                        log::error!("Failed to restore workspace in group: {error:#}");
+                        results.push(Err(error));
                     }
                 }
-                SerializedWorkspaceLocation::Local => {
-                    let app_state = app_state.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let open_task = cx.update(|cx| {
-                            workspace::open_paths(
-                                &paths.paths(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                        });
-                        open_task.await.map(|_| ())
-                    });
-
-                    // If we're using system window tabs and this is the first workspace,
-                    // wait for it to finish so that the other windows can be added as tabs.
-                    if use_system_window_tabs && index == 0 {
-                        results.push(task.await);
-                    } else {
-                        tasks.push(task);
-                    }
-                }
-                SerializedWorkspaceLocation::Remote(mut connection_options) => {
-                    let app_state = app_state.clone();
-                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                        cx.update(|cx| {
-                            RemoteSettings::get_global(cx)
-                                .fill_connection_options_from_settings(options)
-                        });
-                    }
-                    let task = cx.spawn(async move |cx| {
-                        recent_projects::open_remote_project(
-                            connection_options,
-                            paths.paths().into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))
-                    });
-                    tasks.push(task);
+                Err(e) => {
+                    results.push(Err(e));
                 }
             }
         }
 
-        // Wait for all workspaces to open concurrently
+        for session_workspace in remote_workspaces {
+            let app_state = app_state.clone();
+            let SerializedWorkspaceLocation::Remote(mut connection_options) =
+                session_workspace.location
+            else {
+                continue;
+            };
+            let paths = session_workspace.paths;
+            if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                cx.update(|cx| {
+                    RemoteSettings::get_global(cx).fill_connection_options_from_settings(options)
+                });
+            }
+            let task = cx.spawn(async move |cx| {
+                recent_projects::open_remote_project(
+                    connection_options,
+                    paths.paths().iter().map(PathBuf::from).collect(),
+                    app_state,
+                    workspace::OpenOptions::default(),
+                    cx,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+            });
+            tasks.push(task);
+        }
+
+        // Wait for all window groups and remote workspaces to open concurrently
         results.extend(future::join_all(tasks).await);
 
         // Show notifications for any errors that occurred
@@ -1336,12 +1358,16 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             // Try to find an active workspace to show the toast
             let toast_shown = cx.update(|cx| {
                 if let Some(window) = cx.active_window()
-                    && let Some(workspace) = window.downcast::<Workspace>()
+                    && let Some(multi_workspace) = window.downcast::<MultiWorkspace>()
                 {
-                    workspace
-                        .update(cx, |workspace, _, cx| {
-                            workspace
-                                .show_toast(Toast::new(NotificationId::unique::<()>(), message), cx)
+                    multi_workspace
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                workspace.show_toast(
+                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    cx,
+                                )
+                            });
                         })
                         .ok();
                     return true;
@@ -1382,10 +1408,25 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
     Ok(())
 }
 
+async fn restorable_workspaces(
+    cx: &mut AsyncApp,
+    app_state: &Arc<AppState>,
+) -> Option<(
+    Vec<workspace::SerializedMultiWorkspace>,
+    Vec<SessionWorkspace>,
+)> {
+    let locations = restorable_workspace_locations(cx, app_state).await?;
+    let (remote_workspaces, local_workspaces) = locations
+        .into_iter()
+        .partition(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)));
+    let multi_workspaces = workspace::read_serialized_multi_workspaces(local_workspaces);
+    Some((multi_workspaces, remote_workspaces))
+}
+
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
-) -> Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>> {
+) -> Option<Vec<SessionWorkspace>> {
     let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
 
     let session_handle = app_state.session.clone();
@@ -1409,9 +1450,16 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location()
+            workspace::last_opened_workspace_location(app_state.fs.as_ref())
                 .await
-                .map(|location| vec![location])
+                .map(|(workspace_id, location, paths)| {
+                    vec![SessionWorkspace {
+                        workspace_id,
+                        location,
+                        paths,
+                        window_id: None,
+                    }]
+                })
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
             if let Some(last_session_id) = last_session_id {
@@ -1420,7 +1468,9 @@ pub(crate) async fn restorable_workspace_locations(
                 let mut locations = workspace::last_session_workspace_locations(
                     &last_session_id,
                     last_session_window_stack,
+                    app_state.fs.as_ref(),
                 )
+                .await
                 .filter(|locations| !locations.is_empty());
 
                 // Since last_session_window_order returns the windows ordered front-to-back
@@ -1474,6 +1524,7 @@ struct Args {
     paths_or_urls: Vec<String>,
 
     /// Pairs of file paths to diff. Can be specified multiple times.
+    /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
     diff: Vec<String>,
 
@@ -1705,23 +1756,40 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
+        schema: Option<serde_json::Value>,
         deprecated_aliases: &'static [&'static str],
+        deprecation_message: Option<&'static str>,
         documentation: Option<&'static str>,
     }
+    let mut generator = settings::KeymapFile::action_schema_generator();
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.deprecated_aliases,
-            documentation: action.documentation,
+        .map(|action| {
+            let schema = (action.json_schema)(&mut generator)
+                .map(|s| serde_json::to_value(s).expect("Failed to serialize action schema"));
+            ActionDef {
+                name: action.name,
+                human_name: command_palette::humanize_action_name(action.name),
+                schema,
+                deprecated_aliases: action.deprecated_aliases,
+                deprecation_message: action.deprecation_message,
+                documentation: action.documentation,
+            }
         })
         .collect::<Vec<ActionDef>>();
 
     actions.sort_by_key(|a| a.name);
 
+    let schema_definitions = serde_json::to_value(generator.definitions())
+        .expect("Failed to serialize schema definitions");
+
+    let output = serde_json::json!({
+        "actions": actions,
+        "schema_definitions": schema_definitions,
+    });
+
     io::Write::write(
         &mut std::io::stdout(),
-        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+        serde_json::to_string_pretty(&output).unwrap().as_bytes(),
     )
     .unwrap();
 }

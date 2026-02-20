@@ -62,6 +62,15 @@ pub fn init_visual_test(cx: &mut VisualTestAppContext) -> Arc<AppState> {
         terminal_view::init(cx);
         image_viewer::init(cx);
         search::init(cx);
+        cx.set_global(workspace::PaneSearchBarCallbacks {
+            setup_search_bar: |languages, toolbar, window, cx| {
+                let search_bar = cx.new(|cx| search::BufferSearchBar::new(languages, window, cx));
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar, window, cx);
+                });
+            },
+            wrap_div_with_search_actions: search::buffer_search::register_pane_search_actions,
+        });
 
         app_state
     })
@@ -417,7 +426,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_visual_test_smoke() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
 
         let _window = cx
             .open_offscreen_window_default(|_, cx| cx.new(|_| Empty))
@@ -429,7 +438,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_opens() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
         smol::block_on(async {
@@ -470,7 +479,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_screenshot() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
         smol::block_on(async {

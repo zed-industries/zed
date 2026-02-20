@@ -43,6 +43,10 @@ pub const MINIMUM_REQUIRED_VERSION_HEADER_NAME: &str = "x-zed-minimum-required-v
 pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-client-supports-status-messages";
 
+/// The name of the header used by the client to indicate to the server that it supports receiving a "stream_ended" request completion status.
+pub const CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME: &str =
+    "x-zed-client-supports-stream-ended-request-completion-status";
+
 /// The name of the header used by the server to indicate to the client that it supports sending status messages.
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
@@ -173,6 +177,8 @@ pub enum EditPredictionRejectReason {
     /// The current prediction was discarded
     #[default]
     Discarded,
+    /// The current prediction was explicitly rejected by the user
+    Rejected,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -216,11 +222,10 @@ pub enum CompletionRequestStatus {
         /// Retry duration in seconds.
         retry_after: Option<f64>,
     },
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
+    /// The cloud sends a StreamEnded message when the stream from the LLM provider finishes.
+    StreamEnded,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -289,17 +294,28 @@ pub struct LanguageModel {
     pub provider: LanguageModelProvider,
     pub id: LanguageModelId,
     pub display_name: String,
+    #[serde(default)]
+    pub is_latest: bool,
     pub max_token_count: usize,
     pub max_token_count_in_max_mode: Option<usize>,
     pub max_output_tokens: usize,
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportedEffortLevel {
+    pub name: Arc<str>,
+    pub value: Arc<str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_default: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

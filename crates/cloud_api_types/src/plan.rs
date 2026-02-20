@@ -9,6 +9,7 @@ pub enum Plan {
     ZedFree,
     ZedPro,
     ZedProTrial,
+    ZedStudent,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -58,5 +59,8 @@ mod tests {
 
         let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
         assert_eq!(plan, Plan::ZedProTrial);
+
+        let plan = serde_json::from_value::<Plan>(json!("zed_student")).unwrap();
+        assert_eq!(plan, Plan::ZedStudent);
     }
 }
