@@ -20,6 +20,7 @@ pub struct GitPanelSettings {
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub status_style: StatusStyle,
+    pub icons: bool,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
@@ -51,6 +52,7 @@ impl Settings for GitPanelSettings {
             dock: git_panel.dock.unwrap().into(),
             default_width: px(git_panel.default_width.unwrap()),
             status_style: git_panel.status_style.unwrap(),
+            icons: git_panel.icons.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel.scrollbar.unwrap().show.map(Into::into),
             },

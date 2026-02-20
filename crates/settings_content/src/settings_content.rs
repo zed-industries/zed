@@ -593,6 +593,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: icon
     pub status_style: Option<StatusStyle>,
+
+    /// Whether to show file and folder icons in the panel.
+    ///
+    /// Default: true
+    pub icons: Option<bool>,
+
     /// How and when the scrollbar should be displayed.
     ///
     /// Default: inherits editor scrollbar settings

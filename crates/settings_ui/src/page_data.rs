@@ -5017,7 +5017,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 10] {
+    fn git_panel_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5154,6 +5154,19 @@ fn panels_page() -> SettingsPage {
                     },
                     write: |settings_content, value| {
                         settings_content.git_panel.get_or_insert_default().tree_view = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Panel Icons",
+                description: "Whether to show file and folder icons in the panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.icons"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.icons.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.git_panel.get_or_insert_default().icons = value;
                     },
                 }),
                 metadata: None,

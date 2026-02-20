@@ -705,9 +705,12 @@ impl GitPanel {
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
+            let mut was_icons = GitPanelSettings::get_global(cx).icons;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-                let tree_view = GitPanelSettings::get_global(cx).tree_view;
+                let settings = GitPanelSettings::get_global(cx);
+                let sort_by_path = settings.sort_by_path;
+                let tree_view = settings.tree_view;
+                let icons = settings.icons;
                 if tree_view != was_tree_view {
                     this.view_mode = GitPanelViewMode::from_settings(cx);
                 }
@@ -715,8 +718,12 @@ impl GitPanel {
                     this.bulk_staging.take();
                     this.update_visible_entries(window, cx);
                 }
+                if icons != was_icons {
+                    cx.notify();
+                }
                 was_sort_by_path = sort_by_path;
                 was_tree_view = tree_view;
+                was_icons = icons;
             })
             .detach();
 
@@ -5010,14 +5017,15 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let tree_view = GitPanelSettings::get_global(cx).tree_view;
+        let settings = GitPanelSettings::get_global(cx);
+        let tree_view = settings.tree_view;
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
-        let status_style = GitPanelSettings::get_global(cx).status_style;
+        let status_style = settings.status_style;
         let status = entry.status;
         let file_icon = FileIcons::get_icon(entry.repo_path.as_std_path(), cx);
 
@@ -5096,11 +5104,13 @@ impl GitPanel {
             .min_w_0()
             .flex_1()
             .gap_1()
-            .child(
-                file_icon
-                    .map(|file_icon| Icon::from_path(file_icon).color(Color::Muted))
-                    .unwrap_or_else(|| Icon::new(IconName::File).color(Color::Muted)),
-            )
+            .when(settings.icons, |this| {
+                this.child(
+                    file_icon
+                        .map(|file_icon| Icon::from_path(file_icon).color(Color::Muted))
+                        .unwrap_or_else(|| Icon::new(IconName::File).color(Color::Muted)),
+                )
+            })
             .child(git_status_icon(status))
             .map(|this| {
                 if tree_view {
@@ -5257,6 +5267,7 @@ impl GitPanel {
             )
         };
 
+        let show_icons = GitPanelSettings::get_global(cx).icons;
         let folder_icon =
             FileIcons::get_folder_icon(entry.expanded, entry.key.path.as_std_path(), cx);
         let fallback_folder_icon = if entry.expanded {
@@ -5284,15 +5295,17 @@ impl GitPanel {
             .min_w_0()
             .gap_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
-            .child(
-                folder_icon
-                    .map(|folder_icon| Icon::from_path(folder_icon).color(Color::Muted))
-                    .unwrap_or_else(|| {
-                        Icon::new(fallback_folder_icon)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                    }),
-            )
+            .when(show_icons, |this| {
+                this.child(
+                    folder_icon
+                        .map(|folder_icon| Icon::from_path(folder_icon).color(Color::Muted))
+                        .unwrap_or_else(|| {
+                            Icon::new(fallback_folder_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                        }),
+                )
+            })
             .child(self.entry_label(entry.name.clone(), label_color).truncate());
 
         h_flex()
