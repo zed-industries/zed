@@ -5,13 +5,15 @@ use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use cloud_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody,
-    CompletionEvent, CountTokensBody, CountTokensResponse, ListModelsResponse,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
+    CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
+    CountTokensBody, CountTokensResponse, ListModelsResponse,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use feature_flags::{CloudThinkingToggleFeatureFlag, FeatureFlagAppExt as _};
 use futures::{
-    AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt,
+    future::BoxFuture,
+    stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
@@ -33,9 +35,11 @@ use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
@@ -168,26 +172,10 @@ impl State {
     }
 
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
-        let is_thinking_toggle_enabled = cx.has_flag::<CloudThinkingToggleFeatureFlag>();
-
         let mut models = Vec::new();
 
         for model in response.models {
             models.push(Arc::new(model.clone()));
-
-            if !is_thinking_toggle_enabled {
-                // Right now we represent thinking variants of models as separate models on the client,
-                // so we need to insert variants for any model that supports thinking.
-                if model.supports_thinking {
-                    models.push(Arc::new(cloud_llm_client::LanguageModel {
-                        id: cloud_llm_client::LanguageModelId(
-                            format!("{}-thinking", model.id).into(),
-                        ),
-                        display_name: format!("{} Thinking", model.display_name),
-                        ..model
-                    }));
-                }
-            }
         }
 
         self.default_model = models
@@ -410,6 +398,7 @@ impl CloudLanguageModel {
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
 
             let mut response = http_client.send(request).await?;
@@ -564,6 +553,10 @@ impl LanguageModel for CloudLanguageModel {
             Google => language_model::GOOGLE_PROVIDER_NAME,
             XAi => language_model::X_AI_PROVIDER_NAME,
         }
+    }
+
+    fn is_latest(&self) -> bool {
+        self.model.is_latest
     }
 
     fn supports_tools(&self) -> bool {
@@ -740,20 +733,15 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let thinking_allowed = request.thinking_allowed;
-        let is_thinking_toggle_enabled =
-            cx.update(|cx| cx.has_flag::<CloudThinkingToggleFeatureFlag>());
-        let enable_thinking = if is_thinking_toggle_enabled {
-            thinking_allowed && self.model.supports_thinking
-        } else {
-            thinking_allowed && self.model.id.0.ends_with("-thinking")
-        };
-        let effort = request
-            .thinking_effort
-            .as_ref()
-            .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+        let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic => {
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| anthropic::Effort::from_str(effort).ok());
+
                 let mut request = into_anthropic(
                     request,
                     self.model.id.to_string(),
@@ -811,8 +799,12 @@ impl LanguageModel for CloudLanguageModel {
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                let effort = request
+                    .thinking_effort
+                    .as_ref()
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
 
-                let request = into_open_ai_response(
+                let mut request = into_open_ai_response(
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
@@ -820,6 +812,11 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                     None,
                 );
+
+                if enable_thinking && let Some(effort) = effort {
+                    request.reasoning = Some(open_ai::responses::ReasoningConfig { effort });
+                }
+
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -939,24 +936,62 @@ where
         + 'static,
 {
     let provider = provider.clone();
-    stream
-        .flat_map(move |event| {
-            futures::stream::iter(match event {
-                Err(error) => {
-                    vec![Err(LanguageModelCompletionError::from(error))]
+    let mut stream = stream.fuse();
+
+    let mut saw_stream_ended = false;
+
+    let mut done = false;
+    let mut pending = VecDeque::new();
+
+    stream::poll_fn(move |cx| {
+        loop {
+            if let Some(item) = pending.pop_front() {
+                return Poll::Ready(Some(item));
+            }
+
+            if done {
+                return Poll::Ready(None);
+            }
+
+            match stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(event)) => {
+                    let items = match event {
+                        Err(error) => {
+                            vec![Err(LanguageModelCompletionError::from(error))]
+                        }
+                        Ok(CompletionEvent::Status(CompletionRequestStatus::StreamEnded)) => {
+                            saw_stream_ended = true;
+                            vec![]
+                        }
+                        Ok(CompletionEvent::Status(status)) => {
+                            LanguageModelCompletionEvent::from_completion_request_status(
+                                status,
+                                provider.clone(),
+                            )
+                            .transpose()
+                            .map(|event| vec![event])
+                            .unwrap_or_default()
+                        }
+                        Ok(CompletionEvent::Event(event)) => map_callback(event),
+                    };
+                    pending.extend(items);
                 }
-                Ok(CompletionEvent::Status(event)) => {
-                    vec![
-                        LanguageModelCompletionEvent::from_completion_request_status(
-                            event,
-                            provider.clone(),
-                        ),
-                    ]
+                Poll::Ready(None) => {
+                    done = true;
+
+                    if !saw_stream_ended {
+                        return Poll::Ready(Some(Err(
+                            LanguageModelCompletionError::StreamEndedUnexpectedly {
+                                provider: provider.clone(),
+                            },
+                        )));
+                    }
                 }
-                Ok(CompletionEvent::Event(event)) => map_callback(event),
-            })
-        })
-        .boxed()
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    })
+    .boxed()
 }
 
 fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {

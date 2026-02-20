@@ -38,12 +38,12 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ("zbus", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
-    ("blade_graphics", log::LevelFilter::Warn),
+    ("wgpu", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
     // usvg prints a lot of warnings on rendering an SVG with partial errors, which
     // can happen a lot with the SVG preview
-    ("usvg::parser::style", log::LevelFilter::Error),
+    ("usvg::parser", log::LevelFilter::Error),
 ];
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {

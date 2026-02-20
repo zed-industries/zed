@@ -37,16 +37,16 @@ pub use visual_test_context::*;
 use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Arena,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
-    DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
-    KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority,
-    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
+    ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
-    current_platform, hash, init_app_menus,
+    hash, init_app_menus,
 };
 
 mod async_context;
@@ -132,25 +132,10 @@ pub struct Application(Rc<AppCell>);
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
-    /// Builds an app with the given asset source.
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        #[cfg(any(test, feature = "test-support"))]
-        log::info!("GPUI was compiled in test mode");
-
+    /// Builds an app with a caller-provided platform implementation.
+    pub fn with_platform(platform: Rc<dyn Platform>) -> Self {
         Self(App::new_app(
-            current_platform(false),
-            Arc::new(()),
-            Arc::new(NullHttpClient),
-        ))
-    }
-
-    /// Build an app in headless mode. This prevents opening windows,
-    /// but makes it possible to run an application in an context like
-    /// SSH, where GUI applications are not allowed.
-    pub fn headless() -> Self {
-        Self(App::new_app(
-            current_platform(true),
+            platform,
             Arc::new(()),
             Arc::new(NullHttpClient),
         ))
@@ -643,6 +628,8 @@ pub struct App {
     /// Per-App element arena. This isolates element allocations between different
     /// App instances (important for tests where multiple Apps run concurrently).
     pub(crate) element_arena: RefCell<Arena>,
+    /// Per-App event arena.
+    pub(crate) event_arena: Arena,
 }
 
 impl App {
@@ -722,6 +709,7 @@ impl App {
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
+                event_arena: Arena::new(1024 * 1024),
             }),
         });
 
@@ -866,10 +854,12 @@ impl App {
         &mut self,
         callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let accessed_entities_start = self.entities.accessed_entities.borrow().clone();
+        let accessed_entities_start = self.entities.accessed_entities.get_mut().clone();
         let result = callback(self);
-        let accessed_entities_end = self.entities.accessed_entities.borrow().clone();
-        let entities_accessed_in_callback = accessed_entities_end
+        let entities_accessed_in_callback = self
+            .entities
+            .accessed_entities
+            .get_mut()
             .difference(&accessed_entities_start)
             .copied()
             .collect::<FxHashSet<EntityId>>();
@@ -1340,7 +1330,7 @@ impl App {
                         emitter,
                         event_type,
                         event,
-                    } => self.apply_emit_effect(emitter, event_type, event),
+                    } => self.apply_emit_effect(emitter, event_type, &*event),
 
                     Effect::RefreshWindows => {
                         self.apply_refresh_effect();
@@ -1377,6 +1367,7 @@ impl App {
                 }
 
                 if self.pending_effects.is_empty() {
+                    self.event_arena.clear();
                     break;
                 }
             }
@@ -1434,12 +1425,12 @@ impl App {
             .retain(&emitter, |handler| handler(self));
     }
 
-    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: Box<dyn Any>) {
+    fn apply_emit_effect(&mut self, emitter: EntityId, event_type: TypeId, event: &dyn Any) {
         self.event_listeners
             .clone()
             .retain(&emitter, |(stored_type, handler)| {
                 if *stored_type == event_type {
-                    handler(event.as_ref(), self)
+                    handler(event, self)
                 } else {
                     true
                 }
@@ -2407,7 +2398,7 @@ pub(crate) enum Effect {
     Emit {
         emitter: EntityId,
         event_type: TypeId,
-        event: Box<dyn Any>,
+        event: ArenaBox<dyn Any>,
     },
     RefreshWindows,
     NotifyGlobalObservers {

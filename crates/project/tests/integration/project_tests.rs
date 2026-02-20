@@ -48,9 +48,9 @@ use language::{
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
-    CodeActionKind, DiagnosticSeverity, DocumentChanges, FileOperationFilter, LanguageServerId,
-    LanguageServerName, NumberOrString, TextDocumentEdit, Uri, WillRenameFiles,
-    notification::DidRenameFiles,
+    CodeActionKind, DEFAULT_LSP_REQUEST_TIMEOUT, DiagnosticSeverity, DocumentChanges,
+    FileOperationFilter, LanguageServerId, LanguageServerName, NumberOrString, TextDocumentEdit,
+    Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::{config_dir, global_gitignore_path, tasks_file};
@@ -2202,49 +2202,52 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Keep track of the FS events reported to the language server.
     let file_changes = Arc::new(Mutex::new(Vec::new()));
     fake_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/Cargo.toml").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/src/*.{rs,c}").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the-root/target/y/**/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("/the/stdlib/src/**/*.rs").to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    path!("**/Cargo.lock").to_string(),
-                                ),
-                                kind: None,
-                            },
-                        ],
-                    },
-                )
-                .ok(),
-            }],
-        })
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: Default::default(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/Cargo.toml").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/src/*.{rs,c}").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the-root/target/y/**/*.rs").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("/the/stdlib/src/**/*.rs").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                                lsp::FileSystemWatcher {
+                                    glob_pattern: lsp::GlobPattern::String(
+                                        path!("**/Cargo.lock").to_string(),
+                                    ),
+                                    kind: None,
+                                },
+                            ],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
         .await
         .into_response()
         .unwrap();
@@ -3025,6 +3028,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
                 cancellable: Some(false),
                 ..Default::default()
             },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
         )
         .await;
     // Ensure progress notification is fully processed before starting the next one
@@ -3037,6 +3041,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
                 cancellable: Some(true),
                 ..Default::default()
             },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
         )
         .await;
     // Ensure progress notification is fully processed before cancelling
@@ -4672,6 +4677,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                     ..Default::default()
                                 },
                             },
+                            DEFAULT_LSP_REQUEST_TIMEOUT,
                         )
                         .await
                         .into_response()
@@ -5083,7 +5089,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Plain Text".into());
+        assert_eq!(buffer.language().unwrap().name(), "Plain Text");
     });
     project
         .update(cx, |project, cx| {
@@ -5106,7 +5112,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         );
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     let opened_buffer = project
@@ -12138,6 +12144,107 @@ mod disable_ai_settings_tests {
             assert!(
                 DisableAiSettings::get_global(cx).disable_ai,
                 "Local false cannot override global true"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_project_level_settings(cx: &mut TestAppContext) {
+        use settings::{LocalSettingsKind, LocalSettingsPath, SettingsLocation, SettingsStore};
+        use worktree::WorktreeId;
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            // Default should allow AI
+            assert!(
+                !DisableAiSettings::get_global(cx).disable_ai,
+                "Default should allow AI"
+            );
+        });
+
+        let worktree_id = WorktreeId::from_usize(1);
+        let rel_path = |path: &str| -> std::sync::Arc<util::rel_path::RelPath> {
+            std::sync::Arc::from(util::rel_path::RelPath::unix(path).unwrap())
+        };
+        let project_path = rel_path("project");
+        let settings_location = SettingsLocation {
+            worktree_id,
+            path: project_path.as_ref(),
+        };
+
+        // Test: Project-level disable_ai=true should disable AI for files in that project
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(project_path.clone()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "disable_ai": true }"#),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update(|cx| {
+            let settings = DisableAiSettings::get(Some(settings_location), cx);
+            assert!(
+                settings.disable_ai,
+                "Project-level disable_ai=true should disable AI for files in that project"
+            );
+            // Global should now also be true since project-level disable_ai is merged into global
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Global setting should be affected by project-level disable_ai=true"
+            );
+        });
+
+        // Test: Setting project-level to false should allow AI for that project
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(project_path.clone()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "disable_ai": false }"#),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update(|cx| {
+            let settings = DisableAiSettings::get(Some(settings_location), cx);
+            assert!(
+                !settings.disable_ai,
+                "Project-level disable_ai=false should allow AI"
+            );
+            // Global should also be false now
+            assert!(
+                !DisableAiSettings::get_global(cx).disable_ai,
+                "Global setting should be false when project-level is false"
+            );
+        });
+
+        // Test: User-level true + project-level false = AI disabled (saturation)
+        let disable_true = serde_json::json!({ "disable_ai": true }).to_string();
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.set_user_settings(&disable_true, cx).unwrap();
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(project_path.clone()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "disable_ai": false }"#),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        cx.update(|cx| {
+            let settings = DisableAiSettings::get(Some(settings_location), cx);
+            assert!(
+                settings.disable_ai,
+                "Project-level false cannot override user-level true (SaturatingBool)"
             );
         });
     }

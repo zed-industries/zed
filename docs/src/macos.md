@@ -1,3 +1,8 @@
+---
+title: Zed on macOS
+description: "Zed is developed primarily on macOS, making it a first-class platform with full feature support."
+---
+
 # Zed on macOS
 
 Zed is developed primarily on macOS, making it a first-class platform with full feature support.

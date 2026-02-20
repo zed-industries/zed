@@ -283,6 +283,10 @@ impl LanguageModel for GoogleLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), GoogleModelMode::Thinking { .. })
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

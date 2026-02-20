@@ -51,7 +51,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 use std::u64;
 use std::{
@@ -64,7 +63,8 @@ use std::{
 use task::SharedTaskContext;
 use text::{PointUtf16, ToPointUtf16};
 use url::Url;
-use util::command::new_smol_command;
+use util::command::Stdio;
+use util::command::new_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
@@ -2883,7 +2883,7 @@ impl Session {
 
                 let child = remote_client.update(cx, |client, _| {
                     let command = client.build_forward_ports_command(port_forwards)?;
-                    let child = new_smol_command(command.program)
+                    let child = new_command(command.program)
                         .args(command.args)
                         .envs(command.env)
                         .spawn()
@@ -3067,7 +3067,7 @@ struct KillCompanionBrowserParams {
 async fn spawn_companion(
     node_runtime: NodeRuntime,
     cx: &mut AsyncApp,
-) -> Result<(u16, smol::process::Child)> {
+) -> Result<(u16, util::command::Child)> {
     let binary_path = node_runtime
         .binary_path()
         .await
@@ -3089,7 +3089,7 @@ async fn spawn_companion(
         .to_string_lossy()
         .to_string();
 
-    let child = new_smol_command(binary_path)
+    let child = new_command(binary_path)
         .arg(path)
         .args([
             format!("--listen=127.0.0.1:{port}"),

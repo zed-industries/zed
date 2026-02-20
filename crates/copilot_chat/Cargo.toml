@@ -22,7 +22,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 collections.workspace = true
 dirs.workspace = true
 fs.workspace = true

@@ -18,7 +18,8 @@ anyhow.workspace = true
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true
-bedrock.workspace = true
+base64.workspace = true
+bedrock = { workspace = true, features = ["schemars"] }
 chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
@@ -33,7 +34,6 @@ credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 extension.workspace = true
 extension_host.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }

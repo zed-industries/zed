@@ -5,7 +5,8 @@ use crate::{
     repair,
 };
 use anyhow::{Context as _, Result};
-use zeta_prompt::{CURSOR_MARKER, ZetaVersion};
+use edit_prediction::example_spec::encode_cursor_in_patch;
+use zeta_prompt::{CURSOR_MARKER, ZetaFormat};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -49,15 +50,21 @@ pub fn parse_prediction_output(
     }
 }
 
-fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<String> {
-    let (current_marker, end_marker) = match version {
-        ZetaVersion::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
-        ZetaVersion::V0113Ordered | ZetaVersion::V0114180EditableRegion => {
+fn extract_zeta2_current_region(prompt: &str, format: ZetaFormat) -> Result<String> {
+    let (current_marker, end_marker) = match format {
+        ZetaFormat::V0112MiddleAtEnd => ("<|fim_middle|>current\n", "<|fim_middle|>updated"),
+        ZetaFormat::V0113Ordered | ZetaFormat::V0114180EditableRegion => {
             ("<|fim_middle|>current\n", "<|fim_suffix|>")
         }
-        ZetaVersion::V0120GitMergeMarkers | ZetaVersion::V0131GitMergeMarkersPrefix => (
+        ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill => (
             zeta_prompt::v0120_git_merge_markers::START_MARKER,
             zeta_prompt::v0120_git_merge_markers::SEPARATOR,
+        ),
+        ZetaFormat::V0211SeedCoder => (
+            zeta_prompt::seed_coder::START_MARKER,
+            zeta_prompt::seed_coder::SEPARATOR,
         ),
     };
 
@@ -82,7 +89,7 @@ fn extract_zeta2_current_region(prompt: &str, version: ZetaVersion) -> Result<St
 fn parse_zeta2_output(
     example: &Example,
     actual_output: &str,
-    version: ZetaVersion,
+    format: ZetaFormat,
 ) -> Result<(String, Option<ActualCursor>)> {
     let prompt = &example.prompt.as_ref().context("prompt required")?.input;
     let prompt_inputs = example
@@ -90,7 +97,7 @@ fn parse_zeta2_output(
         .as_ref()
         .context("prompt_inputs required")?;
 
-    let old_text = extract_zeta2_current_region(prompt, version)?;
+    let old_text = extract_zeta2_current_region(prompt, format)?;
 
     let mut new_text = actual_output.to_string();
     let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
@@ -100,12 +107,15 @@ fn parse_zeta2_output(
         None
     };
 
-    let suffix = match version {
-        ZetaVersion::V0131GitMergeMarkersPrefix => {
+    let suffix = match format {
+        ZetaFormat::V0131GitMergeMarkersPrefix | ZetaFormat::V0211Prefill => {
             zeta_prompt::v0131_git_merge_markers_prefix::END_MARKER
         }
-        ZetaVersion::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
-        _ => "",
+        ZetaFormat::V0120GitMergeMarkers => zeta_prompt::v0120_git_merge_markers::END_MARKER,
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion => "",
+        ZetaFormat::V0211SeedCoder => zeta_prompt::seed_coder::END_MARKER,
     };
     if !suffix.is_empty() {
         new_text = new_text
@@ -153,6 +163,8 @@ fn parse_zeta2_output(
         path = example.spec.cursor_path.to_string_lossy(),
     );
 
+    let formatted_diff = encode_cursor_in_patch(&formatted_diff, cursor_offset);
+
     let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
         ActualCursor::from_editable_region(
             &example.spec.cursor_path,
@@ -184,7 +196,7 @@ mod tests {
             <|fim_middle|>updated
         "};
 
-        let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
+        let region = extract_zeta2_current_region(prompt, ZetaFormat::V0113Ordered).unwrap();
         assert_eq!(region, "println!(\"hello\");\n");
     }
 
@@ -201,7 +213,7 @@ mod tests {
             <|fim_middle|>updated
         "};
 
-        let region = extract_zeta2_current_region(prompt, ZetaVersion::V0112MiddleAtEnd).unwrap();
+        let region = extract_zeta2_current_region(prompt, ZetaFormat::V0112MiddleAtEnd).unwrap();
         assert_eq!(region, "println!(\"hello\");\n");
     }
 
@@ -218,7 +230,7 @@ mod tests {
             <|fim_middle|>updated
         "};
 
-        let region = extract_zeta2_current_region(prompt, ZetaVersion::V0113Ordered).unwrap();
+        let region = extract_zeta2_current_region(prompt, ZetaFormat::V0113Ordered).unwrap();
         assert_eq!(region, "println!(\"hello\");\n");
     }
 
@@ -236,7 +248,7 @@ mod tests {
         "};
 
         let region =
-            extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
+            extract_zeta2_current_region(prompt, ZetaFormat::V0120GitMergeMarkers).unwrap();
         assert_eq!(region, "println!(\"hello\");\n");
     }
 
@@ -254,7 +266,7 @@ mod tests {
         "};
 
         let region =
-            extract_zeta2_current_region(prompt, ZetaVersion::V0120GitMergeMarkers).unwrap();
+            extract_zeta2_current_region(prompt, ZetaFormat::V0120GitMergeMarkers).unwrap();
         assert_eq!(region, "println!(\"hello\");\n");
     }
 }

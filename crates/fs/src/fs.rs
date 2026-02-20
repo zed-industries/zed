@@ -15,7 +15,7 @@ use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
 use std::borrow::Cow;
-use util::command::new_smol_command;
+use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -33,9 +33,11 @@ use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
+#[cfg(any(target_os = "windows", feature = "test-support"))]
+use std::path::Component;
 use std::{
     io::{self, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -516,7 +518,7 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            let status = new_smol_command("cmd")
+            let status = new_command("cmd")
                 .args(["/C", "mklink", "/J"])
                 .args([path, target.as_path()])
                 .status()
@@ -1057,7 +1059,7 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let config = new_smol_command("git")
+        let config = new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()
@@ -1071,7 +1073,7 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_smol_command("git")
+        new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
@@ -1091,7 +1093,7 @@ impl Fs for RealFs {
 
         let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
 
-        let output = new_smol_command("git")
+        let output = new_command("git")
             .current_dir(abs_work_directory)
             .args(&["clone", repo_url])
             .output()
@@ -2069,6 +2071,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_create_worktree_error = message;
+        })
+        .unwrap();
+    }
+
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
@@ -2806,30 +2815,7 @@ impl Fs for FakeFs {
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
+    util::normalize_path(path)
 }
 
 pub async fn copy_recursive<'a>(

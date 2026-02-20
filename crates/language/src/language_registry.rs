@@ -87,6 +87,18 @@ impl Borrow<str> for LanguageName {
     }
 }
 
+impl PartialEq<str> for LanguageName {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_ref() == other
+    }
+}
+
+impl PartialEq<&str> for LanguageName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_ref() == *other
+    }
+}
+
 impl std::fmt::Display for LanguageName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -414,6 +426,17 @@ impl LanguageRegistry {
         state.available_lsp_adapters.contains_key(name)
     }
 
+    /// Returns the names of all available LSP adapters (registered via `register_available_lsp_adapter`).
+    /// These are adapters that are not bound to a specific language but can be enabled via settings.
+    pub fn available_lsp_adapter_names(&self) -> Vec<LanguageServerName> {
+        self.state
+            .read()
+            .available_lsp_adapters
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
 
@@ -552,15 +575,16 @@ impl LanguageRegistry {
     }
 
     /// Adds paths to WASM grammar files, which can be loaded if needed.
-    pub fn register_wasm_grammars(
-        &self,
-        grammars: impl IntoIterator<Item = (impl Into<Arc<str>>, PathBuf)>,
-    ) {
+    pub fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        if grammars.is_empty() {
+            return;
+        }
+
         let mut state = self.state.write();
         state.grammars.extend(
             grammars
                 .into_iter()
-                .map(|(name, path)| (name.into(), AvailableGrammar::Unloaded(path))),
+                .map(|(name, path)| (name, AvailableGrammar::Unloaded(path))),
         );
         state.version += 1;
         state.reload_count += 1;
@@ -740,6 +764,7 @@ impl LanguageRegistry {
         self.language_for_file_internal(path, None, None)
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn load_language_for_file_path<'a>(
         self: &Arc<Self>,
         path: &'a Path,

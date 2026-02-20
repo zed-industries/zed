@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf};
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, SharedString, Task};
-use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
+use project::agent_server_store::{AllAgentServersSettings, CLAUDE_AGENT_NAME};
 
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
@@ -24,7 +24,7 @@ pub struct AgentServerLoginCommand {
 
 impl AgentServer for ClaudeCode {
     fn name(&self) -> SharedString {
-        "Claude Code".into()
+        "Claude Agent".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -232,8 +232,8 @@ impl AgentServer for ClaudeCode {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
-                        .get_external_agent(&CLAUDE_CODE_NAME.into())
-                        .context("Claude Code is not registered")?;
+                        .get_external_agent(&CLAUDE_AGENT_NAME.into())
+                        .context("Claude Agent is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
                         extra_env,

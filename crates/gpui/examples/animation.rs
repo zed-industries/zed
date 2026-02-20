@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    Animation, AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
-    Transformation, Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage,
-    prelude::*, px, size, svg,
+    Animation, AnimationExt as _, App, AssetSource, Bounds, Context, SharedString, Transformation,
+    Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage, prelude::*, px,
+    size, svg,
 };
+use gpui_platform::application;
 
 struct Assets {}
 
@@ -101,21 +102,19 @@ impl Render for AnimationExample {
 }
 
 fn main() {
-    Application::new()
-        .with_assets(Assets {})
-        .run(|cx: &mut App| {
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(300.), px(300.)),
-                    cx,
-                ))),
-                ..Default::default()
-            };
-            cx.open_window(options, |_, cx| {
-                cx.activate(false);
-                cx.new(|_| AnimationExample {})
-            })
-            .unwrap();
-        });
+    application().with_assets(Assets {}).run(|cx: &mut App| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(300.), px(300.)),
+                cx,
+            ))),
+            ..Default::default()
+        };
+        cx.open_window(options, |_, cx| {
+            cx.activate(false);
+            cx.new(|_| AnimationExample {})
+        })
+        .unwrap();
+    });
 }

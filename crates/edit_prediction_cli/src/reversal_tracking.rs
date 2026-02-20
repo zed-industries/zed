@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use edit_prediction::udiff::apply_diff_to_string;
-use language::text_diff;
+use language::{char_diff, text_diff};
 
 use crate::example::ExamplePromptInputs;
 
@@ -417,17 +417,6 @@ impl ReversalOverlap {
     }
 }
 
-/// Check if `needle` is a subsequence of `haystack` (characters appear in order, not necessarily contiguous).
-fn is_subsequence(needle: &str, haystack: &str) -> bool {
-    let mut needle_chars = needle.chars().peekable();
-    for c in haystack.chars() {
-        if needle_chars.peek() == Some(&c) {
-            needle_chars.next();
-        }
-    }
-    needle_chars.peek().is_none()
-}
-
 /// Normalize edits where `old_text` appears as a subsequence within `new_text` (extension),
 /// or where `new_text` appears as a subsequence within `old_text` (reduction).
 ///
@@ -442,31 +431,35 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
 fn normalize_extension_edits(edits: Vec<GranularEdit>) -> Vec<GranularEdit> {
     edits
         .into_iter()
-        .map(|edit| {
+        .flat_map(|edit| {
             if edit.old_text.is_empty() || edit.new_text.is_empty() {
-                return edit;
+                return vec![edit];
             }
 
-            if is_subsequence(&edit.old_text, &edit.new_text) {
-                let inserted_char_count =
-                    edit.new_text.chars().count() - edit.old_text.chars().count();
-                GranularEdit {
-                    range: edit.range.start..edit.range.start,
-                    old_text: String::new(),
-                    new_text: edit.new_text.chars().take(inserted_char_count).collect(),
-                }
-            } else if is_subsequence(&edit.new_text, &edit.old_text) {
-                let deleted_char_count =
-                    edit.old_text.chars().count() - edit.new_text.chars().count();
-                let deleted_text: String = edit.old_text.chars().take(deleted_char_count).collect();
-                GranularEdit {
-                    range: edit.range.start..edit.range.start + deleted_text.len(),
-                    old_text: deleted_text,
-                    new_text: String::new(),
-                }
-            } else {
-                edit
+            // Use character-wise diff to find exact byte ranges of changes
+            let char_edits = char_diff(&edit.old_text, &edit.new_text);
+
+            let all_deletions = !char_edits.is_empty()
+                && char_edits
+                    .iter()
+                    .all(|(range, replacement)| !range.is_empty() && replacement.is_empty());
+            let all_insertions = !char_edits.is_empty()
+                && char_edits
+                    .iter()
+                    .all(|(range, replacement)| range.is_empty() && !replacement.is_empty());
+            if all_deletions || all_insertions {
+                return char_edits
+                    .into_iter()
+                    .map(|(range, replacement)| GranularEdit {
+                        range: edit.range.start + range.start..edit.range.start + range.end,
+                        old_text: edit.old_text[range].to_string(),
+                        new_text: replacement.to_string(),
+                    })
+                    .collect();
             }
+
+            // Otherwise, keep the original edit (mixed changes)
+            vec![edit]
         })
         .collect()
 }
@@ -1716,20 +1709,6 @@ mod tests {
                 case.name, case.expected_total_chars, overlap.total_chars_in_prediction
             );
         }
-    }
-
-    #[test]
-    fn test_is_subsequence() {
-        assert!(is_subsequence("", "anything"));
-        assert!(is_subsequence("", ""));
-        assert!(is_subsequence("abc", "abc"));
-        assert!(is_subsequence("abc", "aXbXc"));
-        assert!(is_subsequence("ac", "abc"));
-        assert!(!is_subsequence("abc", "ab"));
-        assert!(!is_subsequence("abc", "cba"));
-        assert!(!is_subsequence("abc", ""));
-        assert!(is_subsequence("日本", "日X本Y語"));
-        assert!(!is_subsequence("日本語", "日本"));
     }
 
     #[test]

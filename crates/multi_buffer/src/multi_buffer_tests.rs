@@ -521,7 +521,7 @@ async fn test_inverted_diff_hunks_in_range(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx));
     let diff = cx
         .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
-    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(base_text_buffer.clone(), cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
@@ -3066,7 +3066,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         });
 
                         let base_text_buffer =
-                            diff.read_with(cx, |diff, _| diff.base_text_buffer());
+                            diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
                         // Track for recalculation when main buffer is edited
                         inverted_diff_main_buffers.insert(main_buffer_id, diff.clone());
@@ -3100,7 +3100,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                     if let Some(diff) = inverted_diff_main_buffers.get(&buffer_id) {
                         let base_text_buffer =
-                            diff.read_with(cx, |diff, _| diff.base_text_buffer());
+                            diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
                         (base_text_buffer, diff.clone(), Some(buffer_handle))
                     } else {
                         // Get existing diff or create new one for regular buffer
@@ -3933,7 +3933,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
-    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
@@ -4084,7 +4084,7 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
         .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
     cx.run_until_parked();
 
-    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer());
+    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
@@ -5040,4 +5040,87 @@ fn test_range_to_buffer_ranges_with_range_bounds(cx: &mut App) {
     );
     assert_eq!(ranges_unbounded_trailing[0].2, te_excerpt_1_id);
     assert_eq!(ranges_unbounded_trailing[1].2, te_excerpt_2_id);
+}
+
+#[gpui::test]
+fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) {
+    let buffer_b_text: String = (0..50).map(|i| format!("line_b {i}\n")).collect();
+    let buffer_b = cx.new(|cx| Buffer::local(buffer_b_text, cx));
+
+    let buffer_c_text: String = (0..10).map(|i| format!("line_c {i}\n")).collect();
+    let buffer_c = cx.new(|cx| Buffer::local(buffer_c_text, cx));
+
+    let buffer_d_text: String = (0..10).map(|i| format!("line_d {i}\n")).collect();
+    let buffer_d = cx.new(|cx| Buffer::local(buffer_d_text, cx));
+
+    let path_b = PathKey::with_sort_prefix(0, rel_path("bbb.rs").into_arc());
+    let path_c = PathKey::with_sort_prefix(0, rel_path("ddd.rs").into_arc());
+    let path_d = PathKey::with_sort_prefix(0, rel_path("ccc.rs").into_arc());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_b.clone(),
+            buffer_b.clone(),
+            vec![
+                Point::row_range(0..3),
+                Point::row_range(15..18),
+                Point::row_range(30..33),
+            ],
+            0,
+            cx,
+        );
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_c.clone(),
+            buffer_c.clone(),
+            vec![Point::row_range(0..3)],
+            0,
+            cx,
+        );
+    });
+
+    let (anchor_in_e_b2, anchor_in_e_b3) = multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+        let excerpt_ids: Vec<ExcerptId> = snapshot.excerpts().map(|(id, _, _)| id).collect();
+        assert_eq!(excerpt_ids.len(), 4, "expected 4 excerpts (3×B + 1×C)");
+
+        let e_b2_id = excerpt_ids[1];
+        let e_b3_id = excerpt_ids[2];
+
+        let e_b2 = snapshot.excerpt(e_b2_id).expect("E_B2 should exist");
+        let e_b3 = snapshot.excerpt(e_b3_id).expect("E_B3 should exist");
+
+        let anchor_b2 = Anchor::in_buffer(e_b2_id, e_b2.range.context.start);
+        let anchor_b3 = Anchor::in_buffer(e_b3_id, e_b3.range.context.start);
+        (anchor_b2, anchor_b3)
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_b.clone(),
+            buffer_b.clone(),
+            vec![Point::row_range(0..3), Point::row_range(28..36)],
+            0,
+            cx,
+        );
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path_d.clone(),
+            buffer_d.clone(),
+            vec![Point::row_range(0..3)],
+            0,
+            cx,
+        );
+    });
+
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+        snapshot.summaries_for_anchors::<Point, _>(&[anchor_in_e_b2, anchor_in_e_b3]);
+    });
 }

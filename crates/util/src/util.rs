@@ -22,7 +22,7 @@ use futures::Future;
 use itertools::Either;
 use paths::PathExt;
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -409,8 +409,6 @@ pub fn set_pre_exec_to_start_new_session(
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
             libc::setsid();
-            #[cfg(target_os = "macos")]
-            crate::command::reset_exception_ports();
             Ok(())
         });
     };
@@ -997,7 +995,10 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 /// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
 /// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
-pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+pub fn split_str_with_ranges<'s>(
+    s: &'s str,
+    pat: &dyn Fn(char) -> bool,
+) -> Vec<(Range<usize>, &'s str)> {
     let mut result = Vec::new();
     let mut start = 0;
 
@@ -1055,6 +1056,36 @@ pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
         panic!("Unexpected None");
     }
     option
+}
+
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
 }
 
 #[cfg(test)]
@@ -1330,13 +1361,13 @@ Line 3"#
     #[test]
     fn test_split_with_ranges() {
         let input = "hi";
-        let result = split_str_with_ranges(input, |c| c == ' ');
+        let result = split_str_with_ranges(input, &|c| c == ' ');
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], (0..2, "hi"));
 
         let input = "héllo🦀world";
-        let result = split_str_with_ranges(input, |c| c == '🦀');
+        let result = split_str_with_ranges(input, &|c| c == '🦀');
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes

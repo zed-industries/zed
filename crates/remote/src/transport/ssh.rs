@@ -18,10 +18,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use semver::Version;
 pub use settings::SshPortForwardOption;
-use smol::{
-    fs,
-    process::{self, Child, Stdio},
-};
+use smol::fs;
 use std::{
     net::IpAddr,
     path::{Path, PathBuf},
@@ -29,6 +26,7 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
+use util::command::{Child, Stdio};
 use util::{
     paths::{PathStyle, RemotePathBuf},
     rel_path::RelPath,
@@ -157,7 +155,7 @@ impl MasterProcess {
             "-o",
         ];
 
-        let mut master_process = util::command::new_smol_command("ssh");
+        let mut master_process = util::command::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -206,7 +204,7 @@ impl MasterProcess {
             &format!("echo '{}'; exec $0", Self::CONNECTION_ESTABLISHED_MAGIC),
         ];
 
-        let mut master_process = util::command::new_smol_command("ssh");
+        let mut master_process = util::command::new_command("ssh");
         master_process
             .kill_on_drop(true)
             .stdin(Stdio::null())
@@ -992,8 +990,8 @@ impl SshRemoteConnection {
         src_path: &Path,
         dest_path_str: &str,
         args: Option<&[&str]>,
-    ) -> process::Command {
-        let mut command = util::command::new_smol_command("scp");
+    ) -> util::command::Command {
+        let mut command = util::command::new_command("scp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1012,8 +1010,8 @@ impl SshRemoteConnection {
         command
     }
 
-    fn build_sftp_command(&self) -> process::Command {
-        let mut command = util::command::new_smol_command("sftp");
+    fn build_sftp_command(&self) -> util::command::Command {
+        let mut command = util::command::new_command("sftp");
         self.socket.ssh_options(&mut command, false).args(
             self.socket
                 .connection_options
@@ -1107,7 +1105,7 @@ impl SshSocket {
         let get_password =
             move |_| Task::ready(std::ops::ControlFlow::Continue(Ok(password.clone())));
 
-        let _proxy = askpass::PasswordProxy::new(get_password, executor).await?;
+        let _proxy = askpass::PasswordProxy::new(Box::new(get_password), executor).await?;
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
         envs.insert(
             "SSH_ASKPASS".into(),
@@ -1133,8 +1131,8 @@ impl SshSocket {
         program: &str,
         args: &[impl AsRef<str>],
         allow_pseudo_tty: bool,
-    ) -> process::Command {
-        let mut command = util::command::new_smol_command("ssh");
+    ) -> util::command::Command {
+        let mut command = util::command::new_command("ssh");
         let program = shell_kind.prepend_command_prefix(program);
         let mut to_run = shell_kind
             .try_quote_prefix_aware(&program)
@@ -1185,9 +1183,9 @@ impl SshSocket {
 
     fn ssh_options<'a>(
         &self,
-        command: &'a mut process::Command,
+        command: &'a mut util::command::Command,
         include_port_forwards: bool,
-    ) -> &'a mut process::Command {
+    ) -> &'a mut util::command::Command {
         let args = if include_port_forwards {
             self.connection_options.additional_args()
         } else {
