@@ -21,7 +21,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentGitWorktreesFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
@@ -3372,7 +3372,9 @@ impl AgentPanel {
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .pr(DynamicSpacing::Base06.rems(cx))
                     .when(
-                        has_v2_flag && !self.active_thread_has_messages(cx),
+                        has_v2_flag
+                            && cx.has_flag::<AgentGitWorktreesFeatureFlag>()
+                            && !self.active_thread_has_messages(cx),
                         |this| this.child(self.render_thread_target_selector(cx)),
                     )
                     .child(new_thread_menu)

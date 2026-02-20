@@ -47,6 +47,16 @@ impl FeatureFlag for SubagentsFeatureFlag {
     }
 }
 
+pub struct AgentGitWorktreesFeatureFlag;
+
+impl FeatureFlag for AgentGitWorktreesFeatureFlag {
+    const NAME: &'static str = "agent-git-worktrees";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
