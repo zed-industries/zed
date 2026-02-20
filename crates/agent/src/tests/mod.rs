@@ -4232,8 +4232,8 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
-        prompt: "subagent task prompt".to_string(),
-        timeout: None,
+        task: "subagent task prompt".to_string(),
+        timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
@@ -4382,8 +4382,8 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
-        prompt: "subagent task prompt".to_string(),
-        timeout: None,
+        task: "subagent task prompt".to_string(),
+        timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),

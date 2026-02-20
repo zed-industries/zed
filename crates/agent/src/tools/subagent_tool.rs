@@ -13,26 +13,28 @@ use crate::{AgentTool, Thread, ThreadEnvironment, ToolCallEventStream};
 /// Spawns an agent to perform a delegated task.
 ///
 /// Use this tool when you want to do any of the following:
-/// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
-/// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
 /// - Run multiple tasks in parallel that would take significantly longer to run sequentially.
+/// - Complete a self-contained task where you need to know if it succeeded or failed (and how), but none of its intermediate output.
+/// - Perform an investigation where all you need to know is the outcome, not the research that led to that outcome.
 ///
-/// You control what the agent does by providing a prompt describing what the agent should do. The agent has access to the same tools you do.
+/// Do NOT use this tool for simple tasks you could accomplish directly with one or two tool calls (e.g. reading a file, running a single command). Each agent has startup overhead.
 ///
-/// You will receive the agent's final message.
+/// You control what the agent does by providing a prompt describing what the agent should do. The agent has access to the same tools you do, but does NOT see your conversation history or any context the user attached. You must include all relevant context (file paths, requirements, constraints) in the prompt.
+///
+/// You will receive only the agent's final message as output.
 ///
 /// Note:
 /// - Agents cannot use tools you don't have access to.
-/// - If spawning multiple agents that might write to the filesystem, provide guidance on how to avoid conflicts (e.g. assign each to different directories)
+/// - If spawning multiple agents that might write to the filesystem, provide guidance on how to avoid conflicts (e.g. assign each to different directories).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SubagentToolInput {
     /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
     pub label: String,
-    /// The prompt that tells the agent what task to perform. Be specific about what you want the agent to accomplish.
-    pub prompt: String,
-    /// Optional: Maximum runtime in seconds. No timeout by default.
+    /// Describe the task for the agent to perform. Be specific about what you want accomplished. Include all necessary context (file paths, requirements, constraints) since the agent cannot see your conversation.
+    pub task: String,
+    /// Optional maximum runtime in seconds. If not set, the agent runs until it completes or is cancelled.
     #[serde(default)]
-    pub timeout: Option<u64>,
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -108,8 +110,8 @@ impl AgentTool for SubagentTool {
         let subagent = match self.environment.create_subagent(
             parent_thread_entity,
             input.label,
-            input.prompt,
-            input.timeout.map(|secs| Duration::from_secs(secs)),
+            input.task,
+            input.timeout_secs.map(|secs| Duration::from_secs(secs)),
             cx,
         ) {
             Ok(subagent) => subagent,
