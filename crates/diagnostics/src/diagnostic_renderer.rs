@@ -233,24 +233,26 @@ impl DiagnosticBlock {
             .bg(background_color)
             .border_color(border_color)
             .child(
-                MarkdownElement::new(
-                    self.markdown.clone(),
-                    diagnostics_markdown_style(bcx.window, cx),
-                )
-                .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                    copy_button: false,
-                    copy_button_on_hover: false,
-                    border: false,
-                })
-                .on_url_click({
-                    move |link, window, cx| {
-                        editor
-                            .update(cx, |editor, cx| {
-                                Self::open_link(editor, &diagnostics_editor, link, window, cx)
-                            })
-                            .ok();
-                    }
-                }),
+                div().flex_1().min_w_0().child(
+                    MarkdownElement::new(
+                        self.markdown.clone(),
+                        diagnostics_markdown_style(bcx.window, cx),
+                    )
+                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                        copy_button: false,
+                        copy_button_on_hover: false,
+                        border: false,
+                    })
+                    .on_url_click({
+                        move |link, window, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    Self::open_link(editor, &diagnostics_editor, link, window, cx)
+                                })
+                                .ok();
+                        }
+                    }),
+                ),
             )
             .child(
                 CopyButton::new(copy_button_id, self.copy_message.clone())
