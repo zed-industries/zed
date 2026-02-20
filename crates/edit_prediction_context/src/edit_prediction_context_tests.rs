@@ -576,7 +576,7 @@ async fn test_type_definition_deduplication(cx: &mut TestAppContext) {
                     use super::types::TypeA;
 
                     fn work() {
-                        let item: TypeA = todo!();
+                        let item: TypeA = unimplemented!();
                         println!("{}", item.value);
                     }
                 "#},

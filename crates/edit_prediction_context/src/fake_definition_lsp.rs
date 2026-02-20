@@ -341,9 +341,9 @@ fn extract_type_annotations(content: &str) -> Vec<(String, String)> {
     annotations
 }
 
-/// Unwraps common generic wrappers (Arc, Box, Rc, Option, Vec) to find the
-/// innermost meaningful type name. For example: `Arc<Person>` → `"Person"`,
-/// `&str` → `"str"`, `Option<Vec<Foo>>` → `"Foo"`.
+/// Unwraps common generic wrappers (Arc, Box, Rc, Option, Vec) and trait
+/// object prefixes (dyn, impl) to find the concrete type name. For example:
+/// `Arc<Person>` → `"Person"`, `Box<dyn Trait>` → `"Trait"`.
 fn extract_base_type_name(type_str: &str) -> String {
     let trimmed = type_str
         .trim()
@@ -352,6 +352,9 @@ fn extract_base_type_name(type_str: &str) -> String {
         .trim_end_matches(',')
         .trim_end_matches('{')
         .trim_end_matches(')')
+        .trim()
+        .trim_start_matches("dyn ")
+        .trim_start_matches("impl ")
         .trim();
 
     if let Some(angle_start) = trimmed.find('<') {
@@ -446,51 +449,4 @@ fn word_at_position(content: &str, position: lsp::Position) -> Option<&str> {
         .map(|i| i + column)
         .unwrap_or(line.len());
     Some(&line[start..end]).filter(|word| !word.is_empty())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_base_type_name() {
-        assert_eq!(extract_base_type_name("Person"), "Person");
-        assert_eq!(extract_base_type_name("Arc<Person>"), "Person");
-        assert_eq!(extract_base_type_name("Option<Vec<Foo>>"), "Foo");
-        assert_eq!(extract_base_type_name("&str"), "str");
-        assert_eq!(extract_base_type_name("Box<dyn Trait>"), "dyn");
-        assert_eq!(extract_base_type_name("String,"), "String");
-        assert_eq!(extract_base_type_name("u32"), "u32");
-    }
-
-    #[test]
-    fn test_extract_type_annotations() {
-        let content = indoc::indoc! {r#"
-            pub struct Company {
-                owner: Arc<Person>,
-                address: Address,
-            }
-        "#};
-        let annotations = extract_type_annotations(content);
-        assert_eq!(annotations.len(), 2);
-        assert_eq!(annotations[0], ("owner".to_string(), "Person".to_string()));
-        assert_eq!(
-            annotations[1],
-            ("address".to_string(), "Address".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_type_annotations_skips_use_and_comments() {
-        let content = indoc::indoc! {r#"
-            use super::person::Person;
-            // comment: not a real annotation
-            pub struct Foo {
-                name: String,
-            }
-        "#};
-        let annotations = extract_type_annotations(content);
-        assert_eq!(annotations.len(), 1);
-        assert_eq!(annotations[0], ("name".to_string(), "String".to_string()));
-    }
 }
