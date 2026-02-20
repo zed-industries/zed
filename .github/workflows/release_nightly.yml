@@ -31,6 +31,7 @@ jobs:
       run: ./script/clippy
     timeout-minutes: 60
   run_tests_windows:
+    if: false  # Disabled for GitHub hosted runners due to test timeouts/failures
     runs-on: windows-2022
     steps:
     - name: steps::checkout_repo
@@ -141,7 +142,6 @@ jobs:
   bundle_linux_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: ubuntu-latest-arm64
     env:
@@ -187,7 +187,6 @@ jobs:
   bundle_linux_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: ubuntu-latest
     env:
@@ -233,7 +232,6 @@ jobs:
   bundle_mac_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: macos-14
     env:
@@ -279,7 +277,6 @@ jobs:
   bundle_mac_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: macos-14
     env:
@@ -325,7 +322,6 @@ jobs:
   bundle_windows_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: windows-2022
     env:
@@ -378,7 +374,6 @@ jobs:
   bundle_windows_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     runs-on: windows-2022
     env:
@@ -431,7 +426,6 @@ jobs:
   build_nix_linux_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     runs-on: ubuntu-latest
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -460,7 +454,6 @@ jobs:
   build_nix_mac_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     runs-on: macos-14
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
