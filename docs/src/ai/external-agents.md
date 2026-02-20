@@ -130,7 +130,7 @@ Claude Agent supports the same workflows as Zed's first-party agent. Add context
 In complement to talking to it [over ACP](https://agentclientprotocol.com), Zed relies on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview) to support some of its specific features.
 However, the SDK doesn't yet expose everything needed to fully support all of them:
 
-- Slash Commands: A subset of [built-in commands](https://code.claude.com/docs/en/slash-commands#built-in-slash-commands) are supported, while [custom slash commands](https://code.claude.com/docs/en/slash-commands#custom-slash-commands) are fully supported.
+- Slash Commands: [Custom slash commands](https://code.claude.com/docs/en/slash-commands#custom-slash-commands) are fully supported, and have been merged into skills. A subset of [built-in commands](https://code.claude.com/docs/en/slash-commands#built-in-slash-commands) are supported.
 - [Subagents](https://code.claude.com/docs/en/sub-agents) are supported.
 - [Agent teams](https://code.claude.com/docs/en/agent-teams) are currently _not_ supported.
 - [Hooks](https://code.claude.com/docs/en/hooks-guide) are currently _not_ supported.
