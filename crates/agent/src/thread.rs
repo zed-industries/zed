@@ -621,6 +621,19 @@ pub trait ThreadEnvironment {
         timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
+
+    fn resume_subagent(
+        &self,
+        _parent_thread: Entity<Thread>,
+        _session_id: acp::SessionId,
+        _follow_up_prompt: String,
+        _timeout: Option<Duration>,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        Err(anyhow::anyhow!(
+            "Resuming subagent sessions is not supported"
+        ))
+    }
 }
 
 #[derive(Debug)]

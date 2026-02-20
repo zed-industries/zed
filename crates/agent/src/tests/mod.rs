@@ -4233,6 +4233,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
         task: "subagent task prompt".to_string(),
+        session_id: None,
         timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
@@ -4383,6 +4384,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     let subagent_tool_input = SubagentToolInput {
         label: "label".to_string(),
         task: "subagent task prompt".to_string(),
+        session_id: None,
         timeout_secs: None,
     };
     let subagent_tool_use = LanguageModelToolUse {
@@ -4458,6 +4460,195 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
             "}
         );
     });
+}
+
+#[gpui::test]
+async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = NativeAgent::new(
+        project.clone(),
+        thread_store.clone(),
+        Templates::new(),
+        None,
+        fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), Path::new(""), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // === First turn: create subagent ===
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SubagentToolInput {
+        label: "initial task".to_string(),
+        task: "do the first task".to_string(),
+        session_id: None,
+        timeout_secs: None,
+    };
+    let subagent_tool_use = LanguageModelToolUse {
+        id: "subagent_1".into(),
+        name: SubagentTool::NAME.into(),
+        raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+        input: serde_json::to_value(&subagent_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        subagent_tool_use,
+    ));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    let subagent_acp_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .acp_thread
+            .clone()
+    });
+
+    // Subagent responds
+    model.send_last_completion_stream_text_chunk("first task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete first turn
+    model.send_last_completion_stream_text_chunk("First response");
+    model.end_last_completion_stream();
+
+    send.await.unwrap();
+
+    // Verify subagent is no longer running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should not be running after completion"
+        );
+    });
+
+    // === Second turn: resume subagent with session_id ===
+    let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("resuming subagent");
+    let resume_tool_input = SubagentToolInput {
+        label: "follow-up task".to_string(),
+        task: "do the follow-up task".to_string(),
+        session_id: Some(subagent_session_id.clone()),
+        timeout_secs: None,
+    };
+    let resume_tool_use = LanguageModelToolUse {
+        id: "subagent_2".into(),
+        name: SubagentTool::NAME.into(),
+        raw_input: serde_json::to_string(&resume_tool_input).unwrap(),
+        input: serde_json::to_value(&resume_tool_input).unwrap(),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(resume_tool_use));
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Subagent should be running again with the same session
+    thread.read_with(cx, |thread, cx| {
+        let running = thread.running_subagent_ids(cx);
+        assert_eq!(running.len(), 1, "subagent should be running");
+        assert_eq!(running[0], subagent_session_id, "should be same session");
+    });
+
+    // Subagent responds to follow-up
+    model.send_last_completion_stream_text_chunk("follow-up task response");
+    model.end_last_completion_stream();
+
+    cx.run_until_parked();
+
+    // Parent model responds to complete second turn
+    model.send_last_completion_stream_text_chunk("Second response");
+    model.end_last_completion_stream();
+
+    send2.await.unwrap();
+
+    // Verify subagent is no longer running
+    thread.read_with(cx, |thread, cx| {
+        assert!(
+            thread.running_subagent_ids(cx).is_empty(),
+            "subagent should not be running after resume completion"
+        );
+    });
+
+    // Verify the subagent's acp thread has both conversation turns
+    assert_eq!(
+        subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        indoc! {"
+            ## User
+
+            do the first task
+
+            ## Assistant
+
+            first task response
+
+            ## User
+
+            do the follow-up task
+
+            ## Assistant
+
+            follow-up task response
+
+        "}
+    );
 }
 
 #[gpui::test]
