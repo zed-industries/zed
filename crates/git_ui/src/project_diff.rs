@@ -751,10 +751,15 @@ impl ProjectDiff {
             if was_empty {
                 eprintln!("ProjectDiff: calling split");
                 editor.split(window, cx);
-                eprintln!("ProjectDiff: split returned, lhs.is_some={}", editor.lhs.is_some());
+                eprintln!("ProjectDiff: split returned");
             }
             (was_empty, is_newly_added)
         });
+
+        // Notify that the editor has changed (to trigger re-render)
+        if was_empty {
+            cx.notify();
+        }
 
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
