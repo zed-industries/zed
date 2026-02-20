@@ -1747,30 +1747,47 @@ impl AgentPanel {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
                     server_view.read(cx).active_thread().cloned().map(|tv| {
-                        cx.subscribe(
+                        cx.subscribe_in(
                             &tv,
-                            |this, _view, event: &AcpThreadViewEvent, cx| match event {
+                            window,
+                            |this, _view, event: &AcpThreadViewEvent, window, cx| match event {
                                 AcpThreadViewEvent::WorktreeCreationRequested { text } => {
-                                    this.handle_worktree_creation_requested(text.clone(), cx);
+                                    this.handle_worktree_creation_requested(
+                                        text.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                             },
                         )
                     });
-                Some(cx.observe(server_view, |this, server_view, cx| {
-                    this._thread_view_subscription =
-                        server_view.read(cx).active_thread().cloned().map(|tv| {
-                            cx.subscribe(&tv, |this, _view, event: &AcpThreadViewEvent, cx| {
-                                match event {
-                                    AcpThreadViewEvent::WorktreeCreationRequested { text } => {
-                                        this.handle_worktree_creation_requested(text.clone(), cx);
-                                    }
-                                }
-                            })
-                        });
-                    cx.emit(AgentPanelEvent::ActiveViewChanged);
-                    this.serialize(cx);
-                    cx.notify();
-                }))
+                Some(
+                    cx.observe_in(server_view, window, |this, server_view, window, cx| {
+                        this._thread_view_subscription =
+                            server_view.read(cx).active_thread().cloned().map(|tv| {
+                                cx.subscribe_in(
+                                    &tv,
+                                    window,
+                                    |this, _view, event: &AcpThreadViewEvent, window, cx| {
+                                        match event {
+                                            AcpThreadViewEvent::WorktreeCreationRequested {
+                                                text,
+                                            } => {
+                                                this.handle_worktree_creation_requested(
+                                                    text.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }
+                                    },
+                                )
+                            });
+                        cx.emit(AgentPanelEvent::ActiveViewChanged);
+                        this.serialize(cx);
+                        cx.notify();
+                    }),
+                )
             }
             _ => {
                 self._thread_view_subscription = None;
@@ -2094,7 +2111,12 @@ impl AgentPanel {
         self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
     }
 
-    fn handle_worktree_creation_requested(&mut self, text: String, cx: &mut Context<Self>) {
+    fn handle_worktree_creation_requested(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use git::repository::validate_worktree_directory;
         use project::project_settings::ProjectSettings;
         use rand::Rng as _;
@@ -2187,12 +2209,12 @@ impl AgentPanel {
             }
         }
 
-        let app_state = self
-            .workspace
-            .upgrade()
-            .map(|ws| ws.read(cx).app_state().clone());
+        let workspace = self.workspace.clone();
+        let window_handle = window
+            .window_handle()
+            .downcast::<workspace::MultiWorkspace>();
 
-        let task = cx.spawn(async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             // Await all worktree creation results
             let mut results = Vec::new();
             for (repo, new_path, receiver) in creation_infos {
@@ -2228,14 +2250,15 @@ impl AgentPanel {
             if let Some(err) = first_error {
                 // Rollback all successfully created worktrees
                 for (rollback_repo, rollback_path) in &repos_and_paths {
-                    cx.update(|cx| {
+                    cx.update(|_, cx| {
                         rollback_repo.update(cx, |repo, _cx| {
                             // Fire-and-forget: the remove runs in the background
                             let _receiver = repo.remove_worktree(rollback_path.clone(), true);
                         });
-                    });
+                    })
+                    .ok();
                 }
-                this.update(cx, |this, cx| {
+                this.update_in(cx, |this, _window, cx| {
                     this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
                         format!("Failed to create worktree: {err}").into(),
                     ));
@@ -2249,9 +2272,9 @@ impl AgentPanel {
             let has_non_git = !non_git_paths.is_empty();
             all_paths.extend(non_git_paths);
 
-            // Open the new workspace
-            let Some(app_state) = app_state else {
-                this.update(cx, |this, cx| {
+            // Open the new workspace in the current window's sidebar
+            let Some(workspace) = workspace.upgrade() else {
+                this.update_in(cx, |this, _window, cx| {
                     this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
                         "Workspace no longer available".into(),
                     ));
@@ -2260,45 +2283,56 @@ impl AgentPanel {
                 return anyhow::Ok(());
             };
 
-            let open_task = cx.update(|cx| {
-                workspace::open_paths(&all_paths, app_state, workspace::OpenOptions::default(), cx)
-            });
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_workspace_for_paths(true, all_paths, window, cx)
+                })?
+                .await?;
 
-            let (window_handle, _) = open_task.await?;
-
-            // Submit the prompt in the new workspace's agent panel
+            // Submit the prompt in the new workspace's agent panel.
+            // After open_workspace_for_paths completes, the new workspace is the
+            // active one in the MultiWorkspace. We access it via the window handle
+            // (not this.workspace, which still points to the original workspace).
             let initial_content = AgentInitialContent::ContentBlock {
                 blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
                 auto_submit: true,
             };
 
-            window_handle.update(cx, |multi_workspace, window, cx| {
-                let workspace_entity = multi_workspace.workspace().clone();
-                workspace_entity.update(cx, |workspace, cx| {
-                    if has_non_git {
-                        let toast_id =
-                            workspace::notifications::NotificationId::unique::<AgentPanel>();
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                toast_id,
-                                "Some project folders are not git repositories. \
-                                 They were included as-is without creating a worktree.",
-                            ),
-                            cx,
-                        );
-                    }
+            if let Some(window_handle) = window_handle {
+                window_handle.update(cx, |multi_workspace, window, cx| {
+                    let new_workspace = multi_workspace.workspace().clone();
+                    new_workspace.update(cx, |workspace, cx| {
+                        if has_non_git {
+                            let toast_id =
+                                workspace::notifications::NotificationId::unique::<AgentPanel>();
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    toast_id,
+                                    "Some project folders are not git repositories. \
+                                     They were included as-is without creating a worktree.",
+                                ),
+                                cx,
+                            );
+                        }
 
-                    workspace.focus_panel::<AgentPanel>(window, cx);
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| {
-                            panel.external_thread(None, None, Some(initial_content), window, cx);
-                        });
-                    }
-                });
-            })?;
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.external_thread(
+                                    None,
+                                    None,
+                                    Some(initial_content),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    });
+                })?;
+            }
 
             // Clear the creation status on the original panel
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, _window, cx| {
                 this.worktree_creation_status = None;
                 cx.notify();
             })?;
@@ -2306,7 +2340,7 @@ impl AgentPanel {
             anyhow::Ok(())
         });
 
-        self._worktree_creation_task = Some(cx.spawn(async move |_this, _cx| {
+        self._worktree_creation_task = Some(cx.spawn_in(window, async move |_this, _cx| {
             task.await.log_err();
         }));
     }
