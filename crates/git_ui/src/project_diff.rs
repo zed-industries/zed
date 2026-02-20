@@ -747,6 +747,12 @@ impl ProjectDiff {
                 diff,
                 cx,
             );
+            // Enable split view for git diff
+            if was_empty {
+                eprintln!("ProjectDiff: calling split");
+                editor.split(window, cx);
+                eprintln!("ProjectDiff: split returned, lhs.is_some={}", editor.lhs.is_some());
+            }
             (was_empty, is_newly_added)
         });
 

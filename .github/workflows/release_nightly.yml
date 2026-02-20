@@ -230,6 +230,7 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_aarch64:
+    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues with Xcode 15.4
     needs:
     - check_style
     - clippy_windows
@@ -275,6 +276,7 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 60
   bundle_mac_x86_64:
+    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues with Xcode 15.4
     needs:
     - check_style
     - clippy_windows
@@ -498,10 +500,6 @@ jobs:
     needs:
     - bundle_linux_aarch64
     - bundle_linux_x86_64
-    - bundle_mac_aarch64
-    - bundle_mac_x86_64
-    - bundle_windows_aarch64
-    - bundle_windows_x86_64
     runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
@@ -519,18 +517,10 @@ jobs:
       run: |-
         mkdir -p release-artifacts/
 
-        mv ./artifacts/Zed-aarch64.dmg/Zed-aarch64.dmg release-artifacts/Zed-aarch64.dmg
-        mv ./artifacts/Zed-x86_64.dmg/Zed-x86_64.dmg release-artifacts/Zed-x86_64.dmg
         mv ./artifacts/zed-linux-aarch64.tar.gz/zed-linux-aarch64.tar.gz release-artifacts/zed-linux-aarch64.tar.gz
         mv ./artifacts/zed-linux-x86_64.tar.gz/zed-linux-x86_64.tar.gz release-artifacts/zed-linux-x86_64.tar.gz
-        mv ./artifacts/Zed-x86_64.exe/Zed-x86_64.exe release-artifacts/Zed-x86_64.exe
-        mv ./artifacts/Zed-aarch64.exe/Zed-aarch64.exe release-artifacts/Zed-aarch64.exe
-        mv ./artifacts/zed-remote-server-macos-aarch64.gz/zed-remote-server-macos-aarch64.gz release-artifacts/zed-remote-server-macos-aarch64.gz
-        mv ./artifacts/zed-remote-server-macos-x86_64.gz/zed-remote-server-macos-x86_64.gz release-artifacts/zed-remote-server-macos-x86_64.gz
         mv ./artifacts/zed-remote-server-linux-aarch64.gz/zed-remote-server-linux-aarch64.gz release-artifacts/zed-remote-server-linux-aarch64.gz
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
-        mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
-        mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:
@@ -559,10 +549,6 @@ jobs:
     needs:
     - bundle_linux_aarch64
     - bundle_linux_x86_64
-    - bundle_mac_aarch64
-    - bundle_mac_x86_64
-    - bundle_windows_aarch64
-    - bundle_windows_x86_64
     if: failure()
     runs-on: ubuntu-latest
     steps:
