@@ -267,6 +267,11 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
+    /// The working directory of the original repository. For a normal
+    /// checkout this equals `work_directory_abs_path`. For a git worktree
+    /// checkout, this is the original repo's working directory — used to
+    /// anchor new worktree creation so they don't nest.
+    pub original_repo_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub head_commit: Option<CommitDetails>,
@@ -1493,16 +1498,19 @@ impl GitStore {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
                 dot_git_abs_path: Some(dot_git_abs_path),
                 repository_dir_abs_path: Some(_repository_dir_abs_path),
-                common_dir_abs_path: Some(_common_dir_abs_path),
+                common_dir_abs_path: Some(common_dir_abs_path),
                 ..
             } = update
             {
+                let original_repo_abs_path: Arc<Path> =
+                    git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
                         id,
                         work_directory_abs_path.clone(),
+                        original_repo_abs_path.clone(),
                         dot_git_abs_path.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
@@ -1828,6 +1836,11 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             let client = this.upstream_client().context("no upstream client")?;
 
+            let original_repo_abs_path: Option<Arc<Path>> = update
+                .original_repo_abs_path
+                .as_deref()
+                .map(|p| Path::new(p).into());
+
             let mut repo_subscription = None;
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
@@ -1835,6 +1848,7 @@ impl GitStore {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
+                        original_repo_abs_path.clone(),
                         path_style,
                         ProjectId(update.project_id),
                         client,
@@ -3469,10 +3483,17 @@ impl RepositoryId {
 }
 
 impl RepositorySnapshot {
-    fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>, path_style: PathStyle) -> Self {
+    fn empty(
+        id: RepositoryId,
+        work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Option<Arc<Path>>,
+        path_style: PathStyle,
+    ) -> Self {
         Self {
             id,
             statuses_by_path: Default::default(),
+            original_repo_abs_path: original_repo_abs_path
+                .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
             branch: None,
             head_commit: None,
@@ -3516,6 +3537,9 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
+            original_repo_abs_path: Some(
+                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            ),
         }
     }
 
@@ -3587,6 +3611,9 @@ impl RepositorySnapshot {
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
+            original_repo_abs_path: Some(
+                self.original_repo_abs_path.to_string_lossy().into_owned(),
+            ),
         }
     }
 
@@ -3754,14 +3781,19 @@ impl Repository {
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot =
-            RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::local());
+        let snapshot = RepositorySnapshot::empty(
+            id,
+            work_directory_abs_path.clone(),
+            Some(original_repo_abs_path),
+            PathStyle::local(),
+        );
         let state = cx
             .spawn(async move |_, cx| {
                 LocalRepositoryState::new(
@@ -3815,13 +3847,19 @@ impl Repository {
     fn remote(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
+        original_repo_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
         project_id: ProjectId,
         client: AnyProtoClient,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path, path_style);
+        let snapshot = RepositorySnapshot::empty(
+            id,
+            work_directory_abs_path,
+            original_repo_abs_path,
+            path_style,
+        );
         let repository_state = RemoteRepositoryState { project_id, client };
         let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
         let repository_state = Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
@@ -5967,6 +6005,10 @@ impl Repository {
         update: proto::UpdateRepository,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if let Some(main_path) = &update.original_repo_abs_path {
+            self.snapshot.original_repo_abs_path = Path::new(main_path.as_str()).into();
+        }
+
         let conflicted_paths = TreeSet::from_ordered_entries(
             update
                 .current_merge_conflicts
@@ -6761,6 +6803,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         work_directory_abs_path,
+        original_repo_abs_path: prev_snapshot.original_repo_abs_path,
         path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
