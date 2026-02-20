@@ -2669,7 +2669,7 @@ pub mod tests {
     use editor::{DisplayPoint, display_map::DisplayRow};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
-    use multi_buffer::Event as MultiBufferEvent;
+    use multi_buffer::{Event as MultiBufferEvent, ToPoint};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use serde_json::json;
@@ -5349,6 +5349,67 @@ pub mod tests {
         assert_all_highlights_match_query(search_view, "targeted", cx);
         assert_eq!(read_match_count(search_view, cx), 1);
         assert_eq!(take_excerpt_changes(), Vec::new());
+    }
+
+    #[gpui::test]
+    async fn test_incremental_search_does_not_overly_expand_excerpts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // File where "o" matches on every line (creating a huge merged excerpt)
+        // but "on" only matches near the end. Without the expansion cap,
+        // narrowing "o" → "on" would preserve the old huge excerpt, placing
+        // 40+ irrelevant lines above the first actual match.
+        let mut lines: Vec<String> = (0..50).map(|i| format!("line {i}: block")).collect();
+        lines[45] = "line 45: configure one".into();
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "big.rs": lines.join("\n"),
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // "o" matches on every line, creating one large merged excerpt.
+        perform_search(search_view, "o", cx);
+        let broad_count = read_match_count(search_view, cx);
+        assert!(
+            broad_count > 40,
+            "expected many matches for 'o', got {broad_count}"
+        );
+
+        // Narrow to "on" — only line 45 matches.
+        perform_incremental_search(search_view, "on", cx);
+        assert_all_highlights_match_query(search_view, "on", cx);
+        assert_eq!(read_match_count(search_view, cx), 2);
+
+        // The first match must be close to the top of the multibuffer.
+        // Before the fix, the excerpt expanded to the old [0..49] range,
+        // placing 40+ empty lines above the first hit.
+        let first_match_row = search_view
+            .read_with(cx, |search_view, cx| {
+                let search = search_view.entity.read(cx);
+                let snapshot = search.excerpts.read(cx).snapshot(cx);
+                let first_range = &search.match_ranges[0];
+                first_range.start.to_point(&snapshot).row
+            })
+            .unwrap();
+        assert!(
+            first_match_row <= 15,
+            "first match at multibuffer row {first_match_row} is too far from the excerpt start; \
+             the excerpt was over-expanded"
+        );
     }
 
     #[gpui::test]

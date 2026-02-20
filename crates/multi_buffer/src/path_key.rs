@@ -1,5 +1,13 @@
 use std::{mem, ops::Range, sync::Arc};
 
+/// When incrementally updating excerpts, we try to expand new ranges to match
+/// overlapping existing excerpts so we can reuse them (avoiding rewrap churn).
+/// But if an existing excerpt is much larger than the new range, blindly
+/// expanding creates huge excerpts with many irrelevant lines above/below the
+/// actual matches. This constant caps how many extra rows we allow on each
+/// side of the *original* new range when expanding toward an existing excerpt.
+const MAX_EXCERPT_EXPANSION_ROWS: u32 = 10;
+
 use collections::HashSet;
 use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
@@ -12,6 +20,22 @@ use ztracing::instrument;
 use crate::{
     Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
 };
+
+struct ExistingExcerpt {
+    id: ExcerptId,
+    range: Range<Point>,
+}
+
+struct ExpandedExcerpts {
+    ranges: Vec<ExcerptRange<Point>>,
+    counts: Vec<usize>,
+    /// Existing excerpts that overlap new ranges but are too large to expand
+    /// to within `MAX_EXCERPT_EXPANSION_ROWS`. These must be removed before
+    /// `update_path_excerpts` runs, so the new ranges get inserted fresh
+    /// instead of being unioned back to the old size by the partial-overlap
+    /// branch.
+    stale_excerpt_ids: Vec<ExcerptId>,
+}
 
 #[derive(Debug, Clone)]
 pub struct PathExcerptInsertResult {
@@ -283,14 +307,22 @@ impl MultiBuffer {
         counts: Vec<usize>,
         cx: &mut Context<Self>,
     ) -> PathExcerptInsertResult {
-        let (new, counts) =
-            self.expand_new_ranges_to_existing(&path, buffer_snapshot, new, counts, cx);
+        let expanded = self.expand_new_ranges_to_existing(&path, buffer_snapshot, new, counts, cx);
+        if !expanded.stale_excerpt_ids.is_empty() {
+            if let Some(existing) = self.excerpts_by_path.get_mut(&path) {
+                existing.retain(|id| !expanded.stale_excerpt_ids.contains(id));
+            }
+            for &id in &expanded.stale_excerpt_ids {
+                self.paths_by_excerpt.remove(&id);
+            }
+            self.remove_excerpts(expanded.stale_excerpt_ids, cx);
+        }
         let (excerpt_ids, added_new_excerpt) =
-            self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
+            self.update_path_excerpts(path, buffer, buffer_snapshot, expanded.ranges, cx);
 
         let mut inserted_ranges = Vec::new();
         let mut ranges = ranges.into_iter();
-        for (&excerpt_id, range_count) in excerpt_ids.iter().zip(counts.into_iter()) {
+        for (&excerpt_id, range_count) in excerpt_ids.iter().zip(expanded.counts.into_iter()) {
             for range in ranges.by_ref().take(range_count) {
                 let range = Anchor::range_in_buffer(
                     excerpt_id,
@@ -319,44 +351,67 @@ impl MultiBuffer {
         mut new: Vec<ExcerptRange<Point>>,
         counts: Vec<usize>,
         cx: &App,
-    ) -> (Vec<ExcerptRange<Point>>, Vec<usize>) {
+    ) -> ExpandedExcerpts {
         let existing = self.excerpts_by_path.get(path).cloned().unwrap_or_default();
         if existing.is_empty() || new.is_empty() {
-            return (new, counts);
+            return ExpandedExcerpts {
+                ranges: new,
+                counts,
+                stale_excerpt_ids: Vec::new(),
+            };
         }
 
         let snapshot = self.snapshot(cx);
         let buffer_id = buffer_snapshot.remote_id();
-        let existing_ranges: Vec<Range<Point>> = existing
+        let existing_excerpts = existing
             .iter()
             .filter_map(|&id| {
                 let excerpt = snapshot.excerpt(id)?;
-                (excerpt.buffer_id == buffer_id)
-                    .then(|| excerpt.range.context.to_point(buffer_snapshot))
+                (excerpt.buffer_id == buffer_id).then(|| ExistingExcerpt {
+                    id,
+                    range: excerpt.range.context.to_point(buffer_snapshot),
+                })
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         let mut changed = false;
+        let mut stale_excerpt_ids = Vec::new();
         for new_range in &mut new {
-            for existing_range in &existing_ranges {
-                if new_range.context.start <= existing_range.end
-                    && new_range.context.end >= existing_range.start
+            let original_start_row = new_range.context.start.row;
+            let original_end_row = new_range.context.end.row;
+            for existing in &existing_excerpts {
+                let overlaps = new_range.context.start <= existing.range.end
+                    && new_range.context.end >= existing.range.start;
+                if !overlaps {
+                    continue;
+                }
+
+                let start_excess = original_start_row.saturating_sub(existing.range.start.row);
+                let end_excess = existing.range.end.row.saturating_sub(original_end_row);
+
+                if start_excess <= MAX_EXCERPT_EXPANSION_ROWS
+                    && end_excess <= MAX_EXCERPT_EXPANSION_ROWS
                 {
-                    let expanded_start = new_range.context.start.min(existing_range.start);
-                    let expanded_end = new_range.context.end.max(existing_range.end);
-                    if expanded_start != new_range.context.start
-                        || expanded_end != new_range.context.end
-                    {
-                        new_range.context.start = expanded_start;
-                        new_range.context.end = expanded_end;
+                    if existing.range.start < new_range.context.start {
+                        new_range.context.start = existing.range.start;
                         changed = true;
                     }
+                    if existing.range.end > new_range.context.end {
+                        new_range.context.end = existing.range.end;
+                        changed = true;
+                    }
+                } else {
+                    stale_excerpt_ids.push(existing.id);
                 }
             }
         }
 
-        if !changed {
-            return (new, counts);
+        if !changed && stale_excerpt_ids.is_empty() {
+            return ExpandedExcerpts {
+                ranges: new,
+                counts,
+                stale_excerpt_ids: Vec::new(),
+            };
         }
 
         let mut result_ranges: Vec<ExcerptRange<Point>> = Vec::new();
@@ -375,7 +430,11 @@ impl MultiBuffer {
             result_counts.push(count);
         }
 
-        (result_ranges, result_counts)
+        ExpandedExcerpts {
+            ranges: result_ranges,
+            counts: result_counts,
+            stale_excerpt_ids,
+        }
     }
 
     fn update_path_excerpts(
