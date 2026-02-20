@@ -11,7 +11,7 @@ use refineable::Refineable;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
-use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
+use settings::{InlayHintSettingsContent, IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
@@ -705,6 +705,7 @@ fn font_fallbacks_from_settings(
 
 impl settings::Settings for ThemeSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
+        let project_content = &content.project;
         let content = &content.theme;
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
@@ -721,18 +722,33 @@ impl settings::Settings for ThemeSettings {
         // Then the underlying inlay hint type, which only edit predictions are
         // supported for this atm.
         // buffer > inlay hints > inlay type
+        let inlay_content = project_content
+            .all_languages
+            .defaults
+            .inlay_hints
+            .clone()
+            .unwrap_or_else(|| InlayHintSettingsContent {
+                font_family: Some(buffer_font_family.clone()),
+                font_weight: Some(buffer_font_weight),
+                font_features: Some(buffer_font_features.clone()),
+                ..Default::default()
+            });
         let buffer_font_size = content.buffer_font_size.unwrap();
-        let inlay_hints_font_family = content
-            .inlay_hints_font_family
+        let inlay_hints_font_family = inlay_content
+            .font_family
             .as_ref()
             .unwrap_or(buffer_font_family);
-        let inlay_hints_font_weight = content
-            .inlay_hints_font_weight
-            .unwrap_or(buffer_font_weight);
-        let inlay_hints_font_features = content
-            .inlay_hints_font_features
+        let inlay_hints_font_weight = inlay_content.font_weight.unwrap_or(buffer_font_weight);
+        let inlay_hints_font_features = inlay_content
+            .font_features
             .clone()
             .unwrap_or(buffer_font_features.clone());
+
+        let edit_prediction_content = project_content
+            .all_languages
+            .edit_predictions
+            .clone()
+            .unwrap_or_default();
 
         Self {
             ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into_gpui()),
@@ -751,21 +767,20 @@ impl settings::Settings for ThemeSettings {
                 style: FontStyle::default(),
             },
             edit_predictions_font: Font {
-                family: content
-                    .edit_predictions_font_family
+                family: edit_prediction_content
+                    .font_family
                     .as_ref()
                     .unwrap_or(inlay_hints_font_family)
                     .0
                     .clone()
                     .into(),
-                features: content
-                    .edit_predictions_font_features
-                    .clone()
+                features: edit_prediction_content
+                    .font_features
                     .unwrap_or(inlay_hints_font_features)
                     .into_gpui(),
                 fallbacks: buffer_font_fallbacks.clone(),
-                weight: content
-                    .edit_predictions_font_weight
+                weight: edit_prediction_content
+                    .font_weight
                     .unwrap_or(inlay_hints_font_weight)
                     .into_gpui(),
                 style: FontStyle::default(),
