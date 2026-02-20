@@ -496,7 +496,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     };
     Some(Anchor::new(
         timestamp,
-        anchor.offset as usize,
+        anchor.offset as u32,
         bias,
         buffer_id,
     ))
