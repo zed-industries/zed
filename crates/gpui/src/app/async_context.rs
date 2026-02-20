@@ -147,6 +147,15 @@ impl AsyncApp {
         lock.update(f)
     }
 
+    /// Like [`update`](Self::update), but returns `Err` instead of panicking when the app context
+    /// is already borrowed. This is useful for platform callbacks that may be invoked re-entrantly
+    /// (e.g., macOS `display_layer` triggered during window tab synchronization).
+    pub fn try_update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut lock = app.try_borrow_mut()?;
+        Ok(lock.update(f))
+    }
+
     /// Arrange for the given callback to be invoked whenever the given entity emits an event of a given type.
     /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
     pub fn subscribe<T, Event>(
@@ -469,5 +478,30 @@ impl VisualContext for AsyncWindowContext {
         self.app.update_window(self.window, |_, window, cx| {
             view.read(cx).focus_handle(cx).focus(window, cx);
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::TestAppContext;
+
+    #[gpui_macros::test]
+    fn test_try_update_succeeds_when_not_borrowed(cx: &mut TestAppContext) {
+        let async_cx = cx.to_async();
+        let result = async_cx.try_update(|_| 42);
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[gpui_macros::test]
+    fn test_try_update_returns_err_when_already_borrowed(cx: &mut TestAppContext) {
+        let async_cx = cx.to_async();
+        // Hold a mutable borrow on the AppCell while calling try_update,
+        // simulating the re-entrant access pattern from macOS display_layer.
+        let _guard = cx.app.borrow_mut();
+        let result = async_cx.try_update(|_| 42);
+        assert!(
+            result.is_err(),
+            "try_update should return Err when AppCell is already borrowed"
+        );
     }
 }

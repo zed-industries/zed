@@ -1173,9 +1173,10 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
-                let _ = cx.update(|cx| {
+                cx.try_update(|cx| {
                     SystemWindowTabController::remove_tab(cx, window_id);
-                });
+                })
+                .log_err();
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -1186,7 +1187,18 @@ impl Window {
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
             move |request_frame_options| {
-                let thermal_state = cx.update(|cx| cx.thermal_state());
+                // Use try_update to avoid panicking when the AppCell is already
+                // borrowed. On macOS, `addTabbedWindow:ordered:` can trigger
+                // `display_layer` re-entrantly during window creation, which
+                // invokes this callback while App::open_window still holds the
+                // borrow. Skipping the frame is safe because the display link
+                // will request another one.
+                let Ok(thermal_state) = cx.try_update(|cx| cx.thermal_state()) else {
+                    log::debug!(
+                        "skipping frame: app context already borrowed (re-entrant platform callback)"
+                    );
+                    return;
+                };
 
                 if thermal_state == ThermalState::Serious || thermal_state == ThermalState::Critical
                 {
