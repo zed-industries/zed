@@ -1626,7 +1626,10 @@ impl Render for BranchDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
-        let show_review_button = AgentSettings::get_global(cx).enabled(cx);
+        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
+        let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+
+        let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
         h_group_xl()
             .my_neg_1()
