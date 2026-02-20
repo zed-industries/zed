@@ -230,6 +230,7 @@ zlog.workspace = true
 zlog_settings.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+etw_tracing.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

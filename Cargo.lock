@@ -3894,7 +3894,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "windows 0.61.3",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -5750,6 +5750,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "etw_tracing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "net",
+ "serde",
+ "serde_json",
+ "util",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+ "workspace",
+ "wprcontrol",
+]
+
+[[package]]
 name = "euclid"
 version = "0.22.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7325,7 +7342,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.17",
- "windows 0.61.3",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -8426,7 +8443,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "serde",
  "serde_core",
 ]
@@ -19829,6 +19846,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-bindgen"
+version = "0.61.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b4e97b01190d32f268a2dfbd3f006f77840633746707fbe40bcee588108a231"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows-threading 0.1.0",
+]
+
+[[package]]
 name = "windows-capture"
 version = "1.4.3"
 source = "git+https://github.com/zed-industries/windows-capture.git?rev=f0d6c1b6691db75461b732f6d5ff56eed002eeb9#f0d6c1b6691db75461b732f6d5ff56eed002eeb9"
@@ -20856,6 +20884,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wprcontrol"
+version = "0.1.0"
+source = "git+https://github.com/zed-industries/wprcontrol?rev=cd811f7#cd811f7d744f65291e13131b1d907fda63ed91a1"
+dependencies = [
+ "windows 0.61.3",
+ "windows-bindgen",
+ "windows-core 0.61.2",
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21252,6 +21291,7 @@ dependencies = [
  "editor",
  "encoding_selector",
  "env_logger 0.11.8",
+ "etw_tracing",
  "extension",
  "extension_host",
  "extensions_ui",
