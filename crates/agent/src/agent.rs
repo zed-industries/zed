@@ -1669,22 +1669,12 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, cx)
         });
 
-        let acp_thread = self.acp_thread.clone();
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_cx| {
             let terminal = task?.await?;
-
-            let (drop_tx, drop_rx) = oneshot::channel();
-            let terminal_id = terminal.read_with(cx, |terminal, _cx| terminal.id().clone());
-
-            cx.spawn(async move |cx| {
-                drop_rx.await.ok();
-                acp_thread.update(cx, |thread, cx| thread.release_terminal(terminal_id, cx))
-            })
-            .detach();
 
             let handle = AcpTerminalHandle {
                 terminal,
-                _drop_tx: Some(drop_tx),
+                _drop_tx: None,
             };
 
             Ok(Rc::new(handle) as _)
@@ -1707,6 +1697,28 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             timeout,
             cx,
         )
+    }
+
+    fn get_terminal(
+        &self,
+        terminal_id: &acp::TerminalId,
+        cx: &AsyncApp,
+    ) -> Result<Rc<dyn TerminalHandle>> {
+        let terminal = self
+            .acp_thread
+            .read_with(cx, |thread, _cx| thread.terminal(terminal_id.clone()))??;
+        Ok(Rc::new(AcpTerminalHandle::new(terminal, None)) as _)
+    }
+
+    fn kill_all_terminals(&self, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.acp_thread
+                .update(cx, |thread, cx| {
+                    thread.release_all_terminals(cx);
+                })
+                .log_err();
+        });
+        Ok(())
     }
 }
 
@@ -1768,6 +1780,19 @@ pub struct AcpTerminalHandle {
     _drop_tx: Option<oneshot::Sender<()>>,
 }
 
+impl AcpTerminalHandle {
+    /// Creates a new AcpTerminalHandle wrapping the given terminal.
+    pub fn new(
+        terminal: Entity<acp_thread::Terminal>,
+        drop_tx: Option<oneshot::Sender<()>>,
+    ) -> Self {
+        Self {
+            terminal,
+            _drop_tx: drop_tx,
+        }
+    }
+}
+
 impl TerminalHandle for AcpTerminalHandle {
     fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
@@ -1789,6 +1814,17 @@ impl TerminalHandle for AcpTerminalHandle {
         cx.update(|cx| {
             self.terminal.update(cx, |terminal, cx| {
                 terminal.kill(cx);
+            });
+        });
+        Ok(())
+    }
+
+    fn send_input(&self, input: &str, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.inner().update(cx, |inner_terminal, _cx| {
+                    inner_terminal.input(input.as_bytes().to_vec());
+                });
             });
         });
         Ok(())

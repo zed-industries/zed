@@ -3,8 +3,8 @@ use crate::{
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot,
     ReadFileTool, RestoreFileFromDiskTool, SaveFileTool, StreamingEditFileTool, SubagentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    SystemPromptTemplate, Template, Templates, TerminalAction, TerminalTool,
+    ToolPermissionDecision, WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -596,6 +596,7 @@ pub trait TerminalHandle {
     fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
     fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
     fn kill(&self, cx: &AsyncApp) -> Result<()>;
+    fn send_input(&self, input: &str, cx: &AsyncApp) -> Result<()>;
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool>;
 }
 
@@ -613,6 +614,12 @@ pub trait ThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 
+    fn get_terminal(
+        &self,
+        terminal_id: &acp::TerminalId,
+        cx: &AsyncApp,
+    ) -> Result<Rc<dyn TerminalHandle>>;
+
     fn create_subagent(
         &self,
         parent_thread: Entity<Thread>,
@@ -621,6 +628,14 @@ pub trait ThreadEnvironment {
         timeout: Option<Duration>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>>;
+
+    fn kill_all_terminals(&self, cx: &AsyncApp) -> Result<()>;
+}
+
+fn is_terminal_send_input(tool_name: &str, input: &serde_json::Value) -> bool {
+    tool_name == TerminalTool::NAME
+        && TerminalAction::parse_from_json(input)
+            .is_some_and(|a| matches!(a, TerminalAction::SendInput { .. }))
 }
 
 #[derive(Debug)]
@@ -889,6 +904,7 @@ pub struct Thread {
     subagent_context: Option<SubagentContext>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    environment: Option<Rc<dyn ThreadEnvironment>>,
     /// Git worktree info if this thread is running in an agent worktree.
     git_worktree_info: Option<AgentGitWorktreeInfo>,
 }
@@ -981,6 +997,7 @@ impl Thread {
             imported: false,
             subagent_context: None,
             running_subagents: Vec::new(),
+            environment: None,
             git_worktree_info: None,
         }
     }
@@ -1206,6 +1223,7 @@ impl Thread {
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             running_subagents: Vec::new(),
+            environment: None,
             git_worktree_info: db_thread.git_worktree_info,
         }
     }
@@ -1329,6 +1347,7 @@ impl Thread {
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
+        self.environment = Some(environment.clone());
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1408,15 +1427,24 @@ impl Thread {
             }
         }
 
+        let environment = self.environment.clone();
+
         let Some(running_turn) = self.running_turn.take() else {
             self.flush_pending_message(cx);
-            return Task::ready(());
+            return cx.spawn(async move |_this, cx| {
+                if let Some(env) = environment {
+                    env.kill_all_terminals(cx).log_err();
+                }
+            });
         };
 
         let turn_task = running_turn.cancel();
 
         cx.spawn(async move |this, cx| {
             turn_task.await;
+            if let Some(env) = environment {
+                env.kill_all_terminals(cx).log_err();
+            }
             this.update(cx, |this, cx| {
                 this.flush_pending_message(cx);
             })
@@ -1853,6 +1881,9 @@ impl Thread {
                     }
                 })?;
             } else if end_turn {
+                if let Ok(Some(env)) = this.read_with(cx, |this, _| this.environment.clone()) {
+                    env.kill_all_terminals(cx).log_err();
+                }
                 return Ok(());
             } else {
                 let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
@@ -2081,9 +2112,18 @@ impl Thread {
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
+        let should_kill_terminals = !is_terminal_send_input(&tool_use.name, &tool_use.input);
+        let environment = if should_kill_terminals {
+            self.environment.clone()
+        } else {
+            None
+        };
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
-        Some(cx.foreground_executor().spawn(async move {
+        Some(cx.spawn(async move |_this, cx| {
+            if let Some(env) = environment {
+                env.kill_all_terminals(cx).log_err();
+            }
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output
                     && !supports_images

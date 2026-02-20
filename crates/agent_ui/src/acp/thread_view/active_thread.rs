@@ -3390,6 +3390,13 @@ impl AcpThreadView {
     }
 }
 
+fn terminal_action_label(raw_input: Option<&serde_json::Value>) -> &'static str {
+    raw_input
+        .and_then(agent::TerminalAction::parse_from_json)
+        .map(|action| action.ui_label())
+        .unwrap_or("Run Command")
+}
+
 impl AcpThreadView {
     pub(crate) fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         list(
@@ -4465,6 +4472,7 @@ impl AcpThreadView {
         is_preview: bool,
         command_source: &str,
         tool_call_id: &acp::ToolCallId,
+        action_label: &str,
         cx: &Context<Self>,
     ) -> Div {
         let command_group =
@@ -4482,7 +4490,7 @@ impl AcpThreadView {
                             // layout shift when it changes from being a preview label
                             // to the actual path where the command will run in
                             h_flex().h_6().child(
-                                Label::new("Run Command")
+                                Label::new(action_label.to_string())
                                     .buffer_font(cx)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
@@ -4574,8 +4582,14 @@ impl AcpThreadView {
             .and_then(|s| s.strip_suffix("\n```"))
             .unwrap_or(&command_source);
 
-        let command_element =
-            self.render_collapsible_command(false, command_content, &tool_call.id, cx);
+        let action_label = terminal_action_label(tool_call.raw_input.as_ref());
+        let command_element = self.render_collapsible_command(
+            false,
+            command_content,
+            &tool_call.id,
+            action_label,
+            cx,
+        );
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 
@@ -5034,7 +5048,8 @@ impl AcpThreadView {
             .map(|this| {
                 if is_terminal_tool {
                     let label_source = tool_call.label.read(cx).source();
-                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, cx))
+                    let action_label = terminal_action_label(tool_call.raw_input.as_ref());
+                    this.child(self.render_collapsible_command(true, label_source, &tool_call.id, action_label, cx))
                 } else {
                     this.child(
                         h_flex()

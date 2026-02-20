@@ -2513,6 +2513,15 @@ impl AcpThread {
         Ok(())
     }
 
+    pub fn release_all_terminals(&mut self, cx: &mut Context<Self>) {
+        let terminal_ids: Vec<_> = self.terminals.keys().cloned().collect();
+        for id in terminal_ids {
+            if let Err(err) = self.release_terminal(id, cx) {
+                log::warn!("Failed to release terminal: {}", err);
+            }
+        }
+    }
+
     pub fn terminal(&self, terminal_id: acp::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)

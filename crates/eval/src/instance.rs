@@ -642,6 +642,17 @@ impl agent::TerminalHandle for EvalTerminalHandle {
         Ok(())
     }
 
+    fn send_input(&self, input: &str, cx: &AsyncApp) -> Result<()> {
+        cx.update(|cx| {
+            self.terminal.update(cx, |terminal, cx| {
+                terminal.inner().update(cx, |inner_terminal, _cx| {
+                    inner_terminal.input(input.as_bytes().to_vec());
+                });
+            });
+        });
+        Ok(())
+    }
+
     fn was_stopped_by_user(&self, cx: &AsyncApp) -> Result<bool> {
         Ok(self
             .terminal
@@ -680,6 +691,14 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         })
     }
 
+    fn get_terminal(
+        &self,
+        _terminal_id: &acp::TerminalId,
+        _cx: &AsyncApp,
+    ) -> Result<Rc<dyn agent::TerminalHandle>> {
+        anyhow::bail!("get_terminal not supported in eval environment")
+    }
+
     fn create_subagent(
         &self,
         _parent_thread: Entity<agent::Thread>,
@@ -689,6 +708,10 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
         _cx: &mut App,
     ) -> Result<Rc<dyn agent::SubagentHandle>> {
         unimplemented!()
+    }
+
+    fn kill_all_terminals(&self, _cx: &AsyncApp) -> Result<()> {
+        Ok(())
     }
 }
 
