@@ -5763,4 +5763,86 @@ mod tests {
             &mut cx,
         );
     }
+
+    #[gpui::test]
+    async fn test_split_after_removing_folded_buffer(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Unified).await;
+
+        let base_text_a = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text_a = "
+            aaa
+            bbb modified
+            ccc
+        "
+        .unindent();
+
+        let base_text_b = "
+            xxx
+            yyy
+            zzz
+        "
+        .unindent();
+        let current_text_b = "
+            xxx
+            yyy modified
+            zzz
+        "
+        .unindent();
+
+        let (buffer_a, diff_a) = buffer_with_diff(&base_text_a, &current_text_a, &mut cx);
+        let (buffer_b, diff_b) = buffer_with_diff(&base_text_b, &current_text_b, &mut cx);
+
+        let path_a = cx.read(|cx| PathKey::for_buffer(&buffer_a, cx));
+        let path_b = cx.read(|cx| PathKey::for_buffer(&buffer_b, cx));
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path_a.clone(),
+                buffer_a.clone(),
+                vec![Point::new(0, 0)..buffer_a.read(cx).max_point()],
+                0,
+                diff_a.clone(),
+                cx,
+            );
+            editor.set_excerpts_for_path(
+                path_b.clone(),
+                buffer_b.clone(),
+                vec![Point::new(0, 0)..buffer_b.read(cx).max_point()],
+                0,
+                diff_b.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+        editor.update(cx, |editor, cx| {
+            editor
+                .rhs_editor()
+                .update(cx, |right_editor, cx| right_editor.fold_buffer(buffer_a_id, cx));
+        });
+
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            editor.remove_excerpts_for_path(path_a.clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.split(window, cx);
+        });
+
+        cx.run_until_parked();
+    }
 }
