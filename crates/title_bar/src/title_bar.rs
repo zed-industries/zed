@@ -971,15 +971,25 @@ impl TitleBar {
                             let organization = organization.clone();
 
                             menu = menu.custom_entry(
-                                move |_window, _cx| {
-                                    h_flex()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new(&organization.name))
-                                        .into_any_element()
+                                {
+                                    let organization = organization.clone();
+                                    move |_window, _cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new(&organization.name))
+                                            .into_any_element()
+                                    }
                                 },
-                                move |_window, cx| {
-                                    //
+                                {
+                                    let user_store = user_store.clone();
+                                    let organization = organization.clone();
+                                    move |_window, cx| {
+                                        user_store.update(cx, |user_store, _cx| {
+                                            user_store
+                                                .set_current_organization(organization.clone());
+                                        });
+                                    }
                                 },
                             );
                         }

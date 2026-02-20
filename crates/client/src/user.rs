@@ -690,6 +690,10 @@ impl UserStore {
         self.current_organization.clone()
     }
 
+    pub fn set_current_organization(&mut self, organization: Arc<Organization>) {
+        self.current_organization.replace(organization);
+    }
+
     pub fn organizations(&self) -> &Vec<Arc<Organization>> {
         &self.organizations
     }
