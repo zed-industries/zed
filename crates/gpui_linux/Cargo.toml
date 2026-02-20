@@ -30,6 +30,7 @@ wayland = [
     "filedescriptor",
     "xkbcommon",
     "open",
+    "gpui/wayland",
 ]
 x11 = [
     "gpui_wgpu",
