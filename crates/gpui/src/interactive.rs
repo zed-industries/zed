@@ -284,6 +284,19 @@ impl ClickEvent {
         }
     }
 
+    /// Returns if this was a middle click
+    ///
+    /// `Keyboard`: false
+    /// `Mouse`: Whether the middle button was pressed and released
+    pub fn is_middle_click(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Mouse(event) => {
+                event.down.button == MouseButton::Middle && event.up.button == MouseButton::Middle
+            }
+        }
+    }
+
     /// Returns whether the click was a standard click
     ///
     /// `Keyboard`: Always true
@@ -544,7 +557,7 @@ impl Deref for MouseExitEvent {
 
 /// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
+pub struct ExternalPaths(pub SmallVec<[PathBuf; 2]>);
 
 impl ExternalPaths {
     /// Convert this collection of paths into a slice.

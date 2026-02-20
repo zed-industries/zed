@@ -1,11 +1,12 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt, App, Application, Asset, AssetLogger, AssetSource, Bounds, Context,
-    Hsla, ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, RenderImage,
+    Animation, AnimationExt, App, Asset, AssetLogger, AssetSource, Bounds, Context, Hsla,
+    ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, RenderImage,
     Resource, SharedString, Window, WindowBounds, WindowOptions, black, div, img, prelude::*,
     pulsating_between, px, red, size,
 };
+use gpui_platform::application;
 
 struct Assets {}
 
@@ -193,21 +194,19 @@ impl Render for ImageLoadingExample {
 
 fn main() {
     env_logger::init();
-    Application::new()
-        .with_assets(Assets {})
-        .run(|cx: &mut App| {
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(300.), px(300.)),
-                    cx,
-                ))),
-                ..Default::default()
-            };
-            cx.open_window(options, |_, cx| {
-                cx.activate(false);
-                cx.new(|_| ImageLoadingExample {})
-            })
-            .unwrap();
-        });
+    application().with_assets(Assets {}).run(|cx: &mut App| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(300.), px(300.)),
+                cx,
+            ))),
+            ..Default::default()
+        };
+        cx.open_window(options, |_, cx| {
+            cx.activate(false);
+            cx.new(|_| ImageLoadingExample {})
+        })
+        .unwrap();
+    });
 }

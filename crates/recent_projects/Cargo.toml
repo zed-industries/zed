@@ -14,22 +14,22 @@ doctest = false
 
 [features]
 default = []
-test-support = ["remote/test-support", "project/test-support", "workspace/test-support"]
+test-support = ["remote/test-support", "remote_connection/test-support", "project/test-support", "workspace/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 askpass.workspace = true
-auto_update.workspace = true
 db.workspace = true
 dev_container.workspace = true
 editor.workspace = true
 extension_host.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
-markdown.workspace = true
 menu.workspace = true
 node_runtime.workspace = true
 open_path_prompt.workspace = true
@@ -39,6 +39,7 @@ picker.workspace = true
 project.workspace = true
 release_channel.workspace = true
 remote.workspace = true
+remote_connection.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -46,8 +47,8 @@ settings.workspace = true
 smol.workspace = true
 task.workspace = true
 telemetry.workspace = true
-theme.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
@@ -68,6 +69,7 @@ language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
+remote_connection = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }

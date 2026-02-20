@@ -27,7 +27,6 @@ lsp.workspace = true
 markdown.workspace = true
 project.workspace = true
 rand.workspace = true
-search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -43,11 +42,11 @@ client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 markdown = { workspace = true, features = ["test-support"] }
-lsp = { workspace = true, features=["test-support"] }
+pretty_assertions.workspace = true
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
 zlog.workspace = true

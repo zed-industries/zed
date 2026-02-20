@@ -136,3 +136,55 @@ Other entities can then register a callback to handle these events by doing `cx.
 ## Build guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+
+# Pull request hygiene
+
+When an agent opens or updates a pull request, it must:
+
+- Use a clear, correctly capitalized, imperative PR title (for example, `Fix crash in project panel`).
+- Avoid conventional commit prefixes in PR titles (`fix:`, `feat:`, `docs:`, etc.).
+- Avoid trailing punctuation in PR titles.
+- Optionally prefix the title with a crate name when one crate is the clear scope (for example, `git_ui: Add history view`).
+- Include a `Release Notes:` section as the final section in the PR body.
+- Use one bullet under `Release Notes:`:
+  - `- Added ...`, `- Fixed ...`, or `- Improved ...` for user-facing changes, or
+  - `- N/A` for docs-only and other non-user-facing changes.
+- Format release notes exactly with a blank line after the heading, for example:
+
+```
+Release Notes:
+
+- N/A
+```
+
+# Crash Investigation
+
+## Sentry Integration
+- Crash investigation prompts: `.factory/prompts/crash/investigate.md`
+- Crash fix prompts: `.factory/prompts/crash/fix.md`
+- Fetch crash reports: `script/sentry-fetch <issue-id>`
+- Generate investigation prompt from crash: `script/crash-to-prompt <issue-id>`
+
+# Rules Hygiene
+
+These `.rules` files are read by every agent session. Keep them high-signal.
+
+## After any agentic session
+If you discover a non-obvious pattern that would help future sessions, include a **"Suggested .rules additions"** heading in your PR description with the proposed text. Do **not** edit `.rules` inline during normal feature/fix work. Reviewers decide what gets merged.
+
+## High bar for new rules
+Editing or clarifying existing rules is always welcome. New rules must meet **all three** criteria:
+1. **Non-obvious** — someone familiar with the codebase would still get it wrong without the rule.
+2. **Repeatedly encountered** — it came up more than once (multiple hits in one session counts).
+3. **Specific enough to act on** — a concrete instruction, not a vague principle.
+
+Rules that apply to a single crate belong in that crate's own `.rules` file, not the repo root.
+
+## What NOT to put in `.rules`
+Avoid architectural descriptions of a crate (module layout, data flow, key types). These go stale fast and the agent can gather them by reading the code. Rules should be **traps to avoid**, not **maps to follow**.
+
+## No drive-by additions
+Rules emerge from validated patterns, not one-off observations. The workflow is:
+1. Agent notes a pattern during a session.
+2. Team validates the pattern in code review.
+3. A dedicated commit adds the rule with context on *why* it exists.

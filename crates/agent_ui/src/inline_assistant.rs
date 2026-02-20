@@ -27,7 +27,7 @@ use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    HighlightKey, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
@@ -132,9 +132,9 @@ impl InlineAssistant {
             })
             .detach();
 
-        let workspace = workspace.downgrade();
+        let workspace_weak = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
-            let Some(workspace) = workspace.upgrade() else {
+            let Some(workspace) = workspace_weak.upgrade() else {
                 return;
             };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
@@ -144,6 +144,19 @@ impl InlineAssistant {
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
+        })
+        .detach();
+
+        cx.observe(workspace, |workspace, cx| {
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AgentSettings::get_global(cx).enabled(cx);
+            if terminal_panel.read(cx).assistant_enabled() != enabled {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.set_assistant_enabled(enabled, cx)
+                });
+            }
         })
         .detach();
     }
@@ -1432,9 +1445,10 @@ impl InlineAssistant {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_highlights::<InlineAssist>(cx);
+                editor.clear_highlights(HighlightKey::InlineAssist, cx);
             } else {
-                editor.highlight_text::<InlineAssist>(
+                editor.highlight_text(
+                    HighlightKey::InlineAssist,
                     foreground_ranges,
                     HighlightStyle {
                         fade_out: Some(0.6),

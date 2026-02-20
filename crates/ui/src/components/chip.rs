@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{AnyElement, Hsla, IntoElement, ParentElement, Styled};
+use gpui::{AnyElement, AnyView, Hsla, IntoElement, ParentElement, Styled};
 
 /// Chips provide a container for an informative label.
 ///
@@ -16,6 +16,7 @@ pub struct Chip {
     label_color: Color,
     label_size: LabelSize,
     bg_color: Option<Hsla>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl Chip {
@@ -26,6 +27,7 @@ impl Chip {
             label_color: Color::Default,
             label_size: LabelSize::XSmall,
             bg_color: None,
+            tooltip: None,
         }
     }
 
@@ -46,6 +48,11 @@ impl Chip {
         self.bg_color = Some(color);
         self
     }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
+    }
 }
 
 impl RenderOnce for Chip {
@@ -64,11 +71,13 @@ impl RenderOnce for Chip {
             .bg(bg_color)
             .overflow_hidden()
             .child(
-                Label::new(self.label)
+                Label::new(self.label.clone())
                     .size(self.label_size)
                     .color(self.label_color)
                     .buffer_font(cx),
             )
+            .id(self.label.clone())
+            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
     }
 }
 
