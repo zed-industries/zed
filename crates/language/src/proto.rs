@@ -251,9 +251,10 @@ pub fn serialize_diagnostics<'a>(
 
 /// Serializes an [`Anchor`] to be sent over RPC.
 pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
+    let timestamp = anchor.timestamp();
     proto::Anchor {
-        replica_id: anchor.timestamp.replica_id.as_u16() as u32,
-        timestamp: anchor.timestamp.value,
+        replica_id: timestamp.replica_id.as_u16() as u32,
+        timestamp: timestamp.value,
         offset: anchor.offset as u64,
         bias: match anchor.bias {
             Bias::Left => proto::Bias::Left as i32,
@@ -485,18 +486,20 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     } else {
         None
     };
-    Some(Anchor {
-        timestamp: clock::Lamport {
-            replica_id: ReplicaId::new(anchor.replica_id as u16),
-            value: anchor.timestamp,
-        },
-        offset: anchor.offset as usize,
-        bias: match proto::Bias::from_i32(anchor.bias)? {
-            proto::Bias::Left => Bias::Left,
-            proto::Bias::Right => Bias::Right,
-        },
+    let timestamp = clock::Lamport {
+        replica_id: ReplicaId::new(anchor.replica_id as u16),
+        value: anchor.timestamp,
+    };
+    let bias = match proto::Bias::from_i32(anchor.bias)? {
+        proto::Bias::Left => Bias::Left,
+        proto::Bias::Right => Bias::Right,
+    };
+    Some(Anchor::new(
+        timestamp,
+        anchor.offset as usize,
+        bias,
         buffer_id,
-    })
+    ))
 }
 
 /// Returns a `[clock::Lamport`] timestamp for the given [`proto::Operation`].

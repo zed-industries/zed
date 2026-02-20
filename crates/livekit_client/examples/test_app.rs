@@ -23,7 +23,7 @@ actions!(livekit_client, [Quit]);
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::Application::new().run(|cx| {
+    gpui_platform::application().run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
@@ -144,7 +144,6 @@ impl LivekitWindow {
             )
             .unwrap()
         })
-        .unwrap()
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut Context<Self>) {

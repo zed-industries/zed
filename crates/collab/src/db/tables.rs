@@ -1,4 +1,3 @@
-pub mod access_token;
 pub mod buffer;
 pub mod buffer_operation;
 pub mod buffer_snapshot;
@@ -22,6 +21,7 @@ pub mod project_repository_statuses;
 pub mod room;
 pub mod room_participant;
 pub mod server;
+pub mod shared_thread;
 pub mod user;
 pub mod worktree;
 pub mod worktree_diagnostic_summary;

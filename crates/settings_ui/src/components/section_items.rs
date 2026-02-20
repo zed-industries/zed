@@ -40,11 +40,11 @@ impl RenderOnce for SettingsSectionHeader {
             .when(!self.no_padding, |this| this.px_8())
             .gap_1p5()
             .map(|this| {
-                if self.icon.is_some() {
+                if let Some(icon) = self.icon {
                     this.child(
                         h_flex()
                             .gap_1p5()
-                            .child(Icon::new(self.icon.unwrap()).color(Color::Muted))
+                            .child(Icon::new(icon).color(Color::Muted))
                             .child(label),
                     )
                 } else {

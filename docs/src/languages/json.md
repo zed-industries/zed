@@ -1,3 +1,8 @@
+---
+title: JSON
+description: "Configure JSON language support in Zed, including language servers, formatting, and debugging."
+---
+
 # JSON
 
 JSON support is available natively in Zed.
@@ -16,7 +21,7 @@ If you use files with the `*.jsonc` extension when using `Format Document` or ha
 
 To workaround this behavior you can add the following to your `.prettierrc` configuration file:
 
-```json [settings]
+```json
 {
   "overrides": [
     {
@@ -40,7 +45,7 @@ To specify a schema inline with your JSON files, add a `$schema` top level key l
 
 For example to for a `.luarc.json` for use with [lua-language-server](https://github.com/LuaLS/lua-language-server/):
 
-```json [settings]
+```json
 {
   "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.4"

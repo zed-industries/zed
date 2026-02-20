@@ -104,16 +104,16 @@ impl From<BufferId> for u64 {
 
 #[derive(Clone)]
 pub struct BufferSnapshot {
-    replica_id: ReplicaId,
-    remote_id: BufferId,
     visible_text: Rope,
     deleted_text: Rope,
-    line_ending: LineEnding,
-    undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
     insertion_slices: TreeSet<InsertionSlice>,
+    undo_map: UndoMap,
     pub version: clock::Global,
+    remote_id: BufferId,
+    replica_id: ReplicaId,
+    line_ending: LineEnding,
 }
 
 #[derive(Clone, Debug)]
@@ -780,8 +780,12 @@ impl Buffer {
         self.version.clone()
     }
 
-    pub fn snapshot(&self) -> BufferSnapshot {
-        self.snapshot.clone()
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> BufferSnapshot {
+        self.snapshot
     }
 
     pub fn branch(&self) -> Self {
@@ -1653,10 +1657,10 @@ impl Buffer {
     ) -> impl 'static + Future<Output = Result<()>> + use<It> {
         let mut futures = Vec::new();
         for anchor in anchors {
-            if !self.version.observed(anchor.timestamp) && !anchor.is_max() && !anchor.is_min() {
+            if !self.version.observed(anchor.timestamp()) && !anchor.is_max() && !anchor.is_min() {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers
-                    .entry(anchor.timestamp)
+                    .entry(anchor.timestamp())
                     .or_default()
                     .push(tx);
                 futures.push(rx);
@@ -2248,7 +2252,6 @@ impl BufferSnapshot {
         A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
     {
         let anchors = anchors.into_iter();
-        let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
         let mut fragment_cursor = self
             .fragments
             .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
@@ -2262,24 +2265,7 @@ impl BufferSnapshot {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
-                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                if comparison == Ordering::Greater
-                    || (anchor.bias == Bias::Left
-                        && comparison == Ordering::Equal
-                        && anchor.offset > 0)
-                {
-                    insertion_cursor.prev();
-                }
-            } else {
-                insertion_cursor.prev();
-            }
-            let Some(insertion) = insertion_cursor.item() else {
+            let Some(insertion) = self.try_find_fragment(anchor) else {
                 panic!(
                     "invalid insertion for buffer {}@{:?} with anchor {:?}",
                     self.remote_id(),
@@ -2289,7 +2275,7 @@ impl BufferSnapshot {
             };
             assert_eq!(
                 insertion.timestamp,
-                anchor.timestamp,
+                anchor.timestamp(),
                 "invalid insertion for buffer {}@{:?} and anchor {:?}",
                 self.remote_id(),
                 self.version,
@@ -2323,33 +2309,14 @@ impl BufferSnapshot {
         } else {
             debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
             debug_assert!(
-                self.version.observed(anchor.timestamp),
+                self.version.observed(anchor.timestamp()),
                 "Anchor timestamp {:?} not observed by buffer {:?}",
-                anchor.timestamp,
+                anchor.timestamp(),
                 self.version
             );
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
-                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                if comparison == Ordering::Greater
-                    || (anchor.bias == Bias::Left
-                        && comparison == Ordering::Equal
-                        && anchor.offset > 0)
-                {
-                    insertion_cursor.prev();
-                }
-            } else {
-                insertion_cursor.prev();
-            }
-
-            let Some(insertion) = insertion_cursor
-                .item()
-                .filter(|insertion| insertion.timestamp == anchor.timestamp)
+            let item = self.try_find_fragment(anchor);
+            let Some(insertion) =
+                item.filter(|insertion| insertion.timestamp == anchor.timestamp())
             else {
                 self.panic_bad_anchor(anchor);
             };
@@ -2377,7 +2344,7 @@ impl BufferSnapshot {
                 "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
                 self.remote_id, self.version
             );
-        } else if !self.version.observed(anchor.timestamp) {
+        } else if !self.version.observed(anchor.timestamp()) {
             panic!(
                 "invalid anchor - snapshot has not observed lamport: {:?}; version: {:?}",
                 anchor, self.version
@@ -2401,38 +2368,56 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             Some(Locator::max_ref())
         } else {
-            let anchor_key = InsertionFragmentKey {
-                timestamp: anchor.timestamp,
-                split_offset: anchor.offset,
-            };
-            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
-            insertion_cursor.seek(&anchor_key, anchor.bias);
-            if let Some(insertion) = insertion_cursor.item() {
+            let item = self.try_find_fragment(anchor);
+            item.filter(|insertion| {
+                !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp()
+            })
+            .map(|insertion| &insertion.fragment_id)
+        }
+    }
+
+    fn try_find_fragment(&self, anchor: &Anchor) -> Option<&InsertionFragment> {
+        let anchor_key = InsertionFragmentKey {
+            timestamp: anchor.timestamp(),
+            split_offset: anchor.offset,
+        };
+        match self.insertions.find_with_prev::<InsertionFragmentKey, _>(
+            (),
+            &anchor_key,
+            anchor.bias,
+        ) {
+            (_, _, Some((prev, insertion))) => {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
                     || (anchor.bias == Bias::Left
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev();
+                    prev
+                } else {
+                    Some(insertion)
                 }
-            } else {
-                insertion_cursor.prev();
             }
-
-            insertion_cursor
-                .item()
-                .filter(|insertion| {
-                    !cfg!(debug_assertions) || insertion.timestamp == anchor.timestamp
-                })
-                .map(|insertion| &insertion.fragment_id)
+            _ => self.insertions.last(),
         }
     }
 
+    /// Returns an anchor range for the given input position range that is anchored to the text inbetween.
+    pub fn anchor_range_around<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor range for the given input position range that is anchored to the text before the start position and after the end position.
+    pub fn anchor_range_between<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+        self.anchor_before(position.start)..self.anchor_after(position.end)
+    }
+
+    /// Returns an anchor for the given input position that is anchored to the text before the position.
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
 
+    /// Returns an anchor for the given input position that is anchored to the text after the position.
     pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
@@ -2449,7 +2434,7 @@ impl BufferSnapshot {
         {
             Anchor::max_for_buffer(self.remote_id)
         } else {
-            if self
+            if !self
                 .visible_text
                 .assert_char_boundary::<{ cfg!(debug_assertions) }>(offset)
             {
@@ -2469,19 +2454,20 @@ impl BufferSnapshot {
                 return Anchor::max_for_buffer(self.remote_id);
             };
             let overshoot = offset - start;
-            Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset + overshoot,
+            Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset + overshoot,
                 bias,
-                buffer_id: Some(self.remote_id),
-            }
+                Some(self.remote_id),
+            )
         }
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         anchor.is_min()
             || anchor.is_max()
-            || (Some(self.remote_id) == anchor.buffer_id && self.version.observed(anchor.timestamp))
+            || (Some(self.remote_id) == anchor.buffer_id
+                && self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -2540,15 +2526,14 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        let fragments_cursor = if *since == self.version {
-            None
-        } else {
-            let mut cursor = self.fragments.filter(&None, move |summary| {
-                !since.observed_all(&summary.max_version)
-            });
-            cursor.next();
-            Some(cursor)
-        };
+        if *since == self.version {
+            return None.into_iter().flatten();
+        }
+        let mut cursor = self.fragments.filter(&None, move |summary| {
+            !since.observed_all(&summary.max_version)
+        });
+        cursor.next();
+        let fragments_cursor = Some(cursor);
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
         let (start, _, item) = self
             .fragments
@@ -2569,7 +2554,7 @@ impl BufferSnapshot {
         }
         let end_fragment_id = self.fragment_id_for_anchor(&range.end);
 
-        Edits {
+        Some(Edits {
             visible_cursor: self.visible_text.cursor(visible_start),
             deleted_cursor: self.deleted_text.cursor(deleted_start),
             fragments_cursor,
@@ -2579,7 +2564,9 @@ impl BufferSnapshot {
             new_end: D::zero(()),
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
             buffer_id: self.remote_id,
-        }
+        })
+        .into_iter()
+        .flatten()
     }
 
     pub fn has_edits_since_in_range(&self, since: &clock::Global, range: Range<Anchor>) -> bool {
@@ -2775,18 +2762,18 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 break;
             }
 
-            let start_anchor = Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset,
-                bias: Bias::Right,
-                buffer_id: Some(self.buffer_id),
-            };
-            let end_anchor = Anchor {
-                timestamp: fragment.timestamp,
-                offset: fragment.insertion_offset + fragment.len,
-                bias: Bias::Left,
-                buffer_id: Some(self.buffer_id),
-            };
+            let start_anchor = Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset,
+                Bias::Right,
+                Some(self.buffer_id),
+            );
+            let end_anchor = Anchor::new(
+                fragment.timestamp,
+                fragment.insertion_offset + fragment.len,
+                Bias::Left,
+                Some(self.buffer_id),
+            );
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {
                 let mut visible_end = cursor.end().visible;
@@ -3155,8 +3142,9 @@ impl ToOffset for Point {
 }
 
 impl ToOffset for usize {
+    #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        if snapshot
+        if !snapshot
             .as_rope()
             .assert_char_boundary::<{ cfg!(debug_assertions) }>(*self)
         {

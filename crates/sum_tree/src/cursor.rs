@@ -30,7 +30,7 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 pub struct Cursor<'a, 'b, T: Item, D> {
     tree: &'a SumTree<T>,
     stack: ArrayVec<StackEntry<'a, T, D>, 16>,
-    position: D,
+    pub position: D,
     did_seek: bool,
     at_end: bool,
     cx: <T::Summary as Summary>::Context<'b>,
@@ -72,7 +72,7 @@ where
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);
@@ -586,9 +586,8 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
             descend = true;
         }
 
-        while !self.stack.is_empty() {
+        while let Some(entry) = self.stack.last_mut() {
             let new_subtree = {
-                let entry = self.stack.last_mut().unwrap();
                 match entry.tree.0.as_ref() {
                     Node::Internal { child_trees, .. } => {
                         if !descend {
@@ -624,6 +623,20 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
         }
 
         None
+    }
+
+    fn last(mut self) -> Option<Self::Item> {
+        self.stack.clear();
+        self.tree.rightmost_leaf().last()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let lower_bound = match self.stack.last() {
+            Some(top) => top.tree.0.child_summaries().len() - top.index as usize,
+            None => self.tree.0.child_summaries().len(),
+        };
+
+        (lower_bound, None)
     }
 }
 

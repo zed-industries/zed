@@ -108,7 +108,7 @@ impl<'a> Statement<'a> {
         }
     }
 
-    fn bind_index_with(&self, index: i32, bind: impl Fn(&*mut sqlite3_stmt)) -> Result<()> {
+    fn bind_index_with(&self, index: i32, bind: &dyn Fn(&*mut sqlite3_stmt)) -> Result<()> {
         let mut any_succeed = false;
         unsafe {
             for raw_statement in self.raw_statements.iter() {
@@ -135,7 +135,7 @@ impl<'a> Statement<'a> {
         let blob_pointer = blob.as_ptr() as *const _;
         let len = blob.len() as c_int;
 
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_blob(*raw_statement, index, blob_pointer, len, SQLITE_TRANSIENT());
         })
     }
@@ -161,7 +161,7 @@ impl<'a> Statement<'a> {
     pub fn bind_double(&self, index: i32, double: f64) -> Result<()> {
         let index = index as c_int;
 
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_double(*raw_statement, index, double);
         })
     }
@@ -177,7 +177,7 @@ impl<'a> Statement<'a> {
 
     pub fn bind_int(&self, index: i32, int: i32) -> Result<()> {
         let index = index as c_int;
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_int(*raw_statement, index, int);
         })
     }
@@ -193,7 +193,7 @@ impl<'a> Statement<'a> {
 
     pub fn bind_int64(&self, index: i32, int: i64) -> Result<()> {
         let index = index as c_int;
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_int64(*raw_statement, index, int);
         })
     }
@@ -209,7 +209,7 @@ impl<'a> Statement<'a> {
 
     pub fn bind_null(&self, index: i32) -> Result<()> {
         let index = index as c_int;
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_null(*raw_statement, index);
         })
     }
@@ -219,7 +219,7 @@ impl<'a> Statement<'a> {
         let text_pointer = text.as_ptr() as *const _;
         let len = text.len() as c_int;
 
-        self.bind_index_with(index, |raw_statement| unsafe {
+        self.bind_index_with(index, &|raw_statement| unsafe {
             sqlite3_bind_text(*raw_statement, index, text_pointer, len, SQLITE_TRANSIENT());
         })
     }

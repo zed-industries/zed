@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::KeymapFile;
+use settings::{KeymapFile, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -22,7 +22,7 @@ static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(load_all_actions);
+static ALL_ACTIONS: LazyLock<ActionManifest> = LazyLock::new(load_all_actions);
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
@@ -68,7 +68,7 @@ enum PreprocessorError {
 
 impl PreprocessorError {
     fn new_for_not_found_action(action_name: String) -> Self {
-        for action in &*ALL_ACTIONS {
+        for action in &ALL_ACTIONS.actions {
             for alias in &action.deprecated_aliases {
                 if alias == action_name.as_str() {
                     return PreprocessorError::DeprecatedActionUsed {
@@ -256,13 +256,14 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
     ALL_ACTIONS
+        .actions
         .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
-        .map(|index| &ALL_ACTIONS[index])
+        .map(|index| &ALL_ACTIONS.actions[index])
 }
 
 fn actions_available() -> bool {
-    !ALL_ACTIONS.is_empty()
+    !ALL_ACTIONS.actions.is_empty()
 }
 
 fn is_missing_action(name: &str) -> bool {
@@ -290,10 +291,19 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
 }
 
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let settings_validator = jsonschema::validator_for(&settings_schema)
+        .expect("failed to compile settings JSON schema");
+
+    let keymap_schema =
+        keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
+    let keymap_validator =
+        jsonschema::validator_for(&keymap_schema).expect("failed to compile keymap JSON schema");
+
     fn for_each_labeled_code_block_mut(
         book: &mut Book,
         errors: &mut HashSet<PreprocessorError>,
-        f: impl Fn(&str, &str) -> anyhow::Result<()>,
+        f: &dyn Fn(&str, &str) -> anyhow::Result<()>,
     ) {
         const TAGGED_JSON_BLOCK_START: &'static str = "```json [";
         const JSON_BLOCK_END: &'static str = "```";
@@ -360,7 +370,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
         });
     }
 
-    for_each_labeled_code_block_mut(book, errors, |label, snippet_json| {
+    for_each_labeled_code_block_mut(book, errors, &|label, snippet_json| {
         let mut snippet_json_fixed = snippet_json
             .to_string()
             .replace("\n>", "\n")
@@ -378,9 +388,15 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.insert(0, '{');
                     snippet_json_fixed.push_str("\n}");
                 }
-                settings::parse_json_with_comments::<settings::SettingsContent>(
-                    &snippet_json_fixed,
-                )?;
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = settings_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
+                }
             }
             "keymap" => {
                 if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
@@ -388,21 +404,14 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.push_str("\n]");
                 }
 
-                let keymap = settings::KeymapFile::parse(&snippet_json_fixed)
-                    .context("Failed to parse keymap JSON")?;
-                for section in keymap.sections() {
-                    for (_keystrokes, action) in section.bindings() {
-                        if let Some((action_name, _)) = settings::KeymapFile::parse_action(action)
-                            .map_err(|err| anyhow::format_err!(err))
-                            .context("Failed to parse action")?
-                        {
-                            anyhow::ensure!(
-                                !is_missing_action(action_name),
-                                "Action not found: {}",
-                                action_name
-                            );
-                        }
-                    }
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = keymap_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
                 }
             }
             "debug" => {
@@ -431,9 +440,17 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     &snippet_json_fixed,
                 )?;
             }
-            label => {
-                anyhow::bail!("Unexpected JSON code block tag: {}", label)
+            "semantic_token_rules" => {
+                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                    snippet_json_fixed.insert(0, '[');
+                    snippet_json_fixed.push_str("\n]");
+                }
+
+                settings::parse_json_with_comments::<settings::SemanticTokenRules>(
+                    &snippet_json_fixed,
+                )?;
             }
+            label => anyhow::bail!("Unexpected JSON code block tag: {label}"),
         };
         Ok(())
     });
@@ -497,19 +514,30 @@ where
 struct ActionDef {
     name: String,
     human_name: String,
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
     deprecated_aliases: Vec<String>,
+    #[serde(default)]
+    deprecation_message: Option<String>,
     #[serde(rename = "documentation")]
     docs: Option<String>,
 }
 
-fn load_all_actions() -> Vec<ActionDef> {
+#[derive(Debug, serde::Deserialize)]
+struct ActionManifest {
+    actions: Vec<ActionDef>,
+    #[serde(default)]
+    schema_definitions: serde_json::Map<String, serde_json::Value>,
+}
+
+fn load_all_actions() -> ActionManifest {
     let asset_path = concat!(env!("CARGO_MANIFEST_DIR"), "/actions.json");
     match std::fs::read_to_string(asset_path) {
         Ok(content) => {
-            let mut actions: Vec<ActionDef> =
+            let mut manifest: ActionManifest =
                 serde_json::from_str(&content).expect("Failed to parse actions.json");
-            actions.sort_by(|a, b| a.name.cmp(&b.name));
-            actions
+            manifest.actions.sort_by(|a, b| a.name.cmp(&b.name));
+            manifest
         }
         Err(err) => {
             if std::env::var("CI").is_ok() {
@@ -519,7 +547,10 @@ fn load_all_actions() -> Vec<ActionDef> {
                 "Warning: actions.json not found, action validation will be skipped: {}",
                 err
             );
-            Vec::new()
+            ActionManifest {
+                actions: Vec::new(),
+                schema_definitions: serde_json::Map::new(),
+            }
         }
     }
 }
@@ -653,7 +684,7 @@ fn title_regex() -> &'static Regex {
 }
 
 fn generate_big_table_of_actions() -> String {
-    let actions = &*ALL_ACTIONS;
+    let actions = &ALL_ACTIONS.actions;
     let mut output = String::new();
 
     let mut actions_sorted = actions.iter().collect::<Vec<_>>();
@@ -701,4 +732,52 @@ fn generate_big_table_of_actions() -> String {
     output.push_str("</dl>\n");
 
     output
+}
+
+fn keymap_schema_for_actions(
+    actions: &[ActionDef],
+    schema_definitions: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mut generator = KeymapFile::action_schema_generator();
+
+    for (name, definition) in schema_definitions {
+        generator
+            .definitions_mut()
+            .insert(name.clone(), definition.clone());
+    }
+
+    let mut action_schemas = Vec::new();
+    let mut documentation = collections::HashMap::<&str, &str>::default();
+    let mut deprecations = collections::HashMap::<&str, &str>::default();
+    let mut deprecation_messages = collections::HashMap::<&str, &str>::default();
+
+    for action in actions {
+        let schema = action
+            .schema
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+        action_schemas.push((action.name.as_str(), schema));
+        if let Some(doc) = &action.docs {
+            documentation.insert(action.name.as_str(), doc.as_str());
+        }
+        if let Some(msg) = &action.deprecation_message {
+            deprecation_messages.insert(action.name.as_str(), msg.as_str());
+        }
+        for alias in &action.deprecated_aliases {
+            deprecations.insert(alias.as_str(), action.name.as_str());
+            let alias_schema = action
+                .schema
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+            action_schemas.push((alias.as_str(), alias_schema));
+        }
+    }
+
+    KeymapFile::generate_json_schema(
+        generator,
+        action_schemas,
+        &documentation,
+        &deprecations,
+        &deprecation_messages,
+    )
 }

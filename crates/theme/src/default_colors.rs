@@ -177,7 +177,14 @@ impl ThemeColors {
             vim_visual_block_background: system.transparent,
             vim_helix_normal_background: system.transparent,
             vim_helix_select_background: system.transparent,
-            vim_mode_text: system.transparent,
+            vim_normal_foreground: system.transparent,
+            vim_insert_foreground: system.transparent,
+            vim_replace_foreground: system.transparent,
+            vim_visual_foreground: system.transparent,
+            vim_visual_line_foreground: system.transparent,
+            vim_visual_block_foreground: system.transparent,
+            vim_helix_normal_foreground: system.transparent,
+            vim_helix_select_foreground: system.transparent,
         }
     }
 
@@ -315,7 +322,14 @@ impl ThemeColors {
             vim_visual_block_background: system.transparent,
             vim_helix_normal_background: system.transparent,
             vim_helix_select_background: system.transparent,
-            vim_mode_text: system.transparent,
+            vim_normal_foreground: system.transparent,
+            vim_insert_foreground: system.transparent,
+            vim_replace_foreground: system.transparent,
+            vim_visual_foreground: system.transparent,
+            vim_visual_line_foreground: system.transparent,
+            vim_visual_block_foreground: system.transparent,
+            vim_helix_normal_foreground: system.transparent,
+            vim_helix_select_foreground: system.transparent,
         }
     }
 }

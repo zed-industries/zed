@@ -1,6 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
-use action_log::ActionLogTelemetry;
+use action_log::{ActionLogTelemetry, LastRejectUndo};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -12,6 +12,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+
 use gpui::{
     Action, AnyElement, App, AppContext, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
@@ -32,7 +33,7 @@ use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 use zed_actions::assistant::ToggleFocus;
@@ -95,7 +96,8 @@ impl AgentDiffPane {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
+            editor
+                .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
             editor.register_addon(AgentDiffAddon);
             editor
         });
@@ -130,6 +132,15 @@ impl AgentDiffPane {
             .action_log()
             .read(cx)
             .changed_buffers(cx);
+
+        // Sort edited files alphabetically for consistency with Git diff view
+        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
+            let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
+            let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
+            path_a.cmp(&path_b)
+        });
+
         let mut paths_to_delete = self
             .multibuffer
             .read(cx)
@@ -137,7 +148,7 @@ impl AgentDiffPane {
             .cloned()
             .collect::<HashSet<_>>();
 
-        for (buffer, diff_handle) in changed_buffers {
+        for (buffer, diff_handle) in sorted_buffers {
             if buffer.read(cx).file().is_none() {
                 continue;
             }
@@ -146,13 +157,13 @@ impl AgentDiffPane {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = diff_handle.read(cx);
 
-            let diff_hunk_ranges = diff
+            let diff_hunk_ranges = diff_handle
+                .read(cx)
+                .snapshot(cx)
                 .hunks_intersecting_range(
                     language::Anchor::min_max_range_for_buffer(snapshot.remote_id()),
                     &snapshot,
-                    cx,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
@@ -167,7 +178,7 @@ impl AgentDiffPane {
                         multibuffer_context_lines(cx),
                         cx,
                     );
-                    multibuffer.add_diff(diff_handle, cx);
+                    multibuffer.add_diff(diff_handle.clone(), cx);
                     (was_empty, is_excerpt_newly_added)
                 });
 
@@ -264,7 +275,14 @@ impl AgentDiffPane {
     fn reject(&mut self, _: &Reject, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            reject_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
+            reject_edits_in_selection(
+                editor,
+                &snapshot,
+                &self.thread,
+                self.workspace.clone(),
+                window,
+                cx,
+            );
         });
     }
 
@@ -276,6 +294,7 @@ impl AgentDiffPane {
                 &snapshot,
                 &self.thread,
                 vec![editor::Anchor::min()..editor::Anchor::max()],
+                self.workspace.clone(),
                 window,
                 cx,
             );
@@ -310,6 +329,7 @@ fn reject_edits_in_selection(
     editor: &mut Editor,
     buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<AcpThread>,
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -317,7 +337,15 @@ fn reject_edits_in_selection(
         .selections
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
-    reject_edits_in_ranges(editor, buffer_snapshot, thread, ranges, window, cx)
+    reject_edits_in_ranges(
+        editor,
+        buffer_snapshot,
+        thread,
+        ranges,
+        workspace,
+        window,
+        cx,
+    )
 }
 
 fn keep_edits_in_ranges(
@@ -357,6 +385,7 @@ fn reject_edits_in_ranges(
     buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<AcpThread>,
     ranges: Vec<Range<editor::Anchor>>,
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -381,12 +410,32 @@ fn reject_edits_in_ranges(
 
     let action_log = thread.read(cx).action_log().clone();
     let telemetry = ActionLogTelemetry::from(thread.read(cx));
+    let mut undo_buffers = Vec::new();
+
     for (buffer, ranges) in ranges_by_buffer {
         action_log
             .update(cx, |action_log, cx| {
-                action_log.reject_edits_in_ranges(buffer, ranges, Some(telemetry.clone()), cx)
+                let (task, undo_info) =
+                    action_log.reject_edits_in_ranges(buffer, ranges, Some(telemetry.clone()), cx);
+                undo_buffers.extend(undo_info);
+                task
             })
             .detach_and_log_err(cx);
+    }
+    if !undo_buffers.is_empty() {
+        action_log.update(cx, |action_log, _cx| {
+            action_log.set_last_reject_undo(LastRejectUndo {
+                buffers: undo_buffers,
+            });
+        });
+
+        if let Some(workspace) = workspace.upgrade() {
+            cx.defer(move |cx| {
+                workspace.update(cx, |workspace, cx| {
+                    crate::ui::show_undo_reject_toast(workspace, action_log, cx);
+                });
+            });
+        }
     }
 }
 
@@ -460,7 +509,7 @@ impl Item for AgentDiffPane {
         Some(Icon::new(IconName::ZedAssistant).color(Color::Muted))
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -471,7 +520,7 @@ impl Item for AgentDiffPane {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -595,14 +644,6 @@ impl Item for AgentDiffPane {
         }
     }
 
-    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
-        ToolbarItemLocation::PrimaryLeft
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
-    }
-
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -665,7 +706,10 @@ impl Render for AgentDiffPane {
     }
 }
 
-fn diff_hunk_controls(thread: &Entity<AcpThread>) -> editor::RenderDiffHunkControlsFn {
+fn diff_hunk_controls(
+    thread: &Entity<AcpThread>,
+    workspace: WeakEntity<Workspace>,
+) -> editor::RenderDiffHunkControlsFn {
     let thread = thread.clone();
 
     Arc::new(
@@ -679,6 +723,7 @@ fn diff_hunk_controls(thread: &Entity<AcpThread>) -> editor::RenderDiffHunkContr
                     line_height,
                     &thread,
                     editor,
+                    workspace.clone(),
                     cx,
                 )
             }
@@ -694,6 +739,7 @@ fn render_diff_hunk_controls(
     line_height: Pixels,
     thread: &Entity<AcpThread>,
     editor: &Entity<Editor>,
+    workspace: WeakEntity<Workspace>,
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
@@ -730,6 +776,7 @@ fn render_diff_hunk_controls(
                                 &snapshot,
                                 &thread,
                                 vec![hunk_range.start..hunk_range.start],
+                                workspace.clone(),
                                 window,
                                 cx,
                             );
@@ -1302,7 +1349,13 @@ impl AgentDiff {
 
     fn register_review_action<T: Action>(
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<AcpThread>, &mut Window, &mut App) -> PostReviewState
+        review: impl Fn(
+            &Entity<Editor>,
+            &Entity<AcpThread>,
+            &WeakEntity<Workspace>,
+            &mut Window,
+            &mut App,
+        ) -> PostReviewState
         + 'static,
         this: &Entity<AgentDiff>,
     ) {
@@ -1350,20 +1403,22 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped
-            | AcpThreadEvent::Error
-            | AcpThreadEvent::LoadError(_)
-            | AcpThreadEvent::Refusal => {
+            AcpThreadEvent::Stopped => {
+                self.update_reviewing_editors(workspace, window, cx);
+            }
+            AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
             | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)
-            | AcpThreadEvent::ModeUpdated(_) => {}
+            | AcpThreadEvent::ModeUpdated(_)
+            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
         }
     }
 
@@ -1496,7 +1551,10 @@ impl AgentDiff {
                 if previous_state.is_none() {
                     editor.update(cx, |editor, cx| {
                         editor.start_temporary_diff_override();
-                        editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
+                        editor.set_render_diff_hunk_controls(
+                            diff_hunk_controls(&thread, workspace.clone()),
+                            cx,
+                        );
                         editor.set_expand_all_diff_hunks(cx);
                         editor.register_addon(EditorAgentDiffAddon);
                     });
@@ -1582,6 +1640,7 @@ impl AgentDiff {
     fn keep_all(
         editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
+        _workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1602,6 +1661,7 @@ impl AgentDiff {
     fn reject_all(
         editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
+        workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1612,6 +1672,7 @@ impl AgentDiff {
                 &snapshot,
                 thread,
                 vec![editor::Anchor::min()..editor::Anchor::max()],
+                workspace.clone(),
                 window,
                 cx,
             );
@@ -1622,6 +1683,7 @@ impl AgentDiff {
     fn keep(
         editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
+        _workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
@@ -1635,12 +1697,13 @@ impl AgentDiff {
     fn reject(
         editor: &Entity<Editor>,
         thread: &Entity<AcpThread>,
+        workspace: &WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            reject_edits_in_selection(editor, &snapshot, thread, window, cx);
+            reject_edits_in_selection(editor, &snapshot, thread, workspace.clone(), window, cx);
             Self::post_review_state(&snapshot)
         })
     }
@@ -1657,7 +1720,13 @@ impl AgentDiff {
     fn review_in_active_editor(
         &mut self,
         workspace: &mut Workspace,
-        review: impl Fn(&Entity<Editor>, &Entity<AcpThread>, &mut Window, &mut App) -> PostReviewState,
+        review: impl Fn(
+            &Entity<Editor>,
+            &Entity<AcpThread>,
+            &WeakEntity<Workspace>,
+            &mut Window,
+            &mut App,
+        ) -> PostReviewState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1676,12 +1745,14 @@ impl AgentDiff {
 
         let thread = thread.upgrade()?;
 
-        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx)
+        let review_result = review(&editor, &thread, &workspace.weak_handle(), window, cx);
+
+        if matches!(review_result, PostReviewState::AllReviewed)
             && let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton()
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys().cycle();
+            let mut keys = changed_buffers.keys();
             keys.find(|k| *k == &curr_buffer);
             let next_project_path = keys
                 .next()
@@ -1722,6 +1793,7 @@ mod tests {
     use super::*;
     use crate::Keep;
     use acp_thread::AgentConnection as _;
+    use agent_settings::AgentSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1729,6 +1801,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, rc::Rc};
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
@@ -1758,15 +1831,16 @@ mod tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
 
         let action_log = cx.read(|cx| thread.read(cx).action_log().clone());
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let agent_diff = cx.new_window_entity(|window, cx| {
             AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
@@ -1885,7 +1959,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
+    async fn test_single_file_review_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1893,6 +1967,14 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut agent_settings = store.get::<AgentSettings>(None).clone();
+                agent_settings.single_file_review = true;
+                store.override_global(agent_settings);
+            });
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1916,8 +1998,9 @@ mod tests {
             })
             .unwrap();
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         // Add the diff toolbar to the active pane
         let diff_toolbar = cx.new_window_entity(|_, cx| AgentDiffToolbar::new(cx));
@@ -1939,7 +2022,7 @@ mod tests {
             .update(|_, cx| {
                 connection
                     .clone()
-                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();

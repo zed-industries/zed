@@ -1,17 +1,30 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
+use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    RemoteUrl,
+    PullRequest, RemoteUrl,
 };
+
+fn merge_request_number_regex() -> &'static Regex {
+    static MERGE_REQUEST_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        // Matches GitLab MR references:
+        // - "(!123)" at the end of line (squash merge pattern)
+        // - "See merge request group/project!123" (standard merge commit)
+        Regex::new(r"(?:\(!(\d+)\)$|See merge request [^\s]+!(\d+))").unwrap()
+    });
+    &MERGE_REQUEST_NUMBER_REGEX
+}
 
 use crate::get_host_from_git_remote_url;
 
@@ -209,11 +222,52 @@ impl GitHostingProvider for Gitlab {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let mut url = self
+            .base_url()
+            .join(&format!(
+                "{}/{}/-/merge_requests/new",
+                remote.owner, remote.repo
+            ))
+            .ok()?;
+
+        let query = format!("merge_request%5Bsource_branch%5D={}", encode(source_branch));
+
+        url.set_query(Some(&query));
+        Some(url)
+    }
+
+    fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
+        // Check commit message for GitLab MR references
+        let capture = merge_request_number_regex().captures(message)?;
+        // The regex has two capture groups - one for "(!123)" pattern, one for "See merge request" pattern
+        let number = capture
+            .get(1)
+            .or_else(|| capture.get(2))?
+            .as_str()
+            .parse::<u32>()
+            .ok()?;
+
+        let mut url = self.base_url();
+        let path = format!(
+            "{}/{}/-/merge_requests/{}",
+            remote.owner, remote.repo, number
+        );
+        url.set_path(&path);
+
+        Some(PullRequest { number, url })
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        _author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
@@ -377,6 +431,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_gitlab_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(&remote, "feature/cool stuff")
+            .expect("create PR url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcool%20stuff"
+        );
+    }
+
+    #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
         let gitlab =
             Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
@@ -416,5 +489,111 @@ mod tests {
 
         let expected_url = "https://gitlab-instance.big-co.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let github = Gitlab::public_instance();
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
+
+        let base_url = Url::parse("https://gitlab.zed.com").unwrap();
+        let github = Gitlab::new("GitLab Self-Hosted", base_url);
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://gitlab.zed.com/zed-industries/zed/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fnew-feature"
+        );
+    }
+
+    #[test]
+    fn test_extract_merge_request_from_squash_commit() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        // Test squash merge pattern: "commit message (!123)"
+        let message = "Add new feature (!456)";
+        let pull_request = provider.extract_pull_request(&remote, message).unwrap();
+
+        assert_eq!(pull_request.number, 456);
+        assert_eq!(
+            pull_request.url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/456"
+        );
+    }
+
+    #[test]
+    fn test_extract_merge_request_from_merge_commit() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        // Test standard merge commit pattern: "See merge request group/project!123"
+        let message =
+            "Merge branch 'feature' into 'main'\n\nSee merge request zed-industries/zed!789";
+        let pull_request = provider.extract_pull_request(&remote, message).unwrap();
+
+        assert_eq!(pull_request.number, 789);
+        assert_eq!(
+            pull_request.url.as_str(),
+            "https://gitlab.com/zed-industries/zed/-/merge_requests/789"
+        );
+    }
+
+    #[test]
+    fn test_extract_merge_request_self_hosted() {
+        let base_url = Url::parse("https://gitlab.my-company.com").unwrap();
+        let provider = Gitlab::new("GitLab Self-Hosted", base_url);
+
+        let remote = ParsedGitRemote {
+            owner: "team".into(),
+            repo: "project".into(),
+        };
+
+        let message = "Fix bug (!42)";
+        let pull_request = provider.extract_pull_request(&remote, message).unwrap();
+
+        assert_eq!(pull_request.number, 42);
+        assert_eq!(
+            pull_request.url.as_str(),
+            "https://gitlab.my-company.com/team/project/-/merge_requests/42"
+        );
+    }
+
+    #[test]
+    fn test_extract_merge_request_no_match() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Gitlab::public_instance();
+
+        // No MR reference in message
+        let message = "Just a regular commit message";
+        let pull_request = provider.extract_pull_request(&remote, message);
+
+        assert!(pull_request.is_none());
     }
 }

@@ -2,11 +2,9 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
+use cloud_api_client::{GetAuthenticatedUserResponse, Organization, Plan, PlanInfo};
 use cloud_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, Plan,
-    UsageLimit,
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
 use derive_more::Deref;
@@ -108,18 +106,19 @@ pub struct UserStore {
     by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    model_request_usage: Option<ModelRequestUsage>,
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    current_organization: Option<Arc<Organization>>,
+    organizations: Vec<Arc<Organization>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
     pending_contact_requests: HashMap<u64, usize>,
-    invite_info: Option<InviteInfo>,
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
+    _handle_sign_out: Task<()>,
     weak_self: WeakEntity<Self>,
 }
 
@@ -156,9 +155,6 @@ enum UpdateContacts {
 }
 
 #[derive(Debug, Clone, Copy, Deref)]
-pub struct ModelRequestUsage(pub RequestUsage);
-
-#[derive(Debug, Clone, Copy, Deref)]
 pub struct EditPredictionUsage(pub RequestUsage);
 
 #[derive(Debug, Clone, Copy)]
@@ -170,13 +166,14 @@ pub struct RequestUsage {
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
+        let (sign_out_tx, mut sign_out_rx) = mpsc::unbounded();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
-            client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
 
+        client.sign_out_tx.lock().replace(sign_out_tx);
         client.add_message_to_client_handler({
             let this = cx.weak_entity();
             move |message, cx| Self::handle_message_to_client(this.clone(), message, cx)
@@ -186,14 +183,14 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
+            current_organization: None,
+            organizations: Vec::new(),
             plan_info: None,
-            model_request_usage: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
             outgoing_contact_requests: Default::default(),
-            invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
             _maintain_contacts: cx.spawn(async move |this, cx| {
@@ -259,7 +256,7 @@ impl UserStore {
                                     } else {
                                         anyhow::Ok(())
                                     }
-                                })??;
+                                })?;
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -267,6 +264,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_organizations();
                                 this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -286,6 +284,19 @@ impl UserStore {
                 }
                 Ok(())
             }),
+            _handle_sign_out: cx.spawn(async move |this, cx| {
+                while let Some(()) = sign_out_rx.next().await {
+                    let Some(client) = this
+                        .read_with(cx, |this, _cx| this.client.upgrade())
+                        .ok()
+                        .flatten()
+                    else {
+                        break;
+                    };
+
+                    client.sign_out(cx).await;
+                }
+            }),
             pending_contact_requests: Default::default(),
             weak_self: cx.weak_entity(),
         }
@@ -297,32 +308,13 @@ impl UserStore {
         self.by_github_login.clear();
     }
 
-    async fn handle_update_invite_info(
-        this: Entity<Self>,
-        message: TypedEnvelope<proto::UpdateInviteInfo>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            this.invite_info = Some(InviteInfo {
-                url: Arc::from(message.payload.url),
-                count: message.payload.count,
-            });
-            cx.notify();
-        })?;
-        Ok(())
-    }
-
     async fn handle_show_contacts(
         this: Entity<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
+        this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts));
         Ok(())
-    }
-
-    pub fn invite_info(&self) -> Option<&InviteInfo> {
-        self.invite_info.as_ref()
     }
 
     async fn handle_update_contacts(
@@ -334,7 +326,7 @@ impl UserStore {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
-        })?;
+        });
         Ok(())
     }
 
@@ -375,7 +367,7 @@ impl UserStore {
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
                         incoming_requests.push({
-                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))
                                 .await?
                         });
                     }
@@ -383,7 +375,7 @@ impl UserStore {
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))
                                 .await?,
                         );
                     }
@@ -450,7 +442,7 @@ impl UserStore {
                         }
 
                         cx.notify();
-                    })?;
+                    });
 
                     Ok(())
                 })
@@ -694,15 +686,19 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
+    pub fn current_organization(&self) -> Option<Arc<Organization>> {
+        self.current_organization.clone()
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
-            use cloud_llm_client::PlanV1;
+            use cloud_api_client::Plan;
 
             return match plan.as_str() {
-                "free" => Some(Plan::V1(PlanV1::ZedFree)),
-                "trial" => Some(Plan::V1(PlanV1::ZedProTrial)),
-                "pro" => Some(Plan::V1(PlanV1::ZedPro)),
+                "free" => Some(Plan::ZedFree),
+                "trial" => Some(Plan::ZedProTrial),
+                "pro" => Some(Plan::ZedPro),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
@@ -747,26 +743,6 @@ impl UserStore {
             .unwrap_or_default()
     }
 
-    pub fn is_usage_based_billing_enabled(&self) -> bool {
-        self.plan_info
-            .as_ref()
-            .map(|plan| plan.is_usage_based_billing_enabled)
-            .unwrap_or_default()
-    }
-
-    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
-        if self.plan().is_some_and(|plan| plan.is_v2()) {
-            return None;
-        }
-
-        self.model_request_usage
-    }
-
-    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
-        self.model_request_usage = Some(usage);
-        cx.notify();
-    }
-
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
     }
@@ -780,9 +756,13 @@ impl UserStore {
         cx.notify();
     }
 
+    pub fn clear_organizations(&mut self) {
+        self.organizations.clear();
+        self.current_organization = None;
+    }
+
     pub fn clear_plan_and_usage(&mut self) {
         self.plan_info = None;
-        self.model_request_usage = None;
         self.edit_prediction_usage = None;
     }
 
@@ -799,10 +779,9 @@ impl UserStore {
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
 
-        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
-            limit: response.plan.usage.model_requests.limit,
-            amount: response.plan.usage.model_requests.used as i32,
-        }));
+        self.organizations = response.organizations.into_iter().map(Arc::new).collect();
+        self.current_organization = self.organizations.first().cloned();
+
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
             amount: response.plan.usage.edit_predictions.used as i32,
@@ -820,7 +799,7 @@ impl UserStore {
                             this.read_with(cx, |this, _cx| {
                                 this.client.upgrade().map(|client| client.cloud_client())
                             })
-                        })??
+                        })?
                         .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
 
                     let response = cloud_client.get_authenticated_user().await?;
@@ -828,7 +807,7 @@ impl UserStore {
                         this.update(cx, |this, cx| {
                             this.update_authenticated_user(response, cx);
                         })
-                    })??;
+                    })?;
                 }
             }
 
@@ -936,7 +915,7 @@ impl Contact {
         let user = user_store
             .update(cx, |user_store, cx| {
                 user_store.get_user(contact.user_id, cx)
-            })?
+            })
             .await?;
         Ok(Self {
             user,
@@ -983,16 +962,6 @@ impl RequestUsage {
         let amount = amount.to_str()?.parse::<i32>()?;
 
         Ok(Self { limit, amount })
-    }
-}
-
-impl ModelRequestUsage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        Ok(Self(RequestUsage::from_headers(
-            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
-            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
-            headers,
-        )?))
     }
 }
 

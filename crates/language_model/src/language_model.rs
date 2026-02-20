@@ -13,7 +13,7 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use cloud_llm_client::{CompletionMode, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::CompletionRequestStatus;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -77,11 +77,6 @@ pub enum LanguageModelCompletionEvent {
         position: usize,
     },
     Started,
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -109,18 +104,13 @@ impl LanguageModelCompletionEvent {
     pub fn from_completion_request_status(
         status: CompletionRequestStatus,
         upstream_provider: LanguageModelProviderName,
-    ) -> Result<Self, LanguageModelCompletionError> {
+    ) -> Result<Option<Self>, LanguageModelCompletionError> {
         match status {
             CompletionRequestStatus::Queued { position } => {
-                Ok(LanguageModelCompletionEvent::Queued { position })
+                Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
-            CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
-            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
-            }
-            CompletionRequestStatus::ToolUseLimitReached => {
-                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
-            }
+            CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
+            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -218,6 +208,9 @@ pub enum LanguageModelCompletionError {
         #[source]
         error: serde_json::Error,
     },
+
+    #[error("stream from {provider} ended unexpectedly")]
+    StreamEndedUnexpectedly { provider: LanguageModelProviderName },
 
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
@@ -580,6 +573,13 @@ impl Default for LanguageModelTextStream {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LanguageModelEffortLevel {
+    pub name: SharedString,
+    pub value: SharedString,
+    pub is_default: bool,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -592,10 +592,37 @@ pub trait LanguageModel: Send + Sync {
         self.provider_name()
     }
 
+    /// Returns whether this model is the "latest", so we can highlight it in the UI.
+    fn is_latest(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
+    }
+
+    /// Information about the cost of using this model, if available.
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        None
+    }
+
+    /// Whether this model supports thinking.
+    fn supports_thinking(&self) -> bool {
+        false
+    }
+
+    /// Returns the list of supported effort levels that can be used when thinking.
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        Vec::new()
+    }
+
+    /// Returns the default effort level to use when thinking.
+    fn default_effort_level(&self) -> Option<LanguageModelEffortLevel> {
+        self.supported_effort_levels()
+            .into_iter()
+            .find(|effort_level| effort_level.is_default)
     }
 
     /// Whether this model supports images
@@ -607,13 +634,14 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "burn mode";
-    fn supports_burn_mode(&self) -> bool {
+    /// Returns whether this model or provider supports streaming tool calls;
+    fn supports_streaming_tools(&self) -> bool {
         false
     }
 
-    /// Returns whether this model or provider supports streaming tool calls;
-    fn supports_streaming_tools(&self) -> bool {
+    /// Returns whether this model/provider reports accurate split input/output token counts.
+    /// When true, the UI may show separate input/output token indicators.
+    fn supports_split_token_display(&self) -> bool {
         false
     }
 
@@ -622,10 +650,6 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
-    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` is `false` this returns `None`)
-    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
-        None
-    }
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }
@@ -683,8 +707,6 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
@@ -758,18 +780,6 @@ pub trait LanguageModel: Send + Sync {
         unimplemented!()
     }
 }
-
-pub trait LanguageModelExt: LanguageModel {
-    fn max_token_count_for_mode(&self, mode: CompletionMode) -> u64 {
-        match mode {
-            CompletionMode::Normal => self.max_token_count(),
-            CompletionMode::Max => self
-                .max_token_count_in_burn_mode()
-                .unwrap_or_else(|| self.max_token_count()),
-        }
-    }
-}
-impl LanguageModelExt for dyn LanguageModel {}
 
 impl std::fmt::Debug for dyn LanguageModel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -880,6 +890,44 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LanguageModelCostInfo {
+    /// Cost per 1,000 input and output tokens
+    TokenCost {
+        input_token_cost_per_1m: f64,
+        output_token_cost_per_1m: f64,
+    },
+    /// Cost per request
+    RequestCost { cost_per_request: f64 },
+}
+
+impl LanguageModelCostInfo {
+    pub fn to_shared_string(&self) -> SharedString {
+        match self {
+            LanguageModelCostInfo::RequestCost { cost_per_request } => {
+                let cost_str = format!("{}×", Self::cost_value_to_string(cost_per_request));
+                SharedString::from(cost_str)
+            }
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
+                let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
+                SharedString::from(format!("{}$/{}$", input_cost, output_cost))
+            }
+        }
+    }
+
+    fn cost_value_to_string(cost: &f64) -> SharedString {
+        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+            SharedString::from(format!("{:.0}", cost))
+        } else {
+            SharedString::from(format!("{:.2}", cost))
+        }
+    }
+}
 
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {

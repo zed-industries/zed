@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use project::Project;
@@ -38,33 +39,48 @@ pub struct FindPathToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct FindPathToolOutput {
-    offset: usize,
-    current_matches_page: Vec<PathBuf>,
-    all_matches_len: usize,
+#[serde(untagged)]
+pub enum FindPathToolOutput {
+    Success {
+        offset: usize,
+        current_matches_page: Vec<PathBuf>,
+        all_matches_len: usize,
+    },
+    Error {
+        error: String,
+    },
 }
 
 impl From<FindPathToolOutput> for LanguageModelToolResultContent {
     fn from(output: FindPathToolOutput) -> Self {
-        if output.current_matches_page.is_empty() {
-            "No matches found".into()
-        } else {
-            let mut llm_output = format!("Found {} total matches.", output.all_matches_len);
-            if output.all_matches_len > RESULTS_PER_PAGE {
-                write!(
-                    &mut llm_output,
-                    "\nShowing results {}-{} (provide 'offset' parameter for more results):",
-                    output.offset + 1,
-                    output.offset + output.current_matches_page.len()
-                )
-                .unwrap();
-            }
+        match output {
+            FindPathToolOutput::Success {
+                offset,
+                current_matches_page,
+                all_matches_len,
+            } => {
+                if current_matches_page.is_empty() {
+                    "No matches found".into()
+                } else {
+                    let mut llm_output = format!("Found {} total matches.", all_matches_len);
+                    if all_matches_len > RESULTS_PER_PAGE {
+                        write!(
+                            &mut llm_output,
+                            "\nShowing results {}-{} (provide 'offset' parameter for more results):",
+                            offset + 1,
+                            offset + current_matches_page.len()
+                        )
+                        .ok();
+                    }
 
-            for mat in output.current_matches_page {
-                write!(&mut llm_output, "\n{}", mat.display()).unwrap();
-            }
+                    for mat in current_matches_page {
+                        write!(&mut llm_output, "\n{}", mat.display()).ok();
+                    }
 
-            llm_output.into()
+                    llm_output.into()
+                }
+            }
+            FindPathToolOutput::Error { error } => error.into(),
         }
     }
 }
@@ -85,9 +101,7 @@ impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
     type Output = FindPathToolOutput;
 
-    fn name() -> &'static str {
-        "find_path"
-    }
+    const NAME: &'static str = "find_path";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Search
@@ -110,11 +124,16 @@ impl AgentTool for FindPathTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<FindPathToolOutput>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let search_paths_task = search_paths(&input.glob, self.project.clone(), cx);
 
         cx.background_spawn(async move {
-            let matches = search_paths_task.await?;
+            let matches = futures::select! {
+                result = search_paths_task.fuse() => result.map_err(|e| FindPathToolOutput::Error { error: e.to_string() })?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Err(FindPathToolOutput::Error { error: "Path search cancelled by user".to_string() });
+                }
+            };
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
@@ -142,7 +161,7 @@ impl AgentTool for FindPathTool {
                     ),
             );
 
-            Ok(FindPathToolOutput {
+            Ok(FindPathToolOutput::Success {
                 offset: input.offset,
                 current_matches_page: paginated_matches.to_vec(),
                 all_matches_len: matches.len(),

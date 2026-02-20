@@ -1,10 +1,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use client::Client;
+use cloud_api_client::ClientApiError;
 use cloud_api_types::websocket_protocol::MessageToClient;
-use cloud_llm_client::{Plan, PlanV1};
+use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
@@ -17,42 +18,6 @@ impl fmt::Display for PaymentRequiredError {
         write!(
             f,
             "Payment required to use this language model. Please upgrade your account."
-        )
-    }
-}
-
-#[derive(Error, Debug)]
-pub struct ModelRequestLimitReachedError {
-    pub plan: Plan,
-}
-
-impl fmt::Display for ModelRequestLimitReachedError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let message = match self.plan {
-            Plan::V1(PlanV1::ZedFree) => {
-                "Model request limit reached. Upgrade to Zed Pro for more requests."
-            }
-            Plan::V1(PlanV1::ZedPro) => {
-                "Model request limit reached. Upgrade to usage-based billing for more requests."
-            }
-            Plan::V1(PlanV1::ZedProTrial) => {
-                "Model request limit reached. Upgrade to Zed Pro for more requests."
-            }
-            Plan::V2(_) => "Model request limit reached.",
-        };
-
-        write!(f, "{message}")
-    }
-}
-
-#[derive(Error, Debug)]
-pub struct ToolUseLimitReachedError;
-
-impl fmt::Display for ToolUseLimitReachedError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Consecutive tool use limit reached. Enable Burn Mode for unlimited tool use."
         )
     }
 }
@@ -83,9 +48,32 @@ impl LlmApiToken {
             .system_id()
             .map(|system_id| system_id.to_string());
 
-        let response = client.cloud_client().create_llm_token(system_id).await?;
-        *lock = Some(response.token.0.clone());
-        Ok(response.token.0)
+        let result = client.cloud_client().create_llm_token(system_id).await;
+        match result {
+            Ok(response) => {
+                *lock = Some(response.token.0.clone());
+                Ok(response.token.0)
+            }
+            Err(err) => match err {
+                ClientApiError::Unauthorized => {
+                    client.request_sign_out();
+                    Err(err).context("Failed to create LLM token")
+                }
+                ClientApiError::Other(err) => Err(err),
+            },
+        }
+    }
+}
+
+pub trait NeedsLlmTokenRefresh {
+    /// Returns whether the LLM token needs to be refreshed.
+    fn needs_llm_token_refresh(&self) -> bool;
+}
+
+impl NeedsLlmTokenRefresh for http_client::Response<http_client::AsyncBody> {
+    fn needs_llm_token_refresh(&self) -> bool {
+        self.headers().get(EXPIRED_LLM_TOKEN_HEADER_NAME).is_some()
+            || self.headers().get(OUTDATED_LLM_TOKEN_HEADER_NAME).is_some()
     }
 }
 

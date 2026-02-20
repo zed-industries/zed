@@ -4,6 +4,7 @@ pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+pub mod process;
 pub mod redact;
 pub mod rel_path;
 pub mod schemars;
@@ -21,7 +22,7 @@ use futures::Future;
 use itertools::Either;
 use paths::PathExt;
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -303,8 +304,19 @@ fn load_shell_from_passwd() -> Result<()> {
 
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
-    let zed_path =
+    let mut zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    if cfg!(target_os = "linux")
+        && !zed_path.is_file()
+        && let Some(truncated) = zed_path
+            .clone()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|n| n.strip_suffix(" (deleted)"))
+    {
+        // Might have been deleted during update; let's use the new binary if there is one.
+        zed_path.set_file_name(truncated);
+    }
 
     zed_path
         .try_shell_safe(shell_kind)
@@ -364,6 +376,13 @@ pub async fn load_login_shell_environment() -> Result<()> {
         .await
         .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
     {
+        // Skip SHLVL to prevent it from polluting Zed's process environment.
+        // The login shell used for env capture increments SHLVL, and if we propagate it,
+        // terminals spawned by Zed will inherit it and increment again, causing SHLVL
+        // to start at 2 instead of 1 (and increase by 2 on each reload).
+        if name == "SHLVL" {
+            continue;
+        }
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -390,8 +409,6 @@ pub fn set_pre_exec_to_start_new_session(
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
             libc::setsid();
-            #[cfg(target_os = "macos")]
-            crate::command::reset_exception_ports();
             Ok(())
         });
     };
@@ -978,7 +995,10 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 /// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
 /// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
-pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+pub fn split_str_with_ranges<'s>(
+    s: &'s str,
+    pat: &dyn Fn(char) -> bool,
+) -> Vec<(Range<usize>, &'s str)> {
     let mut result = Vec::new();
     let mut start = 0;
 
@@ -1036,6 +1056,36 @@ pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
         panic!("Unexpected None");
     }
     option
+}
+
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
 }
 
 #[cfg(test)]
@@ -1311,13 +1361,13 @@ Line 3"#
     #[test]
     fn test_split_with_ranges() {
         let input = "hi";
-        let result = split_str_with_ranges(input, |c| c == ' ');
+        let result = split_str_with_ranges(input, &|c| c == ' ');
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], (0..2, "hi"));
 
         let input = "héllo🦀world";
-        let result = split_str_with_ranges(input, |c| c == '🦀');
+        let result = split_str_with_ranges(input, &|c| c == '🦀');
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes

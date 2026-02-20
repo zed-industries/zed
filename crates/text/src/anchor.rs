@@ -5,12 +5,19 @@ use crate::{
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
-/// A timestamped position in a buffer
+/// A timestamped position in a buffer.
+#[doc(alias = "TextAnchor")]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Anchor {
-    /// The timestamp of the operation that inserted the text
-    /// in which this anchor is located.
-    pub timestamp: clock::Lamport,
+    // /// The timestamp of the operation that inserted the text
+    // /// in which this anchor is located.
+    // pub(crate) timestamp: clock::Lamport,
+    // we store the replica id and sequence number of the timestamp inline
+    // to avoid the alignment of our fields from increasing the size of this struct
+    // This saves 8 bytes, by allowing replica id, value and bias to occupy the padding
+    timestamp_replica_id: clock::ReplicaId,
+    timestamp_value: clock::Seq,
+
     /// The byte offset into the text inserted in the operation
     /// at `timestamp`.
     pub offset: usize,
@@ -30,7 +37,7 @@ impl Debug for Anchor {
         }
 
         f.debug_struct("Anchor")
-            .field("timestamp", &self.timestamp)
+            .field("timestamp", &self.timestamp())
             .field("offset", &self.offset)
             .field("bias", &self.bias)
             .field("buffer_id", &self.buffer_id)
@@ -40,22 +47,40 @@ impl Debug for Anchor {
 
 impl Anchor {
     pub const MIN: Self = Self {
-        timestamp: clock::Lamport::MIN,
+        timestamp_replica_id: clock::Lamport::MIN.replica_id,
+        timestamp_value: clock::Lamport::MIN.value,
         offset: usize::MIN,
         bias: Bias::Left,
         buffer_id: None,
     };
 
     pub const MAX: Self = Self {
-        timestamp: clock::Lamport::MAX,
+        timestamp_replica_id: clock::Lamport::MAX.replica_id,
+        timestamp_value: clock::Lamport::MAX.value,
         offset: usize::MAX,
         bias: Bias::Right,
         buffer_id: None,
     };
 
+    pub fn new(
+        timestamp: clock::Lamport,
+        offset: usize,
+        bias: Bias,
+        buffer_id: Option<BufferId>,
+    ) -> Self {
+        Self {
+            timestamp_replica_id: timestamp.replica_id,
+            timestamp_value: timestamp.value,
+            offset,
+            bias,
+            buffer_id,
+        }
+    }
+
     pub fn min_for_buffer(buffer_id: BufferId) -> Self {
         Self {
-            timestamp: clock::Lamport::MIN,
+            timestamp_replica_id: clock::Lamport::MIN.replica_id,
+            timestamp_value: clock::Lamport::MIN.value,
             offset: usize::MIN,
             bias: Bias::Left,
             buffer_id: Some(buffer_id),
@@ -64,7 +89,8 @@ impl Anchor {
 
     pub fn max_for_buffer(buffer_id: BufferId) -> Self {
         Self {
-            timestamp: clock::Lamport::MAX,
+            timestamp_replica_id: clock::Lamport::MAX.replica_id,
+            timestamp_value: clock::Lamport::MAX.value,
             offset: usize::MAX,
             bias: Bias::Right,
             buffer_id: Some(buffer_id),
@@ -84,7 +110,7 @@ impl Anchor {
     }
 
     pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
-        let fragment_id_comparison = if self.timestamp == other.timestamp {
+        let fragment_id_comparison = if self.timestamp() == other.timestamp() {
             Ordering::Equal
         } else {
             buffer
@@ -163,15 +189,23 @@ impl Anchor {
     }
 
     pub fn is_min(&self) -> bool {
-        self.timestamp == clock::Lamport::MIN
+        self.timestamp() == clock::Lamport::MIN
             && self.offset == usize::MIN
             && self.bias == Bias::Left
     }
 
     pub fn is_max(&self) -> bool {
-        self.timestamp == clock::Lamport::MAX
+        self.timestamp() == clock::Lamport::MAX
             && self.offset == usize::MAX
             && self.bias == Bias::Right
+    }
+
+    #[inline]
+    pub fn timestamp(&self) -> clock::Lamport {
+        clock::Lamport {
+            replica_id: self.timestamp_replica_id,
+            value: self.timestamp_value,
+        }
     }
 }
 

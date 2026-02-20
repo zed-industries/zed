@@ -19,11 +19,12 @@ use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
-    channel::oneshot, future::BoxFuture,
+    channel::{mpsc, oneshot},
+    future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
@@ -34,7 +35,6 @@ use settings::{RegisterSetting, Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
-    fmt::Write as _,
     future::Future,
     marker::PhantomData,
     path::PathBuf,
@@ -121,7 +121,9 @@ pub struct ProxySettings {
 impl ProxySettings {
     pub fn proxy_url(&self) -> Option<Url> {
         self.proxy
-            .as_ref()
+            .as_deref()
+            .map(str::trim)
+            .filter(|input| !input.is_empty())
             .and_then(|input| {
                 input
                     .parse::<Url>()
@@ -135,7 +137,12 @@ impl ProxySettings {
 impl Settings for ProxySettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            proxy: content.proxy.clone(),
+            proxy: content
+                .proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|proxy| !proxy.is_empty())
+                .map(ToOwned::to_owned),
         }
     }
 }
@@ -189,8 +196,9 @@ pub struct Client {
     telemetry: Arc<Telemetry>,
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
-    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
-    message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
+    handler_set: Mutex<ProtoMessageHandlerSet>,
+    message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
+    sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -336,7 +344,7 @@ impl ClientCredentialsProvider {
     }
 
     fn server_url(&self, cx: &AsyncApp) -> Result<String> {
-        cx.update(|cx| ClientSettings::get_global(cx).server_url.clone())
+        Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
     }
 
     /// Reads the credentials from the provider.
@@ -530,7 +538,8 @@ impl Client {
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
-            message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
+            message_to_client_handlers: Mutex::new(Vec::new()),
+            sign_out_tx: Mutex::new(None),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -927,10 +936,10 @@ impl Client {
         let connect_task = cx.update({
             let cloud_client = self.cloud_client.clone();
             move |cx| cloud_client.connect(cx)
-        })??;
+        })?;
         let connection = connect_task.await?;
 
-        let (mut messages, task) = cx.update(|cx| connection.spawn(cx))?;
+        let (mut messages, task) = cx.update(|cx| connection.spawn(cx));
         task.detach();
 
         cx.spawn({
@@ -970,8 +979,7 @@ impl Client {
                 }
             })
             .detach();
-        })
-        .log_err();
+        });
 
         let credentials = self.sign_in(try_provider, cx).await?;
 
@@ -996,8 +1004,7 @@ impl Client {
                 }
             })
             .detach_and_log_err(cx);
-        })
-        .log_err();
+        });
 
         Ok(())
     }
@@ -1242,14 +1249,8 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let release_channel = cx
-            .update(|cx| ReleaseChannel::try_global(cx))
-            .ok()
-            .flatten();
-        let app_version = cx
-            .update(|cx| AppVersion::global(cx).to_string())
-            .ok()
-            .unwrap_or_default();
+        let release_channel = cx.update(|cx| ReleaseChannel::try_global(cx));
+        let app_version = cx.update(|cx| AppVersion::global(cx).to_string());
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
@@ -1286,7 +1287,7 @@ impl Client {
                         None => Box::new(TcpStream::connect(rpc_host).await?),
                     })
                 }
-            })?
+            })
             .await?;
 
             log::info!("connected to rpc endpoint {}", rpc_url);
@@ -1354,12 +1355,12 @@ impl Client {
             let (open_url_tx, open_url_rx) = oneshot::channel::<String>();
             cx.update(|cx| {
                 cx.spawn(async move |cx| {
-                    let url = open_url_rx.await?;
-                    cx.update(|cx| cx.open_url(&url))
+                    if let Ok(url) = open_url_rx.await {
+                        cx.update(|cx| cx.open_url(&url));
+                    }
                 })
-                .detach_and_log_err(cx);
-            })
-            .log_err();
+                .detach();
+            });
 
             let credentials = background
                 .clone()
@@ -1391,15 +1392,10 @@ impl Client {
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
-                    let mut url = http.build_url(&format!(
+                    let url = http.build_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
                         port, public_key_string
                     ));
-
-                    if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
-                        log::info!("impersonating user @{}", impersonate_login);
-                        write!(&mut url, "&impersonate={}", impersonate_login).unwrap();
-                    }
 
                     open_url_tx.send(url).log_err();
 
@@ -1461,7 +1457,7 @@ impl Client {
                 })
                 .await?;
 
-            cx.update(|cx| cx.activate(true))?;
+            cx.update(|cx| cx.activate(true));
             Ok(credentials)
         })
     }
@@ -1523,6 +1519,13 @@ impl Client {
                 .delete_credentials(cx)
                 .await
                 .log_err();
+        }
+    }
+
+    /// Requests a sign out to be performed asynchronously.
+    pub fn request_sign_out(&self) {
+        if let Some(sign_out_tx) = self.sign_out_tx.lock().clone() {
+            sign_out_tx.unbounded_send(()).ok();
         }
     }
 
@@ -1680,8 +1683,7 @@ impl Client {
             for handler in self.message_to_client_handlers.lock().iter() {
                 handler(&message, cx);
             }
-        })
-        .ok();
+        });
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
@@ -1714,7 +1716,7 @@ impl ProtoClient for Client {
         self.peer.send_dynamic(connection_id, envelope)
     }
 
-    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+    fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
 
@@ -1800,6 +1802,19 @@ mod tests {
     use proto::TypedEnvelope;
     use settings::SettingsStore;
     use std::future;
+
+    #[test]
+    fn test_proxy_settings_trims_and_ignores_empty_proxy() {
+        let mut content = SettingsContent::default();
+        content.proxy = Some("   ".to_owned());
+        assert_eq!(ProxySettings::from_settings(&content).proxy, None);
+
+        content.proxy = Some("http://127.0.0.1:10809".to_owned());
+        assert_eq!(
+            ProxySettings::from_settings(&content).proxy.as_deref(),
+            Some("http://127.0.0.1:10809")
+        );
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {
@@ -2081,7 +2096,7 @@ mod tests {
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, cx| {
-                match entity.read_with(&cx, |entity, _| entity.id).unwrap() {
+                match entity.read_with(&cx, |entity, _| entity.id) {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),

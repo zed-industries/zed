@@ -1,3 +1,8 @@
+---
+title: Zed on Windows
+description: "Get the latest stable builds via the download page. If you want to download our preview build, you can find it on its [releases p..."
+---
+
 # Zed on Windows
 
 ## Installing Zed

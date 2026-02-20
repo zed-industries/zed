@@ -1,3 +1,8 @@
+---
+title: Glob Patterns - Zed
+description: How glob patterns work in Zed for file matching, search filtering, and configuration. Syntax reference and examples.
+---
+
 # Globs
 
 Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). You may be In Zed these are commonly used when matching filenames.
@@ -55,7 +60,7 @@ If instead you wanted to restrict yourself only to [Zed Language-Specific Docume
 
 When using the "Include" / "Exclude" filters on a Project Search each glob is wrapped in implicit wildcards. For example to exclude any files with license in the path or filename from your search just type `license` in the exclude box. Behind the scenes Zed transforms `license` to `**license**`. This means that files named `license.*`, `*.license` or inside a `license` subdirectory will all be filtered out. This enables users to easily filter for `*.ts` without having to remember to type `**/*.ts` every time.
 
-Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring-zed.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
+Alternatively, if in your Zed settings you wanted a [`file_types`](./reference/all-settings.md#file-types) override which only applied to a certain directory you must explicitly include the wildcard globs. For example, if you had a directory of template files with the `html` extension that you wanted to recognize as Jinja2 template you could use the following:
 
 ```json [settings]
 {

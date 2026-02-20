@@ -1,12 +1,20 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow, bail};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
+use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
+
+/// Generates a tool ID for an MCP tool that can be used in settings.
+///
+/// The format is `mcp:<server_id>:<tool_name>` to avoid collisions with built-in tools.
+pub fn mcp_tool_id(server_id: &str, tool_name: &str) -> String {
+    format!("mcp:{}:{}", server_id, tool_name)
+}
 
 pub struct ContextServerPrompt {
     pub server_id: ContextServerId,
@@ -239,31 +247,29 @@ impl ContextServerRegistry {
     fn handle_context_server_store_event(
         &mut self,
         _: Entity<ContextServerStore>,
-        event: &project::context_server_store::Event,
+        event: &project::context_server_store::ServerStatusChangedEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-                match status {
-                    ContextServerStatus::Starting => {}
-                    ContextServerStatus::Running => {
-                        self.reload_tools_for_server(server_id.clone(), cx);
-                        self.reload_prompts_for_server(server_id.clone(), cx);
+        let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
+
+        match status {
+            ContextServerStatus::Starting => {}
+            ContextServerStatus::Running => {
+                self.reload_tools_for_server(server_id.clone(), cx);
+                self.reload_prompts_for_server(server_id.clone(), cx);
+            }
+            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                if let Some(registered_server) = self.registered_servers.remove(server_id) {
+                    if !registered_server.tools.is_empty() {
+                        cx.emit(ContextServerRegistryEvent::ToolsChanged);
                     }
-                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        if let Some(registered_server) = self.registered_servers.remove(server_id) {
-                            if !registered_server.tools.is_empty() {
-                                cx.emit(ContextServerRegistryEvent::ToolsChanged);
-                            }
-                            if !registered_server.prompts.is_empty() {
-                                cx.emit(ContextServerRegistryEvent::PromptsChanged);
-                            }
-                        }
-                        cx.notify();
+                    if !registered_server.prompts.is_empty() {
+                        cx.emit(ContextServerRegistryEvent::PromptsChanged);
                     }
                 }
+                cx.notify();
             }
-        }
+        };
     }
 }
 
@@ -326,18 +332,25 @@ impl AnyAgentTool for ContextServerTool {
         input: serde_json::Value,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>> {
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
-            return Task::ready(Err(anyhow!("Context server not found")));
+            return Task::ready(Err(AgentToolOutput::from_error("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
+        let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
+        let display_name = self.tool.name.clone();
+        let authorize = event_stream.authorize_third_party_tool(
+            self.initial_title(input.clone(), cx),
+            tool_id,
+            display_name,
+            cx,
+        );
 
         cx.spawn(async move |_cx| {
-            authorize.await?;
+            authorize.await.map_err(|e| AgentToolOutput::from_error(e.to_string()))?;
 
             let Some(protocol) = server.client() else {
-                bail!("Context server not initialized");
+                return Err(AgentToolOutput::from_error("Context server not initialized"));
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
@@ -351,15 +364,27 @@ impl AnyAgentTool for ContextServerTool {
                 tool_name,
                 arguments
             );
-            let response = protocol
-                .request::<context_server::types::requests::CallTool>(
-                    context_server::types::CallToolParams {
-                        name: tool_name,
-                        arguments,
-                        meta: None,
-                    },
-                )
-                .await?;
+
+            let request = protocol.request::<context_server::types::requests::CallTool>(
+                context_server::types::CallToolParams {
+                    name: tool_name,
+                    arguments,
+                    meta: None,
+                },
+            );
+
+            let response = futures::select! {
+                response = request.fuse() => response.map_err(|e| AgentToolOutput::from_error(e.to_string()))?,
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return Err(AgentToolOutput::from_error("MCP tool cancelled by user"));
+                }
+            };
+
+            if response.is_error == Some(true) {
+                let error_message: String =
+                    response.content.iter().filter_map(|c| c.text()).collect();
+                return Err(AgentToolOutput::from_error(error_message));
+            }
 
             let mut result = String::new();
             for content in response.content {
@@ -403,10 +428,7 @@ pub fn get_prompt(
     arguments: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Task<Result<context_server::types::PromptsGetResponse>> {
-    let server = match cx.update(|cx| server_store.read(cx).get_running_server(server_id)) {
-        Ok(server) => server,
-        Err(error) => return Task::ready(Err(error)),
-    };
+    let server = cx.update(|cx| server_store.read(cx).get_running_server(server_id));
     let Some(server) = server else {
         return Task::ready(Err(anyhow::anyhow!("Context server not found")));
     };
@@ -430,4 +452,30 @@ pub fn get_prompt(
 
         Ok(response)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_tool_id_format() {
+        assert_eq!(
+            mcp_tool_id("filesystem", "read_file"),
+            "mcp:filesystem:read_file"
+        );
+        assert_eq!(
+            mcp_tool_id("github", "create_issue"),
+            "mcp:github:create_issue"
+        );
+        assert_eq!(
+            mcp_tool_id("my-custom-server", "do_something"),
+            "mcp:my-custom-server:do_something"
+        );
+        // Underscores in names
+        assert_eq!(mcp_tool_id("my_server", "my_tool"), "mcp:my_server:my_tool");
+    }
+
+    // Note: Tests for MCP tool ID collision with built-in tools and permission
+    // decisions are in crates/agent/src/tool_permissions.rs to avoid duplication.
 }

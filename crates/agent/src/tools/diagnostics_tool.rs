@@ -1,6 +1,7 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use project::Project;
@@ -63,9 +64,7 @@ impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
 
-    fn name() -> &'static str {
-        "diagnostics"
-    }
+    const NAME: &'static str = "diagnostics";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
@@ -89,23 +88,28 @@ impl AgentTool for DiagnosticsTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         match input.path {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                    return Task::ready(Err(format!("Could not find path {path} in project")));
                 };
 
-                let buffer = self
+                let open_buffer_task = self
                     .project
                     .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 cx.spawn(async move |cx| {
+                    let buffer = futures::select! {
+                        result = open_buffer_task.fuse() => result.map_err(|e| e.to_string())?,
+                        _ = event_stream.cancelled_by_user().fuse() => {
+                            return Err("Diagnostics cancelled by user".to_string());
+                        }
+                    };
                     let mut output = String::new();
-                    let buffer = buffer.await?;
-                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                     for (_, group) in snapshot.diagnostic_groups(None) {
                         let entry = &group.entries[group.primary_ix];
@@ -122,7 +126,8 @@ impl AgentTool for DiagnosticsTool {
                             severity,
                             range.start.row + 1,
                             entry.diagnostic.message
-                        )?;
+                        )
+                        .ok();
                     }
 
                     if output.is_empty() {

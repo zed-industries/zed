@@ -1,5 +1,8 @@
 use command_palette_hooks::CommandPaletteFilter;
-use editor::{Anchor, Editor, ExcerptId, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
+use editor::{
+    Anchor, Editor, ExcerptId, HighlightKey, MultiBufferOffset, SelectionEffects,
+    scroll::Autoscroll,
+};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -218,9 +221,8 @@ impl SyntaxTreeView {
             if state.editor == editor {
                 return;
             }
-            editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx)
-            });
+            let key = HighlightKey::SyntaxTreeView(cx.entity_id().as_u64() as usize);
+            editor.update(cx, |editor, cx| editor.clear_background_highlights(key, cx));
         }
 
         let subscription = cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
@@ -259,7 +261,7 @@ impl SyntaxTreeView {
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
                 .buffer_snapshot()
-                .range_to_buffer_ranges(selection_range)
+                .range_to_buffer_ranges(selection_range.start..=selection_range.end)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
             Some((buffer, range, excerpt_id))
@@ -339,7 +341,7 @@ impl SyntaxTreeView {
         descendant_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-        mut f: impl FnMut(&mut Editor, Range<Anchor>, &mut Window, &mut Context<Editor>),
+        f: &mut dyn FnMut(&mut Editor, Range<Anchor>, usize, &mut Window, &mut Context<Editor>),
     ) -> Option<()> {
         let editor_state = self.editor.as_ref()?;
         let buffer_state = editor_state.active_buffer.as_ref()?;
@@ -360,10 +362,11 @@ impl SyntaxTreeView {
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         let excerpt_id = buffer_state.excerpt_id;
         let range = multibuffer.anchor_range_in_excerpt(excerpt_id, range)?;
+        let key = cx.entity_id().as_u64() as usize;
 
         // Update the editor with the anchor range.
         editor_state.editor.update(cx, |editor, cx| {
-            f(editor, range, window, cx);
+            f(editor, range, key, window, cx);
         });
         Some(())
     }
@@ -431,7 +434,7 @@ impl SyntaxTreeView {
                                 descendant_ix,
                                 window,
                                 cx,
-                                |editor, mut range, window, cx| {
+                                &mut |editor, mut range, _, window, cx| {
                                     // Put the cursor at the beginning of the node.
                                     mem::swap(&mut range.start, &mut range.end);
 
@@ -440,7 +443,7 @@ impl SyntaxTreeView {
                                         window,
                                         cx,
                                         |selections| {
-                                            selections.select_ranges(vec![range]);
+                                            selections.select_ranges([range]);
                                         },
                                     );
                                 },
@@ -455,17 +458,8 @@ impl SyntaxTreeView {
                                     descendant_ix,
                                     window,
                                     cx,
-                                    |editor, range, _, cx| {
-                                        editor.clear_background_highlights::<Self>(cx);
-                                        editor.highlight_background::<Self>(
-                                            &[range],
-                                            |_, theme| {
-                                                theme
-                                                    .colors()
-                                                    .editor_document_highlight_write_background
-                                            },
-                                            cx,
-                                        );
+                                    &mut |editor, range, key, _, cx| {
+                                        Self::set_editor_highlights(editor, key, &[range], cx);
                                     },
                                 );
                                 cx.notify();
@@ -482,6 +476,27 @@ impl SyntaxTreeView {
             }
         }
         items
+    }
+
+    fn set_editor_highlights(
+        editor: &mut Editor,
+        key: usize,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<Editor>,
+    ) {
+        editor.highlight_background(
+            HighlightKey::SyntaxTreeView(key),
+            ranges,
+            |_, theme| theme.colors().editor_document_highlight_write_background,
+            cx,
+        );
+    }
+
+    fn clear_editor_highlights(editor: &Entity<Editor>, cx: &mut Context<Self>) {
+        let highlight_key = HighlightKey::SyntaxTreeView(cx.entity_id().as_u64() as usize);
+        editor.update(cx, |editor, cx| {
+            editor.clear_background_highlights(highlight_key, cx);
+        });
     }
 }
 
@@ -558,7 +573,7 @@ impl Focusable for SyntaxTreeView {
 impl Item for SyntaxTreeView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Syntax Tree".into()
@@ -588,6 +603,12 @@ impl Item for SyntaxTreeView {
             }
             clone
         })))
+    }
+
+    fn on_removed(&self, cx: &mut Context<Self>) {
+        if let Some(state) = self.editor.as_ref() {
+            Self::clear_editor_highlights(&state.editor, cx);
+        }
     }
 }
 

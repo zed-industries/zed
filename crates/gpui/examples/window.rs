@@ -1,7 +1,8 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Timer, Window,
-    WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Window, WindowBounds, WindowKind,
+    WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 struct SubWindow {
     custom_titlebar: bool,
@@ -251,7 +252,9 @@ impl Render for WindowDemo {
                 // Restore the application after 3 seconds
                 window
                     .spawn(cx, async move |cx| {
-                        Timer::after(std::time::Duration::from_secs(3)).await;
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(3))
+                            .await;
                         cx.update(|_, cx| {
                             cx.activate(false);
                         })
@@ -304,7 +307,7 @@ impl Render for WindowDemo {
 actions!(window, [Quit]);
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
 
         cx.open_window(

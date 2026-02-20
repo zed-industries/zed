@@ -2,7 +2,8 @@
 (
   (
     (function_declaration name: (_) @run
-      (#match? @run "^Test.*"))
+      (#match? @run "^Test.*")
+      (#not-match? @run "^TestMain$"))
   ) @_
   (#set! tag go-test)
 )
@@ -107,7 +108,7 @@
   (#set! tag go-main)
 )
 
-; Table test cases - slice and map
+; Table test cases - slice and map with explicit variable
 (
   (short_var_declaration
     left: (expression_list (identifier) @_collection_var)
@@ -165,35 +166,37 @@
       (#eq? @_range_var @_collection_var)
     )
     body: (block
-      (expression_statement
-        (call_expression
-          function: (selector_expression
-            operand: (identifier)
-            field: (field_identifier) @_run_method
-            (#eq? @_run_method "Run")
-          )
-          arguments: (argument_list
-            .
-            [
-              (selector_expression
-                operand: (identifier) @_tc_var
-                (#eq? @_tc_var @_loop_var_inner)
-                field: (field_identifier) @_field_check
-                (#eq? @_field_check @_field_name)
-              )
-              (identifier) @_arg_var
-              (#eq? @_arg_var @_loop_var_outer)
-            ]
-            .
-            (func_literal
-              parameters: (parameter_list
-                (parameter_declaration
-                  type: (pointer_type
-                    (qualified_type
-                      package: (package_identifier) @_pkg
-                      name: (type_identifier) @_type
-                      (#eq? @_pkg "testing")
-                      (#eq? @_type "T")
+      (statement_list
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier)
+              field: (field_identifier) @_run_method
+              (#eq? @_run_method "Run")
+            )
+            arguments: (argument_list
+              .
+              [
+                (selector_expression
+                  operand: (identifier) @_tc_var
+                  (#eq? @_tc_var @_loop_var_inner)
+                  field: (field_identifier) @_field_check
+                  (#eq? @_field_check @_field_name)
+                )
+                (identifier) @_arg_var
+                (#eq? @_arg_var @_loop_var_outer)
+              ]
+              .
+              (func_literal
+                parameters: (parameter_list
+                  (parameter_declaration
+                    type: (pointer_type
+                      (qualified_type
+                        package: (package_identifier) @_pkg
+                        name: (type_identifier) @_type
+                        (#eq? @_pkg "testing")
+                        (#eq? @_type "T")
+                      )
                     )
                   )
                 )
@@ -205,4 +208,100 @@
     )
   ) @_
   (#set! tag go-table-test-case)
+)
+
+; Table test cases - slice and map declared right inside the loop without
+; explicit variable
+(
+  (for_statement
+    (range_clause
+      left: (expression_list
+        [
+          (
+            (identifier)
+            (identifier) @_loop_var_inner
+          )
+          (identifier) @_loop_var_outer
+        ]
+      )
+      right: (composite_literal
+        type: [
+          (slice_type)
+          (map_type
+            key: (type_identifier) @_key_type
+            (#eq? @_key_type "string")
+          )
+        ]
+        body: (literal_value
+          [
+            (literal_element
+              (literal_value
+                (keyed_element
+                  (literal_element
+                    (identifier) @_field_name
+                  )
+                  (literal_element
+                    [
+                      (interpreted_string_literal) @run @_table_test_case_name
+                      (raw_string_literal) @run @_table_test_case_name
+                    ]
+                  )
+                )
+              )
+            )
+            (keyed_element
+              (literal_element
+                [
+                  (interpreted_string_literal) @run @_table_test_case_name
+                  (raw_string_literal) @run @_table_test_case_name
+                ]
+              )
+            )
+          ]
+        )
+      )
+    )
+    body: (block
+      (statement_list
+        (expression_statement
+          (call_expression
+            function: (selector_expression
+              operand: (identifier)
+              field: (field_identifier) @_run_method
+              (#eq? @_run_method "Run")
+            )
+            arguments: (argument_list
+              .
+              [
+                (selector_expression
+                  operand: (identifier) @_tc_var
+                  (#eq? @_tc_var @_loop_var_inner)
+                  field: (field_identifier) @_field_check
+                  (#eq? @_field_check @_field_name)
+                )
+                (identifier) @_arg_var
+                (#eq? @_arg_var @_loop_var_outer)
+              ]
+              .
+              (func_literal
+                parameters: (parameter_list
+                  (parameter_declaration
+                    type: (pointer_type
+                      (qualified_type
+                        package: (package_identifier) @_pkg
+                        name: (type_identifier) @_type
+                        (#eq? @_pkg "testing")
+                        (#eq? @_type "T")
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  ) @_
+  (#set! tag go-table-test-case-without-explicit-variable)
 )
