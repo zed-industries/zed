@@ -919,8 +919,8 @@ impl X11Window {
     }
 
     /// Handles draw failures by attempting GPU recovery
-    fn handle_draw_failure(&self, err: anyhow::Error) {
-        log::error!("Renderer draw failed: {}", err);
+    fn handle_draw_failure(&self, error: anyhow::Error) {
+        log::error!("Renderer draw failed: {}", error);
 
         let inner = self.0.state.borrow();
         let client = inner.client.clone();
@@ -928,11 +928,11 @@ impl X11Window {
         drop(inner);
 
         // Attempt GPU recovery
-        if let Err(recovery_err) = client.recover_gpu() {
+        if let Err(recovery_error) = client.recover_gpu() {
             // Recovery failed - this is unrecoverable, panic to trigger crash reporting
             panic!(
                 "GPU device lost (recovery failed: {}), original error: {}",
-                recovery_err, err
+                recovery_error, error
             );
         }
 
@@ -1676,9 +1676,9 @@ impl PlatformWindow for X11Window {
 
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
-        if let Err(err) = inner.renderer.draw(scene) {
+        if let Err(error) = inner.renderer.draw(scene) {
             drop(inner);
-            self.handle_draw_failure(err);
+            self.handle_draw_failure(error);
         }
     }
 

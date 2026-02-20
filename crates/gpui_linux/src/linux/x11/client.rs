@@ -247,29 +247,29 @@ impl X11ClientStatePtr {
 
         log::info!("Starting GPU recovery...");
 
-        // Step 1: Collect all windows
         let windows: Vec<_> = {
             let state = client.0.borrow();
-            state.windows.values().map(|r| r.window.clone()).collect()
+            state.windows
+                .values()
+                .map(|window_ref| window_ref.window.clone())
+                .collect()
         };
 
         log::info!("Found {} windows to recover", windows.len());
 
-        // Step 2: Pause rendering on all windows
         for window in &windows {
             window.pause_rendering();
         }
         log::debug!("Paused rendering on all windows");
 
-        // Step 3: Create new WgpuContext in a separate thread with timeout
         // This prevents the main thread from hanging if GPU init fails
-        let (tx, rx) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             log::debug!("Creating new GPU context...");
-            tx.send(WgpuContext::new()).ok();
+            sender.send(WgpuContext::new()).log_err();
         });
 
-        let new_context = rx
+        let new_context = receiver
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| anyhow!("GPU context creation timed out after 10 seconds"))??;
 
@@ -278,31 +278,26 @@ impl X11ClientStatePtr {
             new_context.adapter.get_info().name
         );
 
-        // Step 4: Save atlases before clearing
         let atlases: Vec<_> = windows.iter().map(|window| window.get_atlas()).collect();
         log::debug!("Saved {} atlases", atlases.len());
 
-        // Step 5: Prepare atlases for recovery (clear without destroying)
         for window in &windows {
             window.prepare_atlas();
         }
         log::debug!("Prepared atlases for recovery");
 
-        // Step 6: Destroy old surfaces
         // In wgpu, surfaces are RAII, but we still mark them as invalid
         for window in &windows {
             window.destroy_surface();
         }
         log::debug!("Destroyed old surfaces");
 
-        // Step 7: Collect renderer parameters for recreation
         let renderer_params: Vec<_> = windows
             .iter()
             .map(|window| window.renderer_params())
             .collect();
 
-        // Step 8: Create new renderers in a separate thread with timeout
-        let (tx, rx) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
         let device = Arc::clone(&new_context.device);
         let queue = Arc::clone(&new_context.queue);
         let instance = new_context.instance.clone();
@@ -313,8 +308,8 @@ impl X11ClientStatePtr {
             let result: anyhow::Result<Vec<WgpuRenderer>> = renderer_params
                 .into_iter()
                 .enumerate()
-                .map(|(i, (raw_window, size, transparent))| {
-                    log::trace!("Creating renderer {} (size: {:?})", i, size);
+                .map(|(index, (raw_window, size, transparent))| {
+                    log::trace!("Creating renderer {} (size: {:?})", index, size);
                     let config = WgpuSurfaceConfig { size, transparent };
                     WgpuRenderer::new_with_device_queue(
                         instance.clone(),
@@ -326,26 +321,23 @@ impl X11ClientStatePtr {
                     )
                 })
                 .collect();
-            tx.send(result).ok();
+            sender.send(result).log_err();
         });
 
-        let new_renderers = rx
+        let new_renderers = receiver
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| anyhow!("Renderer creation timed out after 10 seconds"))??;
 
         log::info!("Created {} new renderers", new_renderers.len());
 
-        // Step 9: Replace renderers and adopt atlases
         for ((window, renderer), atlas) in windows.iter().zip(new_renderers).zip(atlases) {
             window.replace_renderer(renderer, &atlas);
         }
         log::debug!("Replaced renderers and adopted atlases");
 
-        // Step 10: Update client GPU context
         self.update_gpu_context(new_context);
         log::debug!("Updated client GPU context");
 
-        // Step 11: Resume rendering on all windows
         for window in &windows {
             window.resume_rendering();
         }
@@ -361,20 +353,20 @@ impl X11ClientStatePtr {
         };
         let mut state = client.0.borrow_mut();
 
-        if let Some(window_ref) = state.windows.remove(&x_window)
+        if let Some(window_ref) = state.windows.remove(&window_id)
             && let Some(RefreshState::PeriodicRefresh {
                 event_loop_token, ..
             }) = window_ref.refresh_state
         {
             state.loop_handle.remove(event_loop_token);
         }
-        if state.mouse_focused_window == Some(x_window) {
+        if state.mouse_focused_window == Some(window_id) {
             state.mouse_focused_window = None;
         }
-        if state.keyboard_focused_window == Some(x_window) {
+        if state.keyboard_focused_window == Some(window_id) {
             state.keyboard_focused_window = None;
         }
-        state.cursor_styles.remove(&x_window);
+        state.cursor_styles.remove(&window_id);
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {

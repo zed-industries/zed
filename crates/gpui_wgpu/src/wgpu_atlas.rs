@@ -202,19 +202,19 @@ impl WgpuAtlasState {
             live_atlas_keys: 0,
         };
 
-        if let Some(ix) = index {
-            texture_list.textures[ix] = Some(atlas_texture);
+        if let Some(index) = index {
+            texture_list.textures[index] = Some(atlas_texture);
             texture_list
                 .textures
-                .get_mut(ix)
-                .and_then(|t| t.as_mut())
+                .get_mut(index)
+                .and_then(|texture| texture.as_mut())
                 .expect("texture must exist")
         } else {
             texture_list.textures.push(Some(atlas_texture));
             texture_list
                 .textures
                 .last_mut()
-                .and_then(|t| t.as_mut())
+                .and_then(|texture| texture.as_mut())
                 .expect("texture must exist")
         }
     }

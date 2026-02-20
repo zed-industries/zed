@@ -359,10 +359,10 @@ impl WgpuRenderer {
     ) -> anyhow::Result<Self> {
         let window_handle = window
             .window_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to get window handle: {error}"))?;
         let display_handle = window
             .display_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to get display handle: {error}"))?;
 
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle: display_handle.as_raw(),
@@ -401,10 +401,10 @@ impl WgpuRenderer {
     ) -> anyhow::Result<Self> {
         let window_handle = window
             .window_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to get window handle: {error}"))?;
         let display_handle = window
             .display_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to get display handle: {error}"))?;
 
         let target = wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle: display_handle.as_raw(),
