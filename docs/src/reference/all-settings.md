@@ -586,7 +586,10 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "**/*.crt",
       "**/.dev.vars",
       "**/secrets.yml"
-    ]
+    ],
+    "font_family": null,
+    "font_weight": null,
+    "font_features": null
   }
 ```
 
@@ -2600,7 +2603,10 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
     "show_background": false,
     "edit_debounce_ms": 700,
     "scroll_debounce_ms": 50,
-    "toggle_on_modifiers_press": null
+    "toggle_on_modifiers_press": null,
+    "font_family": null,
+    "font_weight": null,
+    "font_features": null
   }
 }
 ```
