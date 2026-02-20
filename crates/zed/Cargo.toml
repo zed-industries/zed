@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.225.0"
+version = "0.226.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -15,7 +15,7 @@ workspace = true
 tracy = ["ztracing/tracy"]
 test-support = [
     "gpui/test-support",
-    "gpui/screen-capture",
+    "gpui_platform/screen-capture",
     "dep:image",
     "dep:semver",
     "workspace/test-support",
@@ -29,7 +29,8 @@ test-support = [
 ]
 visual-tests = [
     "gpui/test-support",
-    "gpui/screen-capture",
+    "gpui_platform/screen-capture",
+    "gpui_platform/test-support",
     "dep:image",
     "dep:semver",
     "dep:tempfile",
@@ -78,6 +79,7 @@ auto_update_ui.workspace = true
 bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
+chrono.workspace = true
 channel.workspace = true
 clap.workspace = true
 cli.workspace = true
@@ -118,10 +120,10 @@ go_to_line.workspace = true
 system_specs.workspace = true
 gpui = { workspace = true, features = [
     "wayland",
-    "x11",
-    "font-kit",
     "windows-manifest",
+    "x11",
 ] }
+gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 image = { workspace = true, optional = true }
 semver = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
@@ -226,11 +228,10 @@ zed_actions.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+etw_tracing.workspace = true
 windows.workspace = true
-chrono.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
@@ -242,7 +243,7 @@ ashpd.workspace = true
 call = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support", "screen-capture"] }
+gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }

@@ -395,6 +395,10 @@ impl Scrollbars {
         Self::new_with_setting(show_along, |_| ShowScrollbar::default())
     }
 
+    pub fn always_visible(show_along: ScrollAxes) -> Self {
+        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
+    }
+
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
         Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
     }

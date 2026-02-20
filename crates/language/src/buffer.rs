@@ -576,6 +576,8 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character indices in this chunk
     pub chars: u128,
+    /// Bitmap of newline indices in this chunk
+    pub newlines: u128,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
@@ -5663,6 +5665,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             text: chunk,
             chars: chars_map,
             tabs,
+            newlines,
         }) = self.chunks.peek_with_bitmaps()
         {
             let chunk_start = self.range.start;
@@ -5684,6 +5687,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
             let tabs = (tabs >> bit_start) & mask;
             let chars = (chars_map >> bit_start) & mask;
+            let newlines = (newlines >> bit_start) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -5698,6 +5702,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
                 chars,
+                newlines,
                 ..Chunk::default()
             })
         } else {

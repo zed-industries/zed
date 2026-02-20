@@ -795,7 +795,7 @@ impl PathWithPosition {
         })
     }
 
-    pub fn to_string(&self, path_to_string: impl Fn(&PathBuf) -> String) -> String {
+    pub fn to_string(&self, path_to_string: &dyn Fn(&PathBuf) -> String) -> String {
         let path_string = path_to_string(&self.path);
         if let Some(row) = self.row {
             if let Some(column) = self.column {

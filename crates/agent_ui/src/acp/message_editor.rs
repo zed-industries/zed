@@ -681,7 +681,7 @@ impl MessageEditor {
                             editor.insert(&mention_text, window, cx);
                             editor.insert(" ", window, cx);
 
-                            (*excerpt_id, text_anchor, mention_text.len())
+                            (excerpt_id, text_anchor, mention_text.len())
                         });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -951,7 +951,7 @@ impl MessageEditor {
             editor.insert(&mention_text, window, cx);
             editor.insert(" ", window, cx);
 
-            (*excerpt_id, text_anchor, mention_text.len())
+            (excerpt_id, text_anchor, mention_text.len())
         });
 
         let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -1334,6 +1334,7 @@ impl Render for MessageEditor {
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: settings.agent_buffer_font_size(cx).into(),
+                    font_weight: settings.buffer_font.weight,
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };

@@ -132,11 +132,17 @@ impl WslRemoteConnection {
     }
 
     async fn detect_has_wsl_interop(&self) -> Result<bool> {
-        Ok(self
+        let interop = match self
             .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop"])
             .await
-            .inspect_err(|err| log::error!("Failed to detect wsl interop: {err}"))?
-            .contains("enabled"))
+        {
+            Ok(interop) => interop,
+            Err(err) => self
+                .run_wsl_command_with_output("cat", &["/proc/sys/fs/binfmt_misc/WSLInterop-late"])
+                .await
+                .inspect_err(|err2| log::error!("Failed to detect wsl interop: {err}; {err2}"))?,
+        };
+        Ok(interop.contains("enabled"))
     }
 
     async fn windows_path_to_wsl_path(&self, source: &Path) -> Result<String> {

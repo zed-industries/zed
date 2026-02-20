@@ -23,6 +23,7 @@ jobs:
     - id: filter
       name: filter
       run: |
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"
@@ -44,7 +45,7 @@ jobs:
         }
 
         check_pattern "check_rust" '^(Cargo.lock|Cargo.toml|.*\.rs)$' -qP
-        check_pattern "check_extension" '^.*\.scm$' -qP
+        check_pattern "check_extension" '^(extension\.toml|.*\.scm)$' -qP
     outputs:
       check_rust: ${{ steps.filter.outputs.check_rust }}
       check_extension: ${{ steps.filter.outputs.check_extension }}
@@ -72,7 +73,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
-      run: 'cargo nextest run --workspace --no-fail-fast --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
+      run: 'cargo nextest run --workspace --no-fail-fast --no-tests=warn --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
       env:
         NEXTEST_NO_TESTS: warn
     timeout-minutes: 6
@@ -86,6 +87,7 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+        fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
     - id: cache-zed-extension-cli
       name: extension_tests::cache_zed_extension_cli
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -105,7 +107,7 @@ jobs:
     - id: compare-versions-check
       name: extension_bump::compare_versions
       run: |
-        CURRENT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        CURRENT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
         PR_PARENT_SHA="${{ github.event.pull_request.head.sha }}"
 
         if [[ -n "$PR_PARENT_SHA" ]]; then
@@ -116,7 +118,7 @@ jobs:
             git checkout "$(git log -1 --format=%H)"~1
         fi
 
-        PARENT_COMMIT_VERSION="$(sed -n 's/version = \"\(.*\)\"/\1/p' < extension.toml)"
+        PARENT_COMMIT_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
 
         [[ "$CURRENT_VERSION" == "$PARENT_COMMIT_VERSION" ]] && \
             echo "version_changed=false" >> "$GITHUB_OUTPUT" || \

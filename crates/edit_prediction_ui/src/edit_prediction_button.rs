@@ -188,7 +188,6 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-
             EditPredictionProvider::Supermaven => {
                 let Some(supermaven) = Supermaven::global(cx) else {
                     return div();
@@ -284,7 +283,6 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
-
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = codestral::codestral_api_key(cx).is_some();
@@ -349,6 +347,36 @@ impl Render for EditPredictionButton {
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
+            EditPredictionProvider::OpenAiCompatibleApi => {
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let this = cx.weak_entity();
+
+                div().child(
+                    PopoverMenu::new("openai-compatible-api")
+                        .menu(move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.build_edit_prediction_context_menu(
+                                    EditPredictionProvider::OpenAiCompatibleApi,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .ok()
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger(
+                            IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
+                                .shape(IconButtonShape::Square)
+                                .when(!enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
             EditPredictionProvider::Ollama => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let this = cx.weak_entity();
@@ -377,14 +405,9 @@ impl Render for EditPredictionButton {
                                 }),
                             move |_window, cx| {
                                 let settings = all_language_settings(None, cx);
-                                let tooltip_meta = match settings
-                                    .edit_predictions
-                                    .ollama
-                                    .model
-                                    .as_deref()
-                                {
-                                    Some(model) if !model.trim().is_empty() => {
-                                        format!("Powered by Ollama ({model})")
+                                let tooltip_meta = match settings.edit_predictions.ollama.as_ref() {
+                                    Some(settings) if !settings.model.trim().is_empty() => {
+                                        format!("Powered by Ollama ({})", settings.model)
                                     }
                                     _ => {
                                         "Ollama model not configured — configure a model before use"
@@ -1498,6 +1521,14 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     if edit_prediction::ollama::is_available(cx) {
         providers.push(EditPredictionProvider::Ollama);
+    }
+
+    if all_language_settings(None, cx)
+        .edit_predictions
+        .open_ai_compatible_api
+        .is_some()
+    {
+        providers.push(EditPredictionProvider::OpenAiCompatibleApi);
     }
 
     if edit_prediction::sweep_ai::sweep_api_token(cx)

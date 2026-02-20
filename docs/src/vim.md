@@ -79,7 +79,7 @@ The following commands use the language server to help you navigate and refactor
 
 ### Tree-sitter
 
-Tree-sitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
+Tree-sitter is the parser Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
 | Command                         | Default Shortcut            |
 | ------------------------------- | --------------------------- |
@@ -155,7 +155,7 @@ The following commands help you bring up Zed's completion menu, request a sugges
 
 ### Supported plugins
 
-Zed's vim mode includes some features that are usually provided by very popular plugins in the Vim ecosystem:
+Zed's vim mode includes features commonly provided by plugins in the Vim ecosystem:
 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
@@ -216,7 +216,7 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 
 To use these text objects, you need to add bindings to your keymap. Here's an example configuration that makes them available when using text object operators (`i` and `a`) or change-surrounds (`cs`):
 
-```json [settings]
+```json [keymap]
 {
   "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
   "bindings": {
@@ -368,11 +368,11 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 
 Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor",
   "bindings": {
-    "ctrl-s": "file::Save"
+    "ctrl-s": "workspace::Save"
   }
 }
 ```
@@ -449,7 +449,7 @@ By default, you can navigate between the different files open in the editor with
 
 But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Dock",
   "bindings": {
@@ -464,7 +464,7 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 
 Subword motion, which allows you to navigate and select individual words in `camelCase` or `snake_case`, is not enabled by default. To enable it, add these bindings to your keymap.
 
-```json [settings]
+```json [keymap]
 {
   "context": "VimControl && !menu && vim_mode != operator",
   "bindings": {
@@ -481,7 +481,7 @@ Subword motion, which allows you to navigate and select individual words in `cam
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
-```json [settings]
+```json [keymap]
 {
   "context": "vim_mode == visual",
   "bindings": {
@@ -492,7 +492,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 
 In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
 
-```json [settings]
+```json [keymap]
 // In VimScript, this would look like this:
 // set whichwrap+=<,>,[,],h,l
 {
@@ -508,7 +508,7 @@ In non-modal text editors, cursor navigation typically wraps when moving past li
 
 The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
 
-```json [settings]
+```json [keymap]
 {
   "context": "vim_mode == normal || vim_mode == visual",
   "bindings": {
@@ -520,7 +520,7 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
 
 The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not have a default binding for visual mode, as the `shift-x` binding conflicts with the default `shift-x` binding for visual mode (`vim::VisualDeleteLine`). To assign the default vim-exchange binding, add the following keybinding to your keymap:
 
-```json [settings]
+```json [keymap]
 {
   "context": "vim_mode == visual",
   "bindings": {
@@ -587,7 +587,7 @@ Here's an example of these settings changed:
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
     "gdefault": true,
-    "relative_line_numbers": "enabled",
+    "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {
       "fz": "🧟‍♀️"

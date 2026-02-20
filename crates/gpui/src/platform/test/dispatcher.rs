@@ -102,8 +102,13 @@ impl PlatformDispatcher for TestDispatcher {
         Vec::new()
     }
 
-    fn get_current_thread_timings(&self) -> Vec<crate::TaskTiming> {
-        Vec::new()
+    fn get_current_thread_timings(&self) -> crate::ThreadTaskTimings {
+        crate::ThreadTaskTimings {
+            thread_name: None,
+            thread_id: std::thread::current().id(),
+            timings: Vec::new(),
+            total_pushed: 0,
+        }
     }
 
     fn is_main_thread(&self) -> bool {

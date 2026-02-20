@@ -8,7 +8,7 @@ use cloud_llm_client::{
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
 use futures::{
-    AsyncReadExt, StreamExt,
+    AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
 };
 use gpui::App;
@@ -1376,6 +1376,107 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n",
+            "bar.md": "Hola!\nComo\nAdios\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    // First edit request - no prior edit, so not throttled.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    let (_edit_request, edit_response_tx) = requests.predict.next().await.unwrap();
+    edit_response_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    let diagnostic = lsp::Diagnostic {
+        range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+        severity: Some(lsp::DiagnosticSeverity::ERROR),
+        message: "Sentence is incomplete".to_string(),
+        ..Default::default()
+    };
+
+    // First jump request triggered by diagnostic event on buffer - no prior jump, so not throttled (independent from edit).
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/bar.md")).unwrap(),
+                        diagnostics: vec![diagnostic],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+    let (_jump_request, jump_response_tx) = requests.predict.next().await.unwrap();
+    jump_response_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    // Second edit request - should be throttled by the first edit.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    // Second jump request - should be throttled by the first jump.
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_diagnostics(
+            project.clone(),
+            DiagnosticSearchScope::Global,
+            cx,
+        );
+    });
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    // Wait for both throttles to expire.
+    cx.background_executor
+        .advance_clock(EditPredictionStore::THROTTLE_TIMEOUT);
+    cx.background_executor.run_until_parked();
+    cx.run_until_parked();
+
+    // Both requests should now go through.
+    let (_request_1, response_tx_1) = requests.predict.next().await.unwrap();
+    response_tx_1.send(empty_response()).unwrap();
+    cx.run_until_parked();
+
+    let (_request_2, response_tx_2) = requests.predict.next().await.unwrap();
+    response_tx_2.send(empty_response()).unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui::test]
 async fn test_rejections_flushing(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
 
@@ -1596,8 +1697,26 @@ fn model_response(request: &PredictEditsV3Request, diff_to_apply: &str) -> Predi
     }
 }
 
+fn empty_response() -> PredictEditsV3Response {
+    PredictEditsV3Response {
+        request_id: Uuid::new_v4().to_string(),
+        output: String::new(),
+    }
+}
+
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+}
+
+fn assert_no_predict_request_ready(
+    requests: &mut mpsc::UnboundedReceiver<(
+        PredictEditsV3Request,
+        oneshot::Sender<PredictEditsV3Response>,
+    )>,
+) {
+    if requests.next().now_or_never().flatten().is_some() {
+        panic!("Unexpected prediction request while throttled.");
+    }
 }
 
 struct RequestChannels {
@@ -1707,6 +1826,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             excerpt_ranges: None,
             preferred_model: None,
             in_open_source_repo: false,
+            can_collect_data: false,
         },
         buffer_snapshotted_at: Instant::now(),
         response_received_at: Instant::now(),

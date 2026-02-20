@@ -118,6 +118,7 @@ pub struct UserStore {
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
+    _handle_sign_out: Task<()>,
     weak_self: WeakEntity<Self>,
 }
 
@@ -165,12 +166,14 @@ pub struct RequestUsage {
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
+        let (sign_out_tx, mut sign_out_rx) = mpsc::unbounded();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
 
+        client.sign_out_tx.lock().replace(sign_out_tx);
         client.add_message_to_client_handler({
             let this = cx.weak_entity();
             move |message, cx| Self::handle_message_to_client(this.clone(), message, cx)
@@ -280,6 +283,19 @@ impl UserStore {
                     }
                 }
                 Ok(())
+            }),
+            _handle_sign_out: cx.spawn(async move |this, cx| {
+                while let Some(()) = sign_out_rx.next().await {
+                    let Some(client) = this
+                        .read_with(cx, |this, _cx| this.client.upgrade())
+                        .ok()
+                        .flatten()
+                    else {
+                        break;
+                    };
+
+                    client.sign_out(cx).await;
+                }
             }),
             pending_contact_requests: Default::default(),
             weak_self: cx.weak_entity(),
@@ -668,6 +684,10 @@ impl UserStore {
 
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
+    }
+
+    pub fn current_organization(&self) -> Option<Arc<Organization>> {
+        self.current_organization.clone()
     }
 
     pub fn plan(&self) -> Option<Plan> {

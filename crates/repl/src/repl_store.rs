@@ -2,7 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, prelude::*};
 use jupyter_websocket_client::RemoteServer;
@@ -13,6 +13,7 @@ use util::rel_path::RelPath;
 
 use crate::kernels::{
     Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
+    wsl_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -28,6 +29,7 @@ pub struct ReplStore {
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
+    remote_worktrees: HashSet<WorktreeId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -66,6 +68,7 @@ impl ReplStore {
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
             active_python_toolchain_for_worktree: HashMap::default(),
+            remote_worktrees: HashSet::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -88,11 +91,17 @@ impl ReplStore {
         &self,
         worktree_id: WorktreeId,
     ) -> impl Iterator<Item = &KernelSpecification> {
+        let global_specs = if self.remote_worktrees.contains(&worktree_id) {
+            None
+        } else {
+            Some(self.kernel_specifications.iter())
+        };
+
         self.kernel_specifications_for_worktree
             .get(&worktree_id)
             .into_iter()
             .flat_map(|specs| specs.iter())
-            .chain(self.kernel_specifications.iter())
+            .chain(global_specs.into_iter().flatten())
     }
 
     pub fn pure_jupyter_kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
@@ -134,6 +143,7 @@ impl ReplStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        let is_remote = project.read(cx).is_remote();
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
@@ -158,6 +168,11 @@ impl ReplStore {
                     this.active_python_toolchain_for_worktree
                         .insert(worktree_id, path);
                 }
+                if is_remote {
+                    this.remote_worktrees.insert(worktree_id);
+                } else {
+                    this.remote_worktrees.remove(&worktree_id);
+                }
                 cx.notify();
             })
         })
@@ -180,7 +195,12 @@ impl ReplStore {
                 Some(cx.spawn(async move |_, _| {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
-                        .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
+                        .map(|specs| {
+                            specs
+                                .into_iter()
+                                .map(KernelSpecification::JupyterServer)
+                                .collect()
+                        })
                 }))
             }
             _ => None,
@@ -189,6 +209,7 @@ impl ReplStore {
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
+        let wsl_kernel_specifications = wsl_kernel_specifications(cx.background_executor().clone());
 
         let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
 
@@ -198,6 +219,10 @@ impl ReplStore {
                 .into_iter()
                 .map(KernelSpecification::Jupyter)
                 .collect::<Vec<_>>();
+
+            if let Ok(wsl_specs) = wsl_kernel_specifications.await {
+                all_specs.extend(wsl_specs);
+            }
 
             if let Some(remote_task) = remote_kernel_specifications
                 && let Ok(remote_specs) = remote_task.await
@@ -235,6 +260,10 @@ impl ReplStore {
 
     pub fn active_python_toolchain_path(&self, worktree_id: WorktreeId) -> Option<&SharedString> {
         self.active_python_toolchain_for_worktree.get(&worktree_id)
+    }
+
+    pub fn selected_kernel(&self, worktree_id: WorktreeId) -> Option<&KernelSpecification> {
+        self.selected_kernel_for_worktree.get(&worktree_id)
     }
 
     pub fn is_recommended_kernel(

@@ -155,6 +155,7 @@ pub fn capture_example(
                 events: captured_events,
                 related_files: captured_related_files,
                 in_open_source_repo: false,
+                zed_version: None,
             }
         });
 

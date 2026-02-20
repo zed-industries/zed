@@ -88,7 +88,7 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude" }]
+      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
     }
   }
 ]
@@ -230,7 +230,7 @@ From there, you can click to install your preferred agent and it will become ava
 
 ### Custom Agents
 
-You can also add agents through your `settings.json`, by specifying certain fields under `agent_servers`, like so:
+You can also add agents through your settings file ([how to edit](../configuring-zed.md#settings-files)) by specifying certain fields under `agent_servers`, like so:
 
 ```json [settings]
 {

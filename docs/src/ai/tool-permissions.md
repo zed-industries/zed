@@ -8,7 +8,7 @@ For a list of available tools, [see the Tools page](./tools.md).
 
 ## Quick Start
 
-Use Zed's Settings Editor to [configure tool permissions](zed://settings/agent.tool_permissions), or add rules directly to your `settings.json`:
+Use Zed's Settings Editor to [configure tool permissions](zed://settings/agent.tool_permissions), or add rules directly to your settings file:
 
 ```json [settings]
 {
@@ -92,8 +92,20 @@ For example, a tool called `create_issue` on a server called `github` would be `
 
 ```json [settings]
 {
-  "pattern": "your-regex-here",
-  "case_sensitive": false
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_allow": [
+            {
+              "pattern": "your-regex-here",
+              "case_sensitive": false
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 

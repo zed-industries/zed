@@ -267,7 +267,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ))
         .unwrap()
         .name(),
-        "JavaScript".into()
+        "JavaScript"
     );
 }
 
@@ -341,48 +341,48 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
 
     // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
 
     // user configured lang extension, longer than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript".into());
+    assert_eq!(language.name(), "JavaScript");
 
     // user configured lang extension, shorter than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript".into());
+    assert_eq!(language.name(), "JavaScript");
 
     // user configured glob matches
     let language = cx
         .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
     // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "Dockerfile".into());
+    assert_eq!(language.name(), "Dockerfile");
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -2827,7 +2827,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
         for point in [Point::new(0, 4), Point::new(0, 16)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Markdown".into());
+            assert_eq!(config.language_name(), "Markdown");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Markdown");
@@ -2871,7 +2871,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         // Test points in the code line
         for point in [Point::new(1, 4), Point::new(1, 6)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Rust".into());
+            assert_eq!(config.language_name(), "Rust");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");
@@ -2880,7 +2880,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         // Test points in the comment line to verify it's still detected as Rust
         for point in [Point::new(2, 4), Point::new(2, 6)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Rust".into());
+            assert_eq!(config.language_name(), "Rust");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");

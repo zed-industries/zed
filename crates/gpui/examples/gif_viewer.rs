@@ -1,4 +1,5 @@
-use gpui::{App, Application, Context, Render, Window, WindowOptions, div, img, prelude::*};
+use gpui::{App, Context, Render, Window, WindowOptions, div, img, prelude::*};
+use gpui_platform::application;
 use std::path::PathBuf;
 
 struct GifViewer {
@@ -24,7 +25,7 @@ impl Render for GifViewer {
 
 fn main() {
     env_logger::init();
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let gif_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/image/black-cat-typing.gif");
 

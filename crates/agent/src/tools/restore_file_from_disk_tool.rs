@@ -5,7 +5,6 @@ use super::tool_permissions::{
 };
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
-use anyhow::Result;
 use collections::FxHashSet;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -70,7 +69,7 @@ impl AgentTool for RestoreFileFromDiskTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<String, String>> {
         let settings = AgentSettings::get_global(cx).clone();
 
         // Check for any immediate deny before spawning async work.
@@ -78,7 +77,7 @@ impl AgentTool for RestoreFileFromDiskTool {
             let path_str = path.to_string_lossy();
             let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
             if let ToolPermissionDecision::Deny(reason) = decision {
-                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
+                return Task::ready(Err(reason));
             }
         }
 
@@ -112,7 +111,7 @@ impl AgentTool for RestoreFileFromDiskTool {
                         }
                     }
                     ToolPermissionDecision::Deny(reason) => {
-                        return Err(anyhow::anyhow!("{}", reason));
+                        return Err(reason);
                     }
                     ToolPermissionDecision::Confirm => {
                         if !symlink_escape {
@@ -159,7 +158,7 @@ impl AgentTool for RestoreFileFromDiskTool {
                 };
                 let context = crate::ToolPermissionContext::new(Self::NAME, confirmation_paths);
                 let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
             let mut buffers_to_reload: FxHashSet<Entity<Buffer>> = FxHashSet::default();
 
@@ -221,7 +220,7 @@ impl AgentTool for RestoreFileFromDiskTool {
                         }
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Restore cancelled by user");
+                        return Err("Restore cancelled by user".to_string());
                     }
                 };
 
@@ -243,7 +242,7 @@ impl AgentTool for RestoreFileFromDiskTool {
                 let result = futures::select! {
                     result = reload_task.fuse() => result,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Restore cancelled by user");
+                        return Err("Restore cancelled by user".to_string());
                     }
                 };
                 if let Err(error) = result {

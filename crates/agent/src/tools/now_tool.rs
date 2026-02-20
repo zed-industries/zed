@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use agent_client_protocol as acp;
-use anyhow::Result;
 use chrono::{Local, Utc};
 use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
@@ -52,7 +51,7 @@ impl AgentTool for NowTool {
         input: Self::Input,
         _event_stream: ToolCallEventStream,
         _cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<String, String>> {
         let now = match input.timezone {
             Timezone::Utc => Utc::now().to_rfc3339(),
             Timezone::Local => Local::now().to_rfc3339(),

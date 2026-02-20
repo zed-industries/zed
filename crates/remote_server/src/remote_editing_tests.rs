@@ -678,7 +678,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let buffer_id = cx.read(|cx| {
         let buffer = buffer.read(cx);
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
         buffer.remote_id()
     });
 
@@ -690,7 +690,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .get(buffer_id)
             .unwrap();
 
-        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust");
     });
 
     server_cx.read(|cx| {
@@ -2091,6 +2091,7 @@ pub async fn init_test(
                 node_runtime,
                 languages,
                 extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,

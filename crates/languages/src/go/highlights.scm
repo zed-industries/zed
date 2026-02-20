@@ -1,6 +1,9 @@
 (identifier) @variable
 
 (type_identifier) @type
+(type_spec
+  name: (type_identifier) @type.definition)
+
 (field_identifier) @property
 (package_identifier) @namespace
 
@@ -12,11 +15,11 @@
     (identifier) @property))
 
 (call_expression
-  function: (identifier) @function)
+  function: (identifier) @function.call)
 
 (call_expression
   function: (selector_expression
-    field: (field_identifier) @function.method))
+    field: (field_identifier) @function.method.call))
 
 (function_declaration
   name: (identifier) @function)

@@ -1,3 +1,8 @@
+---
+title: Scheme
+description: "Configure Scheme language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Scheme
 
 Scheme support is available through the [Scheme extension](https://github.com/zed-extensions/scheme).
