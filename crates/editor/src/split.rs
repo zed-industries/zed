@@ -2040,6 +2040,7 @@ impl LhsEditor {
         let new = rhs_multibuffer
             .excerpts_for_buffer(main_buffer.remote_id(), lhs_cx)
             .into_iter()
+            .filter(|(id, _)| rhs_excerpt_ids.contains(&id))
             .map(|(_, excerpt_range)| {
                 let point_range_to_base_text_point_range = |range: Range<Point>| {
                     let start = diff_snapshot
@@ -2083,14 +2084,14 @@ impl LhsEditor {
             let mut current_group = Vec::new();
             let mut last_id = None;
 
-            for (i, &lhs_id) in lhs_result.excerpt_ids.iter().enumerate() {
+            for (lhs_id, rhs_id) in lhs_result.excerpt_ids.iter().zip(rhs_excerpt_ids) {
                 if last_id == Some(lhs_id) {
-                    current_group.push(rhs_excerpt_ids[i]);
+                    current_group.push(rhs_id);
                 } else {
                     if !current_group.is_empty() {
                         groups.push(current_group);
                     }
-                    current_group = vec![rhs_excerpt_ids[i]];
+                    current_group = vec![rhs_id];
                     last_id = Some(lhs_id);
                 }
             }
@@ -2151,6 +2152,7 @@ mod tests {
     use rand::rngs::StdRng;
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
+    use util::rel_path::rel_path;
     use workspace::MultiWorkspace;
 
     use crate::SplittableEditor;
@@ -5864,5 +5866,59 @@ mod tests {
                     .is_buffer_folded(buffer_a_id, cx)
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_two_path_keys_for_one_buffer(cx: &mut gpui::TestAppContext) {
+        use multi_buffer::PathKey;
+        use rope::Point;
+        use unindent::Unindent as _;
+
+        let (editor, mut cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let base_text = "
+            aaa
+            bbb
+            ccc
+        "
+        .unindent();
+        let current_text = "
+            aaa
+            bbb modified
+            ccc
+        "
+        .unindent();
+
+        let (buffer, diff) = buffer_with_diff(&base_text, &current_text, &mut cx);
+
+        let path_key_1 = PathKey {
+            sort_prefix: Some(0),
+            path: rel_path("file1.txt").into(),
+        };
+        let path_key_2 = PathKey {
+            sort_prefix: Some(1),
+            path: rel_path("file1.txt").into(),
+        };
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path_key_1.clone(),
+                buffer.clone(),
+                vec![Point::new(0, 0)..Point::new(1, 0)],
+                0,
+                diff.clone(),
+                cx,
+            );
+            editor.set_excerpts_for_path(
+                path_key_2.clone(),
+                buffer.clone(),
+                vec![Point::new(1, 0)..buffer.read(cx).max_point()],
+                1,
+                diff.clone(),
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
     }
 }
