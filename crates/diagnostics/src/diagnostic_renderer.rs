@@ -213,6 +213,7 @@ impl DiagnosticBlock {
         let editor_line_height = (settings.line_height() * settings.buffer_font_size(cx)).round();
         let line_height = editor_line_height;
         let diagnostics_editor = self.diagnostics_editor.clone();
+
         let copy_button_id = format!(
             "copy-diagnostic-{}-{}-{}-{}",
             self.initial_range.start.row,
@@ -221,15 +222,16 @@ impl DiagnosticBlock {
             self.initial_range.end.column
         );
 
-        div()
-            .relative()
+        h_flex()
+            .max_w(max_width)
+            .pl_1p5()
+            .pr_0p5()
+            .items_start()
+            .gap_1()
             .border_l_2()
-            .px_2()
-            .pr_8()
             .line_height(line_height)
             .bg(background_color)
             .border_color(border_color)
-            .max_w(max_width)
             .child(
                 MarkdownElement::new(
                     self.markdown.clone(),
@@ -251,12 +253,8 @@ impl DiagnosticBlock {
                 }),
             )
             .child(
-                div().absolute().top_0().right_1().bottom_0().child(
-                    v_flex().justify_center().child(
-                        CopyButton::new(copy_button_id, self.copy_message.clone())
-                            .tooltip_label("Copy Diagnostic"),
-                    ),
-                ),
+                CopyButton::new(copy_button_id.clone(), self.copy_message.clone())
+                    .tooltip_label("Copy Diagnostic"),
             )
             .into_any_element()
     }
