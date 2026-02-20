@@ -15,7 +15,7 @@ use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexMap};
 use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
@@ -159,6 +159,104 @@ impl ProfileProvider for Entity<agent::Thread> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Conversation {
+    threads: HashMap<acp::SessionId, Entity<AcpThread>>,
+    permission_requests: IndexMap<acp::SessionId, Vec<acp::ToolCallId>>,
+    subscriptions: Vec<Subscription>,
+}
+
+impl Conversation {
+    pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = thread.read(cx).session_id().clone();
+        let subscription = cx.subscribe(&thread, move |this, _thread, event, _cx| match event {
+            AcpThreadEvent::ToolAuthorizationRequested(id) => {
+                this.permission_requests
+                    .entry(session_id.clone())
+                    .or_default()
+                    .push(id.clone());
+            }
+            AcpThreadEvent::ToolAuthorizationReceived(id) => {
+                if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
+                    tool_calls.retain(|tool_call_id| tool_call_id != id);
+                }
+            }
+            AcpThreadEvent::NewEntry
+            | AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::EntryUpdated(_)
+            | AcpThreadEvent::EntriesRemoved(_)
+            | AcpThreadEvent::Retry(_)
+            | AcpThreadEvent::SubagentSpawned(_)
+            | AcpThreadEvent::Stopped
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::PromptCapabilitiesUpdated
+            | AcpThreadEvent::Refusal
+            | AcpThreadEvent::AvailableCommandsUpdated(_)
+            | AcpThreadEvent::ModeUpdated(_)
+            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
+        });
+        self.subscriptions.push(subscription);
+        self.threads
+            .insert(thread.read(cx).session_id().clone(), thread);
+    }
+
+    pub fn permission_requests(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Vec<(acp::SessionId, acp::ToolCallId)> {
+        let Some(thread) = self.threads.get(session_id) else {
+            return Vec::new();
+        };
+        let is_subagent = thread.read(cx).parent_session_id().is_some();
+        if is_subagent {
+            self.permission_requests
+                .get(session_id)
+                .map_or(Vec::new(), |tool_calls| {
+                    tool_calls
+                        .iter()
+                        .map(|id| (session_id.clone(), id.clone()))
+                        .collect::<Vec<_>>()
+                })
+        } else {
+            self.permission_requests
+                .iter()
+                .flat_map(|(session_id, tool_calls)| {
+                    tool_calls.iter().map(|id| (session_id.clone(), id.clone()))
+                })
+                .collect()
+        }
+    }
+
+    pub fn authorize_tool_call(
+        &mut self,
+        session_id: acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        option_id: acp::PermissionOptionId,
+        option_kind: acp::PermissionOptionKind,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.threads.get(&session_id) else {
+            return;
+        };
+        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
+
+        telemetry::event!(
+            "Agent Tool Call Authorized",
+            agent = agent_telemetry_id,
+            session = session_id,
+            option = option_kind
+        );
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(tool_call_id, option_id, option_kind, cx);
+        });
+        cx.notify();
+    }
+}
+
 pub struct AcpServerView {
     agent: Rc<dyn AgentServer>,
     agent_server_store: Entity<AgentServerStore>,
@@ -251,6 +349,7 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     threads: HashMap<acp::SessionId, Entity<AcpThreadView>>,
     connection: Rc<dyn AgentConnection>,
+    conversation: Entity<Conversation>,
 }
 
 enum AuthState {
@@ -544,9 +643,16 @@ impl AcpServerView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
+                        let conversation = cx.new(|cx| {
+                            let mut conversation = Conversation::default();
+                            conversation.register_thread(thread.clone(), cx);
+                            conversation
+                        });
+
                         let current = this.new_thread_view(
                             None,
                             thread,
+                            conversation.clone(),
                             resumed_without_history,
                             resume_thread,
                             initial_content,
@@ -569,6 +675,7 @@ impl AcpServerView {
                                 auth_state: AuthState::Ok,
                                 active_id: Some(id.clone()),
                                 threads: HashMap::from_iter([(id, current)]),
+                                conversation,
                             }),
                             cx,
                         );
@@ -623,6 +730,7 @@ impl AcpServerView {
         &self,
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
+        conversation: Entity<Conversation>,
         resumed_without_history: bool,
         resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
@@ -780,6 +888,7 @@ impl AcpServerView {
             AcpThreadView::new(
                 parent_id,
                 thread,
+                conversation,
                 self.login.clone(),
                 weak,
                 agent_icon,
@@ -879,6 +988,7 @@ impl AcpServerView {
                         active_id: None,
                         threads: HashMap::default(),
                         connection,
+                        conversation: cx.new(|_cx| Conversation::default()),
                     }),
                     cx,
                 );
@@ -1045,9 +1155,10 @@ impl AcpServerView {
                 window,
                 cx,
             ),
-            AcpThreadEvent::ToolAuthorizationRequired => {
+            AcpThreadEvent::ToolAuthorizationRequested(_) => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
+            AcpThreadEvent::ToolAuthorizationReceived(_) => {}
             AcpThreadEvent::Retry(retry) => {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
@@ -1513,9 +1624,19 @@ impl AcpServerView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
+                let conversation = this
+                    .as_connected()
+                    .map(|connected| connected.conversation.clone());
+                let Some(conversation) = conversation else {
+                    return;
+                };
+                conversation.update(cx, |conversation, cx| {
+                    conversation.register_thread(subagent_thread.clone(), cx);
+                });
                 let view = this.new_thread_view(
                     Some(parent_id),
                     subagent_thread,
+                    conversation,
                     false,
                     None,
                     None,

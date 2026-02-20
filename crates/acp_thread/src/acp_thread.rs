@@ -977,7 +977,8 @@ pub enum AcpThreadEvent {
     TokenUsageUpdated,
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
-    ToolAuthorizationRequired,
+    ToolAuthorizationRequested(acp::ToolCallId),
+    ToolAuthorizationReceived(acp::ToolCallId),
     Retry(RetryStatus),
     SubagentSpawned(acp::SessionId),
     Stopped,
@@ -1744,7 +1745,7 @@ impl AcpThread {
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
         cx: &mut Context<Self>,
-    ) -> Result<BoxFuture<'static, acp::RequestPermissionOutcome>> {
+    ) -> Result<Task<acp::RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -1752,20 +1753,25 @@ impl AcpThread {
             respond_tx: tx,
         };
 
+        let tool_call_id = tool_call.tool_call_id.clone();
         self.upsert_tool_call_inner(tool_call, status, cx)?;
-        cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequested(
+            tool_call_id.clone(),
+        ));
 
-        let fut = async {
-            match rx.await {
+        Ok(cx.spawn(async move |this, cx| {
+            let outcome = match rx.await {
                 Ok(option) => acp::RequestPermissionOutcome::Selected(
                     acp::SelectedPermissionOutcome::new(option),
                 ),
                 Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
-            }
-        }
-        .boxed();
-
-        Ok(fut)
+            };
+            this.update(cx, |_this, cx| {
+                cx.emit(AcpThreadEvent::ToolAuthorizationReceived(tool_call_id))
+            })
+            .ok();
+            outcome
+        }))
     }
 
     pub fn authorize_tool_call(

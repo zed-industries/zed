@@ -191,6 +191,7 @@ pub struct AcpThreadView {
     pub parent_id: Option<acp::SessionId>,
     pub login: Option<task::SpawnInTerminal>, // is some <=> Active | Unauthenticated
     pub thread: Entity<AcpThread>,
+    pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<AcpServerView>,
     pub agent_icon: IconName,
     pub agent_name: SharedString,
@@ -277,9 +278,10 @@ pub struct TurnFields {
 }
 
 impl AcpThreadView {
-    pub fn new(
+    pub(crate) fn new(
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
+        conversation: Entity<super::Conversation>,
         login: Option<task::SpawnInTerminal>,
         server_view: WeakEntity<AcpServerView>,
         agent_icon: IconName,
@@ -385,6 +387,7 @@ impl AcpThreadView {
             parent_id,
             focus_handle: cx.focus_handle(),
             thread,
+            conversation,
             login,
             server_view,
             agent_icon,
