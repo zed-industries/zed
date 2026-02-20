@@ -1537,6 +1537,10 @@ impl EditPredictionStore {
         scope: DiagnosticSearchScope,
         cx: &mut Context<Self>,
     ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
+
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
         };
@@ -1722,7 +1726,10 @@ impl EditPredictionStore {
                 EditPredictionProvider::None
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
-                | EditPredictionProvider::Codestral => unreachable!(),
+                | EditPredictionProvider::Codestral => {
+                    log::error!("queue_prediction_refresh called with non-store provider");
+                    return;
+                }
             };
 
         let drop_on_cancel = !needs_acceptance_tracking;
