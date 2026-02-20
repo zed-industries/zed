@@ -368,6 +368,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
+ "git",
  "gpui",
  "gpui_tokio",
  "html_to_markdown",

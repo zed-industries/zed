@@ -5611,6 +5611,24 @@ impl Repository {
         )
     }
 
+    pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
+        self.send_job(
+            Some("git worktree remove".into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_worktree(path, force).await
+                    }
+                    RepositoryState::Remote(_) => {
+                        anyhow::bail!(
+                            "Removing worktrees on remote repositories is not yet supported"
+                        )
+                    }
+                }
+            },
+        )
+    }
+
     pub fn default_branch(
         &mut self,
         include_remote_name: bool,

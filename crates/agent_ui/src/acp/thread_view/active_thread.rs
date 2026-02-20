@@ -186,6 +186,12 @@ impl DiffStats {
     }
 }
 
+pub enum AcpThreadViewEvent {
+    WorktreeCreationRequested { text: String },
+}
+
+impl EventEmitter<AcpThreadViewEvent> for AcpThreadView {}
+
 pub struct AcpThreadView {
     pub id: acp::SessionId,
     pub parent_id: Option<acp::SessionId>,
@@ -253,6 +259,7 @@ pub struct AcpThreadView {
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
     pub show_codex_windows_warning: bool,
+    pub needs_worktree_creation: bool,
     pub history: Entity<AcpThreadHistory>,
     pub _history_subscription: Subscription,
 }
@@ -302,6 +309,7 @@ impl AcpThreadView {
         history: Entity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
+        needs_worktree_creation: bool,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -445,6 +453,7 @@ impl AcpThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
+            needs_worktree_creation,
         };
         if should_auto_submit {
             this.send(window, cx);
@@ -635,6 +644,16 @@ impl AcpThreadView {
         }
 
         let message_editor = self.message_editor.clone();
+
+        if self.needs_worktree_creation {
+            if !message_editor.read(cx).is_empty(cx) {
+                self.needs_worktree_creation = false;
+                let text = message_editor.read(cx).text(cx);
+                cx.emit(AcpThreadViewEvent::WorktreeCreationRequested { text });
+            }
+            return;
+        }
+
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 

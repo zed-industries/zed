@@ -45,10 +45,7 @@ fn main() {
 // All macOS-specific imports grouped together
 #[cfg(target_os = "macos")]
 use {
-    acp_thread::{
-        AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-        AgentSessionListResponse, SessionListUpdate, StubAgentConnection,
-    },
+    acp_thread::{AgentConnection, StubAgentConnection},
     agent_client_protocol as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
@@ -3090,48 +3087,6 @@ fn run_error_wrapping_visual_tests(
     Ok(test_result)
 }
 
-#[cfg(target_os = "macos")]
-struct StubSessionList {
-    sessions: Vec<AgentSessionInfo>,
-    updates_tx: smol::channel::Sender<SessionListUpdate>,
-    updates_rx: smol::channel::Receiver<SessionListUpdate>,
-}
-
-#[cfg(target_os = "macos")]
-impl StubSessionList {
-    fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-        let (updates_tx, updates_rx) = smol::channel::unbounded();
-        Self {
-            sessions,
-            updates_tx,
-            updates_rx,
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl AgentSessionList for StubSessionList {
-    fn list_sessions(
-        &self,
-        _request: AgentSessionListRequest,
-        _cx: &mut App,
-    ) -> gpui::Task<anyhow::Result<AgentSessionListResponse>> {
-        gpui::Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-    }
-
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
-        Some(self.updates_rx.clone())
-    }
-
-    fn notify_refresh(&self) {
-        self.updates_tx.try_send(SessionListUpdate::Refresh).ok();
-    }
-
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-        self
-    }
-}
-
 #[cfg(all(target_os = "macos", feature = "visual-tests"))]
 fn run_thread_target_selector_visual_tests(
     app_state: Arc<AppState>,
@@ -3328,87 +3283,6 @@ fn run_thread_target_selector_visual_tests(
         update_baseline,
     );
 
-    // ---- Screenshot 5: History with worktree branch badges ----
-    // Clear the creation status first
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.set_thread_target_for_tests(ThreadTarget::default(), cx);
-            panel.set_worktree_creation_status_for_tests(None, cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    // Set up a session list with entries that have worktree_branch metadata
-    let now = Utc::now();
-    let sessions = vec![
-        AgentSessionInfo {
-            session_id: acp::SessionId::new("session-with-branch-1"),
-            cwd: None,
-            title: Some("Refactor authentication module".into()),
-            updated_at: Some(now - ChronoDuration::minutes(15)),
-            meta: Some(acp::Meta::from_iter([(
-                "worktree_branch".to_string(),
-                "zed/agent/bR9kz".into(),
-            )])),
-        },
-        AgentSessionInfo {
-            session_id: acp::SessionId::new("session-no-branch"),
-            cwd: None,
-            title: Some("Fix CI pipeline flakiness".into()),
-            updated_at: Some(now - ChronoDuration::hours(2)),
-            meta: None,
-        },
-        AgentSessionInfo {
-            session_id: acp::SessionId::new("session-with-branch-2"),
-            cwd: None,
-            title: Some("Add visual test coverage for toolbar".into()),
-            updated_at: Some(now - ChronoDuration::hours(5)),
-            meta: Some(acp::Meta::from_iter([(
-                "worktree_branch".to_string(),
-                "zed/agent/x7Qpm".into(),
-            )])),
-        },
-        AgentSessionInfo {
-            session_id: acp::SessionId::new("session-with-branch-3"),
-            cwd: None,
-            title: Some("Implement dark mode toggle".into()),
-            updated_at: Some(now - ChronoDuration::days(1)),
-            meta: Some(acp::Meta::from_iter([(
-                "worktree_branch".to_string(),
-                "zed/agent/kL3nW".into(),
-            )])),
-        },
-    ];
-
-    let session_list: Rc<dyn AgentSessionList> = Rc::new(StubSessionList::new(sessions));
-
-    // Inject the session list into the history entity and switch to history view
-    let history = cx.read(|cx| panel.read(cx).history().clone());
-    history.update(cx, |history, cx| {
-        history.set_session_list(Some(session_list), cx);
-    });
-    cx.run_until_parked();
-
-    // Navigate to history view
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.open_history_for_tests(window, cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_history = run_visual_test(
-        "history_with_worktree_branch",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
     // Clean up
     workspace_window
         .update(cx, |workspace, _window, cx| {
@@ -3448,7 +3322,6 @@ fn run_thread_target_selector_visual_tests(
         ("new_worktree", result_new_worktree),
         ("creating", result_creating),
         ("error", result_error),
-        ("history", result_history),
     ];
 
     let mut has_baseline_update = None;
