@@ -400,7 +400,7 @@ impl ToolCall {
     }
 
     pub fn is_subagent(&self) -> bool {
-        self.tool_name.as_ref().is_some_and(|s| s == "subagent")
+        self.tool_name.as_ref().is_some_and(|s| s == "spawn_agent")
             || self.subagent_session_id.is_some()
     }
 

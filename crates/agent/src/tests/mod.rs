@@ -4230,7 +4230,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("spawning subagent");
-    let subagent_tool_input = SubagentToolInput {
+    let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
         task: "subagent task prompt".to_string(),
         session_id: None,
@@ -4238,7 +4238,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
         input: serde_json::to_value(&subagent_tool_input).unwrap(),
         is_input_complete: true,
@@ -4381,7 +4381,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("spawning subagent");
-    let subagent_tool_input = SubagentToolInput {
+    let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
         task: "subagent task prompt".to_string(),
         session_id: None,
@@ -4389,7 +4389,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
         input: serde_json::to_value(&subagent_tool_input).unwrap(),
         is_input_complete: true,
@@ -4519,7 +4519,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("spawning subagent");
-    let subagent_tool_input = SubagentToolInput {
+    let subagent_tool_input = SpawnAgentToolInput {
         label: "initial task".to_string(),
         task: "do the first task".to_string(),
         session_id: None,
@@ -4527,7 +4527,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     };
     let subagent_tool_use = LanguageModelToolUse {
         id: "subagent_1".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
         input: serde_json::to_value(&subagent_tool_input).unwrap(),
         is_input_complete: true,
@@ -4581,7 +4581,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
     cx.run_until_parked();
     model.send_last_completion_stream_text_chunk("resuming subagent");
-    let resume_tool_input = SubagentToolInput {
+    let resume_tool_input = SpawnAgentToolInput {
         label: "follow-up task".to_string(),
         task: "do the follow-up task".to_string(),
         session_id: Some(subagent_session_id.clone()),
@@ -4589,7 +4589,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     };
     let resume_tool_use = LanguageModelToolUse {
         id: "subagent_2".into(),
-        name: SubagentTool::NAME.into(),
+        name: SpawnAgentTool::NAME.into(),
         raw_input: serde_json::to_string(&resume_tool_input).unwrap(),
         input: serde_json::to_value(&resume_tool_input).unwrap(),
         is_input_complete: true,
@@ -4687,7 +4687,7 @@ async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAp
 
     thread.read_with(cx, |thread, _| {
         assert!(
-            thread.has_registered_tool(SubagentTool::NAME),
+            thread.has_registered_tool(SpawnAgentTool::NAME),
             "subagent tool should be present when feature flag is enabled"
         );
     });
@@ -4780,7 +4780,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
     deep_subagent_thread.read_with(cx, |thread, _| {
         assert_eq!(thread.depth(), MAX_SUBAGENT_DEPTH);
         assert!(
-            !thread.has_registered_tool(SubagentTool::NAME),
+            !thread.has_registered_tool(SpawnAgentTool::NAME),
             "subagent tool should not be present at max depth"
         );
     });

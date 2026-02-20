@@ -1412,7 +1412,7 @@ mod tests {
             "streaming_edit_file",
             // Subagent permission checks happen at the level of individual
             // tool calls within the subagent, not at the spawning level.
-            "subagent",
+            "spawn_agent",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

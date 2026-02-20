@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent::{AgentTool, ContextServerRegistry, SubagentTool};
+use agent::{AgentTool, ContextServerRegistry, SpawnAgentTool};
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use editor::Editor;
 use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
@@ -364,7 +364,7 @@ impl ManageProfilesModal {
                     agent::tool_supports_provider(name, provider)
                 });
                 let enabled_by_feature_flag =
-                    *name != SubagentTool::NAME || cx.has_flag::<SubagentsFeatureFlag>();
+                    *name != SpawnAgentTool::NAME || cx.has_flag::<SubagentsFeatureFlag>();
 
                 supported_by_provider && enabled_by_feature_flag
             })
