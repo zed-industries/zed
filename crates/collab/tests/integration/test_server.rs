@@ -242,14 +242,13 @@ impl TestServer {
         });
 
         let client_name = name.to_string();
-        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
+        let client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
         let db = self.app_state.db.clone();
         let connection_killers = self.connection_killers.clone();
         let forbid_connections = self.forbid_connections.clone();
 
-        Arc::get_mut(&mut client)
-            .unwrap()
+        client
             .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(async move |_| {
