@@ -1978,7 +1978,7 @@ impl EditPredictionStore {
         })
     }
 
-    async fn next_diagnostic_location(
+    pub(crate) async fn next_diagnostic_location(
         active_buffer: Entity<Buffer>,
         active_buffer_snapshot: &BufferSnapshot,
         active_buffer_diagnostic_search_range: Range<Point>,

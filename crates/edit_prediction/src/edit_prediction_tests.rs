@@ -17,7 +17,7 @@ use gpui::{
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
-use language::{Buffer, Point};
+use language::{Anchor, Buffer, CursorShape, Operation, Point, Selection, SelectionGoal};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -2317,6 +2317,222 @@ fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
              thirteen
              fourteen
             "}
+    );
+}
+
+#[gpui::test]
+async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppContext) {
+    fn set_collaborator_cursor(buffer: &Entity<Buffer>, row: u32, cx: &mut TestAppContext) {
+        let collab_replica = clock::ReplicaId::new(10);
+        let anchor = buffer.read_with(cx, |buffer, _| {
+            buffer.snapshot().anchor_before(Point::new(row, 0))
+        });
+        let selections: Arc<[Selection<Anchor>]> = Arc::new([Selection {
+            id: 1,
+            start: anchor,
+            end: anchor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }]);
+        buffer.update(cx, |buffer, cx| {
+            buffer.apply_ops(
+                [Operation::UpdateSelections {
+                    selections,
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: collab_replica,
+                        value: 1,
+                    },
+                    line_mode: false,
+                    cursor_shape: CursorShape::Bar,
+                }],
+                cx,
+            );
+        });
+    }
+
+    fn publish_diagnostics(
+        uri_path: &'static str,
+        rows: &[u32],
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) {
+        let diagnostics: Vec<_> = rows
+            .iter()
+            .map(|&row| lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(row, 0), lsp::Position::new(row, 5)),
+                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                message: format!("error at row {row}"),
+                ..Default::default()
+            })
+            .collect();
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(uri_path).expect("invalid uri"),
+                            diagnostics,
+                            version: None,
+                        },
+                        None,
+                        language::DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .expect("failed to update diagnostics");
+            });
+        });
+    }
+
+    init_test(cx);
+
+    let mut lines = String::new();
+    for i in 0..60 {
+        lines.push_str(&format!("line {i}\n"));
+    }
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "active.txt": lines,
+            "collab_file.txt": "error here\nsecond line\n",
+            "free_file.txt": "another error\nsecond line\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let active_buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/root/active.txt"), cx)
+                .expect("active.txt not found");
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .expect("failed to open active buffer");
+
+    set_collaborator_cursor(&active_buffer, 5, cx);
+
+    publish_diagnostics(path!("/root/active.txt"), &[3, 25, 50], &project, cx);
+
+    cx.run_until_parked();
+
+    let cursor_point = Point::new(25, 0);
+    let empty_search_range: Range<Point> = Default::default();
+
+    let snapshot = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let result = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot,
+        empty_search_range.clone(),
+        cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (result_buffer, result_anchor) = result.expect("expected a diagnostic location");
+    assert_eq!(result_buffer.entity_id(), active_buffer.entity_id());
+    let result_row = result_buffer.read_with(cx, |buffer, _| {
+        result_anchor.to_point(&buffer.snapshot()).row
+    });
+    assert_ne!(
+        result_row, 3,
+        "row 3 is near collaborator (row 5) but far from local cursor (row 25), should be excluded"
+    );
+    assert!(
+        result_row == 25 || result_row == 50,
+        "expected row 25 or 50, got {result_row}"
+    );
+
+    let snapshot_near = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let near_cursor_point = Point::new(4, 0);
+    let result_near = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_near,
+        empty_search_range.clone(),
+        near_cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (_, near_anchor) = result_near.expect("expected a diagnostic location when both are near");
+    let near_row =
+        active_buffer.read_with(cx, |buffer, _| near_anchor.to_point(&buffer.snapshot()).row);
+    assert_eq!(
+        near_row, 3,
+        "row 3 should be included when local cursor (row 4) is also near the collaborator"
+    );
+
+    let snapshot_far = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let far_cursor_point = Point::new(50, 0);
+    let result_far = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_far,
+        empty_search_range.clone(),
+        far_cursor_point,
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("next_diagnostic_location failed");
+
+    let (_, far_anchor) = result_far.expect("expected a diagnostic location");
+    let far_row =
+        active_buffer.read_with(cx, |buffer, _| far_anchor.to_point(&buffer.snapshot()).row);
+    assert_eq!(
+        far_row, 50,
+        "row 50 is near local cursor (row 50) and far from collaborator, should be picked"
+    );
+
+    publish_diagnostics(path!("/root/collab_file.txt"), &[0], &project, cx);
+    publish_diagnostics(path!("/root/free_file.txt"), &[0], &project, cx);
+    cx.run_until_parked();
+
+    let collab_buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/root/collab_file.txt"), cx)
+                .expect("collab_file.txt not found");
+            project.open_buffer(path, cx)
+        })
+        .await
+        .expect("failed to open collab buffer");
+
+    set_collaborator_cursor(&collab_buffer, 0, cx);
+    cx.run_until_parked();
+
+    let no_same_file_search_range = Point::new(0, 0)..Point::new(59, 0);
+    let snapshot_cross = active_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let result_cross = EditPredictionStore::next_diagnostic_location(
+        active_buffer.clone(),
+        &snapshot_cross,
+        no_same_file_search_range,
+        Point::new(0, 0),
+        &project,
+        &mut cx.to_async(),
+    )
+    .await
+    .expect("cross-file next_diagnostic_location failed");
+
+    let (cross_buffer, _) = result_cross.expect("expected a cross-file diagnostic location");
+    let cross_path = cross_buffer.read_with(cx, |buffer, cx| {
+        buffer
+            .file()
+            .expect("buffer should have a file")
+            .full_path(cx)
+    });
+    assert_eq!(
+        cross_path,
+        Path::new(path!("root/free_file.txt")),
+        "should skip collab_file.txt (has collaborator) and pick free_file.txt"
     );
 }
 
