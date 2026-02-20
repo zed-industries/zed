@@ -2324,81 +2324,95 @@ impl AgentPanel {
                 workspace.set_dock_structure(init_dock_structure, window, cx);
             }));
 
-            let new_local_task = cx.update(|_window, cx| {
-                Workspace::new_local(all_paths, app_state, window_handle, None, init, cx)
-            })?;
-            new_local_task.await?;
+            let (new_window_handle, _) = cx
+                .update(|_window, cx| {
+                    Workspace::new_local(all_paths, app_state, window_handle, None, init, false, cx)
+                })?
+                .await?;
 
-            // Submit the prompt in the new workspace's agent panel.
-            // After open_workspace_for_paths completes, the new workspace is the
-            // active one in the MultiWorkspace. We access it via the window handle
-            // (not this.workspace, which still points to the original workspace).
+            // The new workspace was added to the MultiWorkspace but NOT activated.
+            // Retrieve the Entity<Workspace> for it.
+            let new_workspace = new_window_handle.update(cx, |multi_workspace, _window, _cx| {
+                let workspaces = multi_workspace.workspaces();
+                workspaces.last().cloned()
+            })?;
+
+            let Some(new_workspace) = new_workspace else {
+                anyhow::bail!("New workspace was not added to MultiWorkspace");
+            };
+
+            // Wait for panels to finish loading before setting anything up.
+            let panels_task = new_window_handle.update(cx, |_, _, cx| {
+                new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
+            })?;
+            if let Some(task) = panels_task {
+                task.await.log_err();
+            }
+
             let initial_content = AgentInitialContent::ContentBlock {
                 blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
                 auto_submit: true,
             };
 
-            if let Some(window_handle) = window_handle {
-                window_handle.update(cx, |multi_workspace, window, cx| {
-                    let new_workspace = multi_workspace.workspace().clone();
-                    new_workspace.update(cx, |workspace, cx| {
-                        if has_non_git {
-                            let toast_id =
-                                workspace::notifications::NotificationId::unique::<AgentPanel>();
-                            workspace.show_toast(
-                                workspace::Toast::new(
-                                    toast_id,
-                                    "Some project folders are not git repositories. \
-                                     They were included as-is without creating a worktree.",
-                                ),
+            // Now that panels are ready, set up the workspace: open remapped files,
+            // show toasts, and submit the prompt — all before making it visible.
+            new_window_handle.update(cx, |_multi_workspace, window, cx| {
+                new_workspace.update(cx, |workspace, cx| {
+                    if has_non_git {
+                        let toast_id =
+                            workspace::notifications::NotificationId::unique::<AgentPanel>();
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                toast_id,
+                                "Some project folders are not git repositories. \
+                                 They were included as-is without creating a worktree.",
+                            ),
+                            cx,
+                        );
+                    }
+
+                    let remapped_paths: Vec<PathBuf> = open_file_paths
+                        .iter()
+                        .filter_map(|original_path| {
+                            for (old_root, new_root) in &path_remapping {
+                                if let Ok(relative) = original_path.strip_prefix(old_root) {
+                                    return Some(new_root.join(relative));
+                                }
+                            }
+                            for non_git in &non_git_paths {
+                                if original_path.starts_with(non_git) {
+                                    return Some(original_path.clone());
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+
+                    if !remapped_paths.is_empty() {
+                        workspace
+                            .open_paths(
+                                remapped_paths,
+                                workspace::OpenOptions::default(),
+                                None,
+                                window,
                                 cx,
-                            );
-                        }
+                            )
+                            .detach();
+                    }
 
-                        let remapped_paths: Vec<PathBuf> = open_file_paths
-                            .iter()
-                            .filter_map(|original_path| {
-                                for (old_root, new_root) in &path_remapping {
-                                    if let Ok(relative) = original_path.strip_prefix(old_root) {
-                                        return Some(new_root.join(relative));
-                                    }
-                                }
-                                for non_git in &non_git_paths {
-                                    if original_path.starts_with(non_git) {
-                                        return Some(original_path.clone());
-                                    }
-                                }
-                                None
-                            })
-                            .collect();
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(None, None, Some(initial_content), window, cx);
+                        });
+                    }
+                });
+            })?;
 
-                        if !remapped_paths.is_empty() {
-                            workspace
-                                .open_paths(
-                                    remapped_paths,
-                                    workspace::OpenOptions::default(),
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                                .detach();
-                        }
-
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                            panel.update(cx, |panel, cx| {
-                                panel.external_thread(
-                                    None,
-                                    None,
-                                    Some(initial_content),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    });
-                })?;
-            }
+            // Everything is set up — now activate the workspace to make it visible.
+            new_window_handle.update(cx, |multi_workspace, _window, cx| {
+                multi_workspace.activate(new_workspace.clone(), cx);
+            })?;
 
             // Clear the creation status on the original panel
             this.update_in(cx, |this, _window, cx| {
