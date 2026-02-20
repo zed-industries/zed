@@ -5,7 +5,7 @@ description: "Guide for migrating from RustRover to Zed, including settings and 
 
 # How to Migrate from RustRover to Zed
 
-This guide covers how to set up Zed if you're coming from RustRover, including keybindings, settings, and the differences you should expect as a Rust developer.
+This guide covers keybindings, settings, and the differences you'll encounter as a Rust developer switching from RustRover.
 
 ## Install Zed
 
@@ -57,7 +57,7 @@ Settings RustRover users typically configure first:
 | `inlay_hints`           | Show type hints, parameter names, and chaining hints inline.                    |
 | `relative_line_numbers` | Useful if you're coming from IdeaVim.                                           |
 
-Zed also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project, similar to how you might use `.idea` folders in RustRover.
+Zed also supports per-project settings. Create a `.zed/settings.json` file in your project root to override global settings for that project.
 
 > **Tip:** If you're joining an existing project, check `format_on_save` before making your first commit. Otherwise you might accidentally reformat an entire file when you only meant to change one line.
 
@@ -170,7 +170,7 @@ Where you might notice differences:
 
 ### Project Configuration
 
-Both editors store per-project configuration in a hidden folder. RustRover uses `.idea` (with XML files), Zed uses `.zed` (with JSON files). The main differences are in what each editor manages for you and how you interact with project settings.
+Both editors store per-project configuration in a hidden folder. RustRover uses `.idea` (with XML files), Zed uses `.zed` (with JSON files).
 
 **Run configurations don't transfer.** RustRover stores run/debug configurations in `.idea`. These have no automatic migration path. You'll recreate them as Zed [tasks](../tasks.md) in `.zed/tasks.json` and debug configurations in `.zed/debug.json`.
 
@@ -329,9 +329,8 @@ Several features that might require plugins in other editors are built into Zed:
 
 ### What's Not in Zed
 
-To set expectations clearly, here's what RustRover offers that Zed doesn't have:
+Here's what RustRover offers that Zed doesn't have:
 
-- **Cargo GUI** — No visual Cargo tool window; use `cargo add`, `cargo remove`, or edit `Cargo.toml` directly
 - **Profiler integration** — Use `cargo flamegraph`, `perf`, or external profiling tools
 - **Database tools** — Use DataGrip, DBeaver, or TablePlus
 - **HTTP Client** — Use tools like `curl`, `httpie`, or Postman
@@ -339,7 +338,7 @@ To set expectations clearly, here's what RustRover offers that Zed doesn't have:
 
 ## A Note on Licensing and Telemetry
 
-If you're moving from RustRover partly due to licensing concerns or telemetry policies, you should know:
+On licensing and telemetry:
 
 - **Zed is open source** (MIT licensed for the editor, AGPL for collaboration services)
 - **Telemetry is optional** and can be disabled during onboarding or in settings
@@ -356,7 +355,7 @@ Once connected, you'll see each other's cursors, selections, and edits in real t
 
 ## Using AI in Zed
 
-If you're used to AI assistants in RustRover (like JetBrains AI Assistant), Zed offers similar capabilities with more flexibility.
+Zed has built-in AI features. If you've used JetBrains AI Assistant, here's how to get set up.
 
 ### Configuring GitHub Copilot
 
