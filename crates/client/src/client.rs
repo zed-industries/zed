@@ -198,8 +198,7 @@ pub struct Client {
     state: RwLock<ClientState>,
     handler_set: Mutex<ProtoMessageHandlerSet>,
     message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
-    sign_out_tx: mpsc::UnboundedSender<()>,
-    _handle_sign_out: Mutex<Option<Task<()>>>,
+    sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -530,7 +529,6 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let (sign_out_tx, mut sign_out_rx) = mpsc::unbounded();
         let this = Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
@@ -541,8 +539,7 @@ impl Client {
             state: Default::default(),
             handler_set: Default::default(),
             message_to_client_handlers: Mutex::new(Vec::new()),
-            sign_out_tx,
-            _handle_sign_out: Mutex::new(None),
+            sign_out_tx: Mutex::new(None),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -551,16 +548,6 @@ impl Client {
             #[cfg(any(test, feature = "test-support"))]
             rpc_url: RwLock::default(),
         });
-        this._handle_sign_out.lock().replace(cx.spawn({
-            let weak_client = Arc::downgrade(&this);
-            async move |cx| {
-                while sign_out_rx.next().await.is_some() {
-                    if let Some(client) = weak_client.upgrade() {
-                        client.sign_out(&cx).await;
-                    }
-                }
-            }
-        }));
 
         this
     }
@@ -1539,7 +1526,9 @@ impl Client {
 
     /// Requests a sign out to be performed asynchronously.
     pub fn request_sign_out(&self) {
-        self.sign_out_tx.unbounded_send(()).ok();
+        if let Some(sign_out_tx) = self.sign_out_tx.lock().clone() {
+            sign_out_tx.unbounded_send(()).ok();
+        }
     }
 
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncApp) {
