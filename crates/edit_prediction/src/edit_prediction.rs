@@ -1013,6 +1013,9 @@ impl EditPredictionStore {
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
         // TODO [zeta2] init with recent paths
         match event {
             project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
@@ -1665,7 +1668,24 @@ impl EditPredictionStore {
     }
 
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
+}
 
+fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
+    match provider {
+        EditPredictionProvider::Zed
+        | EditPredictionProvider::Sweep
+        | EditPredictionProvider::Mercury
+        | EditPredictionProvider::Ollama
+        | EditPredictionProvider::OpenAiCompatibleApi
+        | EditPredictionProvider::Experimental(_) => true,
+        EditPredictionProvider::None
+        | EditPredictionProvider::Copilot
+        | EditPredictionProvider::Supermaven
+        | EditPredictionProvider::Codestral => false,
+    }
+}
+
+impl EditPredictionStore {
     fn queue_prediction_refresh(
         &mut self,
         project: Entity<Project>,
