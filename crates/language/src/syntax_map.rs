@@ -1553,7 +1553,10 @@ fn get_injections(
     }
 
     for query_range in changed_ranges {
-        query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end + 1);
+        let effective_start = node
+            .descendant_for_byte_range(query_range.start, query_range.start)
+            .map_or(query_range.start, |descendant| descendant.start_byte());
+        query_cursor.set_byte_range(effective_start.saturating_sub(1)..query_range.end + 1);
         let mut matches = query_cursor.matches(&config.query, node, TextProvider(text.as_rope()));
         while let Some(mat) = matches.next() {
             let content_ranges = mat

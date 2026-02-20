@@ -935,6 +935,94 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_jsdoc_injection_preserved_after_edit_deep_in_comment(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let javascript = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_injection_query(
+            r#"
+            (((comment) @_jsdoc_comment
+              (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
+              (#set! injection.language "jsdoc"))
+            "#,
+        )
+        .expect("Could not parse JavaScript injection query"),
+    );
+
+    let jsdoc = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JSDoc".into(),
+                grammar: Some("jsdoc".into()),
+                hidden: true,
+                ..Default::default()
+            },
+            Some(tree_sitter_jsdoc::LANGUAGE.into()),
+        )
+        .with_highlights_query("(tag_name) @keyword.jsdoc")
+        .expect("Could not parse JSDoc highlights query"),
+    );
+
+    registry.add(javascript.clone());
+    registry.add(jsdoc);
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "
+            /**
+             * First line of docs
+             * @param {string} name - The name
+             * @param {number} age - The age
+             * @returns {boolean} Whether valid
+             */
+            function validate(name, age) {}
+        "
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let has_jsdoc_layer = |syntax_map: &SyntaxMap, buffer: &Buffer| {
+        syntax_map
+            .layers(buffer)
+            .iter()
+            .any(|layer| layer.language.name().as_ref() == "JSDoc")
+    };
+
+    assert!(
+        has_jsdoc_layer(&syntax_map, &buffer),
+        "Expected JSDoc injection layer after initial parse"
+    );
+
+    // Edit deep inside the comment, far from the `/**` opening on line 0.
+    // This is the scenario that triggers the bug: the changed range doesn't
+    // cover the comment node's start byte, so the injection query misses it.
+    let edit_target = buffer.as_rope().to_string().find("The age").expect("text not found");
+    buffer.edit([(edit_target..edit_target + "The age".len(), "The person's age")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    assert!(
+        has_jsdoc_layer(&syntax_map, &buffer),
+        "JSDoc injection layer should be preserved after editing deep inside the comment"
+    );
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
