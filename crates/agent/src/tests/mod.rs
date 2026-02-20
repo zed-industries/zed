@@ -331,7 +331,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
         "expected tool call update to include terminal content"
     );
 
-    let mut task_future: Pin<Box<Fuse<Task<Result<String>>>>> = Box::pin(task.fuse());
+    let mut task_future: Pin<Box<Fuse<Task<Result<String, String>>>>> = Box::pin(task.fuse());
 
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     loop {
@@ -4007,7 +4007,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by deny rule"
         );
-        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        let err_msg = result.unwrap_err().to_lowercase();
         assert!(
             err_msg.contains("blocked"),
             "error should mention the command was blocked"
@@ -4165,7 +4165,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
             result.is_err(),
             "expected command to be blocked by tool-specific deny default"
         );
-        let err_msg = result.unwrap_err().to_string().to_lowercase();
+        let err_msg = result.unwrap_err().to_lowercase();
         assert!(
             err_msg.contains("disabled"),
             "error should mention the tool is disabled, got: {err_msg}"
@@ -4847,7 +4847,7 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
     let result = task.await;
     assert!(result.is_err(), "expected deletion to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the deletion was blocked"
     );
 }
@@ -4903,7 +4903,7 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         "expected move to be blocked due to destination path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the move was blocked"
     );
 }
@@ -4959,7 +4959,7 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         "expected move to be blocked due to source path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the move was blocked"
     );
 }
@@ -5014,7 +5014,7 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_err(), "expected copy to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the copy was blocked"
     );
 }
@@ -5074,7 +5074,7 @@ async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) 
         "expected save to be blocked due to denied path"
     );
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the save was blocked"
     );
 }
@@ -5120,7 +5120,7 @@ async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_err(), "expected save to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the save was blocked"
     );
 }
@@ -5157,10 +5157,15 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
 
     let result = task.await;
     assert!(result.is_err(), "expected search to be blocked");
-    assert!(
-        result.unwrap_err().to_string().contains("blocked"),
-        "error should mention the search was blocked"
-    );
+    match result.unwrap_err() {
+        crate::WebSearchToolOutput::Error { error } => {
+            assert!(
+                error.contains("blocked"),
+                "error should mention the search was blocked"
+            );
+        }
+        other => panic!("expected Error variant, got: {other:?}"),
+    }
 }
 
 #[gpui::test]
@@ -5332,7 +5337,7 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
     let result = task.await;
     assert!(result.is_err(), "expected fetch to be blocked");
     assert!(
-        result.unwrap_err().to_string().contains("blocked"),
+        result.unwrap_err().contains("blocked"),
         "error should mention the fetch was blocked"
     );
 }

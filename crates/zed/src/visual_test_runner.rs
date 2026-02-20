@@ -2052,7 +2052,12 @@ fn run_agent_thread_view_test(
     cx.background_executor.allow_parking();
     let run_result = cx.foreground_executor.block_test(run_task);
     cx.background_executor.forbid_parking();
-    run_result.context("ReadFileTool failed")?;
+    run_result.map_err(|e| match e {
+        language_model::LanguageModelToolResultContent::Text(text) => {
+            anyhow::anyhow!("ReadFileTool failed: {text}")
+        }
+        other => anyhow::anyhow!("ReadFileTool failed: {other:?}"),
+    })?;
 
     cx.run_until_parked();
 

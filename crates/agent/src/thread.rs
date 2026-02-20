@@ -2084,32 +2084,28 @@ impl Thread {
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         log::debug!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
-            let tool_result = tool_result.await.and_then(|output| {
-                if let LanguageModelToolResultContent::Image(_) = &output.llm_output
-                    && !supports_images
-                {
-                    return Err(anyhow!(
-                        "Attempted to read an image, but this model doesn't support it.",
-                    ));
+            let (is_error, output) = match tool_result.await {
+                Ok(mut output) => {
+                    if let LanguageModelToolResultContent::Image(_) = &output.llm_output
+                        && !supports_images
+                    {
+                        output = AgentToolOutput::from_error(
+                            "Attempted to read an image, but this model doesn't support it.",
+                        );
+                        (true, output)
+                    } else {
+                        (false, output)
+                    }
                 }
-                Ok(output)
-            });
+                Err(output) => (true, output),
+            };
 
-            match tool_result {
-                Ok(output) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: false,
-                    content: output.llm_output,
-                    output: Some(output.raw_output),
-                },
-                Err(error) => LanguageModelToolResult {
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: true,
-                    content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                    output: Some(error.to_string().into()),
-                },
+            LanguageModelToolResult {
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error,
+                content: output.llm_output,
+                output: Some(output.raw_output),
             }
         }))
     }
@@ -2826,12 +2822,18 @@ where
     }
 
     /// Runs the tool with the provided input.
+    ///
+    /// Returns `Result<Self::Output, Self::Output>` rather than `Result<Self::Output, anyhow::Error>`
+    /// because tool errors are sent back to the model as tool results. This means error output must
+    /// be structured and readable by the agent — not an arbitrary `anyhow::Error`. Returning the
+    /// same `Output` type for both success and failure lets tools provide structured data while
+    /// still signaling whether the invocation succeeded or failed.
     fn run(
         self: Arc<Self>,
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>>;
+    ) -> Task<Result<Self::Output, Self::Output>>;
 
     /// Emits events for a previous execution of the tool.
     fn replay(
@@ -2856,6 +2858,17 @@ pub struct AgentToolOutput {
     pub raw_output: serde_json::Value,
 }
 
+impl AgentToolOutput {
+    pub fn from_error(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let llm_output = LanguageModelToolResultContent::Text(Arc::from(message.as_str()));
+        Self {
+            raw_output: serde_json::Value::String(message),
+            llm_output,
+        }
+    }
+}
+
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self) -> SharedString;
@@ -2865,12 +2878,13 @@ pub trait AnyAgentTool {
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
+    /// See [`AgentTool::run`] for why this returns `Result<AgentToolOutput, AgentToolOutput>`.
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>>;
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>>;
     fn replay(
         &self,
         input: serde_json::Value,
@@ -2916,17 +2930,33 @@ where
         input: serde_json::Value,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<AgentToolOutput>> {
+    ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         cx.spawn(async move |cx| {
-            let input = serde_json::from_value(input)?;
-            let output = cx
-                .update(|cx| self.0.clone().run(input, event_stream, cx))
-                .await?;
-            let raw_output = serde_json::to_value(&output)?;
-            Ok(AgentToolOutput {
-                llm_output: output.into(),
-                raw_output,
-            })
+            let input: T::Input = serde_json::from_value(input).map_err(|e| {
+                AgentToolOutput::from_error(format!("Failed to parse tool input: {e}"))
+            })?;
+            let task = cx.update(|cx| self.0.clone().run(input, event_stream, cx));
+            match task.await {
+                Ok(output) => {
+                    let raw_output = serde_json::to_value(&output).map_err(|e| {
+                        AgentToolOutput::from_error(format!("Failed to serialize tool output: {e}"))
+                    })?;
+                    Ok(AgentToolOutput {
+                        llm_output: output.into(),
+                        raw_output,
+                    })
+                }
+                Err(error_output) => {
+                    let raw_output = serde_json::to_value(&error_output).unwrap_or_else(|e| {
+                        log::error!("Failed to serialize tool error output: {e}");
+                        serde_json::Value::Null
+                    });
+                    Err(AgentToolOutput {
+                        llm_output: error_output.into(),
+                        raw_output,
+                    })
+                }
+            }
         })
     }
 

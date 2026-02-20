@@ -1,6 +1,6 @@
 use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
 use agent_client_protocol as acp;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use gpui::{App, SharedString, Task, WeakEntity};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
@@ -36,16 +36,25 @@ pub struct SubagentToolInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SubagentToolOutput {
-    pub session_id: acp::SessionId,
-    pub output: String,
+#[serde(untagged)]
+pub enum SubagentToolOutput {
+    Success {
+        session_id: acp::SessionId,
+        output: String,
+    },
+    Error {
+        error: String,
+    },
 }
 
 impl From<SubagentToolOutput> for LanguageModelToolResultContent {
     fn from(output: SubagentToolOutput) -> Self {
-        serde_json::to_string(&output)
-            .expect("Failed to serialize SubagentToolOutput")
-            .into()
+        match output {
+            output @ SubagentToolOutput::Success { .. } => serde_json::to_string(&output)
+                .unwrap_or_else(|e| format!("Failed to serialize subagent output: {e}"))
+                .into(),
+            SubagentToolOutput::Error { error } => error.into(),
+        }
     }
 }
 
@@ -89,9 +98,11 @@ impl AgentTool for SubagentTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<SubagentToolOutput>> {
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let Some(parent_thread_entity) = self.parent_thread.upgrade() else {
-            return Task::ready(Err(anyhow!("Parent thread no longer exists")));
+            return Task::ready(Err(SubagentToolOutput::Error {
+                error: "Parent thread no longer exists".to_string(),
+            }));
         };
 
         let subagent = match self.environment.create_subagent(
@@ -102,7 +113,11 @@ impl AgentTool for SubagentTool {
             cx,
         ) {
             Ok(subagent) => subagent,
-            Err(err) => return Task::ready(Err(err)),
+            Err(err) => {
+                return Task::ready(Err(SubagentToolOutput::Error {
+                    error: err.to_string(),
+                }));
+            }
         };
 
         let subagent_session_id = subagent.id();
@@ -115,8 +130,14 @@ impl AgentTool for SubagentTool {
         event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
 
         cx.spawn(async move |cx| {
-            let output = subagent.wait_for_output(cx).await?;
-            Ok(SubagentToolOutput {
+            let output =
+                subagent
+                    .wait_for_output(cx)
+                    .await
+                    .map_err(|e| SubagentToolOutput::Error {
+                        error: e.to_string(),
+                    })?;
+            Ok(SubagentToolOutput::Success {
                 session_id: subagent_session_id,
                 output,
             })
@@ -130,12 +151,17 @@ impl AgentTool for SubagentTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Result<()> {
-        event_stream.subagent_spawned(output.session_id.clone());
-        let meta = acp::Meta::from_iter([(
-            SUBAGENT_SESSION_ID_META_KEY.into(),
-            output.session_id.to_string().into(),
-        )]);
-        event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
+        match output {
+            SubagentToolOutput::Success { session_id, .. } => {
+                event_stream.subagent_spawned(session_id.clone());
+                let meta = acp::Meta::from_iter([(
+                    SUBAGENT_SESSION_ID_META_KEY.into(),
+                    session_id.to_string().into(),
+                )]);
+                event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
+            }
+            SubagentToolOutput::Error { .. } => {}
+        }
         Ok(())
     }
 }
