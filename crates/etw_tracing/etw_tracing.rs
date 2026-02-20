@@ -307,10 +307,10 @@ fn wpr_error_context(hresult: windows_core::HRESULT, source: &windows_core::IUnk
                 ("Element ID", info.GetElementId()),
                 ("Description", info.GetDescription()),
             ] {
-                if let Ok(value) = getter {
-                    if !value.is_empty() {
-                        let _ = write!(out, "\n  {label}: {value}");
-                    }
+                if let Ok(value) = getter
+                    && !value.is_empty()
+                {
+                    let _ = write!(out, "\n  {label}: {value}");
                 }
             }
         }
@@ -333,17 +333,17 @@ fn wpr_error_context(hresult: windows_core::HRESULT, source: &windows_core::IUnk
             if let Ok(hr) = info.GetHResult() {
                 let _ = write!(out, "\n  Inner HRESULT: {hr}");
             }
-            if let Ok(desc) = info.GetDescription() {
-                if !desc.is_empty() {
-                    let _ = write!(out, "\n  Description: {desc}");
-                }
+            if let Ok(desc) = info.GetDescription()
+                && !desc.is_empty()
+            {
+                let _ = write!(out, "\n  Description: {desc}");
             }
             let mut inner = None;
-            if info.GetInnerErrorInfo(&mut inner).is_ok() {
-                if let Some(inner) = inner {
-                    let _ = write!(out, "\n  Caused by:");
-                    append_control_chain(out, &inner);
-                }
+            if info.GetInnerErrorInfo(&mut inner).is_ok()
+                && let Some(inner) = inner
+            {
+                let _ = write!(out, "\n  Caused by:");
+                append_control_chain(out, &inner);
             }
         }
     }
@@ -351,10 +351,10 @@ fn wpr_error_context(hresult: windows_core::HRESULT, source: &windows_core::IUnk
 
     if let Ok(info) = source.cast::<windows::Win32::System::Com::IErrorInfo>() {
         unsafe {
-            if let Ok(desc) = info.GetDescription() {
-                if !desc.is_empty() {
-                    let _ = write!(out, "\n  IErrorInfo: {desc}");
-                }
+            if let Ok(desc) = info.GetDescription()
+                && !desc.is_empty()
+            {
+                let _ = write!(out, "\n  IErrorInfo: {desc}");
             }
         }
     }
@@ -382,7 +382,7 @@ fn create_wpr<T: windows_core::Interface>(clsid: &windows_core::GUID) -> Result<
             &BSTR::from(INSTANCE_NAME),
             clsid,
             None,
-            CLSCTX_INPROC_SERVER.0 as u32,
+            CLSCTX_INPROC_SERVER.0,
         )
         .context("WPRCCreateInstance failed")
     }
@@ -529,8 +529,8 @@ fn receive_command(stream: &mut net::UnixStream) -> Result<ReceivedCommand> {
     let ret = unsafe {
         setsockopt(
             windows::Win32::Networking::WinSock::SOCKET(socket.as_raw_socket() as _),
-            SOL_SOCKET as i32,
-            SO_RCVTIMEO as i32,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
             Some(&millis.to_ne_bytes()),
         )
     };
