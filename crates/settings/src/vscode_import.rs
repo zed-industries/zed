@@ -514,6 +514,7 @@ impl VsCodeSettings {
     }
 
     fn default_language_settings_content(&self) -> LanguageSettingsContent {
+        let (inlay_hints_font_family, _) = self.read_fonts("editor.inlayHints.fontFamily");
         LanguageSettingsContent {
             allow_rewrap: None,
             always_treat_brackets_as_autoclosed: None,
@@ -550,7 +551,21 @@ impl VsCodeSettings {
                 enabled: self.read_bool("editor.guides.indentation"),
                 ..Default::default()
             }),
-            inlay_hints: None,
+            inlay_hints: if self.read_string("editor.inlayHints.enabled").is_some() {
+                Some(InlayHintSettingsContent {
+                    enabled: self.read_enum("editor.inlayHints.enabled", |s| {
+                        Some(match s {
+                            "on" => true,
+                            "onUnlessPressed" => true,
+                            _ => false,
+                        })
+                    }),
+                    font_family: inlay_hints_font_family,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
             jsx_tag_auto_close: None,
             language_servers: None,
             semantic_tokens: self
@@ -629,6 +644,8 @@ impl VsCodeSettings {
             .read_value("cursor.general.globalCursorIgnoreList")?
             .as_array()?;
 
+        let (edit_predictions_font_family, _) = self.read_fonts("editor.inlineSuggest.fontFamily");
+
         skip_default(EditPredictionSettingsContent {
             disabled_globs: skip_default(
                 disabled_globs
@@ -637,6 +654,7 @@ impl VsCodeSettings {
                     .map(|s| s.to_string())
                     .collect(),
             ),
+            font_family: edit_predictions_font_family,
             ..Default::default()
         })
     }
@@ -909,8 +927,6 @@ impl VsCodeSettings {
 
     fn theme_settings_content(&self) -> ThemeSettingsContent {
         let (buffer_font_family, buffer_font_fallbacks) = self.read_fonts("editor.fontFamily");
-        let (inlay_hints_font_family, _) = self.read_fonts("editor.inlayHints.fontFamily");
-        let (edit_predictions_font_family, _) = self.read_fonts("editor.inlineSuggest.fontFamily");
 
         ThemeSettingsContent {
             ui_font_size: None,
@@ -932,12 +948,6 @@ impl VsCodeSettings {
             unnecessary_code_fade: None,
             experimental_theme_overrides: None,
             theme_overrides: Default::default(),
-            inlay_hints_font_family,
-            inlay_hints_font_weight: None,
-            inlay_hints_font_features: None,
-            edit_predictions_font_family,
-            edit_predictions_font_weight: None,
-            edit_predictions_font_features: None,
         }
     }
 
