@@ -2833,7 +2833,7 @@ mod tests {
         assert!(window_is_edited(window, cx));
 
         // Advance the clock to make sure the workspace is serialized
-        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.executor().advance_clock(Duration::from_secs(2));
 
         // When closing the window, no prompt shows up and the window is closed.
         // buffer having unsaved changes.
