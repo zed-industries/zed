@@ -65,12 +65,16 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss(Task<Result<Option<Vec<LocationLink>>>>),
+    CacheMiss {
+        definitions: Task<Result<Option<Vec<LocationLink>>>>,
+        type_definitions: Task<Result<Option<Vec<LocationLink>>>>,
+    },
 }
 
 #[derive(Debug)]
 struct CacheEntry {
     definitions: SmallVec<[CachedDefinition; 1]>,
+    type_definitions: SmallVec<[CachedDefinition; 1]>,
 }
 
 #[derive(Clone, Debug)]
@@ -232,13 +236,22 @@ impl RelatedExcerptStore {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
-                        DefinitionTask::CacheMiss(
-                            this.project
-                                .update(cx, |project, cx| {
-                                    project.definitions(&buffer, identifier.range.start, cx)
-                                })
-                                .ok()?,
-                        )
+                        let definitions = this
+                            .project
+                            .update(cx, |project, cx| {
+                                project.definitions(&buffer, identifier.range.start, cx)
+                            })
+                            .ok()?;
+                        let type_definitions = this
+                            .project
+                            .update(cx, |project, cx| {
+                                project.type_definitions(&buffer, identifier.range.start, cx)
+                            })
+                            .ok()?;
+                        DefinitionTask::CacheMiss {
+                            definitions,
+                            type_definitions,
+                        }
                     };
 
                     let cx = async_cx.clone();
@@ -248,19 +261,50 @@ impl RelatedExcerptStore {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry, None))
                             }
-                            DefinitionTask::CacheMiss(task) => {
-                                let locations = task.await.log_err()??;
+                            DefinitionTask::CacheMiss {
+                                definitions,
+                                type_definitions,
+                            } => {
+                                let (definition_locations, type_definition_locations) =
+                                    futures::join!(definitions, type_definitions);
                                 let duration = start_time.elapsed();
+
+                                let definition_locations =
+                                    definition_locations.log_err().flatten().unwrap_or_default();
+                                let type_definition_locations = type_definition_locations
+                                    .log_err()
+                                    .flatten()
+                                    .unwrap_or_default();
+
                                 Some(cx.update(|cx| {
+                                    let definitions: SmallVec<[CachedDefinition; 1]> =
+                                        definition_locations
+                                            .into_iter()
+                                            .filter_map(|location| {
+                                                process_definition(location, &project, cx)
+                                            })
+                                            .collect();
+
+                                    let type_definitions: SmallVec<[CachedDefinition; 1]> =
+                                        type_definition_locations
+                                            .into_iter()
+                                            .filter_map(|location| {
+                                                process_definition(location, &project, cx)
+                                            })
+                                            .filter(|type_def| {
+                                                !definitions.iter().any(|def| {
+                                                    def.buffer.entity_id()
+                                                        == type_def.buffer.entity_id()
+                                                        && def.anchor_range == type_def.anchor_range
+                                                })
+                                            })
+                                            .collect();
+
                                     (
                                         identifier,
                                         Arc::new(CacheEntry {
-                                            definitions: locations
-                                                .into_iter()
-                                                .filter_map(|location| {
-                                                    process_definition(location, &project, cx)
-                                                })
-                                                .collect(),
+                                            definitions,
+                                            type_definitions,
                                         }),
                                         Some(duration),
                                     )
@@ -323,7 +367,11 @@ async fn rebuild_related_files(
     let mut snapshots = HashMap::default();
     let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
-        for definition in &entry.definitions {
+        for definition in entry
+            .definitions
+            .iter()
+            .chain(entry.type_definitions.iter())
+        {
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
@@ -354,7 +402,11 @@ async fn rebuild_related_files(
                 HashMap::<EntityId, (Entity<Buffer>, Vec<Range<Point>>)>::default();
             let mut paths_by_buffer = HashMap::default();
             for entry in new_entries.values_mut() {
-                for definition in &entry.definitions {
+                for definition in entry
+                    .definitions
+                    .iter()
+                    .chain(entry.type_definitions.iter())
+                {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
