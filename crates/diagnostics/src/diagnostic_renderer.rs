@@ -12,10 +12,7 @@ use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
 use text::{AnchorRangeExt, Point};
 use theme::ThemeSettings;
-use ui::{
-    ActiveTheme, AnyElement, App, Context, CopyButton, IntoElement, ParentElement, SharedString,
-    Styled, Window, div, v_flex,
-};
+use ui::{CopyButton, prelude::*};
 use util::maybe;
 
 use crate::toolbar_controls::DiagnosticsToolbarEditor;
