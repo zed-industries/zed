@@ -766,8 +766,6 @@ impl UserStore {
         self.edit_prediction_usage = None;
     }
 
-    pub fn sign_out(&self) {}
-
     fn update_authenticated_user(
         &mut self,
         response: GetAuthenticatedUserResponse,
