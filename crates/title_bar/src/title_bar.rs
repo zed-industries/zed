@@ -24,9 +24,9 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
@@ -225,6 +225,7 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
+                .child(self.render_organization_menu_button(cx))
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })
@@ -951,6 +952,51 @@ impl TitleBar {
                     })
                     .detach();
             })
+    }
+
+    pub fn render_organization_menu_button(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(organization) = self.user_store.read(cx).current_organization() else {
+            return Empty.into_any_element();
+        };
+
+        PopoverMenu::new("organization-menu")
+            .anchor(Corner::TopRight)
+            .menu({
+                let user_store = self.user_store.clone();
+                move |window, cx| {
+                    ContextMenu::build(window, cx, |mut menu, _window, cx| {
+                        menu = menu.header("Organizations").separator();
+
+                        for organization in user_store.read(cx).organizations() {
+                            let organization = organization.clone();
+
+                            menu = menu.custom_entry(
+                                move |_window, _cx| {
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new(&organization.name))
+                                        .into_any_element()
+                                },
+                                move |_window, cx| {
+                                    //
+                                },
+                            );
+                        }
+
+                        menu
+                    })
+                    .into()
+                }
+            })
+            .trigger_with_tooltip(
+                Button::new("organization-menu", &organization.name)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .label_size(LabelSize::Small),
+                Tooltip::text("Toggle Organization Menu"),
+            )
+            .anchor(gpui::Corner::TopRight)
+            .into_any_element()
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
