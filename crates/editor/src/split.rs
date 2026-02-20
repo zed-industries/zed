@@ -434,8 +434,9 @@ impl SplittableEditor {
         }
     }
 
+    #[allow(unused_variables)]
     pub fn new(
-        _style: DiffViewStyle,
+        style: DiffViewStyle,
         rhs_multibuffer: Entity<MultiBuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -470,7 +471,7 @@ impl SplittableEditor {
             }),
         ];
 
-        let _this = cx.weak_entity();
+        let this = cx.weak_entity();
         window.defer(cx, {
             let workspace = workspace.downgrade();
             let rhs_editor = rhs_editor.downgrade();
