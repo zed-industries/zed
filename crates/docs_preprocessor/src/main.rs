@@ -303,7 +303,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
     fn for_each_labeled_code_block_mut(
         book: &mut Book,
         errors: &mut HashSet<PreprocessorError>,
-        f: impl Fn(&str, &str) -> anyhow::Result<()>,
+        f: &dyn Fn(&str, &str) -> anyhow::Result<()>,
     ) {
         const TAGGED_JSON_BLOCK_START: &'static str = "```json [";
         const JSON_BLOCK_END: &'static str = "```";
@@ -370,7 +370,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
         });
     }
 
-    for_each_labeled_code_block_mut(book, errors, |label, snippet_json| {
+    for_each_labeled_code_block_mut(book, errors, &|label, snippet_json| {
         let mut snippet_json_fixed = snippet_json
             .to_string()
             .replace("\n>", "\n")

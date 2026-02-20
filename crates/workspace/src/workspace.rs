@@ -10049,7 +10049,7 @@ mod tests {
             let item1_id = item1.item_id();
             let item3_id = item3.item_id();
             let item4_id = item4.item_id();
-            pane.close_items(window, cx, SaveIntent::Close, move |id| {
+            pane.close_items(window, cx, SaveIntent::Close, &move |id| {
                 [item1_id, item3_id, item4_id].contains(&id)
             })
         });
@@ -10347,7 +10347,7 @@ mod tests {
 
         // // Ensure auto save with delay saves the item on close, even if the timer hasn't yet run out.
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+            pane.close_items(window, cx, SaveIntent::Close, &move |id| id == item_id)
         })
         .await
         .unwrap();
@@ -10381,7 +10381,7 @@ mod tests {
         });
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+            pane.close_items(window, cx, SaveIntent::Close, &move |id| id == item_id)
         })
         .await
         .unwrap();
@@ -10404,7 +10404,7 @@ mod tests {
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
-            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+            pane.close_items(window, cx, SaveIntent::Close, &move |id| id == item_id)
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
