@@ -11,7 +11,6 @@ use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{AsyncBody, HttpClientWithUrl, HttpRequestExt, Method, Request, StatusCode};
 use parking_lot::RwLock;
-use thiserror::Error;
 use yawc::WebSocket;
 
 use crate::websocket::Connection;
@@ -19,14 +18,6 @@ use crate::websocket::Connection;
 struct Credentials {
     user_id: u32,
     access_token: String,
-}
-
-#[derive(Debug, Error)]
-pub enum ClientApiError {
-    #[error("Unauthorized")]
-    Unauthorized,
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
 }
 
 pub struct CloudApiClient {
@@ -67,9 +58,7 @@ impl CloudApiClient {
         build_request(req, body, credentials)
     }
 
-    pub async fn get_authenticated_user(
-        &self,
-    ) -> Result<GetAuthenticatedUserResponse, ClientApiError> {
+    pub async fn get_authenticated_user(&self) -> Result<GetAuthenticatedUserResponse> {
         let request = self.build_request(
             Request::builder().method(Method::GET).uri(
                 self.http_client
@@ -82,31 +71,19 @@ impl CloudApiClient {
         let mut response = self.http_client.send(request).await?;
 
         if !response.status().is_success() {
-            if response.status() == StatusCode::UNAUTHORIZED {
-                return Err(ClientApiError::Unauthorized);
-            }
-
             let mut body = String::new();
-            response
-                .body_mut()
-                .read_to_string(&mut body)
-                .await
-                .context("failed to read response body")?;
+            response.body_mut().read_to_string(&mut body).await?;
 
-            return Err(ClientApiError::Other(anyhow::anyhow!(
+            anyhow::bail!(
                 "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
                 response.status()
-            )));
+            )
         }
 
         let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .context("failed to read response body")?;
+        response.body_mut().read_to_string(&mut body).await?;
 
-        Ok(serde_json::from_str(&body).context("failed to parse response body")?)
+        Ok(serde_json::from_str(&body)?)
     }
 
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
@@ -141,7 +118,7 @@ impl CloudApiClient {
     pub async fn create_llm_token(
         &self,
         system_id: Option<String>,
-    ) -> Result<CreateLlmTokenResponse, ClientApiError> {
+    ) -> Result<CreateLlmTokenResponse> {
         let request_builder = Request::builder()
             .method(Method::POST)
             .uri(
@@ -158,31 +135,19 @@ impl CloudApiClient {
         let mut response = self.http_client.send(request).await?;
 
         if !response.status().is_success() {
-            if response.status() == StatusCode::UNAUTHORIZED {
-                return Err(ClientApiError::Unauthorized);
-            }
-
             let mut body = String::new();
-            response
-                .body_mut()
-                .read_to_string(&mut body)
-                .await
-                .context("failed to read response body")?;
+            response.body_mut().read_to_string(&mut body).await?;
 
-            return Err(ClientApiError::Other(anyhow::anyhow!(
+            anyhow::bail!(
                 "Failed to create LLM token.\nStatus: {:?}\nBody: {body}",
                 response.status()
-            )));
+            )
         }
 
         let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .context("failed to read response body")?;
+        response.body_mut().read_to_string(&mut body).await?;
 
-        Ok(serde_json::from_str(&body).context("failed to parse response body")?)
+        Ok(serde_json::from_str(&body)?)
     }
 
     pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
