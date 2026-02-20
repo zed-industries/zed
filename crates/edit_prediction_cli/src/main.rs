@@ -22,7 +22,7 @@ mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
-mod sync_deployments;
+
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
@@ -210,8 +210,6 @@ enum Command {
     Repair(repair::RepairArgs),
     /// Print all valid zeta formats (lowercase, one per line)
     PrintZetaFormats,
-    /// Sync baseten deployment metadata to Snowflake for linking predictions to experiments
-    SyncDeployments(SyncDeploymentsArgs),
 }
 
 impl Display for Command {
@@ -257,18 +255,8 @@ impl Display for Command {
             Command::PrintZetaFormats => {
                 write!(f, "print-zeta-formats")
             }
-            Command::SyncDeployments(_) => {
-                write!(f, "sync-deployments")
-            }
         }
     }
-}
-
-#[derive(Debug, Args, Clone)]
-struct SyncDeploymentsArgs {
-    /// BaseTen model name (default: "zeta-2")
-    #[arg(long)]
-    model: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -777,19 +765,7 @@ fn main() {
             }
             return;
         }
-        Command::SyncDeployments(sync_args) => {
-            let http_client: Arc<dyn http_client::HttpClient> = Arc::new(ReqwestClient::new());
-            smol::block_on(async {
-                if let Err(e) =
-                    sync_deployments::run_sync_deployments(http_client, sync_args.model.clone())
-                        .await
-                {
-                    eprintln!("Error: {:?}", e);
-                    std::process::exit(1);
-                }
-            });
-            return;
-        }
+
         Command::Synthesize(synth_args) => {
             let Some(output_dir) = args.output else {
                 panic!("output dir is required");
@@ -1025,8 +1001,7 @@ fn main() {
                                         | Command::TruncatePatch(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
-                                        | Command::PrintZetaFormats
-                                        | Command::SyncDeployments(_) => {
+                                        | Command::PrintZetaFormats => {
                                             unreachable!()
                                         }
                                     }
