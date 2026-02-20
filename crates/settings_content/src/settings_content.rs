@@ -699,6 +699,10 @@ pub struct MessageEditorSettings {
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
+    /// Which file finder experience to use by default.
+    ///
+    /// Default: classic
+    pub mode: Option<FileFinderModeContent>,
     /// Whether to show file icons in the file finder.
     ///
     /// Default: true
@@ -769,6 +773,27 @@ pub enum FileFinderWidthContent {
     Large,
     XLarge,
     Full,
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFinderModeContent {
+    #[default]
+    Classic,
+    Preview,
 }
 
 #[with_fallible_options]

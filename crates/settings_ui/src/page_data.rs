@@ -3154,9 +3154,22 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 6] {
+    fn file_finder_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mode",
+                description: "Choose between the classic file finder and the preview/tree experience.",
+                field: Box::new(SettingField {
+                    json_path: Some("file_finder.mode"),
+                    pick: |settings_content| settings_content.file_finder.as_ref()?.mode.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.file_finder.get_or_insert_default().mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             // todo: null by default
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Include Ignored in Search",

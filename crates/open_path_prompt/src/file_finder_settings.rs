@@ -4,6 +4,7 @@ use settings::{RegisterSetting, Settings};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct FileFinderSettings {
+    pub mode: FileFinderMode,
     pub file_icons: bool,
     pub modal_max_width: FileFinderWidth,
     pub skip_focus_for_active_in_search: bool,
@@ -15,6 +16,7 @@ impl Settings for FileFinderSettings {
         let file_finder = content.file_finder.as_ref().unwrap();
 
         Self {
+            mode: file_finder.mode.unwrap().into(),
             file_icons: file_finder.file_icons.unwrap(),
             modal_max_width: file_finder.modal_max_width.unwrap().into(),
             skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
@@ -23,6 +25,23 @@ impl Settings for FileFinderSettings {
                 settings::IncludeIgnoredContent::Indexed => Some(false),
                 settings::IncludeIgnoredContent::Smart => None,
             },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFinderMode {
+    #[default]
+    Classic,
+    Preview,
+}
+
+impl From<settings::FileFinderModeContent> for FileFinderMode {
+    fn from(content: settings::FileFinderModeContent) -> Self {
+        match content {
+            settings::FileFinderModeContent::Classic => FileFinderMode::Classic,
+            settings::FileFinderModeContent::Preview => FileFinderMode::Preview,
         }
     }
 }

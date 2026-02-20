@@ -415,6 +415,10 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    #[serde(default)]
+    pub show_preview: bool,
+    #[serde(default)]
+    pub show_all_files: bool,
 }
 
 /// Opens a new terminal in the center.

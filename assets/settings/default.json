@@ -1234,6 +1234,17 @@
   },
   // Settings related to the file finder.
   "file_finder": {
+    // Which file finder experience to use by default.
+    // There are 2 possible modes:
+    //
+    // 1. Classic: Keep the existing file finder behavior.
+    //    "mode": "classic"
+    //
+    // 2. Preview: Use the preview/tree file finder experience.
+    //    "mode": "preview"
+    //
+    // Default: classic
+    "mode": "classic",
     // Whether to show file icons in the file finder.
     "file_icons": true,
     // Determines how much space the file finder can take up in relation to the available window width.
