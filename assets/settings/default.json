@@ -890,10 +890,14 @@
     // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
-    // Whether to show file and folder icons in the git panel.
+    // Whether to show file icons in the git panel.
     //
     // Default: true
-    "icons": true,
+    "file_icons": true,
+    // Whether to show folder icons or chevrons for directories in the git panel.
+    //
+    // Default: true
+    "folder_icons": true,
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main

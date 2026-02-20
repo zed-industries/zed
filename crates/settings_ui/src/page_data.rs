@@ -5017,7 +5017,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 11] {
+    fn git_panel_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5160,13 +5160,36 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Git Panel Icons",
-                description: "Whether to show file and folder icons in the panel.",
+                title: "File Icons",
+                description: "Show file icons in the git panel.",
                 field: Box::new(SettingField {
-                    json_path: Some("git_panel.icons"),
-                    pick: |settings_content| settings_content.git_panel.as_ref()?.icons.as_ref(),
+                    json_path: Some("git_panel.file_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.file_icons.as_ref()
+                    },
                     write: |settings_content, value| {
-                        settings_content.git_panel.get_or_insert_default().icons = value;
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .file_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Folder Icons",
+                description: "Whether to show folder icons or chevrons for directories in the git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.folder_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.folder_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .folder_icons = value;
                     },
                 }),
                 metadata: None,
