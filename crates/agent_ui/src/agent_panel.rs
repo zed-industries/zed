@@ -2202,6 +2202,7 @@ impl AgentPanel {
             PathBuf,
             futures::channel::oneshot::Receiver<Result<()>>,
         )> = Vec::new();
+        let mut path_remapping: Vec<(PathBuf, PathBuf)> = Vec::new();
 
         for repo in &git_repos {
             let result = repo.update(cx, |repo, _cx| {
@@ -2210,11 +2211,12 @@ impl AgentPanel {
                     validate_worktree_directory(&work_dir, &worktree_directory_setting)?;
                 let new_path = directory.join(&branch_name);
                 let receiver = repo.create_worktree(branch_name.clone(), directory, None);
-                anyhow::Ok((new_path, receiver))
+                anyhow::Ok((work_dir, new_path, receiver))
             });
 
             match result {
-                Ok((new_path, receiver)) => {
+                Ok((work_dir, new_path, receiver)) => {
+                    path_remapping.push((work_dir.to_path_buf(), new_path.clone()));
                     creation_infos.push((repo.clone(), new_path, receiver));
                 }
                 Err(err) => {
@@ -2226,6 +2228,16 @@ impl AgentPanel {
                 }
             }
         }
+
+        let (dock_structure, open_file_paths) = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                let dock_structure = workspace.read(cx).capture_dock_state(window, cx);
+                let open_file_paths = workspace.read(cx).open_item_abs_paths(cx);
+                (dock_structure, open_file_paths)
+            })
+            .unwrap_or_default();
 
         let workspace = self.workspace.clone();
         let window_handle = window
@@ -2288,24 +2300,33 @@ impl AgentPanel {
             // Collect all paths for the new workspace: new worktree paths + non-git paths as-is
             let mut all_paths = created_paths;
             let has_non_git = !non_git_paths.is_empty();
-            all_paths.extend(non_git_paths);
+            all_paths.extend(non_git_paths.iter().cloned());
 
             // Open the new workspace in the current window's sidebar
-            let Some(workspace) = workspace.upgrade() else {
-                this.update_in(cx, |this, _window, cx| {
-                    this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
-                        "Workspace no longer available".into(),
-                    ));
-                    cx.notify();
-                })?;
-                return anyhow::Ok(());
+            let app_state = match workspace.upgrade() {
+                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
+                None => {
+                    this.update_in(cx, |this, _window, cx| {
+                        this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
+                            "Workspace no longer available".into(),
+                        ));
+                        cx.notify();
+                    })?;
+                    return anyhow::Ok(());
+                }
             };
 
-            workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.open_workspace_for_paths(true, all_paths, window, cx)
-                })?
-                .await?;
+            let init_dock_structure = dock_structure;
+            let init: Option<
+                Box<dyn FnOnce(&mut Workspace, &mut Window, &mut gpui::Context<Workspace>) + Send>,
+            > = Some(Box::new(move |workspace, window, cx| {
+                workspace.set_dock_structure(init_dock_structure, window, cx);
+            }));
+
+            let new_local_task = cx.update(|_window, cx| {
+                Workspace::new_local(all_paths, app_state, window_handle, None, init, cx)
+            })?;
+            new_local_task.await?;
 
             // Submit the prompt in the new workspace's agent panel.
             // After open_workspace_for_paths completes, the new workspace is the
@@ -2331,6 +2352,35 @@ impl AgentPanel {
                                 ),
                                 cx,
                             );
+                        }
+
+                        let remapped_paths: Vec<PathBuf> = open_file_paths
+                            .iter()
+                            .filter_map(|original_path| {
+                                for (old_root, new_root) in &path_remapping {
+                                    if let Ok(relative) = original_path.strip_prefix(old_root) {
+                                        return Some(new_root.join(relative));
+                                    }
+                                }
+                                for non_git in &non_git_paths {
+                                    if original_path.starts_with(non_git) {
+                                        return Some(original_path.clone());
+                                    }
+                                }
+                                None
+                            })
+                            .collect();
+
+                        if !remapped_paths.is_empty() {
+                            workspace
+                                .open_paths(
+                                    remapped_paths,
+                                    workspace::OpenOptions::default(),
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                                .detach();
                         }
 
                         workspace.focus_panel::<AgentPanel>(window, cx);
