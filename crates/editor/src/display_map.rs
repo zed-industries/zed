@@ -551,7 +551,7 @@ impl DisplayMap {
                     .read(cx)
                     .rhs_buffer_to_lhs_buffer
                     .get(my_buffer)
-                    .unwrap();
+                    .expect("unmapped folded buffer");
                 companion_display_map
                     .block_map
                     .folded_buffers

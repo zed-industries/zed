@@ -199,7 +199,7 @@ where
 
         let diff = source_snapshot
             .diff_for_buffer_id(first.source_buffer.remote_id())
-            .unwrap();
+            .expect("buffer with no diff when creating patches");
         let rhs_buffer = if first.source_buffer.remote_id() == diff.base_text().remote_id() {
             first.target_buffer
         } else {
@@ -281,17 +281,17 @@ fn patch_for_excerpt(
 ) -> CompanionExcerptPatch {
     let source_multibuffer_range = source_snapshot
         .range_for_excerpt(source_excerpt_id)
-        .unwrap();
+        .expect("no excerpt for source id when creating patch");
     let source_excerpt_start_in_multibuffer = source_multibuffer_range.start;
     let source_excerpt_start_in_buffer = source_context_range.start;
     let source_excerpt_end_in_buffer = source_context_range.end;
     let target_multibuffer_range = target_snapshot
         .range_for_excerpt(target_excerpt_id)
-        .unwrap();
+        .expect("no excerpt for target id when creating patch");
     let target_excerpt_start_in_multibuffer = target_multibuffer_range.start;
     let target_context_range = target_snapshot
         .context_range_for_excerpt(target_excerpt_id)
-        .unwrap();
+        .expect("no range for target id when creating patch");
     let target_excerpt_start_in_buffer = target_context_range.start.to_point(&target_buffer);
     let target_excerpt_end_in_buffer = target_context_range.end.to_point(&target_buffer);
 
