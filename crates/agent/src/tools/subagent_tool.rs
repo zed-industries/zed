@@ -32,7 +32,7 @@ pub struct SubagentToolInput {
     pub label: String,
     /// Describe the task for the agent to perform. Be specific about what you want accomplished. Include all necessary context (file paths, requirements, constraints) since the agent cannot see your conversation.
     pub task: String,
-    /// Optional maximum runtime in seconds. If not set, the agent runs until it completes or is cancelled.
+    /// Optional maximum runtime in seconds. The purpose of this timeout is to prevent the agent from getting stuck in infinite loops, NOT to estimate task duration. Be generous if setting. If not set, the agent runs until it completes or is cancelled.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
 }
