@@ -1930,6 +1930,8 @@ impl PickerDelegate for FileFinderDelegate {
 
         if raw_query.is_empty() {
             if self.show_all_files {
+                // Invalidate any in-flight search before switching back to browse mode.
+                self.latest_search_id = post_inc(&mut self.search_count);
                 self.rebuild_browse_matches(None, cx);
                 self.queue_preview_update(cx);
                 cx.notify();
