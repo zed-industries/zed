@@ -336,13 +336,12 @@ impl NativeAgent {
             )
         });
 
-        self.register_session(thread, None, cx)
+        self.register_session(thread, cx)
     }
 
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
-        allowed_tool_names: Option<Vec<SharedString>>,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
@@ -374,7 +373,6 @@ impl NativeAgent {
         thread_handle.update(cx, |thread, cx| {
             thread.set_summarization_model(summarization_model, cx);
             thread.add_default_tools(
-                allowed_tool_names,
                 Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
                     agent: weak,
@@ -804,9 +802,8 @@ impl NativeAgent {
         let task = self.load_thread(id, cx);
         cx.spawn(async move |this, cx| {
             let thread = task.await?;
-            let acp_thread = this.update(cx, |this, cx| {
-                this.register_session(thread.clone(), None, cx)
-            })?;
+            let acp_thread =
+                this.update(cx, |this, cx| this.register_session(thread.clone(), cx))?;
             let events = thread.update(cx, |thread, cx| thread.replay(cx));
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
@@ -1601,7 +1598,6 @@ impl NativeThreadEnvironment {
                 MAX_SUBAGENT_DEPTH
             ));
         }
-        let allowed_tool_names = Some(parent_thread.tools.keys().cloned().collect::<Vec<_>>());
 
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
             let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
@@ -1612,7 +1608,7 @@ impl NativeThreadEnvironment {
         let session_id = subagent_thread.read(cx).id().clone();
 
         let acp_thread = agent.update(cx, |agent, cx| {
-            agent.register_session(subagent_thread.clone(), allowed_tool_names, cx)
+            agent.register_session(subagent_thread.clone(), cx)
         })?;
 
         parent_thread_entity.update(cx, |parent_thread, _cx| {

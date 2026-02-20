@@ -1326,111 +1326,52 @@ impl Thread {
 
     pub fn add_default_tools(
         &mut self,
-        allowed_tool_names: Option<Vec<SharedString>>,
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
-        self.add_tool(
-            CopyPathTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            CreateDirectoryTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            DeletePathTool::new(self.project.clone(), self.action_log.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            DiagnosticsTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            EditFileTool::new(
-                self.project.clone(),
-                cx.weak_entity(),
-                language_registry.clone(),
-                Templates::new(),
-            ),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            StreamingEditFileTool::new(
-                self.project.clone(),
-                cx.weak_entity(),
-                language_registry,
-                Templates::new(),
-            ),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            FetchTool::new(self.project.read(cx).client().http_client()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            FindPathTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            GrepTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            ListDirectoryTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            MovePathTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(NowTool, allowed_tool_names.as_ref());
-        self.add_tool(
-            OpenTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            ReadFileTool::new(
-                cx.weak_entity(),
-                self.project.clone(),
-                self.action_log.clone(),
-            ),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            SaveFileTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            RestoreFileFromDiskTool::new(self.project.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(
-            TerminalTool::new(self.project.clone(), environment.clone()),
-            allowed_tool_names.as_ref(),
-        );
-        self.add_tool(WebSearchTool, allowed_tool_names.as_ref());
+        self.add_tool(CopyPathTool::new(self.project.clone()));
+        self.add_tool(CreateDirectoryTool::new(self.project.clone()));
+        self.add_tool(DeletePathTool::new(
+            self.project.clone(),
+            self.action_log.clone(),
+        ));
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+        self.add_tool(EditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry.clone(),
+            Templates::new(),
+        ));
+        self.add_tool(StreamingEditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry,
+            Templates::new(),
+        ));
+        self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
+        self.add_tool(FindPathTool::new(self.project.clone()));
+        self.add_tool(GrepTool::new(self.project.clone()));
+        self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(MovePathTool::new(self.project.clone()));
+        self.add_tool(NowTool);
+        self.add_tool(OpenTool::new(self.project.clone()));
+        self.add_tool(ReadFileTool::new(
+            cx.weak_entity(),
+            self.project.clone(),
+            self.action_log.clone(),
+        ));
+        self.add_tool(SaveFileTool::new(self.project.clone()));
+        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(WebSearchTool);
 
         if cx.has_flag::<SubagentsFeatureFlag>() && self.depth() < MAX_SUBAGENT_DEPTH {
-            self.add_tool(
-                SubagentTool::new(cx.weak_entity(), environment),
-                allowed_tool_names.as_ref(),
-            );
+            self.add_tool(SubagentTool::new(cx.weak_entity(), environment));
         }
     }
 
-    pub fn add_tool<T: AgentTool>(
-        &mut self,
-        tool: T,
-        allowed_tool_names: Option<&Vec<SharedString>>,
-    ) {
-        if allowed_tool_names
-            .is_some_and(|tool_names| !tool_names.iter().any(|x| x.as_str() == T::NAME))
-        {
-            return;
-        }
-
+    pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
         debug_assert!(
             !self.tools.contains_key(T::NAME),
             "Duplicate tool name: {}",

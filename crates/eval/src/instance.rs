@@ -323,7 +323,7 @@ impl ExampleInstance {
                 };
 
                 thread.update(cx, |thread, cx| {
-                    thread.add_default_tools(None, Rc::new(EvalThreadEnvironment {
+                    thread.add_default_tools(Rc::new(EvalThreadEnvironment {
                         project: project.clone(),
                     }), cx);
                     thread.set_profile(meta.profile_id.clone(), cx);
