@@ -260,7 +260,6 @@ impl ReplStore {
         }
 
         let language_at_cursor = language_at_cursor?;
-        let language_name = language_at_cursor.code_fence_block_name().to_lowercase();
 
         // Prefer the recommended (active toolchain) kernel if it has ipykernel
         if let Some(active_path) = self.active_python_toolchain_path(worktree_id) {
@@ -268,7 +267,7 @@ impl ReplStore {
                 .kernel_specifications_for_worktree(worktree_id)
                 .find(|spec| {
                     spec.has_ipykernel()
-                        && spec.language().as_ref().to_lowercase() == language_name
+                        && language_at_cursor.matches_kernel_language(spec.language().as_ref())
                         && spec.path().as_ref() == active_path.as_ref()
                 })
                 .cloned();
@@ -283,7 +282,7 @@ impl ReplStore {
             .find(|spec| {
                 matches!(spec, KernelSpecification::PythonEnv(_))
                     && spec.has_ipykernel()
-                    && spec.language().as_ref().to_lowercase() == language_name
+                    && language_at_cursor.matches_kernel_language(spec.language().as_ref())
             })
             .cloned();
         if python_env.is_some() {
@@ -321,10 +320,10 @@ impl ReplStore {
             return Some(found_by_name);
         }
 
-        let language_name = language_at_cursor.code_fence_block_name().to_lowercase();
         self.kernel_specifications_for_worktree(worktree_id)
             .find(|spec| {
-                spec.has_ipykernel() && spec.language().as_ref().to_lowercase() == language_name
+                spec.has_ipykernel()
+                    && language_at_cursor.matches_kernel_language(spec.language().as_ref())
             })
             .cloned()
     }
