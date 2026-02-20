@@ -546,17 +546,28 @@ impl DisplayMap {
         let all_blocks: Vec<_> = self.block_map.blocks_raw().map(Clone::clone).collect();
 
         companion_display_map.update(cx, |companion_display_map, cx| {
+            // Sync folded buffers from RHS to LHS. Also clean up stale
+            // entries: the block map doesn't remove buffers from
+            // `folded_buffers` when they leave the multibuffer, so we
+            // unfold any RHS buffers whose companion mapping is missing.
+            let mut buffers_to_unfold = Vec::new();
             for my_buffer in self.folded_buffers() {
-                let their_buffer = companion
-                    .read(cx)
-                    .rhs_buffer_to_lhs_buffer
-                    .get(my_buffer)
-                    .expect("unmapped folded buffer");
+                let their_buffer = companion.read(cx).rhs_buffer_to_lhs_buffer.get(my_buffer);
+
+                let Some(their_buffer) = their_buffer else {
+                    buffers_to_unfold.push(*my_buffer);
+                    continue;
+                };
+
                 companion_display_map
                     .block_map
                     .folded_buffers
                     .insert(*their_buffer);
             }
+            for buffer_id in buffers_to_unfold {
+                self.block_map.folded_buffers.remove(&buffer_id);
+            }
+
             for block in all_blocks {
                 let Some(their_block) = block_map::balancing_block(
                     &block.properties(),

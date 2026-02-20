@@ -5826,9 +5826,9 @@ mod tests {
 
         let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
         editor.update(cx, |editor, cx| {
-            editor
-                .rhs_editor()
-                .update(cx, |right_editor, cx| right_editor.fold_buffer(buffer_a_id, cx));
+            editor.rhs_editor().update(cx, |right_editor, cx| {
+                right_editor.fold_buffer(buffer_a_id, cx)
+            });
         });
 
         cx.run_until_parked();
@@ -5836,13 +5836,33 @@ mod tests {
         editor.update(cx, |editor, cx| {
             editor.remove_excerpts_for_path(path_a.clone(), cx);
         });
-
         cx.run_until_parked();
 
-        editor.update_in(cx, |editor, window, cx| {
-            editor.split(window, cx);
+        editor.update_in(cx, |editor, window, cx| editor.split(window, cx));
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            editor.set_excerpts_for_path(
+                path_a.clone(),
+                buffer_a.clone(),
+                vec![Point::new(0, 0)..buffer_a.read(cx).max_point()],
+                0,
+                diff_a.clone(),
+                cx,
+            );
+            assert!(
+                !editor
+                    .lhs_editor()
+                    .unwrap()
+                    .read(cx)
+                    .is_buffer_folded(buffer_a_id, cx)
+            );
+            assert!(
+                !editor
+                    .rhs_editor()
+                    .read(cx)
+                    .is_buffer_folded(buffer_a_id, cx)
+            );
         });
-
-        cx.run_until_parked();
     }
 }
