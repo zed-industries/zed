@@ -622,9 +622,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    buffer.update(cx, |buffer, _| {
-        buffer.set_sync_parse_timeout(Duration::ZERO)
-    });
+    buffer.update(cx, |buffer, _| buffer.set_sync_parse_timeout(None));
 
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
@@ -736,7 +734,7 @@ async fn test_reparse(cx: &mut gpui::TestAppContext) {
 async fn test_resetting_language(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local("{}", cx).with_language(rust_lang(), cx);
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
         buffer
     });
 
@@ -2359,7 +2357,7 @@ async fn test_async_autoindents_preserve_preview(cx: &mut TestAppContext) {
         let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
 
         // This causes autoindent to be async.
-        buffer.set_sync_parse_timeout(Duration::ZERO);
+        buffer.set_sync_parse_timeout(None);
 
         buffer.edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx);
         buffer.refresh_preview();
@@ -2773,14 +2771,11 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language(
-            language_registry
-                .language_for_name("HTML+ERB")
-                .now_or_never()
-                .unwrap()
-                .ok(),
-            cx,
-        );
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
 
         let snapshot = buffer.snapshot();
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
@@ -2896,15 +2891,80 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
     cx.new(|cx| {
+        // ERB template with HTML and Ruby content
         let text = r#"
-            ```html+erb
-            <div>Hello</div>
-            <%= link_to "Some", "https://zed.dev" %>
-            ```
+<div>Hello</div>
+<%= link_to "Click", url %>
+<p>World</p>
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
+
+        let snapshot = buffer.snapshot();
+
+        // Test language_at for HTML content (line 0: "<div>Hello</div>")
+        let html_point = Point::new(0, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_point,
+            language.name()
+        );
+
+        // Test language_at for Ruby code (line 1: "<%= link_to ... %>")
+        let ruby_point = Point::new(1, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "Ruby",
+            "Expected Ruby at {:?}, got {}",
+            ruby_point,
+            language.name()
+        );
+
+        // Test language_at for HTML after Ruby (line 2: "<p>World</p>")
+        let html_after_ruby = Point::new(2, 2);
+        let language = snapshot.language_at(html_after_ruby).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_after_ruby,
+            language.name()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_languages_at_for_combined_injections(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        // ERB template with HTML and Ruby content
+        let text = r#"
+<div>Hello</div>
+<%= yield %>
+<p>World</p>
         "#
         .unindent();
 
@@ -2924,16 +2984,47 @@ fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
             cx,
         );
 
-        let snapshot = buffer.snapshot();
+        // Test languages_at for HTML content - should NOT include Ruby
+        let html_point = Point::new(0, 4);
+        let languages = buffer.languages_at(html_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Expected HTML in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Did not expect Ruby in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
 
-        // Test points in the code line
-        let html_point = Point::new(1, 4);
-        let language = snapshot.language_at(html_point).unwrap();
-        assert_eq!(language.name().as_ref(), "HTML");
-
-        let ruby_point = Point::new(2, 6);
-        let language = snapshot.language_at(ruby_point).unwrap();
-        assert_eq!(language.name().as_ref(), "Ruby");
+        // Test languages_at for Ruby code - should NOT include HTML
+        let ruby_point = Point::new(1, 6);
+        let languages = buffer.languages_at(ruby_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Expected Ruby in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Did not expect HTML in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
 
         buffer
     });
@@ -2964,8 +3055,8 @@ fn test_serialization(cx: &mut gpui::App) {
 
     let state = buffer1.read(cx).to_proto(cx);
     let ops = cx
-        .background_executor()
-        .block(buffer1.read(cx).serialize_ops(None, cx));
+        .foreground_executor()
+        .block_on(buffer1.read(cx).serialize_ops(None, cx));
     let buffer2 = cx.new(|cx| {
         let mut buffer =
             Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap();
@@ -3302,8 +3393,8 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
         let buffer = cx.new(|cx| {
             let state = base_buffer.read(cx).to_proto(cx);
             let ops = cx
-                .background_executor()
-                .block(base_buffer.read(cx).serialize_ops(None, cx));
+                .foreground_executor()
+                .block_on(base_buffer.read(cx).serialize_ops(None, cx));
             let mut buffer =
                 Buffer::from_proto(ReplicaId::new(i as u16), Capability::ReadWrite, state, None)
                     .unwrap();
@@ -3417,8 +3508,8 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             50..=59 if replica_ids.len() < max_peers => {
                 let old_buffer_state = buffer.read(cx).to_proto(cx);
                 let old_buffer_ops = cx
-                    .background_executor()
-                    .block(buffer.read(cx).serialize_ops(None, cx));
+                    .foreground_executor()
+                    .block_on(buffer.read(cx).serialize_ops(None, cx));
                 let new_replica_id = (0..=replica_ids.len() as u16)
                     .map(ReplicaId::new)
                     .filter(|replica_id| *replica_id != buffer.read(cx).replica_id())

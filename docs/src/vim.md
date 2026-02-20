@@ -1,20 +1,15 @@
+---
+title: Vim Mode - Zed
+description: Full Vim emulation in Zed with motions, text objects, visual mode, macros, and Zed-specific extensions.
+---
+
 # Vim Mode
 
-Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands Zed provides to help you navigate and edit your code, and generally how to make the most of vim mode in Zed.
-
-You'll learn how to:
-
-- Understand the core differences between Zed's vim mode and traditional Vim
-- Enable or disable vim mode
-- Make the most of Zed-specific features within vim mode
-- Customize vim mode key bindings
-- Configure vim mode settings
-
-Whether you're new to vim mode or an experienced Vim user looking to optimize your Zed experience, this guide will help you harness the full power of modal editing in Zed.
+Zed includes a Vim emulation layer. This page covers enabling and disabling vim mode, key bindings, Zed-specific features, and configuration options.
 
 ## Zed's vim mode design
 
-Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses Zed-specific functionality to provide an editing experience that "just works" without requiring configuration on your part.
+Vim mode replicates the behavior of motions and commands where it makes sense and uses Zed-specific functionality where Zed's approach is better. The goal is a familiar experience that works out of the box without requiring configuration.
 
 This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
@@ -84,7 +79,7 @@ The following commands use the language server to help you navigate and refactor
 
 ### Tree-sitter
 
-Tree-sitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
+Tree-sitter is the parser Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
 | Command                         | Default Shortcut            |
 | ------------------------------- | --------------------------- |
@@ -124,13 +119,15 @@ per language.
 
 These commands help you manage multiple cursors in Zed.
 
-| Command                                                      | Default Shortcut |
-| ------------------------------------------------------------ | ---------------- |
-| Add a cursor selecting the next copy of the current word     | `g l`            |
-| Add a cursor selecting the previous copy of the current word | `g L`            |
-| Skip latest word selection, and add next                     | `g >`            |
-| Skip latest word selection, and add previous                 | `g <`            |
-| Add a visual selection for every copy of the current word    | `g a`            |
+| Command                                                                           | Default Shortcut |
+| --------------------------------------------------------------------------------- | ---------------- |
+| Add a cursor selecting the next copy of the current word                          | `g l`            |
+| Add a cursor selecting the previous copy of the current word                      | `g L`            |
+| Add a cursor at the end of every line in the current visual selection             | `g A`            |
+| Add a cursor at the first character of every line in the current visual selection | `g I`            |
+| Add a visual selection for every copy of the current word                         | `g a`            |
+| Skip latest word selection, and add next                                          | `g >`            |
+| Skip latest word selection, and add previous                                      | `g <`            |
 
 ### Pane management
 
@@ -158,7 +155,7 @@ The following commands help you bring up Zed's completion menu, request a sugges
 
 ### Supported plugins
 
-Zed's vim mode includes some features that are usually provided by very popular plugins in the Vim ecosystem:
+Zed's vim mode includes features commonly provided by plugins in the Vim ecosystem:
 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
@@ -367,12 +364,6 @@ As any Zed command is available, you may find that it's helpful to remember mnem
 
 ## Customizing key bindings
 
-In this section, we'll learn how to customize the key bindings of Zed's vim mode. You'll learn:
-
-- How to select the correct context for your new key bindings.
-- Useful contexts for vim mode key bindings.
-- Common key bindings to customize for extra productivity.
-
 ### Selecting the correct context
 
 Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
@@ -546,14 +537,15 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 {
   "context": "Editor && !menu",
   "bindings": {
+    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
     "ctrl-c": "editor::Copy",               // vim default: return to normal mode
     "ctrl-x": "editor::Cut",                // vim default: decrement
     "ctrl-v": "editor::Paste",              // vim default: visual block mode
+    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-y": "editor::Undo",               // vim default: line up
-    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
+    "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-o": "workspace::Open",            // vim default: go back
     "ctrl-s": "workspace::Save",            // vim default: show signature
-    "ctrl-a": "editor::SelectAll",          // vim default: increment
     "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },
@@ -569,8 +561,8 @@ You can change the following settings to modify vim mode's behavior:
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | deprecated                                                                                                                                                                                    |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
-| toggle_relative_line_numbers | deprecated                                                                                                                                                                                    | false         |
-| relative_line_numbers        | If "enabled", line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                      | "disabled"    |
+| gdefault                     | If `true`, the `:substitute` command replaces all matches in a line by default (as if `g` flag was given). The `g` flag then toggles this, replacing only the first match.                    | false         |
+| toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
 | highlight_on_yank_duration   | The duration of the highlight animation(in ms). Set to `0` to disable                                                                                                                         | 200           |
 
@@ -594,6 +586,7 @@ Here's an example of these settings changed:
     "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
+    "gdefault": true,
     "relative_line_numbers": "enabled",
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {

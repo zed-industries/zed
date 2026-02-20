@@ -50,6 +50,22 @@ pub(crate) fn input_base_styles(border_color: Hsla, map: impl FnOnce(Div) -> Div
         .border_color(border_color)
         .rounded_md()
 }
+pub(crate) fn filter_search_results_input(
+    border_color: Hsla,
+    map: impl FnOnce(Div) -> Div,
+    cx: &App,
+) -> Div {
+    input_base_styles(border_color, map).pl_0().child(
+        h_flex()
+            .mr_2()
+            .px_2()
+            .h_full()
+            .border_r_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().text_accent.opacity(0.05))
+            .child(Label::new("Find in Results").color(Color::Muted)),
+    )
+}
 
 pub(crate) fn render_text_input(
     editor: &Entity<Editor>,
@@ -88,4 +104,9 @@ pub(crate) fn render_text_input(
     }
 
     EditorElement::new(editor, editor_style)
+}
+
+/// This element makes all search inputs align as if they were in the same column
+pub(crate) fn alignment_element() -> Div {
+    div().size_5().flex_none().ml_0p5()
 }

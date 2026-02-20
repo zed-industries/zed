@@ -41,6 +41,7 @@ thiserror.workspace = true
 url.workspace = true
 util.workspace = true
 urlencoding.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

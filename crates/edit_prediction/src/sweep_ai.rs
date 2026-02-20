@@ -1,23 +1,31 @@
-use anyhow::Result;
-use futures::AsyncReadExt as _;
+use crate::{
+    CurrentEditPrediction, DebugEvent, EditPrediction, EditPredictionFinishedDebugEvent,
+    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
+    EditPredictionStore, UserActionRecord, UserActionType, prediction::EditPredictionResult,
+};
+use anyhow::{Result, bail};
+use client::Client;
+use edit_prediction_types::SuggestionDisplayType;
+use futures::{AsyncReadExt as _, channel::mpsc};
 use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
-use language::{Point, ToOffset as _};
+use language::language_settings::all_language_settings;
+use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write as _},
+    ops::Range,
     path::Path,
     sync::Arc,
     time::Instant,
 };
 
-use crate::{EditPredictionId, EditPredictionModelInput, prediction::EditPredictionResult};
-
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
+const SWEEP_METRICS_URL: &str = "https://backend.app.sweep.dev/backend/track_autocomplete_metrics";
 
 pub struct SweepAi {
     pub api_token: Entity<ApiKeyState>,
@@ -37,10 +45,18 @@ impl SweepAi {
         inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let privacy_mode_enabled = all_language_settings(None, cx)
+            .edit_predictions
+            .sweep
+            .privacy_mode;
         let debug_info = self.debug_info.clone();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
         });
+
+        let buffer = inputs.buffer.clone();
+        let debug_tx = inputs.debug_tx.clone();
+
         let Some(api_token) = self.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
             return Task::ready(Ok(None));
         };
@@ -57,6 +73,7 @@ impl SweepAi {
             .unwrap_or("untitled")
             .into();
         let offset = inputs.position.to_offset(&inputs.snapshot);
+        let buffer_entity_id = inputs.buffer.entity_id();
 
         let recent_buffers = inputs.recent_paths.iter().cloned();
         let http_client = cx.http_client();
@@ -83,7 +100,7 @@ impl SweepAi {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
             }
 
-            let mut file_chunks = recent_buffer_snapshots
+            let file_chunks = recent_buffer_snapshots
                 .into_iter()
                 .map(|snapshot| {
                     let end_point = Point::new(30, 0).min(snapshot.max_point());
@@ -108,7 +125,7 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = inputs
+            let mut retrieval_chunks: Vec<FileChunk> = inputs
                 .related_files
                 .iter()
                 .flat_map(|related_file| {
@@ -143,22 +160,32 @@ impl SweepAi {
 
                 writeln!(
                     &mut diagnostic_content,
-                    "{} at line {}: {}",
-                    severity,
+                    "{}:{}:{}: {}: {}",
+                    full_path.display(),
                     start_point.row + 1,
+                    start_point.column + 1,
+                    severity,
                     entry.diagnostic.message
                 )?;
             }
 
             if !diagnostic_content.is_empty() {
-                file_chunks.push(FileChunk {
-                    file_path: format!("Diagnostics for {}", full_path.display()),
-                    start_line: 0,
+                retrieval_chunks.push(FileChunk {
+                    file_path: "diagnostics".to_string(),
+                    start_line: 1,
                     end_line: diagnostic_count,
                     content: diagnostic_content,
                     timestamp: None,
                 });
             }
+
+            let file_path_str = full_path.display().to_string();
+            let recent_user_actions = inputs
+                .user_actions
+                .iter()
+                .filter(|r| r.buffer_id == buffer_entity_id)
+                .map(|r| to_sweep_user_action(r, &file_path_str))
+                .collect();
 
             let request_body = AutocompleteRequest {
                 debug_info,
@@ -173,14 +200,13 @@ impl SweepAi {
                 branch: None,
                 file_chunks,
                 retrieval_chunks,
-                recent_user_actions: vec![],
+                recent_user_actions,
                 use_bytes: true,
-                // TODO
-                privacy_mode_enabled: false,
+                privacy_mode_enabled,
             };
 
             let mut buf: Vec<u8> = Vec::new();
-            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 1, 22);
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
@@ -188,11 +214,23 @@ impl SweepAi {
                 events: inputs.events,
                 related_files: inputs.related_files.clone(),
                 cursor_path: full_path.clone(),
-                cursor_excerpt: request_body.file_contents.into(),
+                cursor_excerpt: request_body.file_contents.clone().into(),
                 // we actually don't know
                 editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
+                excerpt_start_row: Some(0),
+                excerpt_ranges: None,
+                preferred_model: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
             };
+
+            send_started_event(
+                &debug_tx,
+                &buffer,
+                inputs.position,
+                serde_json::to_string(&request_body).unwrap_or_default(),
+            );
 
             let request = http_client::Request::builder()
                 .uri(SWEEP_API_URL)
@@ -205,19 +243,23 @@ impl SweepAi {
 
             let mut response = http_client.send(request).await?;
 
-            let mut body: Vec<u8> = Vec::new();
-            response.body_mut().read_to_end(&mut body).await?;
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
 
             let response_received_at = Instant::now();
             if !response.status().is_success() {
-                anyhow::bail!(
+                let message = format!(
                     "Request failed with status: {:?}\nBody: {}",
                     response.status(),
-                    String::from_utf8_lossy(&body),
+                    body,
                 );
+                send_finished_event(&debug_tx, &buffer, inputs.position, message.clone());
+                bail!(message);
             };
 
-            let response: AutocompleteResponse = serde_json::from_slice(&body)?;
+            let response: AutocompleteResponse = serde_json::from_str(&body)?;
+
+            send_finished_event(&debug_tx, &buffer, inputs.position, body);
 
             let old_text = inputs
                 .snapshot
@@ -257,6 +299,7 @@ impl SweepAi {
                     &buffer,
                     &old_snapshot,
                     edits.into(),
+                    None,
                     buffer_snapshotted_at,
                     response_received_at,
                     inputs,
@@ -265,6 +308,40 @@ impl SweepAi {
                 .await,
             ))
         })
+    }
+}
+
+fn send_started_event(
+    debug_tx: &Option<mpsc::UnboundedSender<DebugEvent>>,
+    buffer: &Entity<Buffer>,
+    position: Anchor,
+    prompt: String,
+) {
+    if let Some(debug_tx) = debug_tx {
+        _ = debug_tx.unbounded_send(DebugEvent::EditPredictionStarted(
+            EditPredictionStartedDebugEvent {
+                buffer: buffer.downgrade(),
+                position,
+                prompt: Some(prompt),
+            },
+        ));
+    }
+}
+
+fn send_finished_event(
+    debug_tx: &Option<mpsc::UnboundedSender<DebugEvent>>,
+    buffer: &Entity<Buffer>,
+    position: Anchor,
+    model_output: String,
+) {
+    if let Some(debug_tx) = debug_tx {
+        _ = debug_tx.unbounded_send(DebugEvent::EditPredictionFinished(
+            EditPredictionFinishedDebugEvent {
+                buffer: buffer.downgrade(),
+                position,
+                model_output: Some(model_output),
+            },
+        ));
     }
 }
 
@@ -330,7 +407,6 @@ struct UserAction {
     pub timestamp: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ActionType {
@@ -339,6 +415,22 @@ enum ActionType {
     DeleteChar,
     InsertSelection,
     DeleteSelection,
+}
+
+fn to_sweep_user_action(record: &UserActionRecord, file_path: &str) -> UserAction {
+    UserAction {
+        action_type: match record.action_type {
+            UserActionType::InsertChar => ActionType::InsertChar,
+            UserActionType::InsertSelection => ActionType::InsertSelection,
+            UserActionType::DeleteChar => ActionType::DeleteChar,
+            UserActionType::DeleteSelection => ActionType::DeleteSelection,
+            UserActionType::CursorMovement => ActionType::CursorMovement,
+        },
+        line_number: record.line_number as usize,
+        offset: record.offset,
+        file_path: file_path.to_string(),
+        timestamp: record.timestamp_epoch_ms,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -403,4 +495,175 @@ fn debug_info(cx: &gpui::App) -> Arc<str> {
         os = client::telemetry::os_name(),
     )
     .into()
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepEventType {
+    AutocompleteSuggestionShown,
+    AutocompleteSuggestionAccepted,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SweepSuggestionType {
+    GhostText,
+    Popup,
+    JumpToEdit,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AutocompleteMetricsRequest {
+    event_type: SweepEventType,
+    suggestion_type: SweepSuggestionType,
+    additions: u32,
+    deletions: u32,
+    autocomplete_id: String,
+    edit_tracking: String,
+    edit_tracking_line: Option<u32>,
+    lifespan: Option<u64>,
+    debug_info: Arc<str>,
+    device_id: String,
+    privacy_mode_enabled: bool,
+}
+
+fn send_autocomplete_metrics_request(
+    cx: &App,
+    client: Arc<Client>,
+    api_token: Arc<str>,
+    request_body: AutocompleteMetricsRequest,
+) {
+    let http_client = client.http_client();
+    cx.background_spawn(async move {
+        let body: AsyncBody = serde_json::to_string(&request_body)?.into();
+
+        let request = http_client::Request::builder()
+            .uri(SWEEP_METRICS_URL)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_token))
+            .method(Method::POST)
+            .body(body)?;
+
+        let mut response = http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!(
+                "Failed to send autocomplete metrics for sweep_ai: {:?}\nBody: {}",
+                response.status(),
+                body,
+            );
+        }
+
+        Ok(())
+    })
+    .detach_and_log_err(cx);
+}
+
+pub(crate) fn edit_prediction_accepted(
+    store: &EditPredictionStore,
+    current_prediction: CurrentEditPrediction,
+    cx: &App,
+) {
+    let Some(api_token) = store
+        .sweep_ai
+        .api_token
+        .read(cx)
+        .key(&SWEEP_CREDENTIALS_URL)
+    else {
+        return;
+    };
+    let debug_info = store.sweep_ai.debug_info.clone();
+
+    let prediction = current_prediction.prediction;
+
+    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+    let autocomplete_id = prediction.id.to_string();
+
+    let device_id = store
+        .client
+        .user_id()
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+
+    let suggestion_type = match current_prediction.shown_with {
+        Some(SuggestionDisplayType::DiffPopover) => SweepSuggestionType::Popup,
+        Some(SuggestionDisplayType::Jump) => return, // should'nt happen
+        Some(SuggestionDisplayType::GhostText) | None => SweepSuggestionType::GhostText,
+    };
+
+    let request_body = AutocompleteMetricsRequest {
+        event_type: SweepEventType::AutocompleteSuggestionAccepted,
+        suggestion_type,
+        additions,
+        deletions,
+        autocomplete_id,
+        edit_tracking: String::new(),
+        edit_tracking_line: None,
+        lifespan: None,
+        debug_info,
+        device_id,
+        privacy_mode_enabled: false,
+    };
+
+    send_autocomplete_metrics_request(cx, store.client.clone(), api_token, request_body);
+}
+
+pub fn edit_prediction_shown(
+    sweep_ai: &SweepAi,
+    client: Arc<Client>,
+    prediction: &EditPrediction,
+    display_type: SuggestionDisplayType,
+    cx: &App,
+) {
+    let Some(api_token) = sweep_ai.api_token.read(cx).key(&SWEEP_CREDENTIALS_URL) else {
+        return;
+    };
+    let debug_info = sweep_ai.debug_info.clone();
+
+    let (additions, deletions) = compute_edit_metrics(&prediction.edits, &prediction.snapshot);
+    let autocomplete_id = prediction.id.to_string();
+
+    let suggestion_type = match display_type {
+        SuggestionDisplayType::GhostText => SweepSuggestionType::GhostText,
+        SuggestionDisplayType::DiffPopover => SweepSuggestionType::Popup,
+        SuggestionDisplayType::Jump => SweepSuggestionType::JumpToEdit,
+    };
+
+    let request_body = AutocompleteMetricsRequest {
+        event_type: SweepEventType::AutocompleteSuggestionShown,
+        suggestion_type,
+        additions,
+        deletions,
+        autocomplete_id,
+        edit_tracking: String::new(),
+        edit_tracking_line: None,
+        lifespan: None,
+        debug_info,
+        device_id: String::new(),
+        privacy_mode_enabled: false,
+    };
+
+    send_autocomplete_metrics_request(cx, client, api_token, request_body);
+}
+
+fn compute_edit_metrics(
+    edits: &[(Range<Anchor>, Arc<str>)],
+    snapshot: &BufferSnapshot,
+) -> (u32, u32) {
+    let mut additions = 0u32;
+    let mut deletions = 0u32;
+
+    for (range, new_text) in edits {
+        let old_text = snapshot.text_for_range(range.clone());
+        deletions += old_text
+            .map(|chunk| chunk.lines().count())
+            .sum::<usize>()
+            .max(1) as u32;
+        additions += new_text.lines().count().max(1) as u32;
+    }
+
+    (additions, deletions)
 }

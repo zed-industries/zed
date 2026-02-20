@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
@@ -314,6 +315,24 @@ pub struct TaskContext {
     /// This is the environment one would get when `cd`ing in a terminal
     /// into the project's root directory.
     pub project_env: HashMap<String, String>,
+}
+
+/// A shared reference to a [`TaskContext`], used to avoid cloning the context multiple times.
+#[derive(Clone, Debug, Default)]
+pub struct SharedTaskContext(Arc<TaskContext>);
+
+impl std::ops::Deref for SharedTaskContext {
+    type Target = TaskContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TaskContext> for SharedTaskContext {
+    fn from(context: TaskContext) -> Self {
+        Self(Arc::new(context))
+    }
 }
 
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.

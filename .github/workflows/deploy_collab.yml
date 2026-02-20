@@ -1,148 +1,164 @@
-name: Publish Collab Server Image
-
+# Generated from xtask::workflows::deploy_collab
+# Rebuild with `cargo xtask workflows`.
+name: deploy_collab
+env:
+  DOCKER_BUILDKIT: '1'
 on:
   push:
     tags:
-      - collab-production
-      - collab-staging
-
-env:
-  DOCKER_BUILDKIT: 1
-
+    - collab-production
 jobs:
   style:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     name: Check formatting and Clippy lints
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - self-hosted
-      - macOS
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-          fetch-depth: 0
-
-      - name: Run style checks
-        uses: ./.github/actions/check_style
-
-      - name: Run clippy
-        run: ./script/clippy
-
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        fetch-depth: 0
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::cargo_fmt
+      run: cargo fmt --all -- --check
+    - name: steps::clippy
+      run: ./script/clippy
   tests:
+    needs:
+    - style
     name: Run tests
-    runs-on:
-      - self-hosted
-      - macOS
-    needs: style
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-          fetch-depth: 0
-
-      - name: Install cargo nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Limit target directory size
-        shell: bash -euxo pipefail {0}
-        run: script/clear-target-dir-if-larger-than 300
-
-      - name: Run tests
-        shell: bash -euxo pipefail {0}
-        run: cargo nextest run --package collab --no-fail-fast
-
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+        fetch-depth: 0
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: steps::install_mold
+      run: ./script/install-mold
+    - name: steps::download_wasi_sdk
+      run: ./script/download-wasi-sdk
+    - name: steps::cargo_install_nextest
+      uses: taiki-e/install-action@nextest
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than 250
+    - name: deploy_collab::tests::run_collab_tests
+      run: cargo nextest run --package collab --no-fail-fast
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+        - 5432:5432
+        options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   publish:
+    needs:
+    - style
+    - tests
     name: Publish collab server image
-    needs:
-      - style
-      - tests
-    runs-on:
-      - namespace-profile-16x32-ubuntu-2204
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Sign into DigitalOcean docker registry
-        run: doctl registry login
-
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-
-      - name: Build docker image
-        run: |
-          docker build -f Dockerfile-collab \
-            --build-arg "GITHUB_SHA=$GITHUB_SHA" \
-            --tag "registry.digitalocean.com/zed/collab:$GITHUB_SHA" \
-            .
-
-      - name: Publish docker image
-        run: docker push "registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
-
-      - name: Prune Docker system
-        run: docker system prune  --filter 'until=72h' -f
-
+    - name: deploy_collab::publish::install_doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+    - name: deploy_collab::publish::sign_into_registry
+      run: doctl registry login
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: deploy_collab::publish::build_docker_image
+      run: |
+        docker build -f Dockerfile-collab \
+          --build-arg "GITHUB_SHA=$GITHUB_SHA" \
+          --tag "registry.digitalocean.com/zed/collab:$GITHUB_SHA" \
+          .
+    - name: deploy_collab::publish::publish_docker_image
+      run: docker push "registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
+    - name: deploy_collab::publish::prune_docker_system
+      run: docker system prune --filter 'until=72h' -f
   deploy:
-    name: Deploy new server image
     needs:
-      - publish
-    runs-on:
-      - namespace-profile-16x32-ubuntu-2204
-
+    - publish
+    name: Deploy new server image
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: deploy_collab::deploy::install_doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+    - name: deploy_collab::deploy::sign_into_kubernetes
+      run: |
+        doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+    - name: deploy_collab::deploy::start_rollout
+      run: |
+        set -eu
+        if [[ $GITHUB_REF_NAME = "collab-production" ]]; then
+          export ZED_KUBE_NAMESPACE=production
+          export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=10
+          export ZED_API_LOAD_BALANCER_SIZE_UNIT=2
+        elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
+          export ZED_KUBE_NAMESPACE=staging
+          export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=1
+          export ZED_API_LOAD_BALANCER_SIZE_UNIT=1
+        else
+          echo "cowardly refusing to deploy from an unknown branch"
+          exit 1
+        fi
 
-      - name: Install doctl
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
 
-      - name: Sign into Kubernetes
-        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+        source script/lib/deploy-helpers.sh
+        export_vars_for_environment $ZED_KUBE_NAMESPACE
 
-      - name: Start rollout
-        run: |
-          set -eu
-          if [[ $GITHUB_REF_NAME = "collab-production" ]]; then
-            export ZED_KUBE_NAMESPACE=production
-            export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=10
-            export ZED_API_LOAD_BALANCER_SIZE_UNIT=2
-          elif [[ $GITHUB_REF_NAME = "collab-staging" ]]; then
-            export ZED_KUBE_NAMESPACE=staging
-            export ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT=1
-            export ZED_API_LOAD_BALANCER_SIZE_UNIT=1
-          else
-            echo "cowardly refusing to deploy from an unknown branch"
-            exit 1
-          fi
+        ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
+        export ZED_DO_CERTIFICATE_ID
+        export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
-          echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
+        export ZED_SERVICE_NAME=collab
+        export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
+        export DATABASE_MAX_CONNECTIONS=850
+        envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 
-          source script/lib/deploy-helpers.sh
-          export_vars_for_environment $ZED_KUBE_NAMESPACE
-
-          ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
-          export ZED_DO_CERTIFICATE_ID
-          export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
-
-          export ZED_SERVICE_NAME=collab
-          export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
-          export DATABASE_MAX_CONNECTIONS=850
-          envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
-          echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
-
-          export ZED_SERVICE_NAME=api
-          export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
-          export DATABASE_MAX_CONNECTIONS=60
-          envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-          kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
-          echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
+        export ZED_SERVICE_NAME=api
+        export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
+        export DATABASE_MAX_CONNECTIONS=60
+        envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

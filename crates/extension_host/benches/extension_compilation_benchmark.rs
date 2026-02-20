@@ -11,7 +11,7 @@ use fs::{Fs, RealFs};
 use gpui::{TestAppContext, TestDispatcher};
 use http_client::{FakeHttpClient, Response};
 use node_runtime::NodeRuntime;
-use rand::{SeedableRng, rngs::StdRng};
+
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use settings::SettingsStore;
@@ -41,8 +41,8 @@ fn extension_benchmarks(c: &mut Criterion) {
             || wasm_bytes.clone(),
             |wasm_bytes| {
                 let _extension = cx
-                    .executor()
-                    .block(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
+                    .foreground_executor()
+                    .block_on(wasm_host.load_extension(wasm_bytes, &manifest, &cx.to_async()))
                     .unwrap();
             },
             BatchSize::SmallInput,
@@ -52,7 +52,7 @@ fn extension_benchmarks(c: &mut Criterion) {
 
 fn init() -> TestAppContext {
     const SEED: u64 = 9999;
-    let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(SEED));
+    let dispatcher = TestDispatcher::new(SEED);
     let cx = TestAppContext::build(dispatcher, None);
     cx.executor().allow_parking();
     cx.update(|cx| {
@@ -72,8 +72,8 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest, fs: Arc<dyn
         .parent()
         .unwrap()
         .join("extensions/test-extension");
-    cx.executor()
-        .block(extension_builder.compile_extension(
+    cx.foreground_executor()
+        .block_on(extension_builder.compile_extension(
             &path,
             manifest,
             CompileExtensionOptions { release: true },

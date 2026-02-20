@@ -1,22 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
-CREATE TABLE public.access_tokens (
-    id integer NOT NULL,
-    user_id integer,
-    hash character varying(128),
-    impersonated_user_id integer
-);
-
-CREATE SEQUENCE public.access_tokens_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.access_tokens_id_seq OWNED BY public.access_tokens.id;
-
 CREATE TABLE public.breakpoints (
     id integer NOT NULL,
     project_id integer NOT NULL,
@@ -213,22 +196,6 @@ CREATE SEQUENCE public.extensions_id_seq
 
 ALTER SEQUENCE public.extensions_id_seq OWNED BY public.extensions.id;
 
-CREATE TABLE public.feature_flags (
-    id integer NOT NULL,
-    flag character varying(255) NOT NULL,
-    enabled_for_all boolean DEFAULT false NOT NULL
-);
-
-CREATE SEQUENCE public.feature_flags_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.feature_flags_id_seq OWNED BY public.feature_flags.id;
-
 CREATE TABLE public.followers (
     id integer NOT NULL,
     room_id integer NOT NULL,
@@ -335,7 +302,9 @@ CREATE TABLE public.project_repositories (
     current_merge_conflicts character varying,
     branch_summary character varying,
     head_commit_details character varying,
-    merge_message character varying
+    merge_message character varying,
+    remote_upstream_url character varying,
+    remote_origin_url character varying
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -428,9 +397,13 @@ CREATE SEQUENCE public.servers_id_seq
 
 ALTER SEQUENCE public.servers_id_seq OWNED BY public.servers.id;
 
-CREATE TABLE public.user_features (
+CREATE TABLE public.shared_threads (
+    id uuid NOT NULL,
     user_id integer NOT NULL,
-    feature_id integer NOT NULL
+    title text NOT NULL,
+    data bytea NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.users (
@@ -438,9 +411,6 @@ CREATE TABLE public.users (
     github_login character varying,
     admin boolean NOT NULL,
     email_address character varying(255) DEFAULT NULL::character varying,
-    invite_code character varying(64),
-    invite_count integer DEFAULT 0 NOT NULL,
-    inviter_id integer,
     connected_once boolean DEFAULT false NOT NULL,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     github_user_id integer NOT NULL,
@@ -495,7 +465,8 @@ CREATE TABLE public.worktree_settings_files (
     worktree_id bigint NOT NULL,
     path character varying NOT NULL,
     content text NOT NULL,
-    kind character varying
+    kind character varying,
+    outside_worktree boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE public.worktrees (
@@ -508,8 +479,6 @@ CREATE TABLE public.worktrees (
     is_complete boolean DEFAULT false NOT NULL,
     completed_scan_id bigint
 );
-
-ALTER TABLE ONLY public.access_tokens ALTER COLUMN id SET DEFAULT nextval('public.access_tokens_id_seq'::regclass);
 
 ALTER TABLE ONLY public.breakpoints ALTER COLUMN id SET DEFAULT nextval('public.breakpoints_id_seq'::regclass);
 
@@ -526,8 +495,6 @@ ALTER TABLE ONLY public.channels ALTER COLUMN id SET DEFAULT nextval('public.cha
 ALTER TABLE ONLY public.contacts ALTER COLUMN id SET DEFAULT nextval('public.contacts_id_seq'::regclass);
 
 ALTER TABLE ONLY public.extensions ALTER COLUMN id SET DEFAULT nextval('public.extensions_id_seq'::regclass);
-
-ALTER TABLE ONLY public.feature_flags ALTER COLUMN id SET DEFAULT nextval('public.feature_flags_id_seq'::regclass);
 
 ALTER TABLE ONLY public.followers ALTER COLUMN id SET DEFAULT nextval('public.followers_id_seq'::regclass);
 
@@ -546,9 +513,6 @@ ALTER TABLE ONLY public.rooms ALTER COLUMN id SET DEFAULT nextval('public.rooms_
 ALTER TABLE ONLY public.servers ALTER COLUMN id SET DEFAULT nextval('public.servers_id_seq'::regclass);
 
 ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_pkey PRIMARY KEY (id);
@@ -586,12 +550,6 @@ ALTER TABLE ONLY public.extension_versions
 ALTER TABLE ONLY public.extensions
     ADD CONSTRAINT extensions_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_flag_key UNIQUE (flag);
-
-ALTER TABLE ONLY public.feature_flags
-    ADD CONSTRAINT feature_flags_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.followers
     ADD CONSTRAINT followers_pkey PRIMARY KEY (id);
 
@@ -628,8 +586,8 @@ ALTER TABLE ONLY public.rooms
 ALTER TABLE ONLY public.servers
     ADD CONSTRAINT servers_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_pkey PRIMARY KEY (user_id, feature_id);
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
@@ -646,7 +604,7 @@ ALTER TABLE ONLY public.worktree_settings_files
 ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
 
-CREATE INDEX index_access_tokens_user_id ON public.access_tokens USING btree (user_id);
+CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
 
 CREATE INDEX index_breakpoints_on_project_id ON public.breakpoints USING btree (project_id);
 
@@ -678,13 +636,9 @@ CREATE UNIQUE INDEX index_extensions_external_id ON public.extensions USING btre
 
 CREATE INDEX index_extensions_total_download_count ON public.extensions USING btree (total_download_count);
 
-CREATE UNIQUE INDEX index_feature_flags ON public.feature_flags USING btree (id);
-
 CREATE UNIQUE INDEX index_followers_on_project_id_and_leader_connection_server_id_a ON public.followers USING btree (project_id, leader_connection_server_id, leader_connection_id, follower_connection_server_id, follower_connection_id);
 
 CREATE INDEX index_followers_on_room_id ON public.followers USING btree (room_id);
-
-CREATE UNIQUE INDEX index_invite_code_users ON public.users USING btree (invite_code);
 
 CREATE INDEX index_language_servers_on_project_id ON public.language_servers USING btree (project_id);
 
@@ -732,12 +686,6 @@ CREATE INDEX index_settings_files_on_project_id ON public.worktree_settings_file
 
 CREATE INDEX index_settings_files_on_project_id_and_wt_id ON public.worktree_settings_files USING btree (project_id, worktree_id);
 
-CREATE INDEX index_user_features_on_feature_id ON public.user_features USING btree (feature_id);
-
-CREATE INDEX index_user_features_on_user_id ON public.user_features USING btree (user_id);
-
-CREATE UNIQUE INDEX index_user_features_user_id_and_feature_id ON public.user_features USING btree (user_id, feature_id);
-
 CREATE UNIQUE INDEX index_users_github_login ON public.users USING btree (github_login);
 
 CREATE INDEX index_users_on_email_address ON public.users USING btree (email_address);
@@ -759,9 +707,6 @@ CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (gith
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
 
 CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
@@ -877,14 +822,8 @@ ALTER TABLE ONLY public.room_participants
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.channels(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_feature_id_fkey FOREIGN KEY (feature_id) REFERENCES public.feature_flags(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.user_features
-    ADD CONSTRAINT user_features_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.users
-    ADD CONSTRAINT users_inviter_id_fkey FOREIGN KEY (inviter_id) REFERENCES public.users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.shared_threads
+    ADD CONSTRAINT shared_threads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.worktree_diagnostic_summaries
     ADD CONSTRAINT worktree_diagnostic_summaries_project_id_worktree_id_fkey FOREIGN KEY (project_id, worktree_id) REFERENCES public.worktrees(project_id, id) ON DELETE CASCADE;

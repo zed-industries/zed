@@ -4,10 +4,11 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, Application, Context, DefiniteLength, ElementId, Global, Hsla, Menu,
-    SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds,
-    colors::DefaultColors, div, point, prelude::*, px, relative, rgb, size,
+    AbsoluteLength, App, Context, DefiniteLength, ElementId, Global, Hsla, Menu, SharedString,
+    TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds, colors::DefaultColors,
+    div, point, prelude::*, px, relative, rgb, size,
 };
+use gpui_platform::application;
 use std::iter;
 
 #[derive(Clone, Debug)]
@@ -298,7 +299,7 @@ impl Render for TextExample {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
             items: vec![],

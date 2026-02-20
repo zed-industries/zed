@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Job, PullRequest, Push, UsesJob, Workflow};
+use gh_workflow::{Event, Job, Level, Permissions, PullRequest, Push, UsesJob, Workflow};
 
 use crate::tasks::workflows::{
     steps::{NamedJob, named},
@@ -16,12 +16,14 @@ pub(crate) fn run_tests() -> Workflow {
 }
 
 pub(crate) fn call_extension_tests() -> NamedJob<UsesJob> {
-    let job = Job::default().uses(
-        "zed-industries",
-        "zed",
-        ".github/workflows/extension_tests.yml",
-        "main",
-    );
+    let job = Job::default()
+        .permissions(Permissions::default().contents(Level::Read))
+        .uses(
+            "zed-industries",
+            "zed",
+            ".github/workflows/extension_tests.yml",
+            "main",
+        );
 
     named::job(job)
 }

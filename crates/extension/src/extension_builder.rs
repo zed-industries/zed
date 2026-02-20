@@ -11,10 +11,10 @@ use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::Stdio,
     str::FromStr,
     sync::Arc,
 };
+use util::command::Stdio;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -53,6 +53,12 @@ pub struct ExtensionBuilder {
 
 pub struct CompileExtensionOptions {
     pub release: bool,
+}
+
+impl CompileExtensionOptions {
+    pub const fn dev() -> Self {
+        Self { release: false }
+    }
 }
 
 #[derive(Deserialize)]
@@ -151,7 +157,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_smol_command("cargo")
+        let output = util::command::new_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -257,7 +263,7 @@ impl ExtensionBuilder {
             );
         } else {
             log::info!("compiling {grammar_name} parser");
-            let clang_output = util::command::new_smol_command(&clang_path)
+            let clang_output = util::command::new_command(&clang_path)
                 .args(["-fPIC", "-shared", "-Os"])
                 .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
                 .arg("-o")
@@ -286,7 +292,7 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_smol_command("git")
+            let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "-v"])
@@ -310,7 +316,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_smol_command("git")
+            let init_output = util::command::new_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()
@@ -322,7 +328,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_smol_command("git")
+            let remote_add_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -337,7 +343,7 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_smol_command("git")
+        let fetch_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
@@ -345,7 +351,7 @@ impl ExtensionBuilder {
             .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_smol_command("git")
+        let checkout_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -373,7 +379,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_smol_command("rustc")
+        let rustc_output = util::command::new_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -391,7 +397,7 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_smol_command("rustup")
+        let output = util::command::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -446,7 +452,7 @@ impl ExtensionBuilder {
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 
         // Shell out to tar to extract the archive
-        let tar_output = util::command::new_smol_command("tar")
+        let tar_output = util::command::new_command("tar")
             .arg("-xzf")
             .arg(&tar_gz_path)
             .arg("-C")
@@ -711,7 +717,7 @@ mod tests {
     use indoc::indoc;
 
     use crate::{
-        ExtensionManifest,
+        ExtensionManifest, ExtensionSnippets,
         extension_builder::{file_newer_than_deps, populate_defaults},
     };
 
@@ -785,7 +791,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("./snippets/snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("./snippets/snippets.json").unwrap()
+            ))
         )
     }
 
@@ -820,7 +828,9 @@ mod tests {
 
         assert_eq!(
             manifest.snippets,
-            Some(PathBuf::from_str("snippets.json").unwrap())
+            Some(ExtensionSnippets::Single(
+                PathBuf::from_str("snippets.json").unwrap()
+            ))
         )
     }
 }

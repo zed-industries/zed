@@ -18,7 +18,7 @@ use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Application, AsyncApp, Entity, UpdateGlobal};
+use gpui::{App, AppContext, AsyncApp, Entity, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
@@ -114,7 +114,7 @@ fn main() {
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client);
+    let app = gpui_platform::headless().with_http_client(http_client);
     let all_threads = examples::all(&examples_dir);
 
     app.run(move |cx| {
@@ -150,7 +150,7 @@ fn main() {
                     registry.set_default_model(Some(agent_model.clone()), cx);
                 });
                 judge_model
-            })?;
+            });
 
             let mut examples = Vec::new();
 
@@ -210,7 +210,8 @@ fn main() {
 
             if examples.is_empty() {
                 eprintln!("Filter matched no examples");
-                return cx.update(|cx| cx.quit());
+                cx.update(|cx| cx.quit());
+                return anyhow::Ok(());
             }
 
             let mut repo_urls = HashSet::default();
@@ -294,7 +295,7 @@ fn main() {
                         let result = async {
                             example.setup().await?;
                             let run_output = cx
-                                .update(|cx| example.run(app_state.clone(), cx))?
+                                .update(|cx| example.run(app_state.clone(), cx))
                                 .await?;
                             let judge_output = judge_example(
                                 example.clone(),
@@ -328,7 +329,8 @@ fn main() {
 
             app_state.client.telemetry().flush_events().await;
 
-            cx.update(|cx| cx.quit())
+            cx.update(|cx| cx.quit());
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     });

@@ -1,5 +1,5 @@
 use collections::VecDeque;
-use copilot::Copilot;
+use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
     App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
@@ -23,7 +23,7 @@ use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 use crate::get_or_create_tool;
@@ -114,46 +114,6 @@ actions!(
 
 pub fn init(on_headless_host: bool, cx: &mut App) {
     let log_store = log_store::init(on_headless_host, cx);
-
-    log_store.update(cx, |_, cx| {
-        Copilot::global(cx).map(|copilot| {
-            let copilot = &copilot;
-            cx.subscribe(copilot, |log_store, copilot, edit_prediction_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event
-                    && let Some(server) = copilot.read(cx).language_server()
-                {
-                    let server_id = server.server_id();
-                    let weak_lsp_store = cx.weak_entity();
-                    log_store.copilot_log_subscription =
-                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
-                            move |params, cx| {
-                                weak_lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.add_language_server_log(
-                                            server_id,
-                                            MessageType::LOG,
-                                            &params.message,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            },
-                        ));
-
-                    let name = LanguageServerName::new_static("copilot");
-                    log_store.add_language_server(
-                        LanguageServerKind::Global,
-                        server.server_id(),
-                        Some(name),
-                        None,
-                        Some(server.clone()),
-                        cx,
-                    );
-                }
-            })
-            .detach();
-        })
-    });
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         log_store.update(cx, |store, cx| {
@@ -381,8 +341,47 @@ impl LspLogView {
         );
         (editor, vec![editor_subscription, search_subscription])
     }
+    pub(crate) fn try_ensure_copilot_for_project(&self, cx: &mut App) {
+        self.log_store.update(cx, |this, cx| {
+            let copilot = EditPredictionStore::try_global(cx)
+                .and_then(|store| store.read(cx).copilot_for_project(&self.project))?;
+            let server = copilot.read(cx).language_server()?.clone();
+            let log_subscription = this.copilot_state_for_project(&self.project.downgrade());
+            if let Some(subscription_slot @ None) = log_subscription {
+                let weak_lsp_store = cx.weak_entity();
+                let server_id = server.server_id();
 
-    pub(crate) fn menu_items<'a>(&'a self, cx: &'a App) -> Option<Vec<LogMenuItem>> {
+                let name = LanguageServerName::new_static("copilot");
+                *subscription_slot =
+                    Some(server.on_notification::<lsp::notification::LogMessage, _>(
+                        move |params, cx| {
+                            weak_lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    lsp_store.add_language_server_log(
+                                        server_id,
+                                        MessageType::LOG,
+                                        &params.message,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        },
+                    ));
+                this.add_language_server(
+                    LanguageServerKind::Global,
+                    server.server_id(),
+                    Some(name),
+                    None,
+                    Some(server.clone()),
+                    cx,
+                );
+            }
+
+            Some(())
+        });
+    }
+    pub(crate) fn menu_items(&self, cx: &mut App) -> Option<Vec<LogMenuItem>> {
+        self.try_ensure_copilot_for_project(cx);
         let log_store = self.log_store.read(cx);
 
         let unknown_server = LanguageServerName::new_static("unknown server");
@@ -569,10 +568,10 @@ impl LspLogView {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
-                            })
+                            });
                         }
                     })
-                    .detach_and_log_err(cx);
+                    .detach();
                 });
 
             self.editor = editor;
@@ -740,7 +739,7 @@ impl Focusable for LspLogView {
 impl Item for LspLogView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -814,11 +813,12 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |e, cx| {
-            e.update_matches(matches, active_match_index, window, cx)
+            e.update_matches(matches, active_match_index, token, window, cx)
         })
     }
 
@@ -831,21 +831,24 @@ impl SearchableItem for LspLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, token, window, cx)
+        })
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor
-            .update(cx, |e, cx| e.select_matches(matches, window, cx))
+            .update(cx, |e, cx| e.select_matches(matches, token, window, cx))
     }
 
     fn find_matches(
@@ -862,6 +865,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -882,11 +886,12 @@ impl SearchableItem for LspLogView {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |e, cx| {
-            e.active_match_index(direction, matches, window, cx)
+            e.active_match_index(direction, matches, token, window, cx)
         })
     }
 }
@@ -1350,6 +1355,7 @@ impl ServerInfo {
                 binary: Some(server.binary().clone()),
                 configuration: Some(server.configuration().clone()),
                 workspace_folders: server.workspace_folders(),
+                process_id: server.process_id(),
             },
         }
     }

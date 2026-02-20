@@ -11,6 +11,7 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
         TaskTemplate {
             label: format!("run '{}'", VariableName::File.template_value()),
             command: VariableName::File.template_value(),
+            tags: vec!["bash-script".to_owned()],
             ..TaskTemplate::default()
         },
     ]))

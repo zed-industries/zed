@@ -8,7 +8,9 @@ use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
+use workspace::{Workspace, notifications::NotificationId};
 
+use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
@@ -68,6 +70,112 @@ pub fn assign_kernelspec(
     store.update(cx, |store, _cx| {
         store.insert_session(weak_editor.entity_id(), session.clone());
     });
+
+    Ok(())
+}
+
+pub fn install_ipykernel_and_assign(
+    kernel_specification: KernelSpecification,
+    weak_editor: WeakEntity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let KernelSpecification::PythonEnv(ref env_spec) = kernel_specification else {
+        return assign_kernelspec(kernel_specification, weak_editor, window, cx);
+    };
+
+    let python_path = env_spec.path.clone();
+    let env_name = env_spec.name.clone();
+    let env_spec = env_spec.clone();
+
+    struct IpykernelInstall;
+    let notification_id = NotificationId::unique::<IpykernelInstall>();
+
+    let workspace = Workspace::for_window(window, cx);
+    if let Some(workspace) = &workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(
+                    notification_id.clone(),
+                    format!("Installing ipykernel in {}...", env_name),
+                ),
+                cx,
+            );
+        });
+    }
+
+    let weak_workspace = workspace.map(|w| w.downgrade());
+    let window_handle = window.window_handle();
+
+    let install_task = cx.background_spawn(async move {
+        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
+            .args(&["-m", "pip", "install", "ipykernel"])
+            .output()
+            .await
+            .context("failed to run pip install ipykernel")?;
+
+        if output.status.success() {
+            anyhow::Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
+        }
+    });
+
+    cx.spawn(async move |cx| {
+        let result = install_task.await;
+
+        match result {
+            Ok(()) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!("ipykernel installed in {}", env_name),
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        let updated_spec =
+                            KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
+                                has_ipykernel: true,
+                                ..env_spec
+                            });
+                        assign_kernelspec(updated_spec, weak_editor, window, cx).ok();
+                    })
+                    .ok();
+            }
+            Err(error) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!(
+                                        "Failed to install ipykernel in {}: {}",
+                                        env_name, error
+                                    ),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+        }
+    })
+    .detach();
 
     Ok(())
 }
@@ -433,6 +541,36 @@ fn runnable_ranges(
     }
 
     let snippet_range = cell_range(buffer, range.start.row, range.end.row);
+
+    // Check if the snippet range is entirely blank, if so, skip forward to find code
+    let is_blank =
+        (snippet_range.start.row..=snippet_range.end.row).all(|row| buffer.is_line_blank(row));
+
+    if is_blank {
+        // Search forward for the next non-blank line
+        let max_row = buffer.max_point().row;
+        let mut next_row = snippet_range.end.row + 1;
+        while next_row <= max_row && buffer.is_line_blank(next_row) {
+            next_row += 1;
+        }
+
+        if next_row <= max_row {
+            // Found a non-blank line, find the extent of this cell
+            let next_snippet_range = cell_range(buffer, next_row, next_row);
+            let start_language = buffer.language_at(next_snippet_range.start);
+            let end_language = buffer.language_at(next_snippet_range.end);
+
+            if start_language
+                .zip(end_language)
+                .is_some_and(|(start, end)| start == end)
+            {
+                return (vec![next_snippet_range], None);
+            }
+        }
+
+        return (Vec::new(), None);
+    }
+
     let start_language = buffer.language_at(snippet_range.start);
     let end_language = buffer.language_at(snippet_range.end);
 
@@ -820,5 +958,77 @@ mod tests {
                 "#
             },]
         );
+    }
+
+    #[gpui::test]
+    fn test_skip_blank_lines_to_next_cell(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language.clone(), cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Selection on blank line should skip to next non-blank cell
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets, vec!["print(2 + 2)"]);
+
+        // Multiple blank lines should also skip forward
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+
+
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language.clone(), cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 0)..Point::new(2, 0), cx);
+        let snippets = snippets
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect::<String>())
+            .collect::<Vec<_>>();
+        assert_eq!(snippets, vec!["print(2 + 2)"]);
+
+        // Blank lines at end of file should return nothing
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
+        assert!(snippets.is_empty());
     }
 }

@@ -1,7 +1,7 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, CompletionMode};
+use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
@@ -23,12 +23,28 @@ pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
+/// Metadata about the git worktree associated with an agent thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentGitWorktreeInfo {
+    /// The branch name in the git worktree.
+    pub branch: String,
+    /// Absolute path to the git worktree on disk.
+    pub worktree_path: std::path::PathBuf,
+    /// The base branch/commit the worktree was created from.
+    pub base_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbThreadMetadata {
     pub id: acp::SessionId,
+    pub parent_session_id: Option<acp::SessionId>,
     #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    /// Denormalized from `DbThread::git_worktree_info.branch` for efficient
+    /// listing without decompressing thread data. The blob is the source of
+    /// truth; this column is populated on save for query convenience.
+    pub worktree_branch: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,9 +63,66 @@ pub struct DbThread {
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
-    pub completion_mode: Option<CompletionMode>,
-    #[serde(default)]
     pub profile: Option<AgentProfileId>,
+    #[serde(default)]
+    pub imported: bool,
+    #[serde(default)]
+    pub subagent_context: Option<crate::SubagentContext>,
+    #[serde(default)]
+    pub git_worktree_info: Option<AgentGitWorktreeInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedThread {
+    pub title: SharedString,
+    pub messages: Vec<DbMessage>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub model: Option<DbLanguageModel>,
+    pub version: String,
+}
+
+impl SharedThread {
+    pub const VERSION: &'static str = "1.0.0";
+
+    pub fn from_db_thread(thread: &DbThread) -> Self {
+        Self {
+            title: thread.title.clone(),
+            messages: thread.messages.clone(),
+            updated_at: thread.updated_at,
+            model: thread.model.clone(),
+            version: Self::VERSION.to_string(),
+        }
+    }
+
+    pub fn to_db_thread(self) -> DbThread {
+        DbThread {
+            title: format!("🔗 {}", self.title).into(),
+            messages: self.messages,
+            updated_at: self.updated_at,
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: Default::default(),
+            model: self.model,
+            profile: None,
+            imported: true,
+            subagent_context: None,
+            git_worktree_info: None,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        const COMPRESSION_LEVEL: i32 = 3;
+        let json = serde_json::to_vec(self)?;
+        let compressed = zstd::encode_all(json.as_slice(), COMPRESSION_LEVEL)?;
+        Ok(compressed)
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        let decompressed = zstd::decode_all(data)?;
+        Ok(serde_json::from_slice(&decompressed)?)
+    }
 }
 
 impl DbThread {
@@ -207,8 +280,10 @@ impl DbThread {
             cumulative_token_usage: thread.cumulative_token_usage,
             request_token_usage,
             model: thread.model,
-            completion_mode: thread.completion_mode,
             profile: thread.profile,
+            imported: false,
+            subagent_context: None,
+            git_worktree_info: None,
         })
     }
 }
@@ -306,6 +381,20 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN parent_id TEXT
+        "})
+        {
+            s().ok();
+        }
+
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN worktree_branch TEXT
+        "})
+        {
+            s().ok();
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -330,6 +419,14 @@ impl ThreadsDatabase {
 
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
+        let parent_id = thread
+            .subagent_context
+            .as_ref()
+            .map(|ctx| ctx.parent_thread_id.0.clone());
+        let worktree_branch = thread
+            .git_worktree_info
+            .as_ref()
+            .map(|info| info.branch.clone());
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -341,11 +438,19 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, parent_id, worktree_branch, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?, ?)
         "})?;
 
-        insert((id.0, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            parent_id,
+            worktree_branch,
+            title,
+            updated_at,
+            data_type,
+            data,
+        ))?;
 
         Ok(())
     }
@@ -356,19 +461,21 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let connection = connection.lock();
 
-            let mut select =
-                connection.select_bound::<(), (Arc<str>, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+            let mut select = connection
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, String, String)>(indoc! {"
+                SELECT id, parent_id, worktree_branch, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, summary, updated_at) in rows {
+            for (id, parent_id, worktree_branch, summary, updated_at) in rows {
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
+                    parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    worktree_branch,
                 });
             }
 
@@ -439,5 +546,301 @@ impl ThreadsDatabase {
 
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, TimeZone, Utc};
+    use collections::HashMap;
+    use gpui::TestAppContext;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_shared_thread_roundtrip() {
+        let original = SharedThread {
+            title: "Test Thread".into(),
+            messages: vec![],
+            updated_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            model: None,
+            version: SharedThread::VERSION.to_string(),
+        };
+
+        let bytes = original.to_bytes().expect("Failed to serialize");
+        let restored = SharedThread::from_bytes(&bytes).expect("Failed to deserialize");
+
+        assert_eq!(restored.title, original.title);
+        assert_eq!(restored.version, original.version);
+        assert_eq!(restored.updated_at, original.updated_at);
+    }
+
+    #[test]
+    fn test_imported_flag_defaults_to_false() {
+        // Simulate deserializing a thread without the imported field (backwards compatibility).
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            !db_thread.imported,
+            "Legacy threads without imported field should default to false"
+        );
+    }
+
+    fn session_id(value: &str) -> acp::SessionId {
+        acp::SessionId::new(Arc::<str>::from(value))
+    }
+
+    fn make_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
+        DbThread {
+            title: title.to_string().into(),
+            messages: Vec::new(),
+            updated_at,
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: HashMap::default(),
+            model: None,
+            profile: None,
+            imported: false,
+            subagent_context: None,
+            git_worktree_info: None,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_list_threads_orders_by_updated_at(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let older_id = session_id("thread-a");
+        let newer_id = session_id("thread-b");
+
+        let older_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let newer_thread = make_thread(
+            "Thread B",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(older_id.clone(), older_thread)
+            .await
+            .unwrap();
+        database
+            .save_thread(newer_id.clone(), newer_thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, newer_id);
+        assert_eq!(entries[1].id, older_id);
+    }
+
+    #[gpui::test]
+    async fn test_save_thread_replaces_metadata(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-a");
+        let original_thread = make_thread(
+            "Thread A",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let updated_thread = make_thread(
+            "Thread B",
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), original_thread)
+            .await
+            .unwrap();
+        database
+            .save_thread(thread_id.clone(), updated_thread)
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, thread_id);
+        assert_eq!(entries[0].title.as_ref(), "Thread B");
+        assert_eq!(
+            entries[0].updated_at,
+            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_subagent_context_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.subagent_context.is_none(),
+            "Legacy threads without subagent_context should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_subagent_context_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let parent_id = session_id("parent-thread");
+        let child_id = session_id("child-thread");
+
+        let mut child_thread = make_thread(
+            "Subagent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        child_thread.subagent_context = Some(crate::SubagentContext {
+            parent_thread_id: parent_id.clone(),
+            depth: 2,
+        });
+
+        database
+            .save_thread(child_id.clone(), child_thread)
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(child_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+
+        let context = loaded
+            .subagent_context
+            .expect("subagent_context should be restored");
+        assert_eq!(context.parent_thread_id, parent_id);
+        assert_eq!(context.depth, 2);
+    }
+
+    #[gpui::test]
+    async fn test_non_subagent_thread_has_no_subagent_context(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("regular-thread");
+        let thread = make_thread(
+            "Regular Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread)
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+
+        assert!(
+            loaded.subagent_context.is_none(),
+            "Regular threads should have no subagent_context"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_git_worktree_info_roundtrip(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("worktree-thread");
+        let mut thread = make_thread(
+            "Worktree Thread",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+        thread.git_worktree_info = Some(AgentGitWorktreeInfo {
+            branch: "zed/agent/a4Xiu".to_string(),
+            worktree_path: std::path::PathBuf::from("/repo/worktrees/zed/agent/a4Xiu"),
+            base_ref: "main".to_string(),
+        });
+
+        database
+            .save_thread(thread_id.clone(), thread)
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+
+        let info = loaded
+            .git_worktree_info
+            .expect("git_worktree_info should be restored");
+        assert_eq!(info.branch, "zed/agent/a4Xiu");
+        assert_eq!(
+            info.worktree_path,
+            std::path::PathBuf::from("/repo/worktrees/zed/agent/a4Xiu")
+        );
+        assert_eq!(info.base_ref, "main");
+    }
+
+    #[gpui::test]
+    async fn test_session_list_includes_worktree_meta(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        // Save a thread with worktree info
+        let worktree_id = session_id("wt-thread");
+        let mut worktree_thread = make_thread(
+            "With Worktree",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+        worktree_thread.git_worktree_info = Some(AgentGitWorktreeInfo {
+            branch: "zed/agent/bR9kz".to_string(),
+            worktree_path: std::path::PathBuf::from("/repo/worktrees/zed/agent/bR9kz"),
+            base_ref: "develop".to_string(),
+        });
+
+        database
+            .save_thread(worktree_id.clone(), worktree_thread)
+            .await
+            .unwrap();
+
+        // Save a thread without worktree info
+        let plain_id = session_id("plain-thread");
+        let plain_thread = make_thread(
+            "Without Worktree",
+            Utc.with_ymd_and_hms(2024, 6, 15, 11, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(plain_id.clone(), plain_thread)
+            .await
+            .unwrap();
+
+        // List threads and verify worktree_branch is populated correctly
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 2);
+
+        let wt_entry = threads
+            .iter()
+            .find(|t| t.id == worktree_id)
+            .expect("should find worktree thread");
+        assert_eq!(wt_entry.worktree_branch.as_deref(), Some("zed/agent/bR9kz"));
+
+        let plain_entry = threads
+            .iter()
+            .find(|t| t.id == plain_id)
+            .expect("should find plain thread");
+        assert!(
+            plain_entry.worktree_branch.is_none(),
+            "plain thread should have no worktree_branch"
+        );
     }
 }

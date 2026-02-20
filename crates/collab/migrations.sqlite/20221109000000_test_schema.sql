@@ -4,9 +4,6 @@ CREATE TABLE "users" (
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
     "name" TEXT,
-    "invite_code" VARCHAR(64),
-    "invite_count" INTEGER NOT NULL DEFAULT 0,
-    "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
@@ -18,20 +15,9 @@ CREATE TABLE "users" (
 
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 
-CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
-
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 
 CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
-
-CREATE TABLE "access_tokens" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
-    "impersonated_user_id" INTEGER REFERENCES users (id),
-    "hash" VARCHAR(128)
-);
-
-CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
 
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,6 +137,7 @@ CREATE TABLE "worktree_settings_files" (
     "path" VARCHAR NOT NULL,
     "content" TEXT,
     "kind" VARCHAR,
+    "outside_worktree" BOOL NOT NULL DEFAULT FALSE,
     PRIMARY KEY (project_id, worktree_id, path),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -356,26 +343,6 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
     "connection_server_id"
 );
 
-CREATE TABLE "feature_flags" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "flag" TEXT NOT NULL UNIQUE,
-    "enabled_for_all" BOOLEAN NOT NULL DEFAULT false
-);
-
-CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");
-
-CREATE TABLE "user_features" (
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    "feature_id" INTEGER NOT NULL REFERENCES feature_flags (id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, feature_id)
-);
-
-CREATE UNIQUE INDEX "index_user_features_user_id_and_feature_id" ON "user_features" ("user_id", "feature_id");
-
-CREATE INDEX "index_user_features_on_user_id" ON "user_features" ("user_id");
-
-CREATE INDEX "index_user_features_on_feature_id" ON "user_features" ("feature_id");
-
 CREATE TABLE "observed_buffer_edits" (
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
@@ -460,3 +427,14 @@ CREATE TABLE IF NOT EXISTS "breakpoints" (
 );
 
 CREATE INDEX "index_breakpoints_on_project_id" ON "breakpoints" ("project_id");
+
+CREATE TABLE IF NOT EXISTS "shared_threads" (
+    "id" TEXT PRIMARY KEY NOT NULL,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "title" VARCHAR(512) NOT NULL,
+    "data" BLOB NOT NULL,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX "index_shared_threads_user_id" ON "shared_threads" ("user_id");

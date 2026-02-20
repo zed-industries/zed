@@ -59,7 +59,9 @@ impl DebugAdapterClient {
 
     pub fn should_reconnect_for_ssh(&self) -> bool {
         self.transport_delegate.tcp_arguments().is_some()
-            && self.binary.command.as_deref() == Some("ssh")
+            && (self.binary.command.as_deref() == Some("ssh")
+                || (cfg!(feature = "test-support")
+                    && self.binary.command.as_deref() == Some("mock")))
     }
 
     pub async fn connect(

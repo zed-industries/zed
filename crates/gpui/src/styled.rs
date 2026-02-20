@@ -271,6 +271,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the element to stretch flex items to fill the available space along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-items#stretch)
+    fn items_stretch(mut self) -> Self {
+        self.style().align_items = Some(AlignItems::Stretch);
+        self
+    }
+
     /// Sets the element to justify flex items against the start of the container's main axis.
     /// [Docs](https://tailwindcss.com/docs/justify-content#start)
     fn justify_start(mut self) -> Self {

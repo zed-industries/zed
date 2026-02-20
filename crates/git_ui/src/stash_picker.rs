@@ -29,10 +29,6 @@ actions!(
     ]
 );
 
-pub fn register(workspace: &mut Workspace) {
-    workspace.register_action(open);
-}
-
 pub fn open(
     workspace: &mut Workspace,
     _: &zed_actions::git::ViewStash,
@@ -44,6 +40,16 @@ pub fn open(
     workspace.toggle_modal(window, cx, |window, cx| {
         StashList::new(repository, weak_workspace, rems(34.), window, cx)
     })
+}
+
+pub fn create_embedded(
+    repository: Option<Entity<Repository>>,
+    workspace: WeakEntity<Workspace>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<StashList>,
+) -> StashList {
+    StashList::new_embedded(repository, workspace, width, window, cx)
 }
 
 pub struct StashList {
@@ -58,6 +64,22 @@ impl StashList {
         repository: Option<Entity<Repository>>,
         workspace: WeakEntity<Workspace>,
         width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, false, window, cx);
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    fn new_inner(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -103,15 +125,15 @@ impl StashList {
         .detach_and_log_err(cx);
 
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
         });
-
-        _subscriptions.push(cx.subscribe(&picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
 
         Self {
             picker,
@@ -121,7 +143,22 @@ impl StashList {
         }
     }
 
-    fn handle_drop_stash(
+    fn new_embedded(
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(repository, workspace, width, true, window, cx);
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    pub fn handle_drop_stash(
         &mut self,
         _: &DropStashItem,
         window: &mut Window,
@@ -135,7 +172,7 @@ impl StashList {
         cx.notify();
     }
 
-    fn handle_show_stash(
+    pub fn handle_show_stash(
         &mut self,
         _: &ShowStashItem,
         window: &mut Window,
@@ -146,10 +183,11 @@ impl StashList {
                 .delegate
                 .show_stash_at(picker.delegate.selected_index(), window, cx);
         });
-        cx.notify();
+
+        cx.emit(DismissEvent);
     }
 
-    fn handle_modifiers_changed(
+    pub fn handle_modifiers_changed(
         &mut self,
         ev: &ModifiersChangedEvent,
         _: &mut Window,
@@ -246,7 +284,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_drop(Some(stash_index), cx))
                 .await??;
             Ok(())
         })
@@ -281,7 +319,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_pop(Some(stash_index), cx))
                 .await?;
             Ok(())
         })
@@ -297,7 +335,7 @@ impl StashListDelegate {
         };
 
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))?
+            repo.update(cx, |repo, cx| repo.stash_apply(Some(stash_index), cx))
                 .await?;
             Ok(())
         })
@@ -543,5 +581,96 @@ impl PickerDelegate for StashListDelegate {
                 )
                 .into_any(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use git::{Oid, stash::StashEntry};
+    use gpui::{TestAppContext, VisualTestContext, rems};
+    use picker::PickerDelegate;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+
+            theme::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        })
+    }
+
+    /// Convenience function for creating `StashEntry` instances during tests.
+    /// Feel free to update in case you need to provide extra fields.
+    fn stash_entry(index: usize, message: &str, branch: Option<&str>) -> StashEntry {
+        let oid = Oid::from_str(&format!("{:0>40x}", index)).unwrap();
+
+        StashEntry {
+            index,
+            oid,
+            message: message.to_string(),
+            branch: branch.map(Into::into),
+            timestamp: 1000 - index as i64,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_show_stash_dismisses(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
+        let workspace = multi_workspace
+            .update(cx, |workspace, _, _| workspace.workspace().clone())
+            .unwrap();
+        let stash_entries = vec![
+            stash_entry(0, "stash #0", Some("main")),
+            stash_entry(1, "stash #1", Some("develop")),
+        ];
+
+        let stash_list = workspace.update_in(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
+
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                StashList::new(None, weak_workspace, rems(34.), window, cx)
+            });
+
+            assert!(workspace.active_modal::<StashList>(cx).is_some());
+            workspace.active_modal::<StashList>(cx).unwrap()
+        });
+
+        cx.run_until_parked();
+        stash_list.update(cx, |stash_list, cx| {
+            stash_list.picker.update(cx, |picker, _| {
+                picker.delegate.all_stash_entries = Some(stash_entries);
+            });
+        });
+
+        stash_list
+            .update_in(cx, |stash_list, window, cx| {
+                stash_list.picker.update(cx, |picker, cx| {
+                    picker.delegate.update_matches(String::new(), window, cx)
+                })
+            })
+            .await;
+
+        cx.run_until_parked();
+        stash_list.update_in(cx, |stash_list, window, cx| {
+            assert_eq!(stash_list.picker.read(cx).delegate.matches.len(), 2);
+            stash_list.handle_show_stash(&Default::default(), window, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<StashList>(cx).is_none());
+        });
     }
 }

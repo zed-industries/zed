@@ -30,6 +30,8 @@ secret!(AZURE_SIGNING_CLIENT_ID);
 secret!(AZURE_SIGNING_CLIENT_SECRET);
 secret!(AZURE_SIGNING_TENANT_ID);
 secret!(CACHIX_AUTH_TOKEN);
+secret!(CLUSTER_NAME);
+secret!(DIGITALOCEAN_ACCESS_TOKEN);
 secret!(DIGITALOCEAN_SPACES_ACCESS_KEY);
 secret!(DIGITALOCEAN_SPACES_SECRET_KEY);
 secret!(GITHUB_TOKEN);
@@ -46,6 +48,9 @@ secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
 secret!(VERCEL_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
+secret!(R2_ACCOUNT_ID);
+secret!(R2_ACCESS_KEY_ID);
+secret!(R2_SECRET_ACCESS_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -218,6 +223,7 @@ pub struct WorkflowInput {
     pub input_type: &'static str,
     pub name: &'static str,
     pub default: Option<String>,
+    pub description: Option<String>,
 }
 
 impl WorkflowInput {
@@ -226,6 +232,7 @@ impl WorkflowInput {
             input_type: "string",
             name,
             default,
+            description: None,
         }
     }
 
@@ -234,12 +241,21 @@ impl WorkflowInput {
             input_type: "boolean",
             name,
             default: default.as_ref().map(ToString::to_string),
+            description: None,
         }
+    }
+
+    pub fn description(mut self, description: impl ToString) -> Self {
+        self.description = Some(description.to_string());
+        self
     }
 
     pub fn input(&self) -> WorkflowDispatchInput {
         WorkflowDispatchInput {
-            description: self.name.to_owned(),
+            description: self
+                .description
+                .clone()
+                .unwrap_or_else(|| self.name.to_owned()),
             required: self.default.is_none(),
             input_type: self.input_type.to_owned(),
             default: self.default.clone(),
@@ -326,6 +342,8 @@ pub mod assets {
     pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
     pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
     pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
+    pub const REMOTE_SERVER_WINDOWS_AARCH64: &str = "zed-remote-server-windows-aarch64.zip";
+    pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "zed-remote-server-windows-x86_64.zip";
 
     pub fn all() -> Vec<&'static str> {
         vec![
@@ -339,6 +357,8 @@ pub mod assets {
             REMOTE_SERVER_MAC_X86_64,
             REMOTE_SERVER_LINUX_AARCH64,
             REMOTE_SERVER_LINUX_X86_64,
+            REMOTE_SERVER_WINDOWS_AARCH64,
+            REMOTE_SERVER_WINDOWS_X86_64,
         ]
     }
 }
