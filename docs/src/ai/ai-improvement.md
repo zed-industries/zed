@@ -1,3 +1,8 @@
+---
+title: AI Improvement and Data Collection - Zed
+description: Zed's opt-in approach to AI data collection for improving the agent panel and edit predictions.
+---
+
 # Zed AI Improvement
 
 ## Agent Panel
@@ -39,7 +44,7 @@ This data includes:
 
 ### Data Handling
 
-Collected data is stored in Snowflake, a private database where we track other metrics. We periodically review this data to improve our overall agentic approach and refine the product via our system prompt, tool use, etc. We ensure any included data is anonymized and contains no sensitive information (access tokens, user IDs, email addresses, etc).
+Collected data is stored in Snowflake, a private database. We periodically review this data to refine the agent's system prompt and tool use. All data is anonymized and stripped of sensitive information (access tokens, user IDs, email addresses).
 
 ## Edit Predictions
 
@@ -51,7 +56,7 @@ Users who are working on open source licensed projects may optionally opt-in to 
 
 When working on other projects where you haven't opted-in, Zed will not persistently store user content or use user content for training of its models.
 
-You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/zeta/src/license_detection.rs).
+You can see exactly how Zed detects open source licenses in: [license_detection.rs](https://github.com/zed-industries/zed/blob/main/crates/edit_prediction/src/license_detection.rs).
 
 ### Exclusions
 
@@ -77,7 +82,7 @@ You can inspect this exclusion list by opening `zed: open default settings` from
 }
 ```
 
-Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/configuring-zed#edit-predictions) in their Zed settings.json:
+Users may explicitly exclude additional paths and/or file extensions by adding them to [`edit_predictions.disabled_globs`](https://zed.dev/docs/reference/all-settings#edit-predictions) in their Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
 {
@@ -93,6 +98,7 @@ For open source projects where you have opted-in, Zed may store copies of reques
 
 This data includes:
 
+- sampled edit prediction examples (cursor context + recent diffs/edits) for offline evaluation
 - the edit prediction
 - a portion of the buffer content around the cursor
 - a few recent edits
@@ -101,7 +107,7 @@ This data includes:
 
 ### Data Handling
 
-Collected data is stored in Snowflake, a private database where we track other metrics. We periodically review this data to select training samples for inclusion in our model training dataset. We ensure any included data is anonymized and contains no sensitive information (access tokens, user IDs, email addresses, etc). This training dataset is publicly available at [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
+Collected data is stored in Snowflake, a private database. We periodically select training samples from this data. All data is anonymized and stripped of sensitive information (access tokens, user IDs, email addresses). The training dataset is publicly available at [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
 
 ### Model Output
 

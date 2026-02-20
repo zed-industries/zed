@@ -267,7 +267,9 @@ impl SecurityModal {
     }
 
     fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
-        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+        if let Some((trusted_worktrees, worktree_store)) =
+            TrustedWorktrees::try_get_global(cx).zip(self.worktree_store.upgrade())
+        {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 let mut paths_to_trust = self
                     .restricted_paths
@@ -288,7 +290,7 @@ impl SecurityModal {
                         },
                     ));
                 }
-                trusted_worktrees.trust(paths_to_trust, self.remote_host.clone(), cx);
+                trusted_worktrees.trust(&worktree_store, paths_to_trust, cx);
             });
         }
 
@@ -305,7 +307,7 @@ impl SecurityModal {
             if let Some(worktree_store) = self.worktree_store.upgrade() {
                 let new_restricted_worktrees = trusted_worktrees
                     .read(cx)
-                    .restricted_worktrees(worktree_store.read(cx), cx)
+                    .restricted_worktrees(&worktree_store, cx)
                     .into_iter()
                     .filter_map(|(worktree_id, abs_path)| {
                         let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;

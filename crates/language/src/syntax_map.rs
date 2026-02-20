@@ -4,7 +4,6 @@ mod syntax_map_tests;
 use crate::{
     Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
-use anyhow::Context as _;
 use collections::HashMap;
 use futures::FutureExt;
 use gpui::SharedString;
@@ -13,15 +12,16 @@ use std::{
     cmp::{self, Ordering, Reverse},
     collections::BinaryHeap,
     fmt, iter,
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{
     Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
-    QueryPredicateArg, Tree,
+    QueryPredicateArg,
 };
 
 pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
@@ -117,7 +117,7 @@ impl SyntaxLayerContent {
         }
     }
 
-    fn tree(&self) -> Option<&Tree> {
+    fn tree(&self) -> Option<&tree_sitter::Tree> {
         match self {
             SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
             SyntaxLayerContent::Pending { .. } => None,
@@ -133,7 +133,7 @@ pub struct SyntaxLayer<'a> {
     pub language: &'a Arc<Language>,
     pub included_sub_ranges: Option<&'a [Range<Anchor>]>,
     pub(crate) depth: usize,
-    tree: &'a Tree,
+    tree: &'a tree_sitter::Tree,
     pub(crate) offset: (usize, tree_sitter::Point),
 }
 
@@ -296,6 +296,7 @@ impl SyntaxSnapshot {
         self.update_count
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
         let edits = text
             .anchored_edits_since::<Dimensions<usize, Point>>(&self.interpolated_version)
@@ -415,17 +416,47 @@ impl SyntaxSnapshot {
         self.layers = layers;
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn reparse(
         &mut self,
         text: &BufferSnapshot,
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
     ) {
+        self.reparse_(text, registry, root_language, None).ok();
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub fn reparse_with_timeout(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        budget: Duration,
+    ) -> Result<(), ParseTimeout> {
+        self.reparse_(text, registry, root_language, Some(budget))
+    }
+
+    #[ztracing::instrument(skip_all, fields(lang = root_language.config.name.0.as_str()))]
+    fn reparse_(
+        &mut self,
+        text: &BufferSnapshot,
+        registry: Option<Arc<LanguageRegistry>>,
+        root_language: Arc<Language>,
+        mut budget: Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
+        let budget = &mut budget;
         let edit_ranges = text
             .edits_since::<usize>(&self.parsed_version)
             .map(|edit| edit.new)
             .collect::<Vec<_>>();
-        self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
+        self.reparse_with_ranges(
+            text,
+            root_language.clone(),
+            edit_ranges,
+            registry.as_ref(),
+            budget,
+        )?;
 
         if let Some(registry) = registry
             && registry.version() != self.language_registry_version
@@ -460,21 +491,25 @@ impl SyntaxSnapshot {
                     root_language,
                     resolved_injection_ranges,
                     Some(&registry),
-                );
+                    budget,
+                )?;
             }
             self.language_registry_version = registry.version();
         }
 
         self.update_count += 1;
+        Ok(())
     }
 
+    #[ztracing::instrument(skip_all)]
     fn reparse_with_ranges(
         &mut self,
         text: &BufferSnapshot,
         root_language: Arc<Language>,
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
-    ) {
+        budget: &mut Option<Duration>,
+    ) -> Result<(), ParseTimeout> {
         log::trace!(
             "reparse. invalidated ranges:{:?}",
             LogOffsetRanges(&invalidated_ranges, text),
@@ -669,12 +704,16 @@ impl SyntaxSnapshot {
                             text.as_rope(),
                             step_start_byte,
                             &included_ranges,
-                            Some(old_tree.clone()),
+                            Some(old_tree),
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -723,11 +762,15 @@ impl SyntaxSnapshot {
                             step_start_byte,
                             &included_ranges,
                             None,
+                            budget,
                         );
                         match result {
                             Ok(t) => tree = t,
+                            Err(e) if e.downcast_ref::<ParseTimeout>().is_some() => {
+                                return Err(ParseTimeout);
+                            }
                             Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
+                                log::error!("error parsing text: {e:?}");
                                 continue;
                             }
                         };
@@ -738,7 +781,26 @@ impl SyntaxSnapshot {
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        for range in &changed_ranges {
+                        // Handle invalidation and reactivation of injections on comment update
+                        let mut expanded_ranges: Vec<_> = changed_ranges
+                            .iter()
+                            .map(|range| {
+                                let start_row = range.start.to_point(text).row.saturating_sub(1);
+                                let end_row = range.end.to_point(text).row.saturating_add(2);
+                                text.point_to_offset(Point::new(start_row, 0))
+                                    ..text.point_to_offset(Point::new(end_row, 0)).min(text.len())
+                            })
+                            .collect();
+                        expanded_ranges.sort_unstable_by_key(|r| r.start);
+                        expanded_ranges.dedup_by(|b, a| {
+                            let overlaps = b.start <= a.end;
+                            if overlaps {
+                                a.end = a.end.max(b.end);
+                            }
+                            overlaps
+                        });
+
+                        for range in &expanded_ranges {
                             changed_regions.insert(
                                 ChangedRegion {
                                     depth: step.depth + 1,
@@ -758,7 +820,7 @@ impl SyntaxSnapshot {
                             ),
                             registry,
                             step.depth + 1,
-                            &changed_ranges,
+                            &expanded_ranges,
                             &mut combined_injection_ranges,
                             &mut queue,
                         );
@@ -805,6 +867,7 @@ impl SyntaxSnapshot {
         self.parsed_version = text.version.clone();
         #[cfg(debug_assertions)]
         self.check_invariants(text);
+        Ok(())
     }
 
     #[cfg(debug_assertions)]
@@ -846,7 +909,7 @@ impl SyntaxSnapshot {
     pub fn single_tree_captures<'a>(
         range: Range<usize>,
         text: &'a Rope,
-        tree: &'a Tree,
+        tree: &'a tree_sitter::Tree,
         language: &'a Arc<Language>,
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
@@ -908,6 +971,30 @@ impl SyntaxSnapshot {
             query,
             options,
         )
+    }
+
+    pub fn languages<'a>(
+        &'a self,
+        buffer: &'a BufferSnapshot,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = &'a Arc<Language>> {
+        let mut cursor = self.layers.cursor::<()>(buffer);
+        cursor.next();
+        iter::from_fn(move || {
+            while let Some(layer) = cursor.item() {
+                let mut info = None;
+                if let SyntaxLayerContent::Parsed { language, .. } = &layer.content {
+                    if include_hidden || !language.config.hidden {
+                        info = Some(language);
+                    }
+                }
+                cursor.next();
+                if info.is_some() {
+                    return info;
+                }
+            }
+            None
+        })
     }
 
     #[cfg(test)]
@@ -1372,14 +1459,42 @@ fn join_ranges(
     result
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct ParseTimeout;
+
+impl std::error::Error for ParseTimeout {}
+
+impl std::fmt::Display for ParseTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "parse timeout")
+    }
+}
+
+#[ztracing::instrument(skip_all)]
 fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
     ranges: &[tree_sitter::Range],
-    old_tree: Option<Tree>,
-) -> anyhow::Result<Tree> {
+    old_tree: Option<&tree_sitter::Tree>,
+    parse_budget: &mut Option<Duration>,
+) -> anyhow::Result<tree_sitter::Tree> {
     with_parser(|parser| {
+        let mut timed_out = false;
+        let now = Instant::now();
+        let mut progress_callback = parse_budget.map(|budget| {
+            let timed_out = &mut timed_out;
+            move |_: &_| {
+                let elapsed = now.elapsed();
+                if elapsed > budget {
+                    *timed_out = true;
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+        });
+
         let mut chunks = text.chunks_in_range(start_byte..text.len());
         parser.set_included_ranges(ranges)?;
         parser.set_language(&grammar.ts_language)?;
@@ -1389,13 +1504,26 @@ fn parse_text(
                     chunks.seek(start_byte + offset);
                     chunks.next().unwrap_or("").as_bytes()
                 },
-                old_tree.as_ref(),
-                None,
+                old_tree,
+                progress_callback
+                    .as_mut()
+                    .map(|progress_callback| tree_sitter::ParseOptions {
+                        progress_callback: Some(progress_callback),
+                    }),
             )
-            .context("failed to parse")
+            .inspect(|_| {
+                if let Some(parse_budget) = parse_budget {
+                    *parse_budget = parse_budget.saturating_sub(now.elapsed());
+                }
+            })
+            .ok_or_else(|| match timed_out {
+                true => anyhow::anyhow!(ParseTimeout),
+                false => anyhow::anyhow!("parsing failed"),
+            })
     })
 }
 
+#[ztracing::instrument(skip_all)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,
@@ -1627,6 +1755,7 @@ pub(crate) fn splice_included_ranges(
 /// different lines. For performance, only iterate through the given range of
 /// indices. All of the ranges in the array are relative to a given start byte
 /// and point.
+#[ztracing::instrument(skip_all)]
 fn insert_newlines_between_ranges(
     indices: Range<usize>,
     ranges: &mut Vec<tree_sitter::Range>,

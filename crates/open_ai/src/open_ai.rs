@@ -1,3 +1,6 @@
+pub mod batches;
+pub mod responses;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
@@ -60,15 +63,8 @@ pub enum Model {
     Four,
     #[serde(rename = "gpt-4-turbo")]
     FourTurbo,
-    #[serde(rename = "gpt-4o")]
-    #[default]
-    FourOmni,
     #[serde(rename = "gpt-4o-mini")]
     FourOmniMini,
-    #[serde(rename = "gpt-4.1")]
-    FourPointOne,
-    #[serde(rename = "gpt-4.1-mini")]
-    FourPointOneMini,
     #[serde(rename = "gpt-4.1-nano")]
     FourPointOneNano,
     #[serde(rename = "o1")]
@@ -77,11 +73,12 @@ pub enum Model {
     O3Mini,
     #[serde(rename = "o3")]
     O3,
-    #[serde(rename = "o4-mini")]
-    O4Mini,
     #[serde(rename = "gpt-5")]
     Five,
+    #[serde(rename = "gpt-5-codex")]
+    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
+    #[default]
     FiveMini,
     #[serde(rename = "gpt-5-nano")]
     FiveNano,
@@ -89,6 +86,8 @@ pub enum Model {
     FivePointOne,
     #[serde(rename = "gpt-5.2")]
     FivePointTwo,
+    #[serde(rename = "gpt-5.2-codex")]
+    FivePointTwoCodex,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -98,13 +97,18 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
         reasoning_effort: Option<ReasoningEffort>,
+        #[serde(default = "default_supports_chat_completions")]
+        supports_chat_completions: bool,
     },
+}
+
+const fn default_supports_chat_completions() -> bool {
+    true
 }
 
 impl Model {
     pub fn default_fast() -> Self {
-        // TODO: Replace with FiveMini since all other models are deprecated
-        Self::FourPointOneMini
+        Self::FiveMini
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
@@ -112,20 +116,18 @@ impl Model {
             "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
-            "gpt-4o" => Ok(Self::FourOmni),
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
-            "gpt-4.1" => Ok(Self::FourPointOne),
-            "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
             "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
-            "o4-mini" => Ok(Self::O4Mini),
             "gpt-5" => Ok(Self::Five),
+            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             "gpt-5.1" => Ok(Self::FivePointOne),
             "gpt-5.2" => Ok(Self::FivePointTwo),
+            "gpt-5.2-codex" => Ok(Self::FivePointTwoCodex),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -135,20 +137,18 @@ impl Model {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
-            Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOne => "gpt-4.1",
-            Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
-            Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
             Self::Custom { name, .. } => name,
         }
     }
@@ -158,23 +158,19 @@ impl Model {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
-            Self::FourOmni => "gpt-4o",
             Self::FourOmniMini => "gpt-4o-mini",
-            Self::FourPointOne => "gpt-4.1",
-            Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
-            Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::FivePointOne => "gpt-5.1",
             Self::FivePointTwo => "gpt-5.2",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
+            Self::FivePointTwoCodex => "gpt-5.2-codex",
+            Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
 
@@ -183,20 +179,18 @@ impl Model {
             Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
             Self::FourTurbo => 128_000,
-            Self::FourOmni => 128_000,
             Self::FourOmniMini => 128_000,
-            Self::FourPointOne => 1_047_576,
-            Self::FourPointOneMini => 1_047_576,
             Self::FourPointOneNano => 1_047_576,
             Self::O1 => 200_000,
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
-            Self::O4Mini => 200_000,
             Self::Five => 272_000,
+            Self::FiveCodex => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
             Self::FivePointOne => 400_000,
             Self::FivePointTwo => 400_000,
+            Self::FivePointTwoCodex => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -209,20 +203,18 @@ impl Model {
             Self::ThreePointFiveTurbo => Some(4_096),
             Self::Four => Some(8_192),
             Self::FourTurbo => Some(4_096),
-            Self::FourOmni => Some(16_384),
             Self::FourOmniMini => Some(16_384),
-            Self::FourPointOne => Some(32_768),
-            Self::FourPointOneMini => Some(32_768),
             Self::FourPointOneNano => Some(32_768),
             Self::O1 => Some(100_000),
             Self::O3Mini => Some(100_000),
             Self::O3 => Some(100_000),
-            Self::O4Mini => Some(100_000),
             Self::Five => Some(128_000),
+            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
             Self::FivePointOne => Some(128_000),
             Self::FivePointTwo => Some(128_000),
+            Self::FivePointTwoCodex => Some(128_000),
         }
     }
 
@@ -235,6 +227,17 @@ impl Model {
         }
     }
 
+    pub fn supports_chat_completions(&self) -> bool {
+        match self {
+            Self::Custom {
+                supports_chat_completions,
+                ..
+            } => *supports_chat_completions,
+            Self::FiveCodex | Self::FivePointTwoCodex => false,
+            _ => true,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -243,17 +246,16 @@ impl Model {
             Self::ThreePointFiveTurbo
             | Self::Four
             | Self::FourTurbo
-            | Self::FourOmni
             | Self::FourOmniMini
-            | Self::FourPointOne
-            | Self::FourPointOneMini
             | Self::FourPointOneNano
             | Self::Five
+            | Self::FiveCodex
             | Self::FiveMini
             | Self::FivePointOne
             | Self::FivePointTwo
+            | Self::FivePointTwoCodex
             | Self::FiveNano => true,
-            Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
+            Self::O1 | Self::O3 | Self::O3Mini | Model::Custom { .. } => false,
         }
     }
 
@@ -428,6 +430,8 @@ pub struct ResponseMessageDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -490,6 +494,52 @@ pub enum ResponseStreamResult {
 pub struct ResponseStreamEvent {
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
+}
+
+pub async fn non_streaming_completion(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+) -> Result<Response, RequestError> {
+    let uri = format!("{api_url}/chat/completions");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        serde_json::from_str(&body).map_err(|e| RequestError::Other(e.into()))
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: "openai".to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
 }
 
 pub async fn stream_completion(

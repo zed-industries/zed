@@ -1,9 +1,16 @@
+mod extension;
+mod known_or_unknown;
+mod plan;
 mod timestamp;
 pub mod websocket_protocol;
 
-use cloud_llm_client::Plan;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+pub use crate::extension::*;
+pub use crate::known_or_unknown::*;
+pub use crate::plan::*;
 pub use crate::timestamp::Timestamp;
 
 pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
@@ -12,6 +19,8 @@ pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
 pub struct GetAuthenticatedUserResponse {
     pub user: AuthenticatedUser,
     pub feature_flags: Vec<String>,
+    #[serde(default)]
+    pub organizations: Vec<Organization>,
     pub plan: PlanInfo,
 }
 
@@ -26,29 +35,13 @@ pub struct AuthenticatedUser {
     pub accepted_tos_at: Option<Timestamp>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct OrganizationId(Arc<str>);
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlanInfo {
-    pub plan: cloud_llm_client::PlanV1,
-    #[serde(default)]
-    pub plan_v2: Option<cloud_llm_client::PlanV2>,
-    pub subscription_period: Option<SubscriptionPeriod>,
-    pub usage: cloud_llm_client::CurrentUsage,
-    pub trial_started_at: Option<Timestamp>,
-    pub is_usage_based_billing_enabled: bool,
-    pub is_account_too_young: bool,
-    pub has_overdue_invoices: bool,
-}
-
-impl PlanInfo {
-    pub fn plan(&self) -> Plan {
-        self.plan_v2.map(Plan::V2).unwrap_or(Plan::V1(self.plan))
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct SubscriptionPeriod {
-    pub started_at: Timestamp,
-    pub ended_at: Timestamp,
+pub struct Organization {
+    pub id: OrganizationId,
+    pub name: Arc<str>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -62,4 +55,32 @@ pub struct LlmToken(pub String);
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CreateLlmTokenResponse {
     pub token: LlmToken,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAgentThreadFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub agent: String,
+    pub session_id: String,
+    pub rating: String,
+    pub thread: serde_json::Value,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAgentThreadFeedbackCommentsBody {
+    pub organization_id: Option<OrganizationId>,
+    pub agent: String,
+    pub session_id: String,
+    pub comments: String,
+    pub thread: serde_json::Value,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub request_id: String,
+    pub rating: String,
+    pub inputs: serde_json::Value,
+    pub output: Option<String>,
+    pub feedback: String,
 }

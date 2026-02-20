@@ -137,8 +137,14 @@ impl Chunk {
         self.chars
     }
 
+    #[inline(always)]
     pub fn tabs(&self) -> Bitmap {
         self.tabs
+    }
+
+    #[inline(always)]
+    pub fn newlines(&self) -> Bitmap {
+        self.newlines
     }
 
     #[inline(always)]
@@ -168,7 +174,7 @@ impl Chunk {
         if self.is_char_boundary(offset) {
             return true;
         }
-        if PANIC {
+        if PANIC || cfg!(debug_assertions) {
             panic_char_boundary(&self.text, offset);
         } else {
             log_err_char_boundary(&self.text, offset);
@@ -501,7 +507,7 @@ impl<'a> ChunkSlice<'a> {
                     self.text
                 );
             }
-            return line.len();
+            return row_offset_range.end;
         }
 
         let mut offset = row_offset_range.start;
@@ -721,13 +727,14 @@ fn panic_char_boundary(text: &str, offset: usize) -> ! {
 #[inline(never)]
 #[track_caller]
 fn log_err_char_boundary(text: &str, offset: usize) {
-    if offset > text.len() {
+    if offset >= text.len() {
         log::error!(
             "byte index {} is out of bounds of `{:?}` (length: {})",
             offset,
             text,
             text.len()
         );
+        return;
     }
     // find the character
     let char_start = text.floor_char_boundary(offset);
@@ -1174,5 +1181,20 @@ mod tests {
 
         assert_eq!((max_row, max_chars as u32), (longest_row, longest_chars));
         assert_eq!(chunk.tabs().collect::<Vec<_>>(), expected_tab_positions);
+    }
+
+    #[gpui::test]
+    fn test_point_utf16_to_offset_clips_to_correct_absolute_offset() {
+        let text = "abc\nde";
+        let chunk = Chunk::new(text);
+        let slice = chunk.as_slice();
+
+        // Clipping on row 0 (row_offset_range.start == 0, so relative == absolute)
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(0, 99), true), 3,);
+
+        // Clipping on row 1 — this is the case that was buggy.
+        // Row 1 starts at byte offset 4 ("de" is bytes 4..6), so the
+        // clipped result must be 6, not 2.
+        assert_eq!(slice.point_utf16_to_offset(PointUtf16::new(1, 99), true), 6,);
     }
 }

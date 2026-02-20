@@ -28,6 +28,8 @@ pub fn derive_visual_context(input: TokenStream) -> TokenStream {
         impl #impl_generics gpui::VisualContext for #type_name #type_generics
         #where_clause
         {
+            type Result<T> = T;
+
             fn window_handle(&self) -> gpui::AnyWindowHandle {
                 self.#window_variable.window_handle()
             }
@@ -36,33 +38,33 @@ pub fn derive_visual_context(input: TokenStream) -> TokenStream {
                 &mut self,
                 entity: &gpui::Entity<T>,
                 update: impl FnOnce(&mut T, &mut gpui::Window, &mut gpui::Context<T>) -> R,
-            ) -> Self::Result<R> {
+            ) -> R {
                 gpui::AppContext::update_entity(self.#app_variable, entity, |entity, cx| update(entity, self.#window_variable, cx))
             }
 
             fn new_window_entity<T: 'static>(
                 &mut self,
                 build_entity: impl FnOnce(&mut gpui::Window, &mut gpui::Context<'_, T>) -> T,
-            ) -> Self::Result<gpui::Entity<T>> {
+            ) -> gpui::Entity<T> {
                 gpui::AppContext::new(self.#app_variable, |cx| build_entity(self.#window_variable, cx))
             }
 
             fn replace_root_view<V>(
                 &mut self,
                 build_view: impl FnOnce(&mut gpui::Window, &mut gpui::Context<V>) -> V,
-            ) -> Self::Result<gpui::Entity<V>>
+            ) -> gpui::Entity<V>
             where
                 V: 'static + gpui::Render,
             {
                 self.#window_variable.replace_root(self.#app_variable, build_view)
             }
 
-            fn focus<V>(&mut self, entity: &gpui::Entity<V>) -> Self::Result<()>
+            fn focus<V>(&mut self, entity: &gpui::Entity<V>)
             where
                 V: gpui::Focusable,
             {
                 let focus_handle = gpui::Focusable::focus_handle(entity, self.#app_variable);
-                self.#window_variable.focus(&focus_handle, self.#app_variable)
+                self.#window_variable.focus(&focus_handle, self.#app_variable);
             }
         }
     };

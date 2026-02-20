@@ -1,6 +1,11 @@
+---
+title: Key Bindings and Shortcuts - Zed
+description: Customize Zed's keyboard shortcuts. Rebind actions, create key sequences, and set context-specific bindings.
+---
+
 # Key bindings
 
-Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
+Zed's key binding system is fully customizable. You can rebind any action, create key sequences, and define context-specific bindings.
 
 ## Predefined Keymaps
 
@@ -198,7 +203,7 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 
 Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII character, then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts.
 
-We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much appreciated!
+We do not yet remap shortcuts so every built-in shortcut is typeable on every layout. If your layout cannot type some ASCII characters, you may need custom key bindings. We plan to improve this.
 
 ## Tips and tricks
 

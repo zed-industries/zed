@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{AnyElement, IntoElement};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToPoint};
 use serde::{Deserialize, Serialize};
@@ -331,34 +331,25 @@ impl CreaseMap {
         snapshot: &MultiBufferSnapshot,
     ) -> Vec<(CreaseId, Range<Anchor>)> {
         let mut removals = Vec::new();
+        let mut ids_to_remove = HashSet::default();
         for id in ids {
             if let Some(range) = self.id_to_range.remove(&id) {
-                removals.push((id, range.clone()));
+                ids_to_remove.insert(id);
+                removals.push((id, range));
             }
         }
-        removals.sort_unstable_by(|(a_id, a_range), (b_id, b_range)| {
-            AnchorRangeExt::cmp(a_range, b_range, snapshot).then(b_id.cmp(a_id))
-        });
 
-        self.snapshot.creases = {
-            let mut new_creases = SumTree::new(snapshot);
-            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
-
-            for (id, range) in &removals {
-                new_creases.append(cursor.slice(range, Bias::Left), snapshot);
-                while let Some(item) = cursor.item() {
-                    cursor.next();
-                    if item.id == *id {
-                        break;
-                    } else {
+        if !ids_to_remove.is_empty() {
+            self.snapshot.creases = {
+                let mut new_creases = SumTree::new(snapshot);
+                for item in self.snapshot.creases.iter() {
+                    if !ids_to_remove.contains(&item.id) {
                         new_creases.push(item.clone(), snapshot);
                     }
                 }
-            }
-
-            new_creases.append(cursor.suffix(), snapshot);
-            new_creases
-        };
+                new_creases
+            };
+        }
 
         removals
     }

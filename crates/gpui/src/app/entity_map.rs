@@ -11,7 +11,6 @@ use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    mem,
     num::NonZeroU64,
     sync::{
         Arc, Weak,
@@ -95,7 +94,7 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        let mut accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.insert(slot.entity_id);
 
         let handle = slot.0;
@@ -107,7 +106,7 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        let mut accessed_entities = self.accessed_entities.get_mut();
         accessed_entities.insert(pointer.entity_id);
 
         let entity = Some(
@@ -147,21 +146,20 @@ impl EntityMap {
 
     pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
         self.accessed_entities
-            .borrow_mut()
+            .get_mut()
             .extend(entities.iter().copied());
     }
 
     pub fn clear_accessed(&mut self) {
-        self.accessed_entities.borrow_mut().clear();
+        self.accessed_entities.get_mut().clear();
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
-        let mut ref_counts = self.ref_counts.write();
-        let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        let mut ref_counts = &mut *self.ref_counts.write();
+        let dropped_entity_ids = ref_counts.dropped_entity_ids.drain(..);
+        let mut accessed_entities = self.accessed_entities.get_mut();
 
         dropped_entity_ids
-            .into_iter()
             .filter_map(|entity_id| {
                 let count = ref_counts.counts.remove(entity_id).unwrap();
                 debug_assert_eq!(
@@ -431,11 +429,7 @@ impl<T: 'static> Entity<T> {
 
     /// Read the entity referenced by this handle with the given function.
     #[inline]
-    pub fn read_with<R, C: AppContext>(
-        &self,
-        cx: &C,
-        f: impl FnOnce(&T, &App) -> R,
-    ) -> C::Result<R> {
+    pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
@@ -445,18 +439,18 @@ impl<T: 'static> Entity<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> C::Result<R> {
+    ) -> R {
         cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
-    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> GpuiBorrow<'a, T> {
         cx.as_mut(self)
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) {
         self.update(cx, |entity, cx| {
             *entity = value;
             cx.notify();
@@ -465,7 +459,7 @@ impl<T: 'static> Entity<T> {
 
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
-    /// Returns an error if the entity has been released.
+    /// Returns an error if the window has been closed.
     #[inline]
     pub fn update_in<R, C: VisualContext>(
         &self,
@@ -749,13 +743,9 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.update_entity(&this, update)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.update_entity(&entity, update))
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -768,14 +758,13 @@ impl<T: 'static> WeakEntity<T> {
     ) -> Result<R>
     where
         C: VisualContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().context("entity released")?;
+        let entity = self.upgrade().context("entity released")?;
 
-        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
-            this.update(cx, |entity, cx| update(entity, window, cx))
-        }))
+        window.update(cx, |_, window, cx| {
+            entity.update(cx, |entity, cx| update(entity, window, cx))
+        })
     }
 
     /// Reads the entity referenced by this handle with the given function if
@@ -784,13 +773,9 @@ impl<T: 'static> WeakEntity<T> {
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,
-        Result<C::Result<R>>: crate::Flatten<R>,
     {
-        crate::Flatten::flatten(
-            self.upgrade()
-                .context("entity released")
-                .map(|this| cx.read_entity(&this, read)),
-        )
+        let entity = self.upgrade().context("entity released")?;
+        Ok(cx.read_entity(&entity, read))
     }
 
     /// Create a new weak entity that can never be upgraded.

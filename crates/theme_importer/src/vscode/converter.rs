@@ -13,7 +13,7 @@ use super::ZedSyntaxToken;
 
 pub(crate) fn try_parse_font_weight(font_style: &str) -> Option<FontWeightContent> {
     match font_style {
-        style if style.contains("bold") => Some(FontWeightContent::Bold),
+        style if style.contains("bold") => Some(FontWeightContent::BOLD),
         _ => None,
     }
 }

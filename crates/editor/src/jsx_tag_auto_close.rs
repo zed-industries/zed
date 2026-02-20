@@ -311,15 +311,14 @@ pub(crate) fn refresh_enabled_in_any_buffer(
     editor.jsx_tag_auto_close_enabled_in_any_buffer = {
         let multi_buffer = multi_buffer.read(cx);
         let mut found_enabled = false;
-        multi_buffer.for_each_buffer(|buffer| {
+        multi_buffer.for_each_buffer(&mut |buffer| {
             if found_enabled {
                 return;
             }
 
             let buffer = buffer.read(cx);
             let snapshot = buffer.snapshot();
-            for syntax_layer in snapshot.syntax_layers() {
-                let language = syntax_layer.language;
+            for language in snapshot.syntax_layers_languages() {
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
@@ -443,7 +442,7 @@ pub(crate) fn handle_from(
                 };
             }
 
-            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot()).ok()?;
+            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot());
 
             let Some(edit_behavior_state) =
                 should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close_config)
@@ -567,11 +566,9 @@ pub(crate) fn handle_from(
                 }
             }
 
-            buffer
-                .update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                })
-                .ok()?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
 
             if any_selections_need_update {
                 let multi_buffer_snapshot = this

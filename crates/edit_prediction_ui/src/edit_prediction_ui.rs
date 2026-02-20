@@ -3,7 +3,7 @@ mod edit_prediction_context_view;
 mod rate_prediction_modal;
 
 use command_palette_hooks::CommandPaletteFilter;
-use edit_prediction::{ResetOnboarding, Zeta2FeatureFlag, capture_example};
+use edit_prediction::{EditPredictionStore, ResetOnboarding, Zeta2FeatureFlag, capture_example};
 use edit_prediction_context_view::EditPredictionContextView;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
@@ -16,7 +16,9 @@ use std::any::{Any as _, TypeId};
 use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
-pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
+pub use edit_prediction_button::{
+    EditPredictionButton, ToggleMenu, get_available_providers, set_completion_provider,
+};
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 
@@ -150,7 +152,17 @@ fn capture_example_as_markdown(
         .buffer()
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
-    let example = capture_example(project.clone(), buffer, cursor_anchor, true, cx)?;
+    let ep_store = EditPredictionStore::try_global(cx)?;
+    let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
+    let example = capture_example(
+        project.clone(),
+        buffer,
+        cursor_anchor,
+        events,
+        Vec::new(),
+        true,
+        cx,
+    )?;
 
     let examples_dir = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -164,16 +176,21 @@ fn capture_example_as_markdown(
             fs.create_dir(&dir).await.ok();
             let mut path = dir.join(&example_spec.name.replace(' ', "--").replace(':', "-"));
             path.set_extension("md");
-            project.update(cx, |project, cx| project.open_local_buffer(&path, cx))
+            project
+                .update(cx, |project, cx| project.open_local_buffer(&path, cx))
+                .await?
         } else {
-            project.update(cx, |project, cx| project.create_buffer(false, cx))
-        }?
-        .await?;
+            project
+                .update(cx, |project, cx| {
+                    project.create_buffer(Some(markdown_language.clone()), false, cx)
+                })
+                .await?
+        };
 
         buffer.update(cx, |buffer, cx| {
             buffer.set_text(example_spec.to_markdown(), cx);
             buffer.set_language(Some(markdown_language), cx);
-        })?;
+        });
         workspace_entity.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(
                 Box::new(

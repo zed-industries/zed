@@ -2,9 +2,9 @@ use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
     ResponseContent, ToolResultContent, ToolResultPart, Usage,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap};
-use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
@@ -23,6 +23,8 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -139,8 +141,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4_5,
-            anthropic::Model::ClaudeSonnet4_5Thinking,
+            anthropic::Model::ClaudeSonnet4_6,
+            anthropic::Model::ClaudeSonnet4_6Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -219,6 +221,82 @@ pub struct AnthropicModel {
     request_limiter: RateLimiter,
 }
 
+fn to_anthropic_content(content: MessageContent) -> Option<anthropic::RequestContent> {
+    match content {
+        MessageContent::Text(text) => {
+            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
+                text.trim_end().to_string()
+            } else {
+                text
+            };
+            if !text.is_empty() {
+                Some(anthropic::RequestContent::Text {
+                    text,
+                    cache_control: None,
+                })
+            } else {
+                None
+            }
+        }
+        MessageContent::Thinking {
+            text: thinking,
+            signature,
+        } => {
+            if let Some(signature) = signature
+                && !thinking.is_empty()
+            {
+                Some(anthropic::RequestContent::Thinking {
+                    thinking,
+                    signature,
+                    cache_control: None,
+                })
+            } else {
+                None
+            }
+        }
+        MessageContent::RedactedThinking(data) => {
+            if !data.is_empty() {
+                Some(anthropic::RequestContent::RedactedThinking { data })
+            } else {
+                None
+            }
+        }
+        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
+            source: anthropic::ImageSource {
+                source_type: "base64".to_string(),
+                media_type: "image/png".to_string(),
+                data: image.source.to_string(),
+            },
+            cache_control: None,
+        }),
+        MessageContent::ToolUse(tool_use) => Some(anthropic::RequestContent::ToolUse {
+            id: tool_use.id.to_string(),
+            name: tool_use.name.to_string(),
+            input: tool_use.input,
+            cache_control: None,
+        }),
+        MessageContent::ToolResult(tool_result) => Some(anthropic::RequestContent::ToolResult {
+            tool_use_id: tool_result.tool_use_id.to_string(),
+            is_error: tool_result.is_error,
+            content: match tool_result.content {
+                LanguageModelToolResultContent::Text(text) => {
+                    ToolResultContent::Plain(text.to_string())
+                }
+                LanguageModelToolResultContent::Image(image) => {
+                    ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                        source: anthropic::ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: "image/png".to_string(),
+                            data: image.source.to_string(),
+                        },
+                    }])
+                }
+            },
+            cache_control: None,
+        }),
+    }
+}
+
 /// Convert a LanguageModelRequest to an Anthropic CountTokensRequest.
 pub fn into_anthropic_count_tokens_request(
     request: LanguageModelRequest,
@@ -238,87 +316,17 @@ pub fn into_anthropic_count_tokens_request(
                 let anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Text(text) => {
-                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
-                                text.trim_end().to_string()
-                            } else {
-                                text
-                            };
-                            if !text.is_empty() {
-                                Some(anthropic::RequestContent::Text {
-                                    text,
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Thinking {
-                            text: thinking,
-                            signature,
-                        } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::RedactedThinking(data) => {
-                            if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking { data })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
-                            source: anthropic::ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: "image/png".to_string(),
-                                data: image.source.to_string(),
-                            },
-                            cache_control: None,
-                        }),
-                        MessageContent::ToolUse(tool_use) => {
-                            Some(anthropic::RequestContent::ToolUse {
-                                id: tool_use.id.to_string(),
-                                name: tool_use.name.to_string(),
-                                input: tool_use.input,
-                                cache_control: None,
-                            })
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id.to_string(),
-                                is_error: tool_result.is_error,
-                                content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::Plain(text.to_string())
-                                    }
-                                    LanguageModelToolResultContent::Image(image) => {
-                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                                            source: anthropic::ImageSource {
-                                                source_type: "base64".to_string(),
-                                                media_type: "image/png".to_string(),
-                                                data: image.source.to_string(),
-                                            },
-                                        }])
-                                    }
-                                },
-                                cache_control: None,
-                            })
-                        }
-                    })
+                    .filter_map(to_anthropic_content)
                     .collect();
                 let anthropic_role = match message.role {
                     Role::User => anthropic::Role::User,
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if anthropic_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == anthropic_role
                 {
@@ -444,12 +452,10 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let beta_headers = self.model.beta_headers();
 
@@ -507,6 +513,10 @@ impl LanguageModel for AnthropicModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
     }
 
     fn telemetry_id(&self) -> String {
@@ -626,87 +636,17 @@ pub fn into_anthropic(
                 let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Text(text) => {
-                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
-                                text.trim_end().to_string()
-                            } else {
-                                text
-                            };
-                            if !text.is_empty() {
-                                Some(anthropic::RequestContent::Text {
-                                    text,
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Thinking {
-                            text: thinking,
-                            signature,
-                        } => {
-                            if !thinking.is_empty() {
-                                Some(anthropic::RequestContent::Thinking {
-                                    thinking,
-                                    signature: signature.unwrap_or_default(),
-                                    cache_control: None,
-                                })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::RedactedThinking(data) => {
-                            if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking { data })
-                            } else {
-                                None
-                            }
-                        }
-                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
-                            source: anthropic::ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: "image/png".to_string(),
-                                data: image.source.to_string(),
-                            },
-                            cache_control: None,
-                        }),
-                        MessageContent::ToolUse(tool_use) => {
-                            Some(anthropic::RequestContent::ToolUse {
-                                id: tool_use.id.to_string(),
-                                name: tool_use.name.to_string(),
-                                input: tool_use.input,
-                                cache_control: None,
-                            })
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id.to_string(),
-                                is_error: tool_result.is_error,
-                                content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::Plain(text.to_string())
-                                    }
-                                    LanguageModelToolResultContent::Image(image) => {
-                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                                            source: anthropic::ImageSource {
-                                                source_type: "base64".to_string(),
-                                                media_type: "image/png".to_string(),
-                                                data: image.source.to_string(),
-                                            },
-                                        }])
-                                    }
-                                },
-                                cache_control: None,
-                            })
-                        }
-                    })
+                    .filter_map(to_anthropic_content)
                     .collect();
                 let anthropic_role = match message.role {
                     Role::User => anthropic::Role::User,
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if anthropic_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == anthropic_role
                 {
@@ -781,6 +721,7 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => anthropic::ToolChoice::None,
         }),
         metadata: None,
+        output_config: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
@@ -894,12 +835,7 @@ impl AnthropicEventMapper {
             Event::ContentBlockStop { index } => {
                 if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
                     let input_json = tool_use.input_json.trim();
-                    let input_value = if input_json.is_empty() {
-                        Ok(serde_json::Value::Object(serde_json::Map::default()))
-                    } else {
-                        serde_json::Value::from_str(input_json)
-                    };
-                    let event_result = match input_value {
+                    let event_result = match parse_tool_arguments(input_json) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_use.id.into(),
@@ -1020,13 +956,9 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
-                    // We don't log an error, because "not signed in" is also an error.
-                    let _ = task.await;
-                }
+                let task = state.update(cx, |state, cx| state.authenticate(cx));
+                // We don't log an error, because "not signed in" is also an error.
+                let _ = task.await;
                 this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
@@ -1056,7 +988,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1069,7 +1001,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -1120,7 +1052,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
+                        format!("You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted)
@@ -1165,12 +1097,12 @@ mod tests {
             thread_id: None,
             prompt_id: None,
             intent: None,
-            mode: None,
             stop: vec![],
             temperature: None,
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            thinking_effort: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1212,5 +1144,118 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn request_with_assistant_content(
+        assistant_content: Vec<MessageContent>,
+    ) -> anthropic::Request {
+        let mut request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thinking_effort: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: true,
+        };
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: assistant_content,
+            cache: false,
+            reasoning_details: None,
+        });
+        into_anthropic(
+            request,
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            16000,
+            AnthropicModelMode::Thinking {
+                budget_tokens: Some(10000),
+            },
+        )
+    }
+
+    #[test]
+    fn test_unsigned_thinking_blocks_stripped() {
+        let result = request_with_assistant_content(vec![
+            MessageContent::Thinking {
+                text: "Cancelled mid-think, no signature".to_string(),
+                signature: None,
+            },
+            MessageContent::Text("Some response text".to_string()),
+        ]);
+
+        let assistant_message = result
+            .messages
+            .iter()
+            .find(|m| m.role == anthropic::Role::Assistant)
+            .expect("assistant message should still exist");
+
+        assert_eq!(
+            assistant_message.content.len(),
+            1,
+            "Only the text content should remain; unsigned thinking block should be stripped"
+        );
+        assert!(matches!(
+            &assistant_message.content[0],
+            anthropic::RequestContent::Text { text, .. } if text == "Some response text"
+        ));
+    }
+
+    #[test]
+    fn test_signed_thinking_blocks_preserved() {
+        let result = request_with_assistant_content(vec![
+            MessageContent::Thinking {
+                text: "Completed thinking".to_string(),
+                signature: Some("valid-signature".to_string()),
+            },
+            MessageContent::Text("Response".to_string()),
+        ]);
+
+        let assistant_message = result
+            .messages
+            .iter()
+            .find(|m| m.role == anthropic::Role::Assistant)
+            .expect("assistant message should exist");
+
+        assert_eq!(
+            assistant_message.content.len(),
+            2,
+            "Both the signed thinking block and text should be preserved"
+        );
+        assert!(matches!(
+            &assistant_message.content[0],
+            anthropic::RequestContent::Thinking { thinking, signature, .. }
+                if thinking == "Completed thinking" && signature == "valid-signature"
+        ));
+    }
+
+    #[test]
+    fn test_only_unsigned_thinking_block_omits_entire_message() {
+        let result = request_with_assistant_content(vec![MessageContent::Thinking {
+            text: "Cancelled before any text or signature".to_string(),
+            signature: None,
+        }]);
+
+        let assistant_messages: Vec<_> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == anthropic::Role::Assistant)
+            .collect();
+
+        assert_eq!(
+            assistant_messages.len(),
+            0,
+            "An assistant message whose only content was an unsigned thinking block \
+             should be omitted entirely"
+        );
     }
 }

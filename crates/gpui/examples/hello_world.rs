@@ -1,7 +1,8 @@
 use gpui::{
-    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    App, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px,
+    rgb, size,
 };
+use gpui_platform::application;
 
 struct HelloWorld {
     text: SharedString,
@@ -87,7 +88,7 @@ impl Render for HelloWorld {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
         cx.open_window(
             WindowOptions {

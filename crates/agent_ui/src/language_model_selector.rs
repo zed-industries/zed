@@ -4,7 +4,8 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet, IndexMap};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, FocusHandle, ForegroundExecutor,
+    Subscription, Task,
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
@@ -361,22 +362,28 @@ enum LanguageModelPickerEntry {
 
 struct ModelMatcher {
     models: Vec<ModelInfo>,
+    fg_executor: ForegroundExecutor,
     bg_executor: BackgroundExecutor,
     candidates: Vec<StringMatchCandidate>,
 }
 
 impl ModelMatcher {
-    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {
+    fn new(
+        models: Vec<ModelInfo>,
+        fg_executor: ForegroundExecutor,
+        bg_executor: BackgroundExecutor,
+    ) -> ModelMatcher {
         let candidates = Self::make_match_candidates(&models);
         Self {
             models,
+            fg_executor,
             bg_executor,
             candidates,
         }
     }
 
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
-        let mut matches = self.bg_executor.block(match_strings(
+        let mut matches = self.fg_executor.block_on(match_strings(
             &self.candidates,
             query,
             false,
@@ -472,6 +479,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Task<()> {
         let all_models = self.all_models.clone();
         let active_model = (self.get_active_model)(cx);
+        let fg_executor = cx.foreground_executor();
         let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
@@ -503,8 +511,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .cloned()
             .collect::<Vec<_>>();
 
-        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
-        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
+        let matcher_rec =
+            ModelMatcher::new(recommended_models, fg_executor.clone(), bg_executor.clone());
+        let matcher_all =
+            ModelMatcher::new(available_models, fg_executor.clone(), bg_executor.clone());
 
         let recommended = matcher_rec.exact_search(&query);
         let all = matcher_all.fuzzy_search(&query);
@@ -561,6 +571,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
+                let model_cost = model_info
+                    .model
+                    .model_cost_info()
+                    .map(|cost| cost.to_shared_string());
+
                 let is_favorite = model_info.is_favorite;
                 let handle_action_click = {
                     let model = model_info.model.clone();
@@ -579,7 +594,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         })
                         .is_selected(is_selected)
                         .is_focused(selected)
+                        .is_latest(model_info.model.is_latest())
                         .is_favorite(is_favorite)
+                        .cost_info(model_cost)
                         .on_toggle_favorite(handle_action_click)
                         .into_any_element(),
                 )
@@ -741,25 +758,29 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // The order of models should be maintained, case doesn't matter
-        let results = matcher.exact_search("GPT-4.1");
+        let results = matcher.exact_search("GPT-5");
         assert_models_eq(
             results,
             vec![
-                "zed/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1",
-                "openai/gpt-4.1-nano",
+                "zed/gpt-5",
+                "zed/gpt-5-mini",
+                "openai/gpt-5",
+                "openai/gpt-5-mini",
             ],
         );
     }
@@ -769,38 +790,34 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
-        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+        let matcher = ModelMatcher::new(
+            models,
+            cx.foreground_executor().clone(),
+            cx.background_executor.clone(),
+        );
 
         // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // In the case below, `zed/gpt-5-mini` and `openai/gpt-5-mini` have identical
+        // similarity scores, but `zed/gpt-5-mini` was higher in the models list,
         // so it should appear first in the results.
-        let results = matcher.fuzzy_search("41");
-        assert_models_eq(
-            results,
-            vec![
-                "zed/gpt-4.1",
-                "openai/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1-nano",
-            ],
-        );
+        let results = matcher.fuzzy_search("mini");
+        assert_models_eq(results, vec!["zed/gpt-5-mini", "openai/gpt-5-mini"]);
 
         // Model provider should be searchable as well
         let results = matcher.fuzzy_search("ol"); // meaning "ollama"
         assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
 
-        // Fuzzy search
-        let results = matcher.fuzzy_search("z4n");
-        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+        // Fuzzy search - search for Claude to get the Thinking variant
+        let results = matcher.fuzzy_search("thinking");
+        assert_models_eq(results, vec!["zed/Claude 3.7 Sonnet Thinking"]);
     }
 
     #[gpui::test]

@@ -1,3 +1,8 @@
+---
+title: JSON
+description: "Configure JSON language support in Zed, including language servers, formatting, and debugging."
+---
+
 # JSON
 
 JSON support is available natively in Zed.
