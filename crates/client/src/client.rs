@@ -529,7 +529,7 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let this = Arc::new(Self {
+        Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
@@ -547,9 +547,7 @@ impl Client {
             establish_connection: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             rpc_url: RwLock::default(),
-        });
-
-        this
+        })
     }
 
     pub fn production(cx: &mut App) -> Arc<Self> {
