@@ -439,7 +439,6 @@ impl AcpServerView {
         agent: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
-        needs_worktree_creation: bool,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
@@ -485,7 +484,6 @@ impl AcpServerView {
                 resume_thread,
                 project,
                 initial_content,
-                needs_worktree_creation,
                 window,
                 cx,
             ),
@@ -518,7 +516,6 @@ impl AcpServerView {
             resume_thread_metadata,
             self.project.clone(),
             None,
-            false,
             window,
             cx,
         );
@@ -543,7 +540,6 @@ impl AcpServerView {
         resume_thread: Option<AgentSessionInfo>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
-        needs_worktree_creation: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -693,7 +689,6 @@ impl AcpServerView {
                             resumed_without_history,
                             resume_thread,
                             initial_content,
-                            needs_worktree_creation,
                             window,
                             cx,
                         );
@@ -772,7 +767,6 @@ impl AcpServerView {
         resumed_without_history: bool,
         resume_thread: Option<AgentSessionInfo>,
         initial_content: Option<AgentInitialContent>,
-        needs_worktree_creation: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThreadView> {
@@ -949,7 +943,6 @@ impl AcpServerView {
                 self.history.clone(),
                 self.prompt_store.clone(),
                 initial_content,
-                needs_worktree_creation,
                 subscriptions,
                 window,
                 cx,
@@ -1672,7 +1665,6 @@ impl AcpServerView {
                     false,
                     None,
                     None,
-                    false,
                     window,
                     cx,
                 );

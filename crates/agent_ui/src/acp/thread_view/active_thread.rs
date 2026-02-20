@@ -187,7 +187,7 @@ impl DiffStats {
 }
 
 pub enum AcpThreadViewEvent {
-    WorktreeCreationRequested { text: String },
+    FirstSendRequested { text: String },
 }
 
 impl EventEmitter<AcpThreadViewEvent> for AcpThreadView {}
@@ -259,7 +259,6 @@ pub struct AcpThreadView {
     pub recent_history_entries: Vec<AgentSessionInfo>,
     pub hovered_recent_history_item: Option<usize>,
     pub show_codex_windows_warning: bool,
-    pub needs_worktree_creation: bool,
     pub history: Entity<AcpThreadHistory>,
     pub _history_subscription: Subscription,
 }
@@ -309,7 +308,6 @@ impl AcpThreadView {
         history: Entity<AcpThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
-        needs_worktree_creation: bool,
         mut subscriptions: Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -453,10 +451,10 @@ impl AcpThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
-            needs_worktree_creation,
         };
         if should_auto_submit {
-            this.send(window, cx);
+            let message_editor = this.message_editor.clone();
+            this.send_impl(message_editor, window, cx);
         }
         this
     }
@@ -645,12 +643,9 @@ impl AcpThreadView {
 
         let message_editor = self.message_editor.clone();
 
-        if self.needs_worktree_creation {
-            if !message_editor.read(cx).is_empty(cx) {
-                self.needs_worktree_creation = false;
-                let text = message_editor.read(cx).text(cx);
-                cx.emit(AcpThreadViewEvent::WorktreeCreationRequested { text });
-            }
+        if self.thread.read(cx).entries().is_empty() && !message_editor.read(cx).is_empty(cx) {
+            let text = message_editor.read(cx).text(cx);
+            cx.emit(AcpThreadViewEvent::FirstSendRequested { text });
             return;
         }
 
@@ -709,6 +704,14 @@ impl AcpThreadView {
         }
 
         self.send_impl(message_editor, window, cx)
+    }
+
+    /// Called by `AgentPanel` when it has decided the first send should proceed
+    /// normally (i.e. the thread target is not `NewWorktree`). This bypasses the
+    /// first-send interception in `send()` to avoid re-emitting `FirstSendRequested`.
+    pub fn proceed_with_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let message_editor = self.message_editor.clone();
+        self.send_impl(message_editor, window, cx);
     }
 
     pub fn send_impl(

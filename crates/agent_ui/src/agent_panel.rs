@@ -1750,9 +1750,10 @@ impl AgentPanel {
                         cx.subscribe_in(
                             &tv,
                             window,
-                            |this, _view, event: &AcpThreadViewEvent, window, cx| match event {
-                                AcpThreadViewEvent::WorktreeCreationRequested { text } => {
-                                    this.handle_worktree_creation_requested(
+                            |this, view, event: &AcpThreadViewEvent, window, cx| match event {
+                                AcpThreadViewEvent::FirstSendRequested { text } => {
+                                    this.handle_first_send_requested(
+                                        view.clone(),
                                         text.clone(),
                                         window,
                                         cx,
@@ -1768,17 +1769,15 @@ impl AgentPanel {
                                 cx.subscribe_in(
                                     &tv,
                                     window,
-                                    |this, _view, event: &AcpThreadViewEvent, window, cx| {
-                                        match event {
-                                            AcpThreadViewEvent::WorktreeCreationRequested {
-                                                text,
-                                            } => {
-                                                this.handle_worktree_creation_requested(
-                                                    text.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
+                                    |this, view, event: &AcpThreadViewEvent, window, cx| match event
+                                    {
+                                        AcpThreadViewEvent::FirstSendRequested { text } => {
+                                            this.handle_first_send_requested(
+                                                view.clone(),
+                                                text.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         }
                                     },
                                 )
@@ -2089,15 +2088,11 @@ impl AgentPanel {
             .is_some()
             .then(|| self.thread_store.clone());
 
-        let needs_worktree_creation =
-            self.thread_target == ThreadTarget::NewWorktree && resume_thread.is_none();
-
         let server_view = cx.new(|cx| {
             crate::acp::AcpServerView::new(
                 server,
                 resume_thread,
                 initial_content,
-                needs_worktree_creation,
                 workspace.clone(),
                 project,
                 thread_store,
@@ -2109,6 +2104,29 @@ impl AgentPanel {
         });
 
         self.set_active_view(ActiveView::AgentThread { server_view }, true, window, cx);
+    }
+
+    fn active_thread_has_messages(&self, cx: &App) -> bool {
+        self.active_agent_thread(cx)
+            .is_some_and(|thread| !thread.read(cx).entries().is_empty())
+    }
+
+    fn handle_first_send_requested(
+        &mut self,
+        thread_view: Entity<AcpThreadView>,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread_target == ThreadTarget::NewWorktree {
+            self.handle_worktree_creation_requested(text, window, cx);
+        } else {
+            cx.defer_in(window, move |_this, window, cx| {
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view.proceed_with_send(window, cx);
+                });
+            });
+        }
     }
 
     fn handle_worktree_creation_requested(
@@ -3302,9 +3320,10 @@ impl AgentPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .pl(DynamicSpacing::Base04.rems(cx))
                     .pr(DynamicSpacing::Base06.rems(cx))
-                    .when(has_v2_flag, |this| {
-                        this.child(self.render_thread_target_selector(cx))
-                    })
+                    .when(
+                        has_v2_flag && !self.active_thread_has_messages(cx),
+                        |this| this.child(self.render_thread_target_selector(cx)),
+                    )
                     .child(new_thread_menu)
                     .when(show_history_menu, |this| {
                         this.child(self.render_recent_entries_menu(
