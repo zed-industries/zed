@@ -4141,6 +4141,63 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
         .collect();
 }
 
+#[gpui::test]
+async fn test_inverted_diff_secondary_version_mismatch(cx: &mut TestAppContext) {
+    let base_text = "one\ntwo\nthree\nfour\nfive\n";
+    let index_text = "one\nTWO\nthree\nfour\nfive\n";
+    let buffer_text = "one\nTWO\nthree\nFOUR\nfive\n";
+
+    let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+
+    let unstaged_diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(index_text, &buffer.read(cx).text_snapshot(), cx));
+    cx.run_until_parked();
+
+    let uncommitted_diff = cx.new(|cx| {
+        let mut diff =
+            BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx);
+        diff.set_secondary_diff(unstaged_diff.clone());
+        diff
+    });
+    cx.run_until_parked();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "ZERO\n")], None, cx);
+    });
+
+    let update = unstaged_diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
+                buffer.read(cx).text_snapshot(),
+                Some(index_text.into()),
+                None,
+                None,
+                cx,
+            )
+        })
+        .await;
+    unstaged_diff
+        .update(cx, |diff, cx| {
+            diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
+        })
+        .await;
+
+    let base_text_buffer =
+        uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_inverted_diff(uncommitted_diff.clone(), buffer.clone(), cx);
+        multibuffer
+    });
+
+    let _hunks: Vec<_> = multibuffer
+        .read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx))
+        .diff_hunks()
+        .collect();
+}
+
 #[track_caller]
 fn assert_excerpts_match(
     multibuffer: &Entity<MultiBuffer>,
