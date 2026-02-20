@@ -15,7 +15,9 @@ use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
 use crate::ns_string;
-use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash};
+use gpui::{
+    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+};
 
 pub struct Pasteboard {
     inner: id,
