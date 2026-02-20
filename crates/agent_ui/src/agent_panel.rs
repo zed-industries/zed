@@ -1348,19 +1348,7 @@ impl AgentPanel {
 
     fn copy_thread_to_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.active_native_agent_thread(cx) else {
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    struct NoThreadToast;
-                    workspace.show_toast(
-                        workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<NoThreadToast>(),
-                            "No active native thread to copy",
-                        )
-                        .autohide(),
-                        cx,
-                    );
-                });
-            }
+            Self::show_deferred_toast(&self.workspace, "No active native thread to copy", cx);
             return;
         };
 
@@ -1395,38 +1383,37 @@ impl AgentPanel {
         .detach_and_log_err(cx);
     }
 
-    fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(clipboard) = cx.read_from_clipboard() else {
-            if let Some(workspace) = self.workspace.upgrade() {
+    fn show_deferred_toast(
+        workspace: &WeakEntity<workspace::Workspace>,
+        message: &'static str,
+        cx: &mut App,
+    ) {
+        let workspace = workspace.clone();
+        cx.defer(move |cx| {
+            if let Some(workspace) = workspace.upgrade() {
                 workspace.update(cx, |workspace, cx| {
-                    struct NoClipboardToast;
+                    struct ClipboardToast;
                     workspace.show_toast(
                         workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<NoClipboardToast>(),
-                            "No clipboard content available",
+                            workspace::notifications::NotificationId::unique::<ClipboardToast>(),
+                            message,
                         )
                         .autohide(),
                         cx,
                     );
                 });
             }
+        });
+    }
+
+    fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            Self::show_deferred_toast(&self.workspace, "No clipboard content available", cx);
             return;
         };
 
         let Some(encoded) = clipboard.text() else {
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    struct InvalidClipboardToast;
-                    workspace.show_toast(
-                        workspace::Toast::new(
-                            workspace::notifications::NotificationId::unique::<InvalidClipboardToast>(),
-                            "Clipboard does not contain text",
-                        )
-                        .autohide(),
-                        cx,
-                    );
-                });
-            }
+            Self::show_deferred_toast(&self.workspace, "Clipboard does not contain text", cx);
             return;
         };
 
@@ -1434,19 +1421,11 @@ impl AgentPanel {
         {
             Ok(data) => data,
             Err(_) => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct DecodeErrorToast;
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                workspace::notifications::NotificationId::unique::<DecodeErrorToast>(),
-                                "Failed to decode clipboard content (expected base64)",
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    });
-                }
+                Self::show_deferred_toast(
+                    &self.workspace,
+                    "Failed to decode clipboard content (expected base64)",
+                    cx,
+                );
                 return;
             }
         };
@@ -1454,20 +1433,11 @@ impl AgentPanel {
         let shared_thread = match SharedThread::from_bytes(&thread_data) {
             Ok(thread) => thread,
             Err(_) => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct ParseErrorToast;
-                        workspace.show_toast(
-                            workspace::Toast::new(
-                                workspace::notifications::NotificationId::unique::<ParseErrorToast>(
-                                ),
-                                "Failed to parse thread data from clipboard",
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    });
-                }
+                Self::show_deferred_toast(
+                    &self.workspace,
+                    "Failed to parse thread data from clipboard",
+                    cx,
+                );
                 return;
             }
         };
