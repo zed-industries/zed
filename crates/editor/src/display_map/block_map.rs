@@ -1252,11 +1252,6 @@ impl BlockMap {
         let mut our_tab_point_cursor = wrap_snapshot.tab_point_cursor();
         let mut our_wrap_point_cursor = wrap_snapshot.wrap_point_cursor();
 
-        let mut companion_inlay_point_cursor = companion_snapshot.inlay_point_cursor();
-        let mut companion_fold_point_cursor = companion_snapshot.fold_point_cursor();
-        let mut companion_tab_point_cursor = companion_snapshot.tab_point_cursor();
-        let mut companion_wrap_point_cursor = companion_snapshot.wrap_point_cursor();
-
         let mut our_wrapper = |our_point: Point, bias: Bias| {
             our_wrap_point_cursor
                 .map(our_tab_point_cursor.map(
@@ -1265,14 +1260,14 @@ impl BlockMap {
                 .row()
         };
         let mut companion_wrapper = |their_point: Point, bias: Bias| {
-            companion_wrap_point_cursor
-                .map(
-                    companion_tab_point_cursor.map(
-                        companion_fold_point_cursor
-                            .map(companion_inlay_point_cursor.map(their_point, bias), bias),
-                    ),
-                )
-                .row()
+            // TODO(split-diff) fix companion points being passed in decreasing order
+            let inlay_point = companion_snapshot
+                .inlay_snapshot
+                .inlay_point_cursor()
+                .map(their_point, bias);
+            let fold_point = companion_snapshot.to_fold_point(inlay_point, bias);
+            let tab_point = companion_snapshot.fold_point_to_tab_point(fold_point);
+            companion_snapshot.tab_point_to_wrap_point(tab_point).row()
         };
         fn determine_spacer(
             our_wrapper: &mut dyn FnMut(Point, Bias) -> WrapRow,
