@@ -470,6 +470,12 @@ async fn open_workspaces(
     cx: &mut AsyncApp,
 ) -> Result<()> {
     if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
+        let has_existing_workspaces =
+            cx.update(|cx| !workspace::local_workspace_windows(cx).is_empty());
+        if has_existing_workspaces {
+            return Ok(());
+        }
+
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -1206,11 +1212,9 @@ mod tests {
                 open_local_workspace(
                     vec![file_path.to_string()],
                     vec![],
-                    None,
                     false,
-                    false,
+                    workspace::OpenOptions::default(),
                     &response_tx,
-                    None,
                     &app_state,
                     &mut cx,
                 )
@@ -1228,14 +1232,15 @@ mod tests {
             let app_state = app_state.clone();
             |mut cx| async move {
                 open_workspaces(
-                    vec![],     // Empty paths
-                    vec![],     // Empty diff_paths
-                    None,       // open_new_workspace
-                    false,      // reuse
+                    vec![], // Empty paths
+                    vec![], // Empty diff_paths
+                    false,  // diff_all
+                    None,   // open_new_workspace
+                    false,  // reuse
                     &response_tx,
-                    false,      // wait
+                    false, // wait
                     app_state,
-                    None,       // env
+                    None, // env
                     &mut cx,
                 )
                 .await
