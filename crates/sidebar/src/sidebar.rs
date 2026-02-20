@@ -1,9 +1,10 @@
 use acp_thread::{AcpThread, AcpThreadEvent, ThreadStatus};
+use agent::{DbThreadMetadata, ThreadStore};
 use agent_client_protocol as acp;
 use agent_ui::acp::AcpThreadView;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Render, SharedString,
-    Subscription, Task, Window, px,
+    Subscription, Task, WeakEntity, Window, px,
 };
 use picker::{Picker, PickerDelegate};
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use theme::ActiveTheme;
 use ui::utils::TRAFFIC_LIGHT_PADDING;
 use ui::{KeyBinding, Tab, ThreadItem, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
+use util::maybe;
 
 use workspace::{
     FocusWorkspaceSidebar, MultiWorkspace, NewWorkspaceInWindow, Sidebar as WorkspaceSidebar,
@@ -33,14 +35,16 @@ pub struct AgentThreadInfo {
 struct AgentThreadsPickerDelegate {
     thread_ids: Vec<acp::SessionId>,
     threads: HashMap<acp::SessionId, AgentThreadInfo>,
+    historic_threads: Vec<DbThreadMetadata>,
     selected_index: usize,
 }
 
 impl AgentThreadsPickerDelegate {
-    fn new() -> Self {
+    fn new(historic_threads: Vec<DbThreadMetadata>) -> Self {
         Self {
             thread_ids: Vec::new(),
             threads: HashMap::new(),
+            historic_threads,
             selected_index: 0,
         }
     }
@@ -50,7 +54,7 @@ impl PickerDelegate for AgentThreadsPickerDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.thread_ids.len()
+        self.thread_ids.len() + self.historic_threads.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -96,17 +100,33 @@ impl PickerDelegate for AgentThreadsPickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let session_id = self.thread_ids.get(index)?;
-        let thread = self.threads.get(session_id)?;
+        maybe!({
+            let session_id = self.thread_ids.get(index)?;
+            let thread = self.threads.get(session_id)?;
+            Some(
+                ThreadItem::new(("agent-thread", index), thread.title.clone())
+                    .icon(thread.icon)
+                    .running(thread.running)
+                    .selected(selected)
+                    .worktree(thread.worktree_label.clone())
+                    .into_any_element(),
+            )
+        })
+        .or_else(|| {
+            let historic_thread = self
+                .historic_threads
+                .get(index.saturating_sub(self.thread_ids.len()))?;
 
-        Some(
-            ThreadItem::new(("agent-thread", index), thread.title.clone())
-                .icon(thread.icon)
-                .running(thread.running)
+            Some(
+                ThreadItem::new(
+                    ("historic_agent_thread", index),
+                    historic_thread.title.clone(),
+                )
+                .icon(IconName::ZedAgent)
                 .selected(selected)
-                .worktree(thread.worktree_label.clone())
                 .into_any_element(),
-        )
+            )
+        })
     }
 
     fn render_editor(
@@ -148,9 +168,23 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = AgentThreadsPickerDelegate::new();
-
         let picker = cx.new(|cx| {
+            let thread_store = ThreadStore::global(cx);
+            let mut historic_threads: Vec<_> = thread_store.read(cx).entries().collect();
+            historic_threads.sort_by(|this, other| this.updated_at.cmp(&other.updated_at));
+            let delegate = AgentThreadsPickerDelegate::new(historic_threads);
+
+            cx.observe(
+                &thread_store,
+                |picker: &mut Picker<AgentThreadsPickerDelegate>, thread_store, cx| {
+                    let mut historic_threads: Vec<_> = thread_store.read(cx).entries().collect();
+                    historic_threads.sort_by(|this, other| other.updated_at.cmp(&this.updated_at));
+
+                    picker.delegate.historic_threads = historic_threads;
+                },
+            )
+            .detach();
+
             Picker::list(delegate, window, cx)
                 .max_height(None)
                 .show_scrollbar(true)
@@ -159,51 +193,7 @@ impl Sidebar {
 
         let sidebar = cx.weak_entity();
         let observe_threads = cx.observe_new::<AcpThreadView>(move |thread_view, window, cx| {
-            let icon = thread_view.agent_icon;
-            let thread = thread_view.thread.read(cx);
-            let session_id = thread.session_id().clone();
-            let title = thread.title();
-            let running = thread.status() == ThreadStatus::Generating;
-
-            let worktree_label: SharedString = thread
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .filter_map(|worktree| {
-                    worktree
-                        .read(cx)
-                        .abs_path()
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-                .into();
-
-            sidebar
-                .update(cx, |sidebar, cx| {
-                    sidebar.picker.update(cx, |picker, cx| {
-                        let info = AgentThreadInfo {
-                            title,
-                            icon,
-                            running,
-                            worktree_label,
-                        };
-                        picker.delegate.threads.insert(session_id.clone(), info);
-                        picker.delegate.thread_ids.push(session_id);
-
-                        if let Some(window) = window {
-                            picker.refresh(window, cx);
-                        }
-
-                        cx.notify();
-                    });
-
-                    sidebar
-                        ._thread_subscriptions
-                        .push(cx.subscribe(&thread_view.thread, Self::on_thread_event));
-                })
-                .ok();
+            Self::observe_new_acp_thread_view(&sidebar, thread_view, window, cx);
         });
 
         Self {
@@ -213,6 +203,59 @@ impl Sidebar {
             _observe_threads: observe_threads,
             _thread_subscriptions: Vec::new(),
         }
+    }
+
+    fn observe_new_acp_thread_view(
+        sidebar: &WeakEntity<Self>,
+        thread_view: &mut AcpThreadView,
+        window: Option<&mut Window>,
+        cx: &mut Context<AcpThreadView>,
+    ) {
+        let icon = thread_view.agent_icon;
+        let thread = thread_view.thread.read(cx);
+        let session_id = thread.session_id().clone();
+        let title = thread.title();
+        let running = thread.status() == ThreadStatus::Generating;
+
+        let worktree_label: SharedString = thread
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                worktree
+                    .read(cx)
+                    .abs_path()
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+            .into();
+
+        sidebar
+            .update(cx, |sidebar, cx| {
+                sidebar.picker.update(cx, |picker, cx| {
+                    let info = AgentThreadInfo {
+                        title,
+                        icon,
+                        running,
+                        worktree_label,
+                    };
+                    picker.delegate.threads.insert(session_id.clone(), info);
+                    picker.delegate.thread_ids.push(session_id);
+
+                    if let Some(window) = window {
+                        picker.refresh(window, cx);
+                    }
+
+                    cx.notify();
+                });
+
+                sidebar
+                    ._thread_subscriptions
+                    .push(cx.subscribe(&thread_view.thread, Self::on_thread_event));
+            })
+            .ok();
     }
 
     fn on_thread_event(
