@@ -1,3 +1,8 @@
+---
+title: Tasks - Run Commands in Zed
+description: Run and rerun shell commands from Zed with task definitions. Supports variables, templates, and language-specific tasks.
+---
+
 # Tasks
 
 Zed supports ways to spawn (and rerun) commands using its integrated [terminal](./terminal.md) to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
@@ -89,7 +94,7 @@ These variables allow you to pull information from the current editor and use it
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
 
-```json [settings]
+```json [tasks]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE"
@@ -106,7 +111,7 @@ When working with paths containing spaces or other special characters, please en
 
 For example, instead of this (which will fail if the path has a space):
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat $ZED_FILE"
@@ -115,7 +120,7 @@ For example, instead of this (which will fail if the path has a space):
 
 Provide the following:
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat",
@@ -125,7 +130,7 @@ Provide the following:
 
 Or explicitly include escaped quotes like so:
 
-```json [settings]
+```json [tasks]
 {
   "label": "stat current file",
   "command": "stat \"$ZED_FILE\""
@@ -137,7 +142,7 @@ Or explicitly include escaped quotes like so:
 Task definitions with variables which are not present at the moment the task list is determined are filtered out.
 For example, the following task will appear in the spawn modal only if there is a text selection:
 
-```json [settings]
+```json [tasks]
 {
   "label": "selected text",
   "command": "echo \"$ZED_SELECTED_TEXT\""
@@ -146,7 +151,7 @@ For example, the following task will appear in the spawn modal only if there is 
 
 Set default values to such variables to have such tasks always displayed:
 
-```json [settings]
+```json [tasks]
 {
   "label": "selected text with default",
   "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
@@ -228,7 +233,7 @@ Zed supports overriding the default action for inline runnable indicators via wo
 
 To tag a task, add the runnable tag name to the `tags` field on the task template:
 
-```json [settings]
+```json [tasks]
 {
   "label": "echo current file's path",
   "command": "echo $ZED_FILE",

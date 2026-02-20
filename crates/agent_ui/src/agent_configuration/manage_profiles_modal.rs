@@ -2,9 +2,10 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent::ContextServerRegistry;
+use agent::{AgentTool, ContextServerRegistry, SubagentTool};
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use editor::Editor;
+use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use language_model::{LanguageModel, LanguageModelRegistry};
@@ -263,6 +264,10 @@ impl ManageProfilesModal {
                                     profile.default_model = Some(LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider.clone()),
                                         model: model_id.clone(),
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     });
                                 }
                             }
@@ -350,14 +355,21 @@ impl ManageProfilesModal {
             return;
         };
 
-        //todo: This causes the web search tool to show up even it only works when using zed hosted models
-        let tool_names: Vec<Arc<str>> = agent::supported_built_in_tool_names(
-            self.active_model.as_ref().map(|model| model.provider_id()),
-            cx,
-        )
-        .into_iter()
-        .map(|s| Arc::from(s))
-        .collect();
+        let provider = self.active_model.as_ref().map(|model| model.provider_id());
+        let tool_names: Vec<Arc<str>> = agent::ALL_TOOL_NAMES
+            .iter()
+            .copied()
+            .filter(|name| {
+                let supported_by_provider = provider.as_ref().map_or(true, |provider| {
+                    agent::tool_supports_provider(name, provider)
+                });
+                let enabled_by_feature_flag =
+                    *name != SubagentTool::NAME || cx.has_flag::<SubagentsFeatureFlag>();
+
+                supported_by_provider && enabled_by_feature_flag
+            })
+            .map(Arc::from)
+            .collect();
 
         let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::builtin_tools(

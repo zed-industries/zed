@@ -8,26 +8,38 @@ use serde_json::{Value as JsonValue, json};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
+use telemetry_events::EditPredictionRating;
 
 use zeta_prompt::ZetaPromptInput;
 
 use crate::example::Example;
 use crate::progress::{InfoStyle, Progress, Step};
+use crate::sync_deployments::EDIT_PREDICTION_DEPLOYMENT_EVENT;
 use edit_prediction::example_spec::{
     CapturedEvent, CapturedPromptInput, CapturedRelatedExcerpt, CapturedRelatedFile, ExampleSpec,
     TelemetrySource,
 };
 use std::fmt::Write as _;
 
-const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
-const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
+pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
+pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT: &str = "Edit Prediction Example Captured";
 const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
 const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
+const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
+
+/// Minimum Zed version for filtering captured examples.
+/// For example, `MinCaptureVersion { minor: 224, patch: 1 }` means only pull examples
+/// where `zed_version >= 0.224.1`.
+#[derive(Clone, Copy, Debug)]
+pub struct MinCaptureVersion {
+    pub minor: u32,
+    pub patch: u32,
+}
 
 const DEFAULT_STATEMENT_TIMEOUT_SECONDS: u64 = 120;
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const MAX_POLL_ATTEMPTS: usize = 120;
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const MAX_POLL_ATTEMPTS: usize = 120;
 
 /// Parse an input token of the form `captured-after:{timestamp}`.
 pub fn parse_captured_after_input(input: &str) -> Option<&str> {
@@ -39,11 +51,33 @@ pub fn parse_rejected_after_input(input: &str) -> Option<&str> {
     input.strip_prefix("rejected-after:")
 }
 
+/// Parse an input token of the form `requested-after:{timestamp}`.
+pub fn parse_requested_after_input(input: &str) -> Option<&str> {
+    input.strip_prefix("requested-after:")
+}
+
+/// Parse an input token of the form `rated-after:{timestamp}`, `rated-positive-after:{timestamp}`,
+/// or `rated-negative-after:{timestamp}`.
+/// Returns `(timestamp, Option<EditPredictionRating>)` where `None` means all ratings.
+pub fn parse_rated_after_input(input: &str) -> Option<(&str, Option<EditPredictionRating>)> {
+    if let Some(timestamp) = input.strip_prefix("rated-positive-after:") {
+        Some((timestamp, Some(EditPredictionRating::Positive)))
+    } else if let Some(timestamp) = input.strip_prefix("rated-negative-after:") {
+        Some((timestamp, Some(EditPredictionRating::Negative)))
+    } else if let Some(timestamp) = input.strip_prefix("rated-after:") {
+        Some((timestamp, None))
+    } else {
+        None
+    }
+}
+
 pub async fn fetch_captured_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
+    offset: usize,
     background_executor: BackgroundExecutor,
+    _min_capture_version: Option<MinCaptureVersion>,
 ) -> Result<Vec<Example>> {
     if after_timestamps.is_empty() {
         return Ok(Vec::new());
@@ -71,8 +105,10 @@ pub async fn fetch_captured_examples_after(
             FROM events
             WHERE event_type = ?
                 AND time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND event_properties:can_collect_data = true
             ORDER BY time ASC
             LIMIT ?
+            OFFSET ?
         "#};
 
         let request = json!({
@@ -85,7 +121,8 @@ pub async fn fetch_captured_examples_after(
             "bindings": {
                 "1": { "type": "TEXT", "value": EDIT_PREDICTION_EXAMPLE_CAPTURED_EVENT },
                 "2": { "type": "TEXT", "value": after_date },
-                "3": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
+                "3": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+                "4": { "type": "FIXED", "value": offset.to_string() }
             }
         });
 
@@ -115,7 +152,21 @@ pub async fn fetch_captured_examples_after(
         step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
-        all_examples.extend(examples_from_response(&response)?);
+        let example_index = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|m| {
+                m.row_type.iter().enumerate().find_map(|(index, col)| {
+                    if col.name.eq_ignore_ascii_case("example") {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(0);
+
+        all_examples.extend(examples_from_response(&response, example_index)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -139,7 +190,7 @@ pub async fn fetch_captured_examples_after(
                 )
                 .await?;
 
-                all_examples.extend(examples_from_response(&partition_response)?);
+                all_examples.extend(examples_from_response(&partition_response, example_index)?);
             }
         }
 
@@ -151,22 +202,22 @@ pub async fn fetch_captured_examples_after(
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeStatementResponse {
+pub(crate) struct SnowflakeStatementResponse {
     #[serde(default)]
-    data: Vec<Vec<JsonValue>>,
+    pub(crate) data: Vec<Vec<JsonValue>>,
     #[serde(default)]
-    result_set_meta_data: Option<SnowflakeResultSetMetaData>,
+    pub(crate) result_set_meta_data: Option<SnowflakeResultSetMetaData>,
     #[serde(default)]
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     #[serde(default)]
-    statement_handle: Option<String>,
+    pub(crate) statement_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SnowflakeResultSetMetaData {
+pub(crate) struct SnowflakeResultSetMetaData {
     #[serde(default, rename = "rowType")]
     row_type: Vec<SnowflakeColumnMeta>,
     #[serde(default)]
@@ -187,6 +238,7 @@ struct SnowflakeColumnMeta {
 
 fn examples_from_response(
     response: &SnowflakeStatementResponse,
+    example_index: usize,
 ) -> Result<impl Iterator<Item = Example> + '_> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
@@ -196,20 +248,6 @@ fn examples_from_response(
             );
         }
     }
-
-    let example_index = response
-        .result_set_meta_data
-        .as_ref()
-        .and_then(|m| {
-            m.row_type.iter().enumerate().find_map(|(index, col)| {
-                if col.name.eq_ignore_ascii_case("example") {
-                    Some(index)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or(0);
 
     let iter = response.data.iter().enumerate().filter_map(move |(row_index, data_row)| {
         let Some(example_value) = data_row.get(example_index) else {
@@ -290,7 +328,7 @@ async fn run_sql_with_polling(
     Ok(response)
 }
 
-async fn fetch_partition(
+pub(crate) async fn fetch_partition(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -379,7 +417,7 @@ async fn fetch_partition(
     })
 }
 
-async fn run_sql(
+pub(crate) async fn run_sql(
     http_client: Arc<dyn HttpClient>,
     base_url: &str,
     token: &str,
@@ -433,7 +471,9 @@ pub async fn fetch_rejected_examples_after(
     http_client: Arc<dyn HttpClient>,
     after_timestamps: &[String],
     max_rows_per_timestamp: usize,
+    offset: usize,
     background_executor: BackgroundExecutor,
+    min_capture_version: Option<MinCaptureVersion>,
 ) -> Result<Vec<Example>> {
     if after_timestamps.is_empty() {
         return Ok(Vec::new());
@@ -468,7 +508,8 @@ pub async fn fetch_rejected_examples_after(
                 req.event_properties:prompt::string AS prompt,
                 req.event_properties:output::string AS output,
                 rej.event_properties:was_shown::boolean AS was_shown,
-                rej.event_properties:reason::string AS reason
+                rej.event_properties:reason::string AS reason,
+                req.event_properties:zed_version::string AS zed_version
             FROM events req
             INNER JOIN events rej
                 ON req.event_properties:request_id = rej.event_properties:request_id
@@ -476,11 +517,24 @@ pub async fn fetch_rejected_examples_after(
                 AND rej.event_type = ?
                 AND req.event_properties:version = 'V3'
                 AND rej.event_properties:was_shown = true
+                AND req.event_properties:input:can_collect_data = true
                 AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND (? IS NULL OR (
+                    TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
+                    OR (
+                        TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
+                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(req.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
+                    )
+                ))
             ORDER BY req.time ASC
             LIMIT ?
+            OFFSET ?
         "#};
 
+        let min_minor_str = min_capture_version.map(|v| v.minor.to_string());
+        let min_patch_str = min_capture_version.map(|v| v.patch.to_string());
+        let min_minor_str_ref = min_minor_str.as_deref();
+        let min_patch_str_ref = min_patch_str.as_deref();
         let request = json!({
             "statement": statement,
             "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
@@ -492,7 +546,12 @@ pub async fn fetch_rejected_examples_after(
                 "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
                 "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REJECTED_EVENT },
                 "3": { "type": "TEXT", "value": after_date },
-                "4": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() }
+                "4": { "type": "FIXED", "value": min_minor_str_ref },
+                "5": { "type": "FIXED", "value": min_minor_str_ref },
+                "6": { "type": "FIXED", "value": min_minor_str_ref },
+                "7": { "type": "FIXED", "value": min_patch_str_ref },
+                "8": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+                "9": { "type": "FIXED", "value": offset.to_string() }
             }
         });
 
@@ -522,7 +581,22 @@ pub async fn fetch_rejected_examples_after(
         step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
         step_progress.set_substatus("parsing");
 
-        all_examples.extend(rejected_examples_from_response(&response)?);
+        let column_indices = get_column_indices(
+            &response.result_set_meta_data,
+            &[
+                "request_id",
+                "device_id",
+                "time",
+                "input",
+                "prompt",
+                "output",
+                "was_shown",
+                "reason",
+                "zed_version",
+            ],
+        );
+
+        all_examples.extend(rejected_examples_from_response(&response, &column_indices)?);
 
         if num_partitions > 1 {
             let statement_handle = response
@@ -546,7 +620,10 @@ pub async fn fetch_rejected_examples_after(
                 )
                 .await?;
 
-                all_examples.extend(rejected_examples_from_response(&partition_response)?);
+                all_examples.extend(rejected_examples_from_response(
+                    &partition_response,
+                    &column_indices,
+                )?);
             }
         }
 
@@ -556,9 +633,326 @@ pub async fn fetch_rejected_examples_after(
     Ok(all_examples)
 }
 
-fn rejected_examples_from_response(
-    response: &SnowflakeStatementResponse,
-) -> Result<impl Iterator<Item = Example> + '_> {
+pub async fn fetch_requested_examples_after(
+    http_client: Arc<dyn HttpClient>,
+    after_timestamps: &[String],
+    max_rows_per_timestamp: usize,
+    offset: usize,
+    background_executor: BackgroundExecutor,
+    min_capture_version: Option<MinCaptureVersion>,
+) -> Result<Vec<Example>> {
+    if after_timestamps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let progress = Progress::global();
+
+    let token = std::env::var("EP_SNOWFLAKE_API_KEY")
+        .context("missing required environment variable EP_SNOWFLAKE_API_KEY")?;
+    let base_url = std::env::var("EP_SNOWFLAKE_BASE_URL").context(
+        "missing required environment variable EP_SNOWFLAKE_BASE_URL (e.g. https://<account>.snowflakecomputing.com)",
+    )?;
+    let role = std::env::var("EP_SNOWFLAKE_ROLE").ok();
+
+    let mut all_examples = Vec::new();
+
+    for after_date in after_timestamps.iter() {
+        let step_progress_name = format!("requested>{after_date}");
+        let step_progress = progress.start(Step::PullExamples, &step_progress_name);
+        step_progress.set_substatus("querying");
+
+        let statement = indoc! {r#"
+            SELECT
+                req.event_properties:request_id::string AS request_id,
+                req.device_id::string AS device_id,
+                req.time::string AS time,
+                req.event_properties:input AS input,
+                req.event_properties:zed_version::string AS zed_version
+            FROM events req
+            WHERE req.event_type = ?
+                AND req.event_properties:version = 'V3'
+                AND req.event_properties:input:can_collect_data = true
+                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND (? IS NULL OR (
+                    TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
+                    OR (
+                        TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
+                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(req.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
+                    )
+                ))
+            ORDER BY req.time ASC
+            LIMIT ?
+            OFFSET ?
+        "#};
+
+        let min_minor_str = min_capture_version.map(|v| v.minor.to_string());
+        let min_patch_str = min_capture_version.map(|v| v.patch.to_string());
+        let min_minor_str_ref = min_minor_str.as_deref();
+        let min_patch_str_ref = min_patch_str.as_deref();
+        let request = json!({
+            "statement": statement,
+            "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+            "database": "EVENTS",
+            "schema": "PUBLIC",
+            "warehouse": "DBT",
+            "role": role,
+            "bindings": {
+                "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+                "2": { "type": "TEXT", "value": after_date },
+                "3": { "type": "FIXED", "value": min_minor_str_ref },
+                "4": { "type": "FIXED", "value": min_minor_str_ref },
+                "5": { "type": "FIXED", "value": min_minor_str_ref },
+                "6": { "type": "FIXED", "value": min_patch_str_ref },
+                "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+                "8": { "type": "FIXED", "value": offset.to_string() }
+            }
+        });
+
+        let response = run_sql_with_polling(
+            http_client.clone(),
+            &base_url,
+            &token,
+            &request,
+            &step_progress,
+            background_executor.clone(),
+        )
+        .await?;
+
+        let total_rows = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|m| m.num_rows)
+            .unwrap_or(response.data.len() as i64);
+
+        let num_partitions = response
+            .result_set_meta_data
+            .as_ref()
+            .map(|m| m.partition_info.len())
+            .unwrap_or(1)
+            .max(1);
+
+        step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
+        step_progress.set_substatus("parsing");
+
+        let column_indices = get_column_indices(
+            &response.result_set_meta_data,
+            &["request_id", "device_id", "time", "input", "zed_version"],
+        );
+
+        all_examples.extend(requested_examples_from_response(
+            &response,
+            &column_indices,
+        )?);
+
+        if num_partitions > 1 {
+            let statement_handle = response
+                .statement_handle
+                .as_ref()
+                .context("response has multiple partitions but no statementHandle")?;
+
+            for partition in 1..num_partitions {
+                step_progress.set_substatus(format!(
+                    "fetching partition {}/{}",
+                    partition + 1,
+                    num_partitions
+                ));
+
+                let partition_response = fetch_partition(
+                    http_client.clone(),
+                    &base_url,
+                    &token,
+                    statement_handle,
+                    partition,
+                )
+                .await?;
+
+                all_examples.extend(requested_examples_from_response(
+                    &partition_response,
+                    &column_indices,
+                )?);
+            }
+        }
+
+        step_progress.set_substatus("done");
+    }
+
+    Ok(all_examples)
+}
+
+pub async fn fetch_rated_examples_after(
+    http_client: Arc<dyn HttpClient>,
+    inputs: &[(String, Option<EditPredictionRating>)],
+    max_rows_per_timestamp: usize,
+    offset: usize,
+    background_executor: BackgroundExecutor,
+    _min_capture_version: Option<MinCaptureVersion>,
+) -> Result<Vec<Example>> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let progress = Progress::global();
+
+    let token = std::env::var("EP_SNOWFLAKE_API_KEY")
+        .context("missing required environment variable EP_SNOWFLAKE_API_KEY")?;
+    let base_url = std::env::var("EP_SNOWFLAKE_BASE_URL").context(
+        "missing required environment variable EP_SNOWFLAKE_BASE_URL (e.g. https://<account>.snowflakecomputing.com)",
+    )?;
+    let role = std::env::var("EP_SNOWFLAKE_ROLE").ok();
+
+    let mut all_examples = Vec::new();
+
+    for (after_date, rating_filter) in inputs.iter() {
+        let filter_label = match rating_filter {
+            None => "",
+            Some(EditPredictionRating::Positive) => ":positive",
+            Some(EditPredictionRating::Negative) => ":negative",
+        };
+        let step_progress_name = format!("rated{filter_label}>{after_date}");
+        let step_progress = progress.start(Step::PullExamples, &step_progress_name);
+        step_progress.set_substatus("querying");
+
+        let rating_value = rating_filter.as_ref().map(|r| match r {
+            EditPredictionRating::Positive => "Positive",
+            EditPredictionRating::Negative => "Negative",
+        });
+
+        let statement = indoc! {r#"
+            SELECT
+                rated.event_properties:request_id::string AS request_id,
+                rated.event_properties:inputs AS inputs,
+                rated.event_properties:output::string AS output,
+                rated.event_properties:rating::string AS rating,
+                rated.event_properties:feedback::string AS feedback,
+                rated.device_id::string AS device_id,
+                rated.time::string AS time,
+                deploy.event_properties:experiment_name::string AS experiment_name,
+                deploy.event_properties:environment::string AS environment,
+                rated.event_properties:zed_version::string AS zed_version
+            FROM events rated
+            LEFT JOIN events req
+                ON rated.event_properties:request_id::string = req.event_properties:request_id::string
+                AND req.event_type = ?
+            LEFT JOIN events deploy
+                ON req.event_properties:headers:x_baseten_model_id::string = deploy.event_properties:model_id::string
+                AND req.event_properties:headers:x_baseten_model_version_id::string = deploy.event_properties:model_version_id::string
+                AND deploy.event_type = ?
+            WHERE rated.event_type = ?
+                AND (? IS NULL OR rated.event_properties:rating::string = ?)
+                AND rated.time > TRY_TO_TIMESTAMP_NTZ(?)
+                AND rated.event_properties:inputs IS NOT NULL
+                AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
+                AND rated.event_properties:output IS NOT NULL
+                AND rated.event_properties:can_collect_data = true
+            ORDER BY rated.time ASC
+            LIMIT ?
+            OFFSET ?
+        "#};
+
+        let bindings = json!({
+            "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
+            "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
+            "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
+            "4": { "type": "TEXT", "value": rating_value },
+            "5": { "type": "TEXT", "value": rating_value },
+            "6": { "type": "TEXT", "value": after_date },
+            "7": { "type": "FIXED", "value": max_rows_per_timestamp.to_string() },
+            "8": { "type": "FIXED", "value": offset.to_string() }
+        });
+
+        let request = json!({
+            "statement": statement,
+            "timeout": DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+            "database": "EVENTS",
+            "schema": "PUBLIC",
+            "warehouse": "DBT",
+            "role": role,
+            "bindings": bindings
+        });
+
+        let response = run_sql_with_polling(
+            http_client.clone(),
+            &base_url,
+            &token,
+            &request,
+            &step_progress,
+            background_executor.clone(),
+        )
+        .await?;
+
+        let total_rows = response
+            .result_set_meta_data
+            .as_ref()
+            .and_then(|m| m.num_rows)
+            .unwrap_or(response.data.len() as i64);
+
+        let num_partitions = response
+            .result_set_meta_data
+            .as_ref()
+            .map(|m| m.partition_info.len())
+            .unwrap_or(1)
+            .max(1);
+
+        step_progress.set_info(format!("{} rows", total_rows), InfoStyle::Normal);
+        step_progress.set_substatus("parsing");
+
+        let column_indices = get_column_indices(
+            &response.result_set_meta_data,
+            &[
+                "request_id",
+                "inputs",
+                "output",
+                "rating",
+                "feedback",
+                "device_id",
+                "time",
+                "experiment_name",
+                "environment",
+                "zed_version",
+            ],
+        );
+
+        all_examples.extend(rated_examples_from_response(&response, &column_indices)?);
+
+        if num_partitions > 1 {
+            let statement_handle = response
+                .statement_handle
+                .as_ref()
+                .context("response has multiple partitions but no statementHandle")?;
+
+            for partition in 1..num_partitions {
+                step_progress.set_substatus(format!(
+                    "fetching partition {}/{}",
+                    partition + 1,
+                    num_partitions
+                ));
+
+                let partition_response = fetch_partition(
+                    http_client.clone(),
+                    &base_url,
+                    &token,
+                    statement_handle,
+                    partition,
+                )
+                .await?;
+
+                all_examples.extend(rated_examples_from_response(
+                    &partition_response,
+                    &column_indices,
+                )?);
+            }
+        }
+
+        step_progress.set_substatus("done");
+    }
+
+    Ok(all_examples)
+}
+
+fn rated_examples_from_response<'a>(
+    response: &'a SnowflakeStatementResponse,
+    column_indices: &'a std::collections::HashMap<String, usize>,
+) -> Result<impl Iterator<Item = Example> + 'a> {
     if let Some(code) = &response.code {
         if code != SNOWFLAKE_SUCCESS_CODE {
             anyhow::bail!(
@@ -568,19 +962,228 @@ fn rejected_examples_from_response(
         }
     }
 
-    let column_indices = get_column_indices(
-        &response.result_set_meta_data,
-        &[
-            "request_id",
-            "device_id",
-            "time",
-            "input",
-            "prompt",
-            "output",
-            "was_shown",
-            "reason",
-        ],
-    );
+    let iter = response
+        .data
+        .iter()
+        .enumerate()
+        .filter_map(move |(row_index, data_row)| {
+            let get_string = |name: &str| -> Option<String> {
+                let index = column_indices.get(name).copied()?;
+                match data_row.get(index)? {
+                    JsonValue::String(s) => Some(s.clone()),
+                    JsonValue::Null => None,
+                    other => Some(other.to_string()),
+                }
+            };
+
+            let get_json = |name: &str| -> Option<JsonValue> {
+                let index = column_indices.get(name).copied()?;
+                let value = data_row.get(index)?;
+                if value.is_null() {
+                    return None;
+                }
+                match value {
+                    JsonValue::String(s) => serde_json::from_str(s).ok(),
+                    other => Some(other.clone()),
+                }
+            };
+
+            let request_id = get_string("request_id");
+            let inputs_json = get_json("inputs");
+            let inputs: Option<ZetaPromptInput> = match &inputs_json {
+                Some(v) => match serde_json::from_value(v.clone()) {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) => {
+                        log::warn!(
+                            "skipping row {row_index}: failed to parse inputs - {e}",
+                        );
+                        return None;
+                    }
+                },
+                None => None,
+            };
+            let output = get_string("output");
+            let rating = get_string("rating");
+            let feedback = get_string("feedback").unwrap_or_default();
+            let device_id = get_string("device_id");
+            let time = get_string("time");
+            let experiment_name = get_string("experiment_name");
+            let environment = get_string("environment");
+            let zed_version = get_string("zed_version");
+
+            match (inputs, output.clone(), rating.clone(), device_id.clone(), time.clone()) {
+                (Some(inputs), Some(output), Some(rating), Some(device_id), Some(time)) => {
+                    Some(build_rated_example(
+                        request_id,
+                        device_id,
+                        time,
+                        inputs,
+                        output,
+                        rating,
+                        feedback,
+                        experiment_name,
+                        environment,
+                        zed_version,
+                    ))
+                }
+                _ => {
+                    log::warn!(
+                        "skipping row {row_index}: missing fields - inputs={:?} output={:?} rating={:?} device_id={:?} time={:?}",
+                        inputs_json.is_some(),
+                        output.is_some(),
+                        rating.is_some(),
+                        device_id.is_some(),
+                        time.is_some(),
+                    );
+                    None
+                }
+            }
+        });
+
+    Ok(iter)
+}
+
+fn build_rated_example(
+    request_id: Option<String>,
+    device_id: String,
+    time: String,
+    input: ZetaPromptInput,
+    output: String,
+    rating: String,
+    feedback: String,
+    experiment_name: Option<String>,
+    environment: Option<String>,
+    zed_version: Option<String>,
+) -> Example {
+    let parsed_rating = if rating == "Positive" {
+        EditPredictionRating::Positive
+    } else {
+        EditPredictionRating::Negative
+    };
+    let is_positive = parsed_rating == EditPredictionRating::Positive;
+    let request_id = request_id.unwrap_or_else(|| format!("rated-{}-{}", device_id, time));
+
+    let mut tags = Vec::with_capacity(3);
+    tags.push(if is_positive {
+        "rated:positive".to_string()
+    } else {
+        "rated:negative".to_string()
+    });
+    if let Some(experiment) = experiment_name {
+        tags.push(format!("experiment:{experiment}"));
+    }
+    if let Some(env) = environment {
+        tags.push(format!("environment:{env}"));
+    }
+
+    let mut example =
+        build_example_from_snowflake(request_id, device_id, time, input, tags, None, zed_version);
+
+    example.spec.rating = Some(parsed_rating);
+
+    if !feedback.is_empty() {
+        example
+            .spec
+            .human_feedback
+            .push(edit_prediction::example_spec::HumanFeedback { message: feedback });
+    }
+
+    if is_positive {
+        example.spec.expected_patches = vec![output];
+    } else {
+        example.spec.rejected_patch = Some(output);
+    }
+
+    example
+}
+
+fn requested_examples_from_response<'a>(
+    response: &'a SnowflakeStatementResponse,
+    column_indices: &'a std::collections::HashMap<String, usize>,
+) -> Result<impl Iterator<Item = Example> + 'a> {
+    if let Some(code) = &response.code {
+        if code != SNOWFLAKE_SUCCESS_CODE {
+            anyhow::bail!(
+                "snowflake sql api returned error code={code} message={}",
+                response.message.as_deref().unwrap_or("<no message>")
+            );
+        }
+    }
+
+    let iter = response
+        .data
+        .iter()
+        .enumerate()
+        .filter_map(move |(row_index, data_row)| {
+            let get_string = |name: &str| -> Option<String> {
+                let index = column_indices.get(name).copied()?;
+                match data_row.get(index)? {
+                    JsonValue::String(s) => Some(s.clone()),
+                    JsonValue::Null => None,
+                    other => Some(other.to_string()),
+                }
+            };
+
+            let get_json = |name: &str| -> Option<JsonValue> {
+                let index = column_indices.get(name).copied()?;
+                let value = data_row.get(index)?;
+                if value.is_null() {
+                    return None;
+                }
+                match value {
+                    JsonValue::String(s) => serde_json::from_str(s).ok(),
+                    other => Some(other.clone()),
+                }
+            };
+
+            let request_id_str = get_string("request_id");
+            let device_id = get_string("device_id");
+            let time = get_string("time");
+            let input_json = get_json("input");
+            let input: Option<ZetaPromptInput> =
+                input_json.clone().and_then(|v| serde_json::from_value(v).ok());
+            let zed_version = get_string("zed_version");
+
+            match (request_id_str.clone(), device_id.clone(), time.clone(), input) {
+                (Some(request_id), Some(device_id), Some(time), Some(input)) => {
+                    Some(build_example_from_snowflake(
+                        request_id,
+                        device_id,
+                        time,
+                        input,
+                        vec!["requested".to_string()],
+                        None,
+                        zed_version,
+                    ))
+                }
+                _ => {
+                    log::warn!(
+                        "skipping row {row_index}: missing fields - request_id={:?} device_id={:?} time={:?} input={:?}",
+                        request_id_str.is_some(),
+                        device_id.is_some(),
+                        time.is_some(),
+                        input_json.is_some(),
+                    );
+                    None
+                }
+            }
+        });
+
+    Ok(iter)
+}
+
+fn rejected_examples_from_response<'a>(
+    response: &'a SnowflakeStatementResponse,
+    column_indices: &'a std::collections::HashMap<String, usize>,
+) -> Result<impl Iterator<Item = Example> + 'a> {
+    if let Some(code) = &response.code {
+        if code != SNOWFLAKE_SUCCESS_CODE {
+            anyhow::bail!(
+                "snowflake sql api returned error code={code} message={}",
+                response.message.as_deref().unwrap_or("<no message>")
+            );
+        }
+    }
 
     let iter = response
         .data
@@ -626,6 +1229,7 @@ fn rejected_examples_from_response(
             let output = get_string("output");
             let was_shown = get_bool("was_shown");
             let reason = get_string("reason");
+            let zed_version = get_string("zed_version");
 
             match (request_id_str.clone(), device_id.clone(), time.clone(), input, output.clone(), was_shown, reason.clone()) {
                 (Some(request_id), Some(device_id), Some(time), Some(input), Some(output), Some(was_shown), Some(reason)) => {
@@ -637,6 +1241,7 @@ fn rejected_examples_from_response(
                         output,
                         was_shown,
                         reason,
+                        zed_version,
                     ))
                 }
                 _ => {
@@ -666,6 +1271,40 @@ fn build_rejected_example(
     output: String,
     was_shown: bool,
     reason: String,
+    zed_version: Option<String>,
+) -> Example {
+    let rejected_patch = build_output_patch(
+        &input.cursor_path,
+        input.cursor_excerpt.as_ref(),
+        &input.editable_range_in_excerpt,
+        &output,
+    );
+    let mut example = build_example_from_snowflake(
+        request_id,
+        device_id,
+        time,
+        input,
+        vec![format!("rejection:{}", reason.to_lowercase())],
+        Some(RejectionInfo { reason, was_shown }),
+        zed_version,
+    );
+    example.spec.rejected_patch = Some(rejected_patch);
+    example
+}
+
+struct RejectionInfo {
+    reason: String,
+    was_shown: bool,
+}
+
+fn build_example_from_snowflake(
+    request_id: String,
+    device_id: String,
+    time: String,
+    input: ZetaPromptInput,
+    tags: Vec<String>,
+    rejection: Option<RejectionInfo>,
+    zed_version: Option<String>,
 ) -> Example {
     let events: Vec<CapturedEvent> = input
         .events
@@ -715,40 +1354,43 @@ fn build_rejected_example(
         edit_history.push('\n');
     }
 
-    let rejected_patch = build_rejected_patch(
-        &input.cursor_path,
-        cursor_excerpt,
-        &input.editable_range_in_excerpt,
-        &output,
-    );
+    let (rejection_reason, was_shown) = match &rejection {
+        Some(r) => (r.reason.clone(), r.was_shown),
+        None => (String::new(), false),
+    };
 
     let spec = ExampleSpec {
         name: request_id.clone(),
         repository_url: String::new(),
         revision: String::new(),
-        tags: vec![format!("rejection:{}", reason.to_lowercase())],
+        tags,
         reasoning: None,
         uncommitted_diff: String::new(),
         cursor_path: input.cursor_path.clone(),
         cursor_position: build_cursor_position(cursor_excerpt, cursor_offset),
         edit_history,
         expected_patches: Vec::new(),
-        rejected_patch: Some(rejected_patch),
+        rejected_patch: None,
         captured_prompt_input: Some(CapturedPromptInput {
             cursor_file_content: cursor_excerpt.to_string(),
             cursor_offset,
             cursor_row,
             cursor_column,
+            excerpt_start_row: None,
             events,
             related_files,
+            in_open_source_repo: input.in_open_source_repo,
+            zed_version,
         }),
         telemetry: Some(TelemetrySource {
             request_id,
             device_id,
             time,
-            rejection_reason: reason,
+            rejection_reason,
             was_shown,
         }),
+        human_feedback: Vec::new(),
+        rating: None,
     };
 
     Example {
@@ -784,7 +1426,7 @@ fn build_cursor_position(excerpt: &str, cursor_offset: usize) -> String {
     format!("{}[CURSOR_POSITION]{}", before, after)
 }
 
-fn build_rejected_patch(
+fn build_output_patch(
     cursor_path: &std::path::Path,
     cursor_excerpt: &str,
     editable_range: &std::ops::Range<usize>,
@@ -811,7 +1453,7 @@ fn build_rejected_patch(
     patch
 }
 
-fn get_column_indices(
+pub(crate) fn get_column_indices(
     meta: &Option<SnowflakeResultSetMetaData>,
     names: &[&str],
 ) -> std::collections::HashMap<String, usize> {

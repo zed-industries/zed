@@ -12,8 +12,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
-    ToolchainStore, WorktreeId,
+    AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
+    ProjectPath, ToolchainStore, WorktreeId,
     agent_server_store::AgentServerStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     context_server_store::ContextServerStore,
@@ -25,7 +25,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeIdCounter, WorktreeStore},
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -40,6 +40,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -62,6 +63,7 @@ pub struct HeadlessProject {
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
     pub environment: Entity<ProjectEnvironment>,
+    pub profiling_collector: gpui::ProfilingCollector,
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
@@ -74,6 +76,7 @@ pub struct HeadlessAppState {
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
+    pub startup_time: Instant,
 }
 
 impl HeadlessProject {
@@ -90,6 +93,7 @@ impl HeadlessProject {
             node_runtime,
             languages,
             extension_host_proxy: proxy,
+            startup_time,
         }: HeadlessAppState,
         init_worktree_trust: bool,
         cx: &mut Context<Self>,
@@ -98,7 +102,7 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone());
+            let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
             store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             store
         });
@@ -223,6 +227,8 @@ impl HeadlessProject {
             lsp_store
         });
 
+        AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
+
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store = AgentServerStore::local(
                 node_runtime.clone(),
@@ -284,6 +290,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
@@ -297,6 +304,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
+        session.add_entity_request_handler(Self::handle_download_file_by_path);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -341,6 +349,7 @@ impl HeadlessProject {
             extensions,
             git_store,
             environment,
+            profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
         }
     }
@@ -482,7 +491,12 @@ impl HeadlessProject {
                 }
             }
         };
-
+        let next_worktree_id = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .update(cx, |worktree_store, _| worktree_store.next_worktree_id())
+            })
+            .await?;
         let worktree = this
             .read_with(&cx.clone(), |this, _| {
                 Worktree::local(
@@ -491,6 +505,7 @@ impl HeadlessProject {
                     this.fs.clone(),
                     this.next_entry_id.clone(),
                     true,
+                    next_worktree_id,
                     &mut cx,
                 )
             })
@@ -681,6 +696,98 @@ impl HeadlessProject {
         Ok(proto::Ack {})
     }
 
+    pub async fn handle_download_file_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::DownloadFileByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::DownloadFileResponse> {
+        log::debug!(
+            "handle_download_file_by_path: received request: {:?}",
+            message.payload
+        );
+
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+        let file_id = message.payload.file_id;
+        log::debug!(
+            "handle_download_file_by_path: worktree_id={:?}, path={:?}, file_id={}",
+            worktree_id,
+            path,
+            file_id
+        );
+        use proto::create_file_for_peer::Variant;
+
+        let (worktree_store, session): (Entity<WorktreeStore>, AnyProtoClient) = this
+            .read_with(&cx, |this, _| {
+                (this.worktree_store.clone(), this.session.clone())
+            });
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))
+            .context("worktree not found")?;
+
+        let download_task = worktree.update(&mut cx, |worktree: &mut Worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
+
+        let downloaded_file = download_task.await?;
+        let content = downloaded_file.content;
+        let file = downloaded_file.file;
+        log::debug!(
+            "handle_download_file_by_path: file loaded, content_size={}",
+            content.len()
+        );
+
+        let proto_file = worktree.read_with(&cx, |_worktree: &Worktree, cx| file.to_proto(cx));
+        log::debug!(
+            "handle_download_file_by_path: using client-provided file_id={}",
+            file_id
+        );
+
+        let state = proto::FileState {
+            id: file_id,
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+        };
+
+        log::debug!("handle_download_file_by_path: sending State message");
+        session.send(proto::CreateFileForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(Variant::State(state)),
+        })?;
+
+        const CHUNK_SIZE: usize = 1024 * 1024; // 1MB chunks
+        let num_chunks = content.len().div_ceil(CHUNK_SIZE);
+        log::debug!(
+            "handle_download_file_by_path: sending {} chunks",
+            num_chunks
+        );
+        for (i, chunk) in content.chunks(CHUNK_SIZE).enumerate() {
+            log::trace!(
+                "handle_download_file_by_path: sending chunk {}/{}, size={}",
+                i + 1,
+                num_chunks,
+                chunk.len()
+            );
+            session.send(proto::CreateFileForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(Variant::Chunk(proto::FileChunk {
+                    file_id,
+                    data: chunk.to_vec(),
+                })),
+            })?;
+        }
+
+        log::debug!(
+            "handle_download_file_by_path: returning file_id={}",
+            file_id
+        );
+        Ok(proto::DownloadFileResponse { file_id })
+    }
+
     pub async fn handle_open_new_buffer(
         this: Entity<Self>,
         _message: TypedEnvelope<proto::OpenNewBuffer>,
@@ -754,7 +861,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path,
+                        path,
                     },
                     cx,
                 )
@@ -998,6 +1105,53 @@ impl HeadlessProject {
         processes.sort_by_key(|p| p.name.clone());
 
         Ok(proto::GetProcessesResponse { processes })
+    }
+
+    async fn handle_get_remote_profiling_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetRemoteProfilingData>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetRemoteProfilingDataResponse> {
+        let foreground_only = envelope.payload.foreground_only;
+
+        let (deltas, now_nanos) = cx.update(|cx| {
+            let dispatcher = cx.foreground_executor().dispatcher();
+            let timings = if foreground_only {
+                vec![dispatcher.get_current_thread_timings()]
+            } else {
+                dispatcher.get_all_timings()
+            };
+            this.update(cx, |this, _cx| {
+                let deltas = this.profiling_collector.collect_unseen(timings);
+                let now_nanos = Instant::now()
+                    .duration_since(this.profiling_collector.startup_time())
+                    .as_nanos() as u64;
+                (deltas, now_nanos)
+            })
+        });
+
+        let threads = deltas
+            .into_iter()
+            .map(|delta| proto::RemoteProfilingThread {
+                thread_name: delta.thread_name,
+                thread_id: delta.thread_id,
+                timings: delta
+                    .new_timings
+                    .into_iter()
+                    .map(|t| proto::RemoteProfilingTiming {
+                        location: Some(proto::RemoteProfilingLocation {
+                            file: t.location.file.to_string(),
+                            line: t.location.line,
+                            column: t.location.column,
+                        }),
+                        start_nanos: t.start as u64,
+                        duration_nanos: t.duration as u64,
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        Ok(proto::GetRemoteProfilingDataResponse { threads, now_nanos })
     }
 
     async fn handle_get_directory_environment(

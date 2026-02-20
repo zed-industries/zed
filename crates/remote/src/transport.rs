@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
-use smol::process::Child;
+use util::command::Child;
 
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
@@ -181,10 +181,9 @@ async fn build_remote_server_from_source(
     binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
-    use smol::process::{Command, Stdio};
     use std::env::VarError;
     use std::path::Path;
-    use util::command::new_smol_command;
+    use util::command::{Command, Stdio, new_command};
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
         let path = std::path::PathBuf::from(path);
@@ -267,7 +266,7 @@ async fn build_remote_server_from_source(
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
                 .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "build",
@@ -297,18 +296,12 @@ async fn build_remote_server_from_source(
             .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(
-            new_smol_command(rustup)
-                .args(["target", "add"])
-                .arg(&triple),
-        )
-        .await?;
+        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
 
         if which("cargo-zigbuild", cx).await?.is_none() {
             delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
             log::info!("installing cargo-zigbuild");
-            run_cmd(new_smol_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
-                .await?;
+            run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
         }
 
         delegate.set_status(
@@ -319,7 +312,7 @@ async fn build_remote_server_from_source(
         );
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
                 .args([
                     "zigbuild",
                     "--package",
@@ -346,31 +339,31 @@ async fn build_remote_server_from_source(
         delegate.set_status(Some("Compressing binary"), cx);
 
         #[cfg(not(target_os = "windows"))]
-        {
-            run_cmd(new_smol_command("gzip").args(["-f", &bin_path.to_string_lossy()])).await?;
-        }
+        let archive_path = {
+            run_cmd(new_command("gzip").arg("-f").arg(&bin_path)).await?;
+            bin_path.with_extension("gz")
+        };
 
         #[cfg(target_os = "windows")]
-        {
-            let zip_path = format!("target/remote_server/{}/debug/remote_server.zip", triple);
+        let archive_path = {
+            let zip_path = bin_path.with_extension("zip");
             if smol::fs::metadata(&zip_path).await.is_ok() {
                 smol::fs::remove_file(&zip_path).await?;
             }
             let compress_command = format!(
                 "Compress-Archive -Path '{}' -DestinationPath '{}' -Force",
-                bin_path.to_string_lossy(),
-                zip_path
+                bin_path.display(),
+                zip_path.display(),
             );
-            run_cmd(new_smol_command("powershell.exe").args([
+            run_cmd(new_command("powershell.exe").args([
                 "-NoProfile",
                 "-Command",
                 &compress_command,
             ]))
             .await?;
-        }
+            zip_path
+        };
 
-        let mut archive_path = bin_path;
-        archive_path.set_extension("zip");
         std::env::current_dir()?.join(archive_path)
     } else {
         bin_path

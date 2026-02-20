@@ -265,6 +265,20 @@ impl ZedAiOnboarding {
             .children(self.render_dismiss_button())
             .into_any_element()
     }
+
+    fn render_student_plan_state(&self, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_1()
+            .child(Headline::new("Welcome to Zed Student"))
+            .child(
+                Label::new("Here's what you get:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(PlanDefinitions.student_plan())
+            .children(self.render_dismiss_button())
+            .into_any_element()
+    }
 }
 
 impl RenderOnce for ZedAiOnboarding {
@@ -275,6 +289,7 @@ impl RenderOnce for ZedAiOnboarding {
                 Some(Plan::ZedFree) => self.render_free_plan_state(cx),
                 Some(Plan::ZedProTrial) => self.render_trial_state(cx),
                 Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
+                Some(Plan::ZedStudent) => self.render_student_plan_state(cx),
             }
         } else {
             self.render_sign_in_disclaimer(cx)

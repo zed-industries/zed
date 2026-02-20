@@ -116,6 +116,7 @@ impl ForegroundExecutor {
         }
     }
 
+    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }
@@ -211,6 +212,7 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
+    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
     }

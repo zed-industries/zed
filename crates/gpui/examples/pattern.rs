@@ -1,7 +1,8 @@
 use gpui::{
-    App, AppContext, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div,
-    linear_color_stop, linear_gradient, pattern_slash, prelude::*, px, rgb, size,
+    App, AppContext, Bounds, Context, Window, WindowBounds, WindowOptions, div, linear_color_stop,
+    linear_gradient, pattern_slash, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 struct PatternExample;
 
@@ -99,7 +100,7 @@ impl Render for PatternExample {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {

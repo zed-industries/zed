@@ -1,10 +1,13 @@
+---
+title: How to Migrate from VS Code to Zed
+description: "Guide for migrating from VS Code to Zed, including settings and keybindings."
+---
+
 # How to Migrate from VS Code to Zed
 
-This guide is for developers who spent serious time in VS Code and want to try Zed without starting from scratch.
+This guide explains how to move from VS Code to Zed without rebuilding your workflow.
 
-If you’re here, you might be looking for a faster editor. Or something less cluttered. Or you’re curious about built-in collaboration. Whatever brought you here, this guide helps you move over your habits, shortcuts, and settings.
-
-We’ll cover what to bring, what to change, and what’s different. You can ease in gradually or switch all at once. Either way, you’ll stay productive.
+It covers which settings import automatically, which shortcuts map cleanly, and which behaviors differ so you can adjust quickly.
 
 ## Install Zed
 
@@ -159,18 +162,13 @@ The following VS Code settings are automatically imported when you use **Import 
 | `chat.agent.enabled`       | `agent.enabled`                                          |
 | `mcp`                      | `context_servers`                                        |
 
-Zed doesn’t import extensions or keybindings, but this is the fastest way to get a familiar feel while trying something new. If you skip that step during setup, you can still import settings manually later via the command palette:
+Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 
 `Cmd+Shift+P → Zed: Import VS Code Settings`
 
 ## Set Up Editor Preferences
 
-You can also configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
 
 Here’s how common VS Code settings translate:
 | VS Code | Zed | Notes |
@@ -195,12 +193,12 @@ You can also launch Zed from the terminal inside any folder with:
 
 Once inside a project, use `Cmd+P` to jump between files quickly. `Cmd+Shift+P` (`Ctrl+Shift+P` on Linux) opens the command palette for running actions / tasks, toggling settings, or starting a collaboration session.
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Collapse it with `Cmd+B` for a distraction-free view.
 
 ## Differences in Keybindings
 
-If you chose the VS Code keymap during onboarding, you're likely good to go, and most of your shortcuts should already feel familiar.
-Here’s a quick reference guide for how our keybindings compare to what you’re used to coming from VS Code.
+If you chose the VS Code keymap during onboarding, most shortcuts should already feel familiar.
+Here’s a quick reference for where keybindings match and where they differ.
 
 ### Common Shared Keybindings (Zed <> VS Code)
 
@@ -274,23 +272,23 @@ Open a folder → work inside that folder → no additional workspace layer.
 
 ### Navigating in a Project
 
-In VS Code, the standard entry point is opening a folder. From there, the left-hand sidebar is central to your navigation.
+In VS Code, the standard entry point is opening a folder. From there, the left-hand panel is central to navigation.
 Zed takes a different approach:
 
 - You can still open folders, but you don’t need to. Opening a single file or even starting with an empty workspace is valid.
-- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are your primary navigation tools. The File Finder searches across the entire workspace instantly; files, symbols, commands, even teammates if you're collaborating.
-- Instead of a persistent sidebar, Zed encourages you to:
+- The Command Palette (`Cmd+Shift+P`) and File Finder (`Cmd+P`) are primary navigation tools. The File Finder searches files, symbols, and commands across the workspace.
+- Instead of a persistent panel, Zed encourages you to:
   - Fuzzy-find files by name (`Cmd+P`)
   - Jump directly to symbols (`Cmd+Shift+O`)
   - Use split panes and tabs for context, rather than keeping a large file tree open (though you can do this with the Project Panel if you prefer).
 
-The UI is intentionally minimal. Panels slide in only when needed, then get out of your way. The focus is on flowing between code instead of managing panes.
+The UI keeps auxiliary panels out of the way so navigation stays centered on code.
 
 ### Extensions vs. Marketplace
 
 Zed does not offer as many extensions as VS Code. The available extensions are focused on language support, themes, syntax highlighting, and other core editing enhancements.
 
-However there are several features that typically require extensions in VS Code which we built directly into Zed:
+Several features that typically require extensions in VS Code are built into Zed:
 
 - Real-time collaboration with voice and cursor sharing (no Live Share required)
 - AI coding assistance (no Copilot extension needed)
@@ -299,7 +297,7 @@ However there are several features that typically require extensions in VS Code 
 - Task runner with JSON config
 - Inline diagnostics and code actions via LSP
 
-You won’t find one-to-one replacements for every VS Code extension, especially if you rely on tools for DevOps, containers, or test runners. Zed's extension ecosystem is still growing, and the catalog is smaller by design.
+You won’t find one-to-one replacements for every VS Code extension, especially if you rely on tools for DevOps, containers, or test runners. Zed's extension catalog is still growing and remains smaller.
 
 ### Collaboration in Zed vs. VS Code
 
@@ -309,13 +307,13 @@ Unlike VS Code, Zed doesn’t require an extension to collaborate. It’s built 
 - Create a channel and [invite your collaborators](https://zed.dev/docs/collaboration#inviting-a-collaborator) to join.
 - [Share your screen or your codebase](https://zed.dev/docs/collaboration#share-a-project) directly.
 
-Once connected, you’ll see each other's cursors, selections, and edits in real time. Voice chat is included, so you can talk as you work. There’s no need for separate tools or third-party logins. Zed’s collaboration is designed for everything from quick pair programming to longer team sessions.
+Once connected, you’ll see each other's cursors, selections, and edits in real time. Voice chat is included, so you can talk as you work. There’s no need for separate tools or third-party logins.
 
 Learn how [Zed uses Zed](https://zed.dev/blog/zed-is-our-office) to plan work and collaborate.
 
 ### Using AI in Zed
 
-If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You can also explore other agents through Zed Pro, or bring your own keys and connect without authentication. Zed is designed to enable many options for using AI, including disabling it entirely.
+If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You can also explore other agents through Zed Pro, or bring your own keys and connect without authentication. You can disable AI features entirely if you prefer.
 
 #### Configuring GitHub Copilot
 
@@ -338,7 +336,7 @@ To use other AI models in Zed, you have several options:
 
 - Use Zed’s hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
 - Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Code](https://zed.dev/docs/ai/external-agents.html).
+- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html).
 
 ### Advanced Config and Productivity Tweaks
 

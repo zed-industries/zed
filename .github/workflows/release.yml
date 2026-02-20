@@ -21,7 +21,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -35,15 +34,21 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   run_tests_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -57,7 +62,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -65,13 +69,10 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -80,15 +81,21 @@ jobs:
       uses: taiki-e/install-action@nextest
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
-      shell: bash -euxo pipefail {0}
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
-      shell: bash -euxo pipefail {0}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
       if: always()
       run: |
         rm -rf ./../.cargo
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
     services:
       postgres:
@@ -118,8 +125,19 @@ jobs:
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 250
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     - name: steps::cleanup_cargo_config
       if: always()
@@ -139,15 +157,22 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
         cache: rust
         path: ~/.rustup
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_linux:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -161,7 +186,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-      shell: bash -euxo pipefail {0}
     - name: steps::cache_rust_dependencies_namespace
       uses: namespacelabs/nscloud-cache-action@v1
       with:
@@ -169,16 +193,21 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
-      shell: bash -euxo pipefail {0}
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
     timeout-minutes: 60
   clippy_windows:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -193,8 +222,19 @@ jobs:
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache.ps1
+      shell: pwsh
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy.ps1
+      shell: pwsh
+    - name: steps::show_sccache_stats
+      run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
   check_scripts:
@@ -207,15 +247,12 @@ jobs:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
       run: ./script/shellcheck-scripts error
-      shell: bash -euxo pipefail {0}
     - id: get_actionlint
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::run_actionlint
       run: |
         ${{ steps.get_actionlint.outputs.executable }} -color
-      shell: bash -euxo pipefail {0}
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -224,7 +261,6 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-      shell: bash -euxo pipefail {0}
     timeout-minutes: 60
   create_draft_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -238,16 +274,12 @@ jobs:
         ref: ${{ github.ref }}
     - name: script/determine-release-channel
       run: script/determine-release-channel
-      shell: bash -euxo pipefail {0}
     - name: mkdir -p target/
       run: mkdir -p target/
-      shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::generate_release_notes
       run: node --redirect-warnings=/dev/null ./script/draft-release-notes "$RELEASE_VERSION" "$RELEASE_CHANNEL" > target/release-notes.md
-      shell: bash -euxo pipefail {0}
     - name: release::create_draft_release::create_release
       run: script/create-draft-release target/release-notes.md
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
@@ -272,16 +304,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-aarch64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -316,16 +344,12 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-      shell: bash -euxo pipefail {0}
     - name: steps::install_mold
       run: ./script/install-mold
-      shell: bash -euxo pipefail {0}
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
-      shell: bash -euxo pipefail {0}
     - name: ./script/bundle-linux
       run: ./script/bundle-linux
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact zed-linux-x86_64.tar.gz'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -369,10 +393,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -416,10 +438,8 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
-      shell: bash -euxo pipefail {0}
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
-      shell: bash -euxo pipefail {0}
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
@@ -540,7 +560,6 @@ jobs:
         path: ./artifacts/
     - name: ls -lR ./artifacts
       run: ls -lR ./artifacts
-      shell: bash -euxo pipefail {0}
     - name: release::prep_release_artifacts
       run: |-
         mkdir -p release-artifacts/
@@ -557,10 +576,8 @@ jobs:
         mv ./artifacts/zed-remote-server-linux-x86_64.gz/zed-remote-server-linux-x86_64.gz release-artifacts/zed-remote-server-linux-x86_64.gz
         mv ./artifacts/zed-remote-server-windows-aarch64.zip/zed-remote-server-windows-aarch64.zip release-artifacts/zed-remote-server-windows-aarch64.zip
         mv ./artifacts/zed-remote-server-windows-x86_64.zip/zed-remote-server-windows-x86_64.zip release-artifacts/zed-remote-server-windows-x86_64.zip
-      shell: bash -euxo pipefail {0}
     - name: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
       run: gh release upload "$GITHUB_REF_NAME" --repo=zed-industries/zed release-artifacts/*
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   validate_release_assets:
@@ -584,7 +601,6 @@ jobs:
         fi
 
         echo "All expected assets are present in the release."
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   auto_release_preview:
@@ -601,7 +617,6 @@ jobs:
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
   push_release_update_notification:
@@ -610,6 +625,19 @@ jobs:
     - upload_release_assets
     - validate_release_assets
     - auto_release_preview
+    - run_tests_mac
+    - run_tests_linux
+    - run_tests_windows
+    - clippy_mac
+    - clippy_linux
+    - clippy_windows
+    - check_scripts
+    - bundle_linux_aarch64
+    - bundle_linux_x86_64
+    - bundle_mac_aarch64
+    - bundle_mac_x86_64
+    - bundle_windows_aarch64
+    - bundle_windows_x86_64
     if: always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -629,6 +657,35 @@ jobs:
             RELEASE_URL=$(gh release view "$TAG" --repo=zed-industries/zed --json url -q '.url')
             if [ "$UPLOAD_RESULT" == "failure" ]; then
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
+            elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
+                FAILED_JOBS=""
+                if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
+                if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
+                if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
+                if [ "${{ needs.clippy_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
+                if [ "${{ needs.check_scripts.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "${{ needs.bundle_linux_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
+                if [ "${{ needs.bundle_linux_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "${{ needs.bundle_mac_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
+                if [ "${{ needs.bundle_mac_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
+                if [ "${{ needs.bundle_windows_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
+                if [ "${{ needs.bundle_windows_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
+                FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
+                if [ "$UPLOAD_RESULT" == "cancelled" ]; then
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Release job for $TAG was cancelled, most likely because tests \`$FAILED_JOBS\` failed: $RUN_URL"
+                    else
+                        echo "❌ Release job for $TAG was cancelled: $RUN_URL"
+                    fi
+                else
+                    if [ -n "$FAILED_JOBS" ]; then
+                        echo "❌ Tests \`$FAILED_JOBS\` for $TAG failed: $RUN_URL"
+                    else
+                        echo "❌ Tests for $TAG failed: $RUN_URL"
+                    fi
+                fi
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release asset validation failed for $TAG (missing assets): $RUN_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
@@ -641,14 +698,17 @@ jobs:
         fi
         )
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
-      shell: bash -euxo pipefail {0}
+      env:
+        GH_TOKEN: ${{ github.token }}
     - name: release::send_slack_message
       run: |
         curl -X POST -H 'Content-type: application/json'\
          --data '{"text":"${{ steps.generate-webhook-message.outputs.message }}"}' "$SLACK_WEBHOOK"
-      shell: bash -euxo pipefail {0}
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

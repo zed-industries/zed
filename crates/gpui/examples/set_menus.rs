@@ -1,7 +1,8 @@
 use gpui::{
-    App, Application, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window,
-    WindowOptions, actions, div, prelude::*, rgb,
+    App, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window, WindowOptions,
+    actions, div, prelude::*, rgb,
 };
+use gpui_platform::application;
 
 struct SetMenus;
 
@@ -20,7 +21,7 @@ impl Render for SetMenus {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         cx.set_global(AppState::new());
 
         // Bring the menu bar to the foreground (so you can see the menu bar)

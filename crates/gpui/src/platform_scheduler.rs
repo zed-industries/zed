@@ -53,21 +53,27 @@ impl Scheduler for PlatformScheduler {
             unparker.unpark();
         });
         let mut cx = Context::from_waker(&waker);
+        if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+            return true;
+        }
+
+        let park_deadline = |deadline: Instant| {
+            // Timer expirations are only delivered every ~15.6 milliseconds by default on Windows.
+            // We increase the resolution during this wait so that short timeouts stay reasonably short.
+            let _timer_guard = self.dispatcher.increase_timer_resolution();
+            parker.park_deadline(deadline)
+        };
 
         loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => return true,
-                Poll::Pending => {
-                    if let Some(deadline) = deadline {
-                        let now = Instant::now();
-                        if now >= deadline {
-                            return false;
-                        }
-                        parker.park_timeout(deadline - now);
-                    } else {
-                        parker.park();
-                    }
+            match deadline {
+                Some(deadline) if !park_deadline(deadline) && deadline <= Instant::now() => {
+                    return false;
                 }
+                Some(_) => (),
+                None => parker.park(),
+            }
+            if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+                break true;
             }
         }
     }
@@ -89,6 +95,7 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.spawn_realtime(f);
     }
 
+    #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         use std::sync::{Arc, atomic::AtomicBool};
 

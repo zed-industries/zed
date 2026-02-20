@@ -1,7 +1,7 @@
 use gpui::{
-    App, Application, Bounds, Context, Hsla, Window, WindowBounds, WindowOptions, div, prelude::*,
-    px, rgb, size,
+    App, Bounds, Context, Hsla, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 // https://en.wikipedia.org/wiki/Holy_grail_(web_design)
 struct HolyGrailExample {}
@@ -65,7 +65,7 @@ impl Render for HolyGrailExample {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
         cx.open_window(
             WindowOptions {

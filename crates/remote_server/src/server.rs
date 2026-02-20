@@ -54,9 +54,10 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, LazyLock},
+    time::Instant,
 };
 use thiserror::Error;
-use util::{ResultExt, command::new_smol_command};
+use util::{ResultExt, command::new_command};
 
 #[derive(Subcommand)]
 pub enum Commands {
@@ -447,7 +448,8 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
-    let app = gpui::Application::headless();
+    let startup_time = Instant::now();
+    let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
     app.background_executor()
@@ -567,6 +569,7 @@ pub fn execute_run(
                     node_runtime,
                     languages,
                     extension_host_proxy,
+                    startup_time,
                 },
                 true,
                 cx,
@@ -575,8 +578,11 @@ pub fn execute_run(
 
         handle_crash_files_requests(&project, &session);
 
-        cx.background_spawn(async move { cleanup_old_binaries() })
-            .detach();
+        cx.background_spawn(async move {
+            cleanup_old_binaries_wsl();
+            cleanup_old_binaries()
+        })
+        .detach();
 
         mem::forget(project);
     };
@@ -942,11 +948,11 @@ fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), S
 
 #[cfg(not(windows))]
 fn spawn_server_normal(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let mut server_process = new_smol_command(binary_name);
+    let mut server_process = new_command(binary_name);
     server_process
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -974,7 +980,7 @@ pub struct CheckPidError {
     pid: u32,
 }
 async fn check_server_running(pid: u32) -> std::io::Result<bool> {
-    new_smol_command("kill")
+    new_command("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
@@ -1172,6 +1178,15 @@ fn cleanup_old_binaries() -> Result<()> {
     }
 
     Ok(())
+}
+
+// Remove this once 223 goes stable, we only have this to clean up old binaries on WSL
+// we no longer download them into this folder, we use the same folder as other remote servers
+fn cleanup_old_binaries_wsl() {
+    let server_dir = paths::remote_wsl_server_dir_relative();
+    if let Ok(()) = std::fs::remove_dir_all(server_dir.as_std_path()) {
+        log::info!("removing old wsl remote server folder: {:?}", server_dir);
+    }
 }
 
 fn is_new_version(version: &str) -> bool {

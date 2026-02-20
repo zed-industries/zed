@@ -8,6 +8,7 @@ use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
 use gpui::{App, Entity, Task};
+use itertools::Itertools;
 use language::{
     BufferRow,
     language_settings::{InlayHintKind, InlayHintSettings, language_settings},
@@ -210,6 +211,7 @@ pub enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(BufferId),
+    ServerRemoved,
     RefreshRequested {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -225,7 +227,7 @@ impl Editor {
 
         let mut supports = false;
         self.buffer().update(cx, |this, cx| {
-            this.for_each_buffer(|buffer| {
+            this.for_each_buffer(&mut |buffer| {
                 supports |= provider.supports_inlay_hints(buffer, cx);
             });
         });
@@ -267,7 +269,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if self.ignore_lsp_data() || self.inlay_hints.is_none() {
+        if !self.mode().is_full() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -297,7 +299,8 @@ impl Editor {
         let ignore_previous_fetches = match reason {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::SettingsChange(_) => true,
+            | InlayHintRefreshReason::SettingsChange(_)
+            | InlayHintRefreshReason::ServerRemoved => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
             | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
@@ -505,6 +508,7 @@ impl Editor {
                 self.splice_inlays(&to_remove, Vec::new(), cx);
                 return None;
             }
+            InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {
@@ -769,8 +773,17 @@ impl Editor {
             return;
         };
 
-        let mut hints_to_remove = Vec::new();
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(buffer_snapshot) = self
+            .buffer
+            .read(cx)
+            .buffer(buffer_id)
+            .map(|buffer| buffer.read(cx).snapshot())
+        else {
+            return;
+        };
+
+        let mut hints_to_remove = Vec::new();
 
         // If we've received hints from the cache, it means `invalidate_cache` had invalidated whatever possible there,
         // and most probably there are no more hints with IDs from `visible_inlay_hint_ids` in the cache.
@@ -783,9 +796,8 @@ impl Editor {
             hints_to_remove.extend(visible_inlay_hint_ids);
         }
 
-        let excerpts = self.buffer.read(cx).excerpt_ids();
         let mut inserted_hint_text = HashMap::default();
-        let hints_to_insert = new_hints
+        let new_hints = new_hints
             .into_iter()
             .filter_map(|(chunk_range, hints_result)| {
                 let chunks_fetched = inlay_hints.hint_chunk_fetching.get_mut(&buffer_id);
@@ -840,22 +852,24 @@ impl Editor {
 
                 hints_deduplicated
             })
-            .filter_map(|(hint_id, lsp_hint)| {
-                if inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
+            .filter(|(hint_id, lsp_hint)| {
+                inlay_hints.allowed_hint_kinds.contains(&lsp_hint.kind)
                     && inlay_hints
                         .added_hints
-                        .insert(hint_id, lsp_hint.kind)
+                        .insert(*hint_id, lsp_hint.kind)
                         .is_none()
-                {
-                    let position = excerpts.iter().find_map(|excerpt_id| {
-                        multi_buffer_snapshot.anchor_in_excerpt(*excerpt_id, lsp_hint.position)
-                    })?;
-                    return Some(Inlay::hint(hint_id, position, &lsp_hint));
-                }
-                None
             })
+            .sorted_by(|(_, a), (_, b)| a.position.cmp(&b.position, &buffer_snapshot))
             .collect::<Vec<_>>();
 
+        let hints_to_insert = multi_buffer_snapshot
+            .text_anchors_to_visible_anchors(
+                new_hints.iter().map(|(_, lsp_hint)| lsp_hint.position),
+            )
+            .into_iter()
+            .zip(&new_hints)
+            .filter_map(|(position, (hint_id, hint))| Some(Inlay::hint(*hint_id, position?, &hint)))
+            .collect();
         let invalidate_hints_for_buffers =
             std::mem::take(&mut inlay_hints.invalidate_hints_for_buffers);
         if !invalidate_hints_for_buffers.is_empty() {
@@ -956,7 +970,7 @@ pub mod tests {
     use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::rust_lang;
-    use lsp::FakeLanguageServer;
+    use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, FakeLanguageServer};
     use multi_buffer::{MultiBuffer, MultiBufferOffset};
     use parking_lot::Mutex;
     use pretty_assertions::assert_eq;
@@ -1062,7 +1076,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1228,9 +1242,12 @@ pub mod tests {
 
         let progress_token = 42;
         fake_server
-            .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
-                token: lsp::ProgressToken::Number(progress_token),
-            })
+            .request::<lsp::request::WorkDoneProgressCreate>(
+                lsp::WorkDoneProgressCreateParams {
+                    token: lsp::ProgressToken::Number(progress_token),
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
             .await
             .into_response()
             .expect("work done progress create request failed");
@@ -1625,7 +1642,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1783,7 +1800,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");
@@ -1856,7 +1873,7 @@ pub mod tests {
             .unwrap();
 
         fake_server
-            .request::<lsp::request::InlayHintRefreshRequest>(())
+            .request::<lsp::request::InlayHintRefreshRequest>((), DEFAULT_LSP_REQUEST_TIMEOUT)
             .await
             .into_response()
             .expect("inlay refresh request failed");

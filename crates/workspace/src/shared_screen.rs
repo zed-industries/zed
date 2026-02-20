@@ -133,7 +133,7 @@ impl Item for SharedScreen {
         })))
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
         match event {
             Event::Close => f(ItemEvent::CloseItem),
         }

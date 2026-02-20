@@ -704,6 +704,8 @@ pub struct ChunkBitmaps<'a> {
     pub chars: Bitmap,
     /// Bitmap of tab locations in text. LSB ordered
     pub tabs: Bitmap,
+    /// Bitmap of newlines location in text. LSB ordered
+    pub newlines: Bitmap,
 }
 
 #[derive(Clone)]
@@ -916,11 +918,13 @@ impl<'a> Chunks<'a> {
         // Shift the tabs to align with our slice window
         let shifted_tabs = chunk.tabs() >> chunk_start_offset;
         let shifted_chars = chunk.chars() >> chunk_start_offset;
+        let shifted_newlines = chunk.newlines() >> chunk_start_offset;
 
         Some(ChunkBitmaps {
             text: slice_text,
             chars: shifted_chars,
             tabs: shifted_tabs,
+            newlines: shifted_newlines,
         })
     }
 

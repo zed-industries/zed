@@ -1,3 +1,8 @@
+---
+title: C#
+description: "Configure C# language support in Zed, including language servers, formatting, and debugging."
+---
+
 # C#
 
 Note language name is "CSharp" for settings not "C#'
