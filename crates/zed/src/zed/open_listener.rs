@@ -469,13 +469,11 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
-        let has_existing_workspaces =
-            cx.update(|cx| !workspace::local_workspace_windows(cx).is_empty());
-        if has_existing_workspaces {
-            return Ok(());
-        }
+    if should_skip_no_arg_workspace_open(&paths, &diff_paths, open_new_workspace, cx) {
+        return Ok(());
+    }
 
+    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -584,6 +582,21 @@ async fn open_workspaces(
     anyhow::ensure!(!errored, "failed to open a workspace");
 
     Ok(())
+}
+
+fn should_skip_no_arg_workspace_open(
+    paths: &[String],
+    diff_paths: &[[String; 2]],
+    open_new_workspace: Option<bool>,
+    cx: &mut AsyncApp,
+) -> bool {
+    // For CLI opens with no paths, no diffs, and no explicit `--new`, do not
+    // create/restore another workspace if a local workspace window already
+    // exists.
+    paths.is_empty()
+        && diff_paths.is_empty()
+        && open_new_workspace != Some(true)
+        && cx.update(|cx| !workspace::local_workspace_windows(cx).is_empty())
 }
 
 async fn open_local_workspace(
