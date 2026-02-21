@@ -469,6 +469,34 @@ pub mod agent {
         /// The base ref that the diff was computed against (e.g. "main").
         pub base_ref: SharedString,
     }
+
+    /// A single merge conflict region extracted from a file.
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
+    pub struct ConflictContent {
+        pub file_path: String,
+        pub conflict_text: String,
+        pub ours_branch_name: String,
+        pub theirs_branch_name: String,
+    }
+
+    /// Opens a new agent thread to resolve merge conflicts.
+    ///
+    /// Supports two modes:
+    /// - Specific conflicts: `conflicts` contains pre-extracted conflict text
+    ///   (used by per-conflict and per-file buttons where the buffer is already open).
+    /// - Project-wide: `conflicted_file_paths` lists paths the agent should open and resolve
+    ///   (used when not all conflicted buffers are loaded in memory).
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictsWithAgent {
+        /// Individual conflicts with their full text.
+        #[serde(default)]
+        pub conflicts: Vec<ConflictContent>,
+        /// File paths with unresolved conflicts (for project-wide resolution).
+        #[serde(default)]
+        pub conflicted_file_paths: Vec<String>,
+    }
 }
 
 pub mod assistant {
