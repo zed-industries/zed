@@ -4183,7 +4183,7 @@ async fn test_inverted_diff_secondary_version_mismatch(cx: &mut TestAppContext) 
         .await;
 
     let base_text_buffer =
-        uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+        uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer());
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(base_text_buffer.clone(), cx);
