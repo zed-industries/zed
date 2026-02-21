@@ -143,6 +143,7 @@ pub enum IconName {
     GitBranchAlt,
     GitBranchPlus,
     GitGraph,
+    GitMergeConflict,
     Github,
     Hash,
     HistoryRerun,
