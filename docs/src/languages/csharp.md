@@ -19,7 +19,7 @@ Roslyn is enabled by default. To switch back to OmniSharp, add the following to 
   "languages": {
     "CSharp": {
       "language_servers": ["omnisharp", "!roslyn", "..."]
-    },
+    }
   }
 }
 ```
@@ -107,8 +107,8 @@ Roslyn can be configured with the following language server settings:
       },
       "binary": {
         "path": "/path/to/roslyn-language-server",
-        "arguments": ["optional", "additional", "args", "--stdio", "--autoLoadProjects"]
-      },
+        "arguments": ["--stdio", "--autoLoadProjects" /* add extra arguments */]
+      }
     }
   }
 }
@@ -122,7 +122,7 @@ OmniSharp can be configured in a Zed settings file with:
     "omnisharp": {
       "binary": {
         "path": "/path/to/OmniSharp",
-        "arguments": ["optional", "additional", "args", "-lsp"]
+        "arguments": ["-lsp" /* add extra arguments */]
       }
     }
   }
