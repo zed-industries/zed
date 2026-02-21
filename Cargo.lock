@@ -6166,6 +6166,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "multi_buffer",
  "open_path_prompt",
  "picker",
  "pretty_assertions",

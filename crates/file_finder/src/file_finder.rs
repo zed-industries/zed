@@ -13,6 +13,7 @@ use gpui::{
     Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString,
     Styled, Task, WeakEntity, Window, actions, rems,
 };
+use multi_buffer::{MultiBuffer, PathKey};
 use open_path_prompt::{
     OpenPathPrompt,
     file_finder_settings::{FileFinderMode, FileFinderSettings, FileFinderWidth},
@@ -452,9 +453,47 @@ impl Render for FileFinder {
         let max_modal_width = window.viewport_size().width - px(48.);
         modal_max_width = modal_max_width.min(max_modal_width);
 
-        let (preview_title, preview_lines, preview_message, preview_loading) =
-            self.picker.read(cx).delegate.preview_state();
-        let has_preview_message = preview_message.is_some();
+        let (
+            preview_title,
+            preview_lines,
+            preview_message,
+            preview_loading,
+            preview_uses_editor,
+            preview_editor,
+        ) = self.picker.read(cx).delegate.preview_state();
+
+        let preview_content = if let Some(message) = preview_message {
+            v_flex()
+                .px_3()
+                .py_2()
+                .child(Label::new(message).size(LabelSize::Small))
+                .into_any_element()
+        } else if preview_uses_editor {
+            div().size_full().child(preview_editor).into_any_element()
+        } else {
+            div()
+                .id("file-finder-preview-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .child(v_flex().px_3().py_2().gap_px().children(
+                    preview_lines.iter().enumerate().map(|(line_number, line)| {
+                        h_flex()
+                            .items_start()
+                            .gap_2()
+                            .child(
+                                Label::new(format!("{:>4}", line_number + 1))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(line.clone())
+                                    .size(LabelSize::Small)
+                                    .buffer_font(cx),
+                            )
+                    }),
+                ))
+                .into_any_element()
+        };
 
         v_flex()
             .key_context(key_context)
@@ -511,46 +550,7 @@ impl Render for FileFinder {
                                         this.child(Label::new("Loading…").size(LabelSize::XSmall))
                                     }),
                             )
-                            .child(
-                                div()
-                                    .id("file-finder-preview-scroll")
-                                    .flex_1()
-                                    .overflow_y_scroll()
-                                    .children(preview_message.clone().map(|message| {
-                                        v_flex()
-                                            .px_3()
-                                            .py_2()
-                                            .child(Label::new(message).size(LabelSize::Small))
-                                            .into_any_element()
-                                    }))
-                                    .children((!has_preview_message).then(|| {
-                                        v_flex()
-                                            .px_3()
-                                            .py_2()
-                                            .gap_px()
-                                            .children(preview_lines.iter().enumerate().map(
-                                                |(line_number, line)| {
-                                                    h_flex()
-                                                        .items_start()
-                                                        .gap_2()
-                                                        .child(
-                                                            Label::new(format!(
-                                                                "{:>4}",
-                                                                line_number + 1
-                                                            ))
-                                                            .size(LabelSize::XSmall)
-                                                            .color(Color::Muted),
-                                                        )
-                                                        .child(
-                                                            Label::new(line.clone())
-                                                                .size(LabelSize::Small)
-                                                                .buffer_font(cx),
-                                                        )
-                                                },
-                                            ))
-                                            .into_any_element()
-                                    })),
-                            ),
+                            .child(div().flex_1().overflow_hidden().child(preview_content)),
                     ),
             )
     }
@@ -583,6 +583,9 @@ pub struct FileFinderDelegate {
     preview_title: SharedString,
     preview_message: Option<SharedString>,
     preview_lines: Arc<[SharedString]>,
+    preview_uses_editor: bool,
+    preview_multibuffer: Entity<MultiBuffer>,
+    preview_editor: Entity<Editor>,
     preview_loading: bool,
     preview_path: Option<PathBuf>,
     preview_task: Task<()>,
@@ -1035,6 +1038,18 @@ impl FileFinderDelegate {
         cx: &mut Context<FileFinder>,
     ) -> Self {
         Self::subscribe_to_updates(&project, window, cx);
+        let preview_capability = project.read(cx).capability();
+        let preview_multibuffer = cx.new(|_| MultiBuffer::new(preview_capability));
+        let preview_editor = cx.new(|cx| {
+            let mut preview_editor = Editor::for_multibuffer(
+                preview_multibuffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            );
+            preview_editor.set_read_only(true);
+            preview_editor
+        });
         Self {
             file_finder,
             workspace,
@@ -1062,6 +1077,9 @@ impl FileFinderDelegate {
             preview_title: "Preview".into(),
             preview_message: Some("Type to search files".into()),
             preview_lines: Arc::<[SharedString]>::from([]),
+            preview_uses_editor: false,
+            preview_multibuffer,
+            preview_editor,
             preview_loading: false,
             preview_path: None,
             preview_task: Task::ready(()),
@@ -1688,12 +1706,16 @@ impl FileFinderDelegate {
         Arc<[SharedString]>,
         Option<SharedString>,
         bool,
+        bool,
+        Entity<Editor>,
     ) {
         (
             self.preview_title.clone(),
             self.preview_lines.clone(),
             self.preview_message.clone(),
             self.preview_loading,
+            self.preview_uses_editor,
+            self.preview_editor.clone(),
         )
     }
 
@@ -1704,6 +1726,18 @@ impl FileFinderDelegate {
     fn selected_preview_path(&self, cx: &App) -> Option<PathBuf> {
         self.selected_match()
             .and_then(|path_match| path_match.abs_path(&self.project, cx))
+    }
+
+    fn selected_preview_project_path(&self) -> Option<ProjectPath> {
+        match self.selected_match()? {
+            Match::History { path, .. } => Some(path.project.clone()),
+            Match::Browse(entry) => (!entry.is_dir).then(|| entry.project_path.clone()),
+            Match::Search(path_match) => Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                path: path_match.0.path.clone(),
+            }),
+            Match::CreateNew(_) => None,
+        }
     }
 
     fn selected_preview_title(&self, cx: &App) -> SharedString {
@@ -1766,6 +1800,33 @@ impl FileFinderDelegate {
         lines.into()
     }
 
+    fn clear_preview_editor(&mut self, cx: &mut Context<Picker<Self>>) {
+        self.preview_uses_editor = false;
+        self.preview_multibuffer
+            .update(cx, |preview_multibuffer, cx| preview_multibuffer.clear(cx));
+    }
+
+    fn set_preview_editor_buffer(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.preview_uses_editor = true;
+        self.preview_multibuffer
+            .update(cx, |preview_multibuffer, cx| {
+                let snapshot = buffer.read(cx).snapshot();
+                let full_range = Point::zero()..snapshot.max_point();
+                preview_multibuffer.clear(cx);
+                preview_multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer,
+                    [full_range],
+                    0,
+                    cx,
+                );
+            });
+    }
+
     fn queue_preview_update(&mut self, cx: &mut Context<Picker<Self>>) {
         if !self.show_preview {
             return;
@@ -1783,6 +1844,7 @@ impl FileFinderDelegate {
             self.preview_loading = false;
             self.preview_lines = Arc::<[SharedString]>::from([]);
             self.preview_message = Some(format!("Directory: {}", entry.name).into());
+            self.clear_preview_editor(cx);
             cx.notify();
             return;
         }
@@ -1792,6 +1854,7 @@ impl FileFinderDelegate {
             self.preview_loading = false;
             self.preview_lines = Arc::<[SharedString]>::from([]);
             self.preview_message = Some("No file selected".into());
+            self.clear_preview_editor(cx);
             cx.notify();
             return;
         };
@@ -1804,17 +1867,52 @@ impl FileFinderDelegate {
         self.preview_loading = true;
         self.preview_lines = Arc::<[SharedString]>::from([]);
         self.preview_message = Some("Loading preview...".into());
+        self.clear_preview_editor(cx);
         cx.notify();
 
         let fs = self.project.read(cx).fs().clone();
+        let project = self.project.clone();
+        let selected_project_path = self.selected_preview_project_path();
         self.preview_task = cx.spawn(async move |picker, cx| {
-            let loaded_contents = cx
-                .background_spawn({
-                    let fs = fs.clone();
-                    let selected_path = selected_path.clone();
-                    async move { fs.load(&selected_path).await }
-                })
-                .await;
+            let mut opened_buffer = None;
+            let mut loaded_contents = None;
+            let mut load_error = None;
+
+            if let Some(project_path) = selected_project_path {
+                let open_buffer_task =
+                    project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+                match open_buffer_task.await {
+                    Ok(buffer) => {
+                        opened_buffer = Some(buffer);
+                    }
+                    Err(error) => {
+                        load_error = Some(error.to_string());
+                    }
+                }
+            }
+
+            if opened_buffer.is_none() {
+                match cx
+                    .background_spawn({
+                        let fs = fs.clone();
+                        let selected_path = selected_path.clone();
+                        async move { fs.load(&selected_path).await }
+                    })
+                    .await
+                {
+                    Ok(contents) => {
+                        loaded_contents = Some(contents);
+                    }
+                    Err(error) => {
+                        load_error = Some(match load_error {
+                            Some(project_error) => {
+                                format!("{project_error}; also failed to read from disk: {error}")
+                            }
+                            None => error.to_string(),
+                        });
+                    }
+                }
+            }
 
             picker
                 .update(cx, move |picker, cx| {
@@ -1824,16 +1922,24 @@ impl FileFinderDelegate {
                     }
 
                     delegate.preview_loading = false;
-                    match loaded_contents {
-                        Ok(contents) => {
-                            delegate.preview_lines = Self::build_preview_lines(&contents);
-                            delegate.preview_message = None;
-                        }
-                        Err(error) => {
-                            delegate.preview_lines = Arc::<[SharedString]>::from([]);
-                            delegate.preview_message =
-                                Some(format!("Could not load preview: {}", error).into());
-                        }
+                    if let Some(buffer) = opened_buffer {
+                        delegate.preview_lines = Arc::<[SharedString]>::from([]);
+                        delegate.preview_message = None;
+                        delegate.set_preview_editor_buffer(buffer, cx);
+                    } else if let Some(contents) = loaded_contents {
+                        delegate.clear_preview_editor(cx);
+                        delegate.preview_lines = Self::build_preview_lines(&contents);
+                        delegate.preview_message = None;
+                    } else {
+                        delegate.clear_preview_editor(cx);
+                        delegate.preview_lines = Arc::<[SharedString]>::from([]);
+                        delegate.preview_message = Some(
+                            format!(
+                                "Could not load preview: {}",
+                                load_error.unwrap_or_else(|| "Unknown error".to_string())
+                            )
+                            .into(),
+                        );
                     }
                     cx.notify();
                 })
