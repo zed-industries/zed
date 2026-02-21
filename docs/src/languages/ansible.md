@@ -68,13 +68,13 @@ If your inventory file is in the YAML format, you can either:
           "schemas": {
             "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/inventory.json": [
               "./inventory/*.yaml",
-              "hosts.yml",
+              "hosts.yml"
             ]
           }
         }
       }
     }
-  },
+  }
 }
 ```
 
