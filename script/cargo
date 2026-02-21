@@ -62,8 +62,21 @@ function getShellConfigPath(shell) {
     case "fish":
       return path.join(home, ".config", "fish", "config.fish");
     case "powershell":
-      // PowerShell Core (pwsh) profile locations
       if (process.platform === "win32") {
+        // Spawn PowerShell to get the real $PROFILE path, since os.homedir() doesn't account
+        // for OneDrive folder redirection, and the subdirectory differs between Windows PowerShell
+        // 5.x ("WindowsPowerShell") and PowerShell Core ("PowerShell").
+        const psModulePath = process.env.PSModulePath || "";
+        const psExe = psModulePath.toLowerCase().includes("\\windowspowershell\\") ? "powershell" : "pwsh";
+        const result = spawnSync(psExe, ["-NoProfile", "-Command", "$PROFILE"], {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: 5000,
+        });
+        if (result.status === 0 && result.stdout.trim()) {
+          return result.stdout.trim();
+        }
+        // Fallback if spawning fails
         return path.join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
       } else {
         return path.join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1");
@@ -83,7 +96,7 @@ function generateAlias(shell, scriptDir) {
     case "fish":
       return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n    else\n        command cargo $argv\n    end\nend\n`;
     case "powershell":
-      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        & \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
+      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
     default:
       return `cargo() { local w="${cargoWrapper}"; [[ -x "$w" ]] && "$w" "$@" || command cargo "$@"; }`;
   }
