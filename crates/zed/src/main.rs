@@ -199,7 +199,9 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     if args.record_etw_trace {
-        let zed_pid = args.etw_zed_pid.unwrap_or(0);
+        let zed_pid = args
+            .etw_zed_pid
+            .and_then(|pid| if pid >= 0 { Some(pid as u32) } else { None });
         let Some(output_path) = args.etw_output else {
             eprintln!("--etw-output is required for --record-etw-trace");
             process::exit(1);
@@ -1629,8 +1631,8 @@ struct Args {
 
     /// The PID of the Zed process to trace for heap analysis.
     #[cfg(target_os = "windows")]
-    #[arg(long, hide = true)]
-    etw_zed_pid: Option<u32>,
+    #[arg(long, hide = true, allow_hyphen_values = true)]
+    etw_zed_pid: Option<i64>,
 
     /// Output path for the ETW trace file.
     #[cfg(target_os = "windows")]
