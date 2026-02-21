@@ -1216,7 +1216,7 @@ impl DisplayMap {
         let to_insert = match self.text_highlights.remove(&key) {
             Some(mut previous) if merge => match Arc::get_mut(&mut previous) {
                 Some((_, previous_ranges)) => {
-                    previous_ranges.extend(ranges.iter().cloned());
+                    previous_ranges.extend(ranges);
                     previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
                     previous
                 }
