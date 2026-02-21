@@ -2,7 +2,9 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, Organization, Plan, PlanInfo};
+use cloud_api_client::{
+    GetAuthenticatedUserResponse, Organization, OrganizationId, Plan, PlanInfo,
+};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
@@ -111,6 +113,7 @@ pub struct UserStore {
     current_user: watch::Receiver<Option<Arc<User>>>,
     current_organization: Option<Arc<Organization>>,
     organizations: Vec<Arc<Organization>>,
+    plans_by_organization: HashMap<OrganizationId, Plan>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -185,6 +188,7 @@ impl UserStore {
             current_user: current_user_rx,
             current_organization: None,
             organizations: Vec::new(),
+            plans_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -698,6 +702,10 @@ impl UserStore {
         &self.organizations
     }
 
+    pub fn plan_for_organization(&self, organization_id: &OrganizationId) -> Option<Plan> {
+        self.plans_by_organization.get(organization_id).copied()
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -711,6 +719,12 @@ impl UserStore {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
             };
+        }
+
+        if let Some(organization) = &self.current_organization
+            && let Some(plan) = self.plan_for_organization(&organization.id)
+        {
+            return Some(plan);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -789,6 +803,16 @@ impl UserStore {
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
         self.current_organization = self.organizations.first().cloned();
+        // TODO: Remove testing data.
+        for organization in &self.organizations {
+            if organization.name.as_ref() == "Zed" {
+                self.plans_by_organization
+                    .insert(organization.id.clone(), Plan::ZedPro);
+            } else {
+                self.plans_by_organization
+                    .insert(organization.id.clone(), Plan::ZedFree);
+            }
+        }
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,

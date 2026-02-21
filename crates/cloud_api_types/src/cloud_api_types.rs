@@ -35,8 +35,8 @@ pub struct AuthenticatedUser {
     pub accepted_tos_at: Option<Timestamp>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub struct OrganizationId(Arc<str>);
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
+pub struct OrganizationId(pub Arc<str>);
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Organization {
