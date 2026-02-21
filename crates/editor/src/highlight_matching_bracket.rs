@@ -11,11 +11,10 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         cx: &mut Context<Editor>,
     ) {
-        self.clear_highlights(HighlightKey::MatchingBracket, cx);
-
         let newest_selection = self.selections.newest::<MultiBufferOffset>(&snapshot);
         // Don't highlight brackets if the selection isn't empty
         if !newest_selection.is_empty() {
+            self.clear_highlights(HighlightKey::MatchingBracket, cx);
             return;
         }
 
@@ -42,14 +41,31 @@ impl Editor {
             let buffer_snapshot = buffer_snapshot.clone();
             async move |editor, cx| {
                 if let Some((opening_range, closing_range)) = task.await {
+                    let current_ranges = editor
+                        .read_with(cx, |editor, cx| {
+                            editor
+                                .display_map
+                                .read(cx)
+                                .text_highlights(HighlightKey::MatchingBracket)
+                                .map(|(_, ranges)| ranges.to_vec())
+                        })
+                        .ok()
+                        .flatten();
+                    let new_ranges = vec![
+                        opening_range.to_anchors(&buffer_snapshot),
+                        closing_range.to_anchors(&buffer_snapshot),
+                    ];
+
+                    if current_ranges.as_deref() == Some(&new_ranges) {
+                        return;
+                    }
+
                     editor
                         .update(cx, |editor, cx| {
+                            editor.clear_highlights(HighlightKey::MatchingBracket, cx);
                             editor.highlight_text(
                                 HighlightKey::MatchingBracket,
-                                vec![
-                                    opening_range.to_anchors(&buffer_snapshot),
-                                    closing_range.to_anchors(&buffer_snapshot),
-                                ],
+                                new_ranges,
                                 HighlightStyle {
                                     background_color: Some(
                                         cx.theme()
