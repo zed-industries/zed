@@ -8,10 +8,10 @@ use git::{
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
-    DismissEvent, DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render,
-    ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window,
-    actions, anchored, deferred, point, px,
+    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Hsla, InteractiveElement, KeyDownEvent, ParentElement, PathBuilder, Pixels, Point,
+    Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity,
+    Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -712,7 +712,8 @@ pub struct GitGraph {
     branch_filter: BranchFilter,
     show_remotes: bool,
     all_branches: Vec<BranchInfo>,
-    branch_filter_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    branch_filter_query: String,
+    branch_filter_menu_open: bool,
 }
 
 impl GitGraph {
@@ -808,7 +809,8 @@ impl GitGraph {
             branch_filter: BranchFilter::default(),
             show_remotes: false,
             all_branches: Vec::new(),
-            branch_filter_menu: None,
+            branch_filter_query: String::new(),
+            branch_filter_menu_open: false,
         }
     }
 
@@ -1147,7 +1149,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let filter_text = if self.branch_filter.is_all() {
-            "All branches".to_string()
+            "No filter".to_string()
         } else {
             format!("{} branches", self.branch_filter.selected_count())
         };
@@ -1173,102 +1175,254 @@ impl GitGraph {
 
     fn toggle_branch_filter_menu(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         eprintln!("[GitGraph] toggle_branch_filter_menu: called, branches count={}", self.all_branches.len());
 
-        // Close existing menu if open
-        if self.branch_filter_menu.is_some() {
-            eprintln!("[GitGraph] toggle_branch_filter_menu: Closing existing menu");
-            self.branch_filter_menu = None;
-            cx.notify();
-            return;
+        // Toggle menu visibility
+        self.branch_filter_menu_open = !self.branch_filter_menu_open;
+        if self.branch_filter_menu_open {
+            self.branch_filter_query.clear();
         }
+        cx.notify();
+    }
 
-        eprintln!("[GitGraph] toggle_branch_filter_menu: Opening new menu");
-
-        let weak_this = cx.weak_entity();
+    fn render_branch_filter_popover(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let is_all = self.branch_filter.is_all();
         let show_remotes = self.show_remotes;
-        let all_branches = self.all_branches.clone();
+        let query = self.branch_filter_query.to_lowercase();
         let selected_branches = self.branch_filter.selected_branches.clone();
 
-        let menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-            let mut menu = menu;
+        // Filter branches by query
+        let filtered_branches: Vec<_> = self.all_branches
+            .iter()
+            .filter(|branch| {
+                // Skip remote branches if show_remotes is false
+                if branch.is_remote && !show_remotes {
+                    return false;
+                }
+                // Filter by query
+                if query.is_empty() {
+                    return true;
+                }
+                branch.name.to_lowercase().contains(&query)
+            })
+            .collect();
 
-            // Show All Branches toggle
-            let weak_this_clone = weak_this.clone();
-            menu = menu.toggleable_entry(
-                "Show All Branches",
-                is_all,
-                IconPosition::End,
-                None,
-                move |_window, cx| {
-                    if let Some(this) = weak_this_clone.upgrade() {
-                        _ = this.update(cx, |this, cx| {
-                            this.branch_filter.set_mode(BranchFilterMode::All);
-                            cx.notify();
-                        });
-                    }
-                },
-            );
+        let colors = cx.theme().colors().clone();
+        let colors_for_branches = colors.clone();
+        let filter_query_display = if self.branch_filter_query.is_empty() {
+            "Type to filter...".to_string()
+        } else {
+            self.branch_filter_query.clone()
+        };
 
-            menu = menu.separator();
+        div()
+            .id("branch-filter-popover")
+            .absolute()
+            .top(px(30.))
+            .left(px(0.))
+            .w(px(250.))
+            .max_h(px(350.))
+            .bg(colors.elevated_surface_background)
+            .border_1()
+            .border_color(colors.border)
+            .rounded_md()
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                let key = &event.keystroke.key;
+                if key == "backspace" {
+                    this.branch_filter_query.pop();
+                } else if key == "escape" {
+                    this.branch_filter_menu_open = false;
+                } else if key.len() == 1 {
+                    // Single character input
+                    this.branch_filter_query.push_str(key);
+                }
+                cx.notify();
+            }))
+            .child(
+                // Filter input display
+                div()
+                    .id("branch-filter-input")
+                    .m_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(colors.editor_background)
+                    .border_1()
+                    .border_color(colors.border)
+                    .h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::Filter)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(filter_query_display)
+                            .size(LabelSize::Small)
+                            .color(if self.branch_filter_query.is_empty() {
+                                Color::Muted
+                            } else {
+                                Color::Default
+                            }),
+                    )
+                    .when(!self.branch_filter_query.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .id("clear-filter")
+                                .ml_auto()
+                                .cursor_pointer()
+                                .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                    this.branch_filter_query.clear();
+                                    cx.notify();
+                                }))
+                                .child(
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                // Scrollable branch list
+                div()
+                    .id("branch-filter-list")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .max_h(px(250.))
+                    .px_1()
+                    .pb_1()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            // "No Filter" option
+                            .child(
+                                div()
+                                    .id("filter-no-filter")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .when(is_all, |this| this.bg(colors.element_active))
+                                    .hover(|this| this.bg(colors.element_hover))
+                                    .cursor_pointer()
+                                    .h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .when(is_all, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Accent),
+                                        )
+                                    })
+                                    .child(
+                                        Label::new("No Filter (All Commits)")
+                                            .size(LabelSize::Small)
+                                            .color(if is_all { Color::Accent } else { Color::Default }),
+                                    )
+                                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                        this.branch_filter.set_mode(BranchFilterMode::All);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                // Separator
+                                div()
+                                    .m_1()
+                                    .h(px(1.))
+                                    .bg(colors.border),
+                            )
+                            // Branch entries
+                            .children({
+                                let mut children = Vec::new();
+                                for (idx, branch) in filtered_branches.into_iter().enumerate() {
+                                    let branch_name = branch.name.clone();
+                                    let is_selected = is_all || selected_branches.contains(&branch_name);
+                                    let colors = colors_for_branches.clone();
+                                    let branch_name_for_click = branch_name.clone();
 
-            // Add branch entries
-            for branch in &all_branches {
-                let is_selected = is_all || selected_branches.contains(&branch.name);
-                let branch_name = branch.name.clone();
-                let weak_this_clone = weak_this.clone();
-
-                menu = menu.toggleable_entry(
-                    branch_name.clone(),
-                    is_selected,
-                    IconPosition::End,
-                    None,
-                    move |_window, cx| {
-                        if let Some(this) = weak_this_clone.upgrade() {
-                            _ = this.update(cx, |this, cx| {
-                                this.branch_filter.toggle_branch(branch_name.clone());
-                                cx.notify();
-                            });
-                        }
-                    },
-                );
-            }
-
-            // Separator before show remotes toggle
-            menu = menu.separator();
-
-            // Show Remote Branches toggle
-            let weak_this_clone = weak_this.clone();
-            menu = menu.toggleable_entry(
-                "Show Remote Branches",
-                show_remotes,
-                IconPosition::End,
-                None,
-                move |_window, cx| {
-                    if let Some(this) = weak_this_clone.upgrade() {
-                        _ = this.update(cx, |this, cx| {
-                            this.show_remotes = !this.show_remotes;
-                            this.fetch_branches(cx);
-                            cx.notify();
-                        });
-                    }
-                },
-            );
-
-            menu
-        });
-
-        let menu_position = point(px(0.), px(0.));
-        let subscription = cx.subscribe(&menu, |this: &mut GitGraph, _menu: Entity<ContextMenu>, _event: &DismissEvent, cx: &mut Context<Self>| {
-            this.branch_filter_menu = None;
-            cx.notify();
-        });
-        self.branch_filter_menu = Some((menu, menu_position, subscription));
-        cx.notify();
+                                    children.push(
+                                        div()
+                                            .id(("branch", idx))
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .when(is_selected, |this| this.bg(colors.element_active))
+                                            .hover(|this| this.bg(colors.element_hover))
+                                            .cursor_pointer()
+                                            .h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .when(is_selected, |this| {
+                                                this.child(
+                                                    Icon::new(IconName::Check)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Accent),
+                                                )
+                                            })
+                                            .child(
+                                                Label::new(branch_name.clone())
+                                                    .size(LabelSize::Small)
+                                                    .color(if is_selected { Color::Accent } else { Color::Default }),
+                                            )
+                                            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                                                this.branch_filter.toggle_branch(branch_name_for_click.clone());
+                                                cx.notify();
+                                            }))
+                                            .into_any_element()
+                                    );
+                                }
+                                children
+                            })
+                            .child(
+                                // Separator
+                                div()
+                                    .m_1()
+                                    .h(px(1.))
+                                    .bg(colors.border),
+                            )
+                            // Include Remote Branches toggle
+                            .child(
+                                div()
+                                    .id("filter-include-remotes")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .when(show_remotes, |this| this.bg(colors.element_active))
+                                    .hover(|this| this.bg(colors.element_hover))
+                                    .cursor_pointer()
+                                    .h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .when(show_remotes, |this| {
+                                        this.child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Accent),
+                                        )
+                                    })
+                                    .child(
+                                        Label::new("Include Remote Branches")
+                                            .size(LabelSize::Small)
+                                            .color(if show_remotes { Color::Accent } else { Color::Default }),
+                                    )
+                                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                        this.show_remotes = !this.show_remotes;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
     }
 
     fn render_commit_detail_panel(
@@ -2079,15 +2233,9 @@ impl Render for GitGraph {
                 )
                 .with_priority(1)
             }))
-            .children(self.branch_filter_menu.as_ref().map(|(menu, position, _)| {
-                deferred(
-                    anchored()
-                        .position(*position)
-                        .anchor(Corner::TopLeft)
-                        .child(menu.clone()),
-                )
-                .with_priority(1)
-            }))
+            .when(self.branch_filter_menu_open, |this| {
+                this.child(self.render_branch_filter_popover(cx))
+            })
     }
 }
 
