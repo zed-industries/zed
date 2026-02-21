@@ -14,7 +14,6 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
-use ui::ListItem;
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -987,25 +986,6 @@ impl TitleBar {
                                 {
                                     let organization = organization.clone();
                                     move |_window, _cx| {
-                                        // ListItem::new(organization.id.0.clone())
-                                        //     .inset(false)
-                                        //     .spacing(ui::ListItemSpacing::Dense)
-                                        //     .start_slot(div().children(
-                                        //         is_current.then(|| Icon::new(IconName::Check)),
-                                        //     ))
-                                        //     .end_slot(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
-                                        //     .child(Label::new(&organization.name))
-                                        //     // .child(
-                                        //     //     h_flex()
-                                        //     //         .w_full()
-                                        //     //         .justify_between()
-                                        //     //         .child(Label::new(&organization.name))
-                                        //     //         .child(PlanChip::new(
-                                        //     //             plan.unwrap_or(Plan::ZedFree),
-                                        //     //         )),
-                                        //     // )
-                                        //     .into_any_element()
-
                                         h_flex()
                                             .w_full()
                                             .gap_1()

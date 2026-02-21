@@ -803,16 +803,6 @@ impl UserStore {
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
         self.current_organization = self.organizations.first().cloned();
-        // TODO: Remove testing data.
-        for organization in &self.organizations {
-            if organization.name.as_ref() == "Zed" {
-                self.plans_by_organization
-                    .insert(organization.id.clone(), Plan::ZedPro);
-            } else {
-                self.plans_by_organization
-                    .insert(organization.id.clone(), Plan::ZedFree);
-            }
-        }
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
