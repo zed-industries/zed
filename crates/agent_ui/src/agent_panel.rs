@@ -3773,4 +3773,266 @@ mod tests {
 
         cx.run_until_parked();
     }
+
+    /// Extracts the text from a Text content block, panicking if it's not Text.
+    fn expect_text_block(block: &acp::ContentBlock) -> &str {
+        match block {
+            acp::ContentBlock::Text(t) => t.text.as_str(),
+            other => panic!("expected Text block, got {:?}", other),
+        }
+    }
+
+    /// Extracts the (text_content, uri) from a Resource content block, panicking
+    /// if it's not a TextResourceContents resource.
+    fn expect_resource_block(block: &acp::ContentBlock) -> (&str, &str) {
+        match block {
+            acp::ContentBlock::Resource(r) => match &r.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(t) => {
+                    (t.text.as_str(), t.uri.as_str())
+                }
+                other => panic!("expected TextResourceContents, got {:?}", other),
+            },
+            other => panic!("expected Resource block, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_single_conflict() {
+        let conflicts = vec![ConflictContent {
+            file_path: "src/main.rs".to_string(),
+            conflict_text: "<<<<<<< HEAD\nlet x = 1;\n=======\nlet x = 2;\n>>>>>>> feature"
+                .to_string(),
+            ours_branch_name: "HEAD".to_string(),
+            theirs_branch_name: "feature".to_string(),
+        }];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        // 1 Text instruction + 1 Resource for the conflict
+        assert_eq!(blocks.len(), 2, "expected 1 text + 1 resource block");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("src/main.rs"),
+            "prompt should mention the file path"
+        );
+        assert!(
+            text.contains("`HEAD` (ours)"),
+            "prompt should mention ours branch"
+        );
+        assert!(
+            text.contains("`feature` (theirs)"),
+            "prompt should mention theirs branch"
+        );
+        assert!(
+            text.contains("editing the file directly"),
+            "prompt should instruct the agent to edit the file"
+        );
+
+        let (resource_text, resource_uri) = expect_resource_block(&blocks[1]);
+        assert!(
+            resource_text.contains("<<<<<<< HEAD"),
+            "resource should contain the conflict text"
+        );
+        assert!(
+            resource_uri.contains("merge-conflict"),
+            "resource URI should use the merge-conflict scheme"
+        );
+        assert!(
+            resource_uri.contains("main.rs"),
+            "resource URI should reference the file path"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_multiple_conflicts_same_file() {
+        let conflicts = vec![
+            ConflictContent {
+                file_path: "src/lib.rs".to_string(),
+                conflict_text: "<<<<<<< main\nfn a() {}\n=======\nfn a_v2() {}\n>>>>>>> dev"
+                    .to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+            ConflictContent {
+                file_path: "src/lib.rs".to_string(),
+                conflict_text: "<<<<<<< main\nfn b() {}\n=======\nfn b_v2() {}\n>>>>>>> dev"
+                    .to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+        ];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        // 1 Text instruction + 2 Resource blocks
+        assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("all 2 merge conflicts"),
+            "prompt should mention the total count"
+        );
+        assert!(
+            text.contains("`main` (ours)"),
+            "prompt should mention ours branch"
+        );
+        assert!(
+            text.contains("`dev` (theirs)"),
+            "prompt should mention theirs branch"
+        );
+        // Single file, so "file" not "files"
+        assert!(
+            text.contains("file directly"),
+            "single file should use singular 'file'"
+        );
+
+        let (resource_a, _) = expect_resource_block(&blocks[1]);
+        let (resource_b, _) = expect_resource_block(&blocks[2]);
+        assert!(
+            resource_a.contains("fn a()"),
+            "first resource should contain first conflict"
+        );
+        assert!(
+            resource_b.contains("fn b()"),
+            "second resource should contain second conflict"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_multiple_conflicts_different_files() {
+        let conflicts = vec![
+            ConflictContent {
+                file_path: "src/a.rs".to_string(),
+                conflict_text: "<<<<<<< main\nA\n=======\nB\n>>>>>>> dev".to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+            ConflictContent {
+                file_path: "src/b.rs".to_string(),
+                conflict_text: "<<<<<<< main\nC\n=======\nD\n>>>>>>> dev".to_string(),
+                ours_branch_name: "main".to_string(),
+                theirs_branch_name: "dev".to_string(),
+            },
+        ];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts, &[]);
+        // 1 Text instruction + 2 Resource blocks
+        assert_eq!(blocks.len(), 3, "expected 1 text + 2 resource blocks");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("files directly"),
+            "multiple files should use plural 'files'"
+        );
+
+        let (_, uri_a) = expect_resource_block(&blocks[1]);
+        let (_, uri_b) = expect_resource_block(&blocks[2]);
+        assert!(
+            uri_a.contains("a.rs"),
+            "first resource URI should reference a.rs"
+        );
+        assert!(
+            uri_b.contains("b.rs"),
+            "second resource URI should reference b.rs"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_file_paths_only() {
+        let file_paths = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "tests/integration.rs".to_string(),
+        ];
+
+        let blocks = build_conflict_resolution_prompt(&[], &file_paths);
+        // Only 1 Text block (no Resource blocks since there's no inline conflict text)
+        assert_eq!(blocks.len(), 1, "expected 1 text block only");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("unresolved merge conflicts"),
+            "prompt should describe the task"
+        );
+        assert!(
+            text.contains("conflict markers"),
+            "prompt should mention conflict markers"
+        );
+        for path in &file_paths {
+            assert!(text.contains(path), "prompt should list file path: {path}");
+        }
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_mixed_mode() {
+        let conflicts = vec![ConflictContent {
+            file_path: "src/main.rs".to_string(),
+            conflict_text: "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> branch".to_string(),
+            ours_branch_name: "HEAD".to_string(),
+            theirs_branch_name: "branch".to_string(),
+        }];
+        let file_paths = vec!["src/other.rs".to_string()];
+
+        let blocks = build_conflict_resolution_prompt(&conflicts, &file_paths);
+        // 1 Text instruction + 1 Resource for the inline conflict
+        assert_eq!(blocks.len(), 2, "expected 1 text + 1 resource block");
+
+        let text = expect_text_block(&blocks[0]);
+        assert!(
+            text.contains("`HEAD` (ours)"),
+            "mixed mode should mention ours branch"
+        );
+        assert!(
+            text.contains("`branch` (theirs)"),
+            "mixed mode should mention theirs branch"
+        );
+        assert!(
+            text.contains("src/other.rs"),
+            "file-path-only file should appear in text instruction"
+        );
+
+        let (resource_text, resource_uri) = expect_resource_block(&blocks[1]);
+        assert!(
+            resource_text.contains("<<<<<<< HEAD"),
+            "resource should contain the conflict text"
+        );
+        assert!(
+            resource_uri.contains("main.rs"),
+            "resource URI should reference the inline conflict file"
+        );
+    }
+
+    #[test]
+    fn test_build_conflict_resolution_prompt_empty_inputs() {
+        let blocks = build_conflict_resolution_prompt(&[], &[]);
+        // No instruction text and no resource blocks
+        assert!(
+            blocks.is_empty(),
+            "empty inputs should produce no blocks, got {} blocks",
+            blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_conflict_resource_block_structure() {
+        let conflict = ConflictContent {
+            file_path: "src/utils.rs".to_string(),
+            conflict_text: "<<<<<<< HEAD\nold code\n=======\nnew code\n>>>>>>> branch"
+                .to_string(),
+            ours_branch_name: "HEAD".to_string(),
+            theirs_branch_name: "branch".to_string(),
+        };
+
+        let block = conflict_resource_block(&conflict);
+        let (text, uri) = expect_resource_block(&block);
+
+        assert_eq!(text, conflict.conflict_text, "resource text should be the raw conflict");
+        assert!(
+            uri.starts_with("zed:///agent/merge-conflict"),
+            "URI should use the zed merge-conflict scheme, got: {uri}"
+        );
+        assert!(
+            uri.contains("utils.rs"),
+            "URI should encode the file path"
+        );
+    }
 }
