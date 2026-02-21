@@ -27,10 +27,16 @@ impl LinuxWindowControls {
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_maximized = window.is_maximized();
+        let supported_controls = window.window_controls();
         let button_elements: Vec<AnyElement> = self
             .buttons
             .iter()
             .filter_map(|b| *b)
+            .filter(|button| match button {
+                WindowButton::Minimize => supported_controls.minimize,
+                WindowButton::Maximize => supported_controls.maximize,
+                WindowButton::Close => true,
+            })
             .map(|button| {
                 create_window_button(button, button.id(), is_maximized, &*self.close_action, cx)
             })
