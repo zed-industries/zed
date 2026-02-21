@@ -95,6 +95,7 @@ pub(crate) fn bundle_mac(
             .runs_on(runners::MAC_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -146,6 +147,7 @@ pub(crate) fn bundle_linux(
             .runs_on(arch.linux_bundler())
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))
             })
@@ -186,6 +188,7 @@ pub(crate) fn bundle_windows(
             .runs_on(runners::WINDOWS_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .add_step(steps::enable_git_long_paths())
             .when_some(release_channel, |job, release_channel| {
                 job.add_step(set_release_channel(platform, release_channel))

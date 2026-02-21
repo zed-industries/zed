@@ -188,6 +188,15 @@ pub fn cargo_install_nextest() -> Step<Use> {
     named::uses("taiki-e", "install-action", "nextest")
 }
 
+/// Rust cache using Swatinem/rust-cache@v2
+/// This action caches Cargo registry, index, and build artifacts without requiring secrets.
+/// Works on forks where sccache secrets are not available.
+pub fn rust_cache() -> Step<Use> {
+    named::uses("Swatinem", "rust-cache", "v2")
+        .add_with(("shared-key", "zed-ci"))
+        .add_with(("cache-on-failure", "true"))
+}
+
 pub fn enable_git_long_paths() -> Step<Run> {
     named::pwsh("git config --global core.longpaths true")
 }

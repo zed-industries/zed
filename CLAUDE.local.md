@@ -16,3 +16,11 @@
 
 - ローカルとforkリポジトリのnightlyタグを頻繁に更新する
 - 更新コマンド: `git tag -f nightly && git push fork nightly --force`
+
+## コミット前のチェック
+
+push前には必ずフォーマットチェックを行う:
+```bash
+cargo fmt --check
+```
+問題がある場合は `cargo fmt` で修正する。

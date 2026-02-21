@@ -52,6 +52,7 @@ pub(crate) fn build_nix(
     let mut job = Job::default()
         .continue_on_error(true)
         .runs_on(runner)
+        .timeout_minutes(360u32)
         .add_env(("ZED_CLIENT_CHECKSUM_SEED", vars::ZED_CLIENT_CHECKSUM_SEED))
         .add_env(("ZED_MINIDUMP_ENDPOINT", vars::ZED_SENTRY_MINIDUMP_ENDPOINT))
         .add_env((

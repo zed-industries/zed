@@ -24,6 +24,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -62,6 +67,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -105,6 +115,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -148,6 +163,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -195,6 +215,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::enable_git_long_paths
       run: git config --global core.longpaths true
       shell: pwsh
@@ -241,6 +266,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::rust_cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: zed-ci
+        cache-on-failure: 'true'
     - name: steps::enable_git_long_paths
       run: git config --global core.longpaths true
       shell: pwsh
@@ -290,6 +320,7 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
+    timeout-minutes: 360
     continue-on-error: true
   build_nix_mac_aarch64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
@@ -317,6 +348,7 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
+    timeout-minutes: 360
     continue-on-error: true
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

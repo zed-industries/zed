@@ -172,9 +172,12 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     };
 
     named::job(
-        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
-            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
-        ),
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            .timeout_minutes(30u32)
+            .add_step(
+                named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
+            ),
     )
 }
 
@@ -184,6 +187,7 @@ fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
     named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
+            .timeout_minutes(30u32)
             .cond(Expression::new(indoc::indoc!(
                 r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')"#
             )))

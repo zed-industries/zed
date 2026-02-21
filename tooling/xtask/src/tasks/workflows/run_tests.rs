@@ -337,6 +337,7 @@ fn check_workspace_binaries() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_sccache(Platform::Linux))
@@ -357,10 +358,12 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         name: format!("clippy_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .timeout_minutes(180u32)
             .add_step(steps::checkout_repo())
             .when(platform == Platform::Windows, |job| {
                 job.add_step(steps::enable_git_long_paths())
             })
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux,
@@ -390,6 +393,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .timeout_minutes(180u32)
             .when(platform == Platform::Linux, |job| {
                 job.add_service(
                     "postgres",
@@ -408,6 +412,7 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .when(platform == Platform::Windows, |job| {
                 job.add_step(steps::enable_git_long_paths())
             })
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux,
@@ -481,6 +486,7 @@ fn doctests() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::setup_sccache(Platform::Linux))
@@ -532,6 +538,7 @@ fn check_docs() -> NamedJob {
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
+            .add_step(steps::rust_cache())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             // todo(ci): un-inline build_docs/action.yml here
             .add_step(

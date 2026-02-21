@@ -72,6 +72,7 @@ pub fn release_nightly() -> Workflow {
 fn check_style() -> NamedJob {
     let job = release_job(&[])
         .runs_on(runners::MAC_DEFAULT)
+        .timeout_minutes(180u32)
         .add_step(steps::checkout_repo().with_full_history())
         .add_step(steps::cargo_fmt())
         .add_step(steps::script("./script/clippy"));
@@ -106,6 +107,7 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
         name: "update_nightly_tag".to_owned(),
         job: steps::release_job(&bundle.jobs())
             .runs_on(runners::LINUX_MEDIUM)
+            .timeout_minutes(180u32)
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
