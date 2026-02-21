@@ -40,7 +40,25 @@ function Get-VSArch {
 }
 
 Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+$vsEditions = @("Enterprise", "Professional", "Community")
+$vsPath = $null
+foreach ($edition in $vsEditions) {
+    $testPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\$edition"
+    if (Test-Path $testPath) {
+        $vsPath = $testPath
+        break
+    }
+    $testPathX86 = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\$edition"
+    if (Test-Path $testPathX86) {
+        $vsPath = $testPathX86
+        break
+    }
+}
+if (-not $vsPath) {
+    Write-Error "Visual Studio 2022 not found"
+    exit 1
+}
+& "$vsPath\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"
