@@ -48,7 +48,6 @@ jobs:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-linux-aarch64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_linux_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
@@ -87,7 +86,6 @@ jobs:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_mac_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
@@ -131,7 +129,6 @@ jobs:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_mac_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
@@ -175,12 +172,11 @@ jobs:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_windows_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -219,12 +215,11 @@ jobs:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_windows_x86_64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -263,7 +258,6 @@ jobs:
         name: zed-remote-server-windows-x86_64.zip
         path: target/zed-remote-server-windows-x86_64.zip
         if-no-files-found: error
-    timeout-minutes: 60
   build_nix_linux_x86_64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
     runs-on: namespace-profile-32x64-ubuntu-2004
@@ -294,7 +288,6 @@ jobs:
         pushFilter: -zed-editor-[0-9.]*
     - name: nix_build::build_nix::build
       run: nix build .#default -L --accept-flake-config
-    timeout-minutes: 60
     continue-on-error: true
   build_nix_mac_aarch64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && github.event.label.name == 'run-bundling') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling')))
@@ -341,7 +334,6 @@ jobs:
         else
           echo "No build result found, skipping cache export."
         fi
-    timeout-minutes: 60
     continue-on-error: true
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

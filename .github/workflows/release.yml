@@ -10,6 +10,7 @@ on:
     - v*
 jobs:
   run_tests_mac:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -48,8 +49,8 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
   run_tests_linux:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -94,7 +95,6 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
     services:
       postgres:
         image: postgres:15
@@ -104,37 +104,18 @@ jobs:
         - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
-    runs-on: windows-2022
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::enable_git_long_paths
-      run: git config --global core.longpaths true
-      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::cache_cargo_registry
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/registry
-        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_git
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git
-        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_index
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git/db
-        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          cargo-index-${{ runner.os }}-
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -150,8 +131,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: steps::install_cargo_nextest
-      uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast
       shell: pwsh
@@ -163,8 +142,8 @@ jobs:
       run: |
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
-    timeout-minutes: 60
   clippy_mac:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
@@ -191,8 +170,8 @@ jobs:
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
-    timeout-minutes: 60
   clippy_linux:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
@@ -225,39 +204,19 @@ jobs:
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
-    timeout-minutes: 60
   clippy_windows:
-    runs-on: windows-2022
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::enable_git_long_paths
-      run: git config --global core.longpaths true
-      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::cache_cargo_registry
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/registry
-        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_git
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git
-        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_index
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git/db
-        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          cargo-index-${{ runner.os }}-
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
       shell: pwsh
@@ -272,8 +231,8 @@ jobs:
     - name: steps::show_sccache_stats
       run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
-    timeout-minutes: 60
   check_scripts:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -296,8 +255,8 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-    timeout-minutes: 60
   create_draft_release:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
@@ -316,7 +275,6 @@ jobs:
       run: script/create-draft-release target/release-notes.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
@@ -356,7 +314,6 @@ jobs:
         name: zed-remote-server-linux-aarch64.gz
         path: target/zed-remote-server-linux-aarch64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_linux_x86_64:
     needs:
     - run_tests_linux
@@ -396,7 +353,6 @@ jobs:
         name: zed-remote-server-linux-x86_64.gz
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_mac_aarch64:
     needs:
     - run_tests_mac
@@ -441,7 +397,6 @@ jobs:
         name: zed-remote-server-macos-aarch64.gz
         path: target/zed-remote-server-macos-aarch64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_mac_x86_64:
     needs:
     - run_tests_mac
@@ -486,13 +441,12 @@ jobs:
         name: zed-remote-server-macos-x86_64.gz
         path: target/zed-remote-server-macos-x86_64.gz
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_windows_aarch64:
     needs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -531,13 +485,12 @@ jobs:
         name: zed-remote-server-windows-aarch64.zip
         path: target/zed-remote-server-windows-aarch64.zip
         if-no-files-found: error
-    timeout-minutes: 60
   bundle_windows_x86_64:
     needs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -576,7 +529,6 @@ jobs:
         name: zed-remote-server-windows-x86_64.zip
         path: target/zed-remote-server-windows-x86_64.zip
         if-no-files-found: error
-    timeout-minutes: 60
   upload_release_assets:
     needs:
     - create_draft_release

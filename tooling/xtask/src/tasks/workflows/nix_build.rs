@@ -76,7 +76,6 @@ pub(crate) fn build_nix(
         Platform::Mac => runners::MAC_DEFAULT,
     };
     let mut job = Job::default()
-        .timeout_minutes(60u32)
         .continue_on_error(true)
         .with_repository_owner_guard()
         .runs_on(runner)

@@ -81,8 +81,7 @@ fn check_style() -> NamedJob {
 
 fn release_job(deps: &[&NamedJob]) -> Job {
     let job = Job::default()
-        .with_repository_owner_guard()
-        .timeout_minutes(60u32);
+        .with_repository_owner_guard();
     if deps.len() > 0 {
         job.needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
     } else {

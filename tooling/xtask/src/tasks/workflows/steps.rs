@@ -334,7 +334,6 @@ impl CommonJobConditions for Job {
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
         .with_repository_owner_guard()
-        .timeout_minutes(60u32)
 }
 
 pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {

@@ -15,7 +15,8 @@ on:
     - v[0-9]+.[0-9]+.x
 jobs:
   orchestrate:
-    runs-on: ubuntu-latest
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -109,12 +110,18 @@ jobs:
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
   check_style:
-    runs-on: ubuntu-latest
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
@@ -131,42 +138,21 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
-    timeout-minutes: 60
   clippy_windows:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::enable_git_long_paths
-      run: git config --global core.longpaths true
-      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::cache_cargo_registry
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/registry
-        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_git
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git
-        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_index
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git/db
-        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          cargo-index-${{ runner.os }}-
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
       shell: pwsh
@@ -181,12 +167,11 @@ jobs:
     - name: steps::show_sccache_stats
       run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
-    timeout-minutes: 60
   clippy_linux:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -196,6 +181,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -213,12 +203,11 @@ jobs:
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
-    timeout-minutes: 60
   clippy_mac:
     needs:
     - orchestrate
-    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues
-    runs-on: macos-14
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -228,6 +217,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -239,42 +233,21 @@ jobs:
       run: ./script/clippy
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
-    timeout-minutes: 60
   run_tests_windows:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: windows-2022
+    runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::enable_git_long_paths
-      run: git config --global core.longpaths true
-      shell: pwsh
     - name: steps::setup_cargo_config
       run: |
         New-Item -ItemType Directory -Path "./../.cargo" -Force
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
-    - name: steps::cache_cargo_registry
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/registry
-        key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_git
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git
-        key: cargo-git-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: steps::cache_cargo_index
-      uses: actions/cache@v5
-      with:
-        path: ~/.cargo/git/db
-        key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          cargo-index-${{ runner.os }}-
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -290,8 +263,6 @@ jobs:
         R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
-    - name: steps::install_cargo_nextest
-      uses: taiki-e/install-action@nextest
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
       shell: pwsh
@@ -303,12 +274,11 @@ jobs:
       run: |
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
-    timeout-minutes: 60
   run_tests_linux:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -318,6 +288,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -347,7 +322,6 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
     services:
       postgres:
         image: postgres:15
@@ -359,8 +333,8 @@ jobs:
   run_tests_mac:
     needs:
     - orchestrate
-    if: false  # Disabled for GitHub hosted runners due to webrtc-sys build issues
-    runs-on: macos-14
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -370,6 +344,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -393,17 +372,21 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
   doctests:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -431,12 +414,11 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
   check_workspace_binaries:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -446,6 +428,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -469,17 +456,21 @@ jobs:
       if: always()
       run: |
         rm -rf ./../.cargo
-    timeout-minutes: 60
   check_dependencies:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_dependencies::install_cargo_machete
       uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
       with:
@@ -496,12 +487,11 @@ jobs:
       uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8
       with:
         license-check: false
-    timeout-minutes: 60
   check_docs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -511,6 +501,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_docs::lychee_link_check
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
       with:
@@ -539,17 +534,21 @@ jobs:
         args: --no-progress --exclude '^http' 'target/deploy/docs'
         fail: true
         jobSummary: false
-    timeout-minutes: 60
   check_licenses:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_licenses == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: ./script/check-licenses
       run: ./script/check-licenses
     - name: ./script/generate-licenses
@@ -558,7 +557,7 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_action_checks == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -580,12 +579,11 @@ jobs:
           echo "Please run 'cargo xtask workflows' locally and commit the changes"
           exit 1
         fi
-    timeout-minutes: 60
   check_postgres_and_protobuf_migrations:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       GIT_AUTHOR_NAME: Protobuf Action
       GIT_AUTHOR_EMAIL: ci@zed.dev
@@ -617,23 +615,24 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
-    timeout-minutes: 60
   tests_pass:
     needs:
     - orchestrate
     - check_style
     - clippy_windows
     - clippy_linux
+    - clippy_mac
     - run_tests_windows
     - run_tests_linux
+    - run_tests_mac
     - doctests
     - check_workspace_binaries
     - check_dependencies
     - check_docs
     - check_licenses
     - check_scripts
-    if: always()
-    runs-on: ubuntu-latest
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: run_tests::tests_pass
       run: |
@@ -649,8 +648,10 @@ jobs:
         check_result "check_style" "${{ needs.check_style.result }}"
         check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
         check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
+        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
         check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
         check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
+        check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
         check_result "doctests" "${{ needs.doctests.result }}"
         check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
         check_result "check_dependencies" "${{ needs.check_dependencies.result }}"

@@ -70,7 +70,6 @@ fn bundle_job(deps: &[&NamedJob]) -> Job {
                     r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
                     (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
                 })))
-        .timeout_minutes(60u32)
 }
 
 pub(crate) fn bundle_mac(
