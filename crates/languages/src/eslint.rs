@@ -273,7 +273,12 @@ impl LspAdapter for EsLintLspAdapter {
 
 fn set_use_flat_config(configuration: &mut Value) {
     if let Some(configuration) = configuration.as_object_mut() {
-        configuration.insert("useFlatConfig".into(), json!(true));
+        let experimental = configuration
+            .entry("experimental")
+            .or_insert_with(|| json!({}));
+        if let Some(experimental) = experimental.as_object_mut() {
+            experimental.insert("useFlatConfig".into(), json!(true));
+        }
     }
 }
 
@@ -507,7 +512,9 @@ mod tests {
         assert_eq!(
             configuration,
             json!({
-                "useFlatConfig": true,
+                "experimental": {
+                    "useFlatConfig": true,
+                },
                 "validate": "on",
             })
         );
