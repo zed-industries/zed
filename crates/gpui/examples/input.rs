@@ -1,13 +1,14 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
+    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
+use gpui_platform::application;
 use unicode_segmentation::*;
 
 actions!(
@@ -682,7 +683,7 @@ impl Render for InputExample {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),

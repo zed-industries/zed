@@ -1,12 +1,10 @@
 pub mod auth;
 mod conn;
-mod extension;
 mod message_stream;
 mod notification;
 mod peer;
 
 pub use conn::Connection;
-pub use extension::*;
 pub use notification::*;
 pub use peer::*;
 pub use proto;

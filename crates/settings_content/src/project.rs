@@ -10,7 +10,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
 };
 
 #[with_fallible_options]
@@ -79,6 +79,11 @@ pub struct ProjectSettingsContent {
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
+
+    /// Whether to disable all AI features in Zed.
+    ///
+    /// Default: false
+    pub disable_ai: Option<SaturatingBool>,
 }
 
 #[with_fallible_options]
@@ -434,7 +439,7 @@ impl std::fmt::Debug for ContextServerCommand {
 }
 
 #[with_fallible_options]
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
     /// Whether or not to enable git integration.
     ///
@@ -468,6 +473,27 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory.
+    ///
+    /// When the resolved directory is outside the project root, the
+    /// project's directory name is automatically appended so that
+    /// sibling repos don't collide. For example, with the default
+    /// `"../worktrees"` and a project at `~/code/zed`, worktrees are
+    /// created under `~/code/worktrees/zed/`.
+    ///
+    /// When the resolved directory is inside the project root, no
+    /// extra component is added (it's already project-scoped).
+    ///
+    /// Examples:
+    /// - `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+    /// - `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+    /// - `"my-worktrees"` — `<project>/my-worktrees/`
+    ///
+    /// Trailing slashes are ignored.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: Option<String>,
 }
 
 #[with_fallible_options]

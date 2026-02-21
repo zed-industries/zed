@@ -112,6 +112,7 @@ impl MarkdownStyle {
         let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
+        let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
             MarkdownFont::Agent => (
                 theme_settings.agent_buffer_font_size(cx),
@@ -196,6 +197,7 @@ impl MarkdownStyle {
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
+                    font_weight: Some(buffer_font_weight),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -205,6 +207,7 @@ impl MarkdownStyle {
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
+                font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
                 ..Default::default()
             },

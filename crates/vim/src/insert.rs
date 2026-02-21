@@ -62,7 +62,7 @@ impl Vim {
                 editor.dismiss_menus_and_popups(false, window, cx);
 
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(|map, mut cursor, _| {
+                    s.move_cursors_with(&mut |map, mut cursor, _| {
                         *cursor.column_mut() = cursor.column().saturating_sub(1);
                         (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
                     });

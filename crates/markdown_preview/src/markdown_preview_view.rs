@@ -19,7 +19,7 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
-use crate::markdown_renderer::CheckboxClickedEvent;
+use crate::markdown_renderer::{CheckboxClickedEvent, MermaidState};
 use crate::{
     OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollPageDown, ScrollPageUp,
     markdown_elements::ParsedMarkdown,
@@ -39,6 +39,7 @@ pub struct MarkdownPreviewView {
     selected_block: usize,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
+    mermaid_state: MermaidState,
     parsing_markdown_task: Option<Task<Result<()>>>,
     mode: MarkdownPreviewMode,
 }
@@ -214,6 +215,7 @@ impl MarkdownPreviewView {
                 contents: None,
                 list_state,
                 language_registry,
+                mermaid_state: Default::default(),
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
                 mode,
@@ -257,7 +259,7 @@ impl MarkdownPreviewView {
         if let Some(buffer) = buffer.as_singleton()
             && let Some(language) = buffer.read(cx).language()
         {
-            return language.name() == "Markdown".into();
+            return language.name() == "Markdown";
         }
         false
     }
@@ -345,7 +347,9 @@ impl MarkdownPreviewView {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
             let contents = parsing_task.await;
+
             view.update(cx, move |view, cx| {
+                view.mermaid_state.update(&contents, cx);
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
@@ -521,15 +525,10 @@ impl Item for MarkdownPreviewView {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
-            .and_then(|editor_state| {
+            .map(|editor_state| {
                 let buffer = editor_state.editor.read(cx).buffer().read(cx);
-                let buffer = buffer.as_singleton()?;
-                let file = buffer.read(cx).file()?;
-                let local_file = file.as_local()?;
-                local_file
-                    .abs_path(cx)
-                    .file_name()
-                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+                let title = buffer.title(cx);
+                format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
@@ -538,7 +537,7 @@ impl Item for MarkdownPreviewView {
         Some("Markdown Preview Opened")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }
 
 impl Render for MarkdownPreviewView {
@@ -571,39 +570,35 @@ impl Render for MarkdownPreviewView {
                                 return div().into_any();
                             };
 
-                            let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
-                                    .with_checkbox_clicked_callback(cx.listener(
-                                        move |this, e: &CheckboxClickedEvent, window, cx| {
-                                            if let Some(editor) = this
-                                                .active_editor
-                                                .as_ref()
-                                                .map(|s| s.editor.clone())
-                                            {
-                                                editor.update(cx, |editor, cx| {
-                                                    let task_marker =
-                                                        if e.checked() { "[x]" } else { "[ ]" };
+                            let mut render_cx = RenderContext::new(
+                                Some(this.workspace.clone()),
+                                &this.mermaid_state,
+                                window,
+                                cx,
+                            )
+                            .with_checkbox_clicked_callback(cx.listener(
+                                move |this, e: &CheckboxClickedEvent, window, cx| {
+                                    if let Some(editor) =
+                                        this.active_editor.as_ref().map(|s| s.editor.clone())
+                                    {
+                                        editor.update(cx, |editor, cx| {
+                                            let task_marker =
+                                                if e.checked() { "[x]" } else { "[ ]" };
 
-                                                    editor.edit(
-                                                        [(
-                                                            MultiBufferOffset(
-                                                                e.source_range().start,
-                                                            )
-                                                                ..MultiBufferOffset(
-                                                                    e.source_range().end,
-                                                                ),
-                                                            task_marker,
-                                                        )],
-                                                        cx,
-                                                    );
-                                                });
-                                                this.parse_markdown_from_active_editor(
-                                                    false, window, cx,
-                                                );
-                                                cx.notify();
-                                            }
-                                        },
-                                    ));
+                                            editor.edit(
+                                                [(
+                                                    MultiBufferOffset(e.source_range().start)
+                                                        ..MultiBufferOffset(e.source_range().end),
+                                                    task_marker,
+                                                )],
+                                                cx,
+                                            );
+                                        });
+                                        this.parse_markdown_from_active_editor(false, window, cx);
+                                        cx.notify();
+                                    }
+                                },
+                            ));
 
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
@@ -613,6 +608,8 @@ impl Render for MarkdownPreviewView {
                                 contents.children.get(ix + 1),
                             );
 
+                            let selected_block = this.selected_block;
+                            let scaled_rems = render_cx.scaled_rems(1.0);
                             div()
                                 .id(ix)
                                 .when(should_apply_padding, |this| {
@@ -643,11 +640,11 @@ impl Render for MarkdownPreviewView {
                                     let indicator = div()
                                         .h_full()
                                         .w(px(4.0))
-                                        .when(ix == this.selected_block, |this| {
+                                        .when(ix == selected_block, |this| {
                                             this.bg(cx.theme().colors().border)
                                         })
                                         .group_hover("markdown-block", |s| {
-                                            if ix == this.selected_block {
+                                            if ix == selected_block {
                                                 s
                                             } else {
                                                 s.bg(cx.theme().colors().border_variant)
@@ -658,11 +655,7 @@ impl Render for MarkdownPreviewView {
                                     container.child(
                                         div()
                                             .relative()
-                                            .child(
-                                                div()
-                                                    .pl(render_cx.scaled_rems(1.0))
-                                                    .child(rendered_block),
-                                            )
+                                            .child(div().pl(scaled_rems).child(rendered_block))
                                             .child(indicator.absolute().left_0().top_0()),
                                     )
                                 })

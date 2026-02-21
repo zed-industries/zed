@@ -298,13 +298,13 @@ impl AudioStack {
                                         num_channels,
                                         sample_rate,
                                         output_config.channels() as u32,
-                                        output_config.sample_rate().0,
+                                        output_config.sample_rate(),
                                     );
                                     buf = sampled.to_vec();
                                     apm.lock()
                                         .process_reverse_stream(
                                             &mut buf,
-                                            output_config.sample_rate().0 as i32,
+                                            output_config.sample_rate() as i32,
                                             output_config.channels() as i32,
                                         )
                                         .ok();
@@ -348,14 +348,14 @@ impl AudioStack {
                 .name("AudioCapture".to_owned())
                 .spawn(move || {
                     maybe!({
-                        if let Some(name) = device.name().ok() {
-                            log::info!("Using microphone: {}", name)
+                        if let Some(desc) = device.description().ok() {
+                            log::info!("Using microphone: {}", desc.name())
                         } else {
                             log::info!("Using microphone: <unknown>");
                         }
 
                         let ten_ms_buffer_size =
-                            (config.channels() as u32 * config.sample_rate().0 / 100) as usize;
+                            (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
 
                         let stream = device
@@ -380,9 +380,9 @@ impl AudioStack {
                                             let mut sampled = resampler
                                                 .remix_and_resample(
                                                     buf.as_slice(),
-                                                    config.sample_rate().0 / 100,
+                                                    config.sample_rate() / 100,
                                                     config.channels() as u32,
-                                                    config.sample_rate().0,
+                                                    config.sample_rate(),
                                                     num_channels,
                                                     sample_rate,
                                                 )

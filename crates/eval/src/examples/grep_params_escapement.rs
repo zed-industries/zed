@@ -15,7 +15,7 @@ This eval checks that the model doesn't use HTML escapement for characters like 
                       original     +system_prompt change    +tool description
   claude-opus-4        89%          92%                     97%+
   claude-sonnet-4      100%
-  gpt-4.1-mini         100%
+  gpt-5-mini           100%
   gemini-2.5-pro                    98%
 
 */

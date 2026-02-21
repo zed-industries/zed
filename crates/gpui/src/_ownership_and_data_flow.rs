@@ -7,7 +7,7 @@
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! Application::new().run(|cx: &mut App| {
+//! gpui_platform::application().run(|cx: &mut App| {
 //!     let _counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     // ...
 //! });
@@ -22,7 +22,7 @@
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! Application::new().run(|cx: &mut App| {
+//! gpui_platform::application().run(|cx: &mut App| {
 //!     let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     // Call `update` to access the model's state.
 //!     counter.update(cx, |counter: &mut Counter, _cx: &mut Context<Counter>| {
@@ -42,7 +42,7 @@
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! Application::new().run(|cx: &mut App| {
+//! gpui_platform::application().run(|cx: &mut App| {
 //!     let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     counter.update(cx, |counter, cx| {
 //!         counter.count += 1;
@@ -60,7 +60,7 @@
 //!  # struct Counter {
 //!  #     count: usize,
 //!  # }
-//!  Application::new().run(|cx: &mut App| {
+//!  gpui_platform::application().run(|cx: &mut App| {
 //!      let first_counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!
 //!      let second_counter = cx.new(|cx: &mut Context<Counter>| {
@@ -114,7 +114,7 @@
 //! #     increment: usize,
 //! # }
 //! # impl EventEmitter<CounterChangeEvent> for Counter {}
-//! Application::new().run(|cx: &mut App| {
+//! gpui_platform::application().run(|cx: &mut App| {
 //!     let first_counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!
 //!     let second_counter = cx.new(|cx: &mut Context<Counter>| {

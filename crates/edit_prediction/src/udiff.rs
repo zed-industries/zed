@@ -271,7 +271,7 @@ pub fn strip_diff_metadata(diff: &str) -> String {
 fn disambiguate_by_line_number(
     candidates: &[usize],
     expected_line: Option<u32>,
-    offset_to_line: impl Fn(usize) -> u32,
+    offset_to_line: &dyn Fn(usize) -> u32,
 ) -> Option<usize> {
     match candidates.len() {
         0 => None,
@@ -316,7 +316,7 @@ pub fn apply_diff_to_string_with_hunk_offset(
                     .collect();
 
                 let hunk_offset =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
                         text[..offset].matches('\n').count() as u32
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
@@ -363,7 +363,7 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
                     .collect();
 
                 let Some(context_offset) =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
                         content[..offset].matches('\n').count() as u32
                     })
                 else {
@@ -628,7 +628,7 @@ fn resolve_hunk_edits_in_buffer(
             }
         }
 
-        disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+        disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
             buffer.offset_to_point(offset).row
         })
         .ok_or_else(|| {

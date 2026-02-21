@@ -291,6 +291,53 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 }
 
 #[gpui::test]
+async fn test_remote_project_search_single_cpu(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    // Simulate a single-CPU environment (e.g. a devcontainer with 1 visible CPU).
+    // This causes the worker pool in project search to spawn num_cpus - 1 = 0 workers,
+    // which silently drops all search channels and produces zero results.
+    server_cx.executor().set_num_cpus(1);
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    do_search_and_assert(
+        &project,
+        "project",
+        Default::default(),
+        false,
+        &[path!("project1/README.md")],
+        cx.clone(),
+    )
+    .await;
+}
+
+#[gpui::test]
 async fn test_remote_project_search_inclusion(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
@@ -631,7 +678,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let buffer_id = cx.read(|cx| {
         let buffer = buffer.read(cx);
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
         buffer.remote_id()
     });
 
@@ -643,7 +690,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
             .get(buffer_id)
             .unwrap();
 
-        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.read(cx).language().unwrap().name(), "Rust");
     });
 
     server_cx.read(|cx| {
@@ -2044,6 +2091,7 @@ pub async fn init_test(
                 node_runtime,
                 languages,
                 extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
             },
             false,
             cx,

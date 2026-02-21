@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+#
+# Create a draft documentation PR by auto-applying batched suggestions.
+#
+# Usage:
+#   script/docs-suggest-publish [--dry-run] [--model MODEL]
+#
+# This script:
+# 1. Reads pending suggestions from the docs/suggestions-pending branch
+# 2. Uses Droid to apply all suggestions directly to docs files
+# 3. Runs docs formatting
+# 4. Creates a draft PR for human review/merge
+# 5. Optionally resets the suggestions branch after successful PR creation
+#
+# Options:
+#   --dry-run       Show what would be done without creating PR
+#   --keep-queue    Don't reset the suggestions branch after PR creation
+#   --model MODEL   Override Droid model used for auto-apply
+#   --verbose       Show detailed progress
+#
+# Run this as part of the preview release workflow.
+
+set -euo pipefail
+
+DRY_RUN=false
+KEEP_QUEUE=false
+VERBOSE=false
+MODEL="${DROID_MODEL:-claude-sonnet-4-5-20250929}"
+
+SUGGESTIONS_BRANCH="docs/suggestions-pending"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[docs-publish]${NC} $*" >&2
+    fi
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $*" >&2
+    exit 1
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --keep-queue)
+            KEEP_QUEUE=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            head -26 "$0" | tail -24
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Get repo root
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# Check if suggestions branch exists
+log "Checking for suggestions branch..."
+if ! git ls-remote --exit-code --heads origin "$SUGGESTIONS_BRANCH" > /dev/null 2>&1; then
+    echo "No pending suggestions found (branch $SUGGESTIONS_BRANCH doesn't exist)."
+    echo "Suggestions are queued automatically when PRs are merged to main."
+    exit 0
+fi
+
+# Fetch the suggestions branch
+log "Fetching suggestions branch..."
+git fetch origin "$SUGGESTIONS_BRANCH"
+
+# Check for manifest
+if ! git show "origin/$SUGGESTIONS_BRANCH:manifest.json" > /dev/null 2>&1; then
+    echo "No manifest found on suggestions branch."
+    exit 0
+fi
+
+# Read manifest
+MANIFEST=$(git show "origin/$SUGGESTIONS_BRANCH:manifest.json")
+SUGGESTION_COUNT=$(echo "$MANIFEST" | jq '.suggestions | length')
+
+if [[ "$SUGGESTION_COUNT" -eq 0 ]]; then
+    echo "No pending suggestions in queue."
+    exit 0
+fi
+
+echo "Found $SUGGESTION_COUNT pending suggestion(s):"
+echo ""
+echo "$MANIFEST" | jq -r '.suggestions[] | "  PR #\(.pr): \(.title)"'
+echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${YELLOW}=== DRY RUN ===${NC}"
+    echo ""
+    echo "Would auto-apply suggestions to docs via Droid and create a draft PR."
+    echo "Model: $MODEL"
+    echo ""
+    
+    # Show each suggestion file
+    for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
+        echo "--- $file ---"
+        git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || echo "(file not found)"
+        echo ""
+    done
+    
+    echo -e "${YELLOW}=== END DRY RUN ===${NC}"
+    echo ""
+    echo "Run without --dry-run to create the PR."
+    exit 0
+fi
+
+# Ensure clean working state
+if [[ -n "$(git status --porcelain)" ]]; then
+    error "Working directory has uncommitted changes. Please commit or stash first."
+fi
+
+for command in git gh jq droid; do
+    if ! command -v "$command" > /dev/null 2>&1; then
+        error "Required command not found: $command"
+    fi
+done
+
+# Remember current branch
+ORIGINAL_BRANCH=$(git branch --show-current)
+log "Current branch: $ORIGINAL_BRANCH"
+
+# Create new branch for docs PR from latest main
+git fetch origin main
+DOCS_BRANCH="docs/preview-auto-$(date +%Y-%m-%d-%H%M%S)"
+log "Creating docs branch: $DOCS_BRANCH"
+
+git checkout -b "$DOCS_BRANCH" origin/main
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+SUGGESTIONS_FILE="$TMPDIR/suggestions.md"
+APPLY_PROMPT_FILE="$TMPDIR/apply-prompt.md"
+APPLY_SUMMARY_FILE="$TMPDIR/apply-summary.md"
+
+# Combine queued suggestion files into one input
+for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
+    {
+        echo "## Source: $file"
+        echo ""
+        git show "origin/$SUGGESTIONS_BRANCH:$file" 2>/dev/null || error "Suggestion file missing: $file"
+        echo ""
+        echo "---"
+        echo ""
+    } >> "$SUGGESTIONS_FILE"
+done
+
+# Build auto-apply prompt
+cat > "$APPLY_PROMPT_FILE" << 'EOF'
+# Documentation Auto-Apply Request (Preview Release)
+
+Apply all queued documentation suggestions below directly to docs files in this repository.
+
+Before making edits, read and follow these rule files:
+- `.rules`
+- `docs/.rules`
+
+## Required behavior
+
+1. Apply concrete documentation edits (not suggestion text) to the appropriate files.
+2. Edit only docs content files under `docs/src/` unless a suggestion explicitly requires another docs path.
+3. For every docs file you modify, run a full-file brand voice pass (entire file, not only edited sections).
+4. Enforce the brand rubric exactly; final file content must score 4+ on every criterion:
+   - Technical Grounding
+   - Natural Syntax
+   - Quiet Confidence
+   - Developer Respect
+   - Information Priority
+   - Specificity
+   - Voice Consistency
+   - Earned Claims
+5. Keep SEO/frontmatter/linking requirements from the suggestions where applicable.
+6. Keep preview callout semantics correct:
+   - Additive features: `> **Preview:** ...`
+   - Behavior modifications: `> **Changed in Preview (vX.XXX).** ...`
+7. If a suggestion is too ambiguous to apply safely, skip it and explain why in the summary.
+
+## Output format (after making edits)
+
+Return markdown with:
+
+- `## Applied Suggestions`
+- `## Skipped Suggestions`
+- `## Files Updated`
+- `## Brand Voice Verification` (one line per updated file confirming full-file pass)
+
+Do not include a patch in the response; apply edits directly to files.
+
+## Queued Suggestions
+
+EOF
+
+cat "$SUGGESTIONS_FILE" >> "$APPLY_PROMPT_FILE"
+
+log "Running Droid auto-apply with model: $MODEL"
+droid exec -m "$MODEL" -f "$APPLY_PROMPT_FILE" > "$APPLY_SUMMARY_FILE"
+
+if [[ -n "$(git status --porcelain | grep -vE '^.. docs/' || true)" ]]; then
+    error "Auto-apply modified non-doc files. Revert and re-run."
+fi
+
+if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; then
+    error "Auto-apply produced no docs/src changes."
+fi
+
+log "Running docs formatter"
+./script/prettier
+
+if [[ -z "$(git status --porcelain docs/ | grep '^.. docs/src/' || true)" ]]; then
+    error "No docs/src changes remain after formatting; aborting PR creation."
+fi
+
+# Build PR body from suggestions
+PR_BODY_FILE="$TMPDIR/pr-body.md"
+cat > "$PR_BODY_FILE" << 'EOF'
+# Documentation Updates for Preview Release
+
+This draft PR auto-applies queued documentation suggestions collected from
+recently merged PRs.
+
+## How to Use This PR
+
+1. Review the applied changes file-by-file.
+2. Verify brand voice on each touched file as a full-file pass.
+3. Ensure docs use the correct callout type:
+   - Additive features: Preview callout
+   - Behavior modifications: Changed in Preview callout
+4. Merge when ready.
+
+## Auto-Apply Summary
+
+EOF
+
+cat "$APPLY_SUMMARY_FILE" >> "$PR_BODY_FILE"
+
+cat >> "$PR_BODY_FILE" << 'EOF'
+
+## Preview Callouts
+
+Use the Preview callout for new/additive features:
+
+```markdown
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+```
+
+Use this callout for behavior modifications to existing functionality:
+
+```markdown
+> **Changed in Preview (v0.XXX).** See [release notes](/releases#0.XXX).
+```
+
+---
+
+## Pending Suggestions
+
+EOF
+
+# Append each suggestion to PR body
+for file in $(echo "$MANIFEST" | jq -r '.suggestions[].file'); do
+    log "Adding $file to PR body..."
+    echo "" >> "$PR_BODY_FILE"
+    git show "origin/$SUGGESTIONS_BRANCH:$file" >> "$PR_BODY_FILE" 2>/dev/null || true
+    echo "" >> "$PR_BODY_FILE"
+    echo "---" >> "$PR_BODY_FILE"
+done
+
+# Add tracking info
+cat >> "$PR_BODY_FILE" << EOF
+
+## PRs Included
+
+EOF
+
+echo "$MANIFEST" | jq -r '.suggestions[] | "- [PR #\(.pr)](\(.file)): \(.title)"' >> "$PR_BODY_FILE"
+
+cat >> "$PR_BODY_FILE" << 'EOF'
+
+Release Notes:
+
+- N/A
+EOF
+
+git add docs/
+git commit -m "docs: auto-apply preview release suggestions
+
+Auto-applied queued documentation suggestions from:
+$(echo "$MANIFEST" | jq -r '.suggestions[] | "- PR #\(.pr)"')
+
+Generated with script/docs-suggest-publish for human review in draft PR."
+
+# Push and create PR
+log "Pushing branch..."
+git push -u origin "$DOCS_BRANCH"
+
+log "Creating PR..."
+PR_URL=$(gh pr create \
+    --draft \
+    --title "docs: auto-apply preview release suggestions" \
+    --body-file "$PR_BODY_FILE" \
+    --label "documentation")
+
+echo ""
+echo -e "${GREEN}PR created:${NC} $PR_URL"
+
+# Reset suggestions branch if not keeping
+if [[ "$KEEP_QUEUE" != "true" ]]; then
+    echo ""
+    echo "Resetting suggestions queue..."
+    
+    git checkout --orphan "${SUGGESTIONS_BRANCH}-reset"
+    git rm -rf . > /dev/null 2>&1 || true
+    
+    cat > README.md << 'EOF'
+# Documentation Suggestions Queue
+
+This branch contains batched documentation suggestions for the next Preview release.
+
+Each file represents suggestions from a merged PR. At preview branch cut time,
+run `script/docs-suggest-publish` to create a documentation PR from these suggestions.
+
+## Structure
+
+- `suggestions/PR-XXXXX.md` - Suggestions for PR #XXXXX
+- `manifest.json` - Index of all pending suggestions
+
+## Workflow
+
+1. PRs merged to main trigger documentation analysis
+2. Suggestions are committed here as individual files
+3. At preview release, suggestions are collected into a docs PR
+4. After docs PR is created, this branch is reset
+EOF
+    
+    mkdir -p suggestions
+    echo '{"suggestions":[]}' > manifest.json
+    git add README.md suggestions manifest.json
+    git commit -m "Reset documentation suggestions queue
+
+Previous suggestions published in: $PR_URL"
+    
+    git push -f origin "${SUGGESTIONS_BRANCH}-reset:$SUGGESTIONS_BRANCH"
+    git checkout "$ORIGINAL_BRANCH"
+    git branch -D "${SUGGESTIONS_BRANCH}-reset"
+    
+    echo "Suggestions queue reset."
+else
+    git checkout "$ORIGINAL_BRANCH"
+    echo ""
+    echo "Suggestions queue kept (--keep-queue). Remember to reset manually after PR is merged."
+fi
+
+# Cleanup
+
+
+echo ""
+echo -e "${GREEN}Done!${NC}"
+echo ""
+echo "Next steps:"
+echo "1. Review the draft PR and verify all auto-applied docs changes"
+echo "2. Confirm full-file brand voice pass for each touched docs file"
+echo "3. Mark ready for review and merge"

@@ -58,8 +58,6 @@ pub async fn run_prediction(
     if let PredictionProvider::Teacher(backend) | PredictionProvider::TeacherNonBatching(backend) =
         provider
     {
-        let _step_progress = example_progress.start(Step::Predict);
-
         run_format_prompt(
             example,
             &FormatPromptArgs { provider },
@@ -69,8 +67,17 @@ pub async fn run_prediction(
         )
         .await?;
 
+        let step_progress = example_progress.start(Step::Predict);
         let batched = matches!(provider, PredictionProvider::Teacher(..));
-        return predict_teacher(example, backend, batched, repetition_count, args.cache_only).await;
+        return predict_teacher(
+            example,
+            backend,
+            batched,
+            repetition_count,
+            args.cache_only,
+            &step_progress,
+        )
+        .await;
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -159,6 +166,7 @@ pub async fn run_prediction(
                                     expected_output: String::new(),
                                     rejected_output: None,
                                     provider,
+                                    prefill: None,
                                 });
                             }
                         }
@@ -192,6 +200,16 @@ pub async fn run_prediction(
         } else {
             run_dir.clone()
         };
+
+        if repetition_count > 1 {
+            step_progress.set_substatus(format!(
+                "running prediction {}/{}",
+                ix + 1,
+                repetition_count
+            ));
+        } else {
+            step_progress.set_substatus("running prediction");
+        }
 
         fs::create_dir_all(&run_dir)?;
         if LATEST_EXAMPLE_RUN_DIR.is_symlink() {
@@ -272,13 +290,30 @@ async fn predict_teacher(
     batched: bool,
     repetition_count: usize,
     cache_only: bool,
+    step_progress: &crate::progress::StepProgress,
 ) -> anyhow::Result<()> {
     match backend {
-        TeacherBackend::Sonnet45 => {
-            predict_anthropic(example, backend, batched, repetition_count, cache_only).await
+        TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
+            predict_anthropic(
+                example,
+                backend,
+                batched,
+                repetition_count,
+                cache_only,
+                step_progress,
+            )
+            .await
         }
         TeacherBackend::Gpt52 => {
-            predict_openai(example, backend, batched, repetition_count, cache_only).await
+            predict_openai(
+                example,
+                backend,
+                batched,
+                repetition_count,
+                cache_only,
+                step_progress,
+            )
+            .await
         }
     }
 }
@@ -289,6 +324,7 @@ async fn predict_anthropic(
     batched: bool,
     repetition_count: usize,
     cache_only: bool,
+    step_progress: &crate::progress::StepProgress,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -304,6 +340,16 @@ async fn predict_anthropic(
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
     for ix in 0..repetition_count {
+        if repetition_count > 1 {
+            step_progress.set_substatus(format!(
+                "running prediction {}/{}",
+                ix + 1,
+                repetition_count
+            ));
+        } else {
+            step_progress.set_substatus("running prediction");
+        }
+
         let messages = vec![anthropic::Message {
             role: anthropic::Role::User,
             content: vec![anthropic::RequestContent::Text {
@@ -356,6 +402,7 @@ async fn predict_openai(
     batched: bool,
     repetition_count: usize,
     cache_only: bool,
+    step_progress: &crate::progress::StepProgress,
 ) -> anyhow::Result<()> {
     let llm_model_name = backend.model_name();
     let max_tokens = 16384;
@@ -371,6 +418,16 @@ async fn predict_openai(
     let prompt = example.prompt.as_ref().context("Prompt is required")?;
 
     for ix in 0..repetition_count {
+        if repetition_count > 1 {
+            step_progress.set_substatus(format!(
+                "running prediction {}/{}",
+                ix + 1,
+                repetition_count
+            ));
+        } else {
+            step_progress.set_substatus("running prediction");
+        }
+
         let messages = vec![open_ai::RequestMessage::User {
             content: open_ai::MessageContent::Plain(prompt.input.clone()),
         }];
@@ -426,7 +483,7 @@ async fn predict_openai(
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
         Some(PredictionProvider::Teacher(backend)) => match backend {
-            TeacherBackend::Sonnet45 => {
+            TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create Anthropic client")

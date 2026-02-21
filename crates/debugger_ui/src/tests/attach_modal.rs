@@ -60,7 +60,13 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     // assert we didn't show the attach modal
     workspace
         .update(cx, |workspace, _window, cx| {
-            assert!(workspace.active_modal::<AttachModal>(cx).is_none());
+            assert!(
+                workspace
+                    .workspace()
+                    .read(cx)
+                    .active_modal::<AttachModal>(cx)
+                    .is_none()
+            );
         })
         .unwrap();
 }
@@ -97,9 +103,9 @@ async fn test_show_attach_modal_and_select_process(
             });
         });
     let attach_modal = workspace
-        .update(cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            workspace.toggle_modal(window, cx, |window, cx| {
+        .update(cx, |multi, window, cx| {
+            let workspace_handle = multi.workspace().downgrade();
+            multi.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
                     vec![
@@ -133,7 +139,7 @@ async fn test_show_attach_modal_and_select_process(
                 )
             });
 
-            workspace.active_modal::<AttachModal>(cx).unwrap()
+            multi.active_modal::<AttachModal>(cx).unwrap()
         })
         .unwrap();
 
@@ -208,24 +214,26 @@ async fn test_attach_with_pick_pid_variable(executor: BackgroundExecutor, cx: &m
 
     let pick_pid_placeholder = task::VariableName::PickProcessId.template_value();
     workspace
-        .update(cx, |workspace, window, cx| {
-            workspace.start_debug_session(
-                DebugTaskDefinition {
-                    adapter: FakeAdapter::ADAPTER_NAME.into(),
-                    label: "attach with picker".into(),
-                    config: json!({
-                        "request": "attach",
-                        "process_id": pick_pid_placeholder,
-                    }),
-                    tcp_connection: None,
-                }
-                .to_scenario(),
-                SharedTaskContext::default(),
-                None,
-                None,
-                window,
-                cx,
-            )
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.start_debug_session(
+                    DebugTaskDefinition {
+                        adapter: FakeAdapter::ADAPTER_NAME.into(),
+                        label: "attach with picker".into(),
+                        config: json!({
+                            "request": "attach",
+                            "process_id": pick_pid_placeholder,
+                        }),
+                        tcp_connection: None,
+                    }
+                    .to_scenario(),
+                    SharedTaskContext::default(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
+            })
         })
         .unwrap();
 

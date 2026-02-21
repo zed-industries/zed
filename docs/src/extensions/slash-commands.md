@@ -1,3 +1,8 @@
+---
+title: Slash Commands
+description: "Slash Commands for Zed extensions."
+---
+
 # Slash Commands
 
 Extensions may provide slash commands for use in the Assistant.

@@ -2,10 +2,8 @@
 //! handle deep hierarchies (even though it cannot just yet!).
 use std::sync::LazyLock;
 
-use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
-};
+use gpui::{App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
+use gpui_platform::application;
 
 struct Tree {}
 
@@ -32,7 +30,7 @@ impl Render for Tree {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.open_window(
             WindowOptions {

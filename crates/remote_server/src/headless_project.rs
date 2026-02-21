@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
+use collections::HashMap;
 use collections::HashSet;
 use language::File;
 use lsp::LanguageServerId;
@@ -12,8 +13,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
-    ToolchainStore, WorktreeId,
+    AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
+    ProjectPath, ToolchainStore, WorktreeId,
     agent_server_store::AgentServerStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     context_server_store::ContextServerStore,
@@ -31,6 +32,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
+use smol::process::Child;
 
 use settings::initial_server_settings_content;
 use std::{
@@ -40,6 +42,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
@@ -62,9 +65,11 @@ pub struct HeadlessProject {
     pub extensions: Entity<HeadlessExtensionStore>,
     pub git_store: Entity<GitStore>,
     pub environment: Entity<ProjectEnvironment>,
+    pub profiling_collector: gpui::ProfilingCollector,
     // Used mostly to keep alive the toolchain store for RPC handlers.
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
+    pub kernels: HashMap<String, Child>,
 }
 
 pub struct HeadlessAppState {
@@ -74,6 +79,7 @@ pub struct HeadlessAppState {
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
+    pub startup_time: Instant,
 }
 
 impl HeadlessProject {
@@ -90,6 +96,7 @@ impl HeadlessProject {
             node_runtime,
             languages,
             extension_host_proxy: proxy,
+            startup_time,
         }: HeadlessAppState,
         init_worktree_trust: bool,
         cx: &mut Context<Self>,
@@ -223,6 +230,8 @@ impl HeadlessProject {
             lsp_store
         });
 
+        AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
+
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store = AgentServerStore::local(
                 node_runtime.clone(),
@@ -284,6 +293,7 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         session.add_request_handler(cx.weak_entity(), Self::handle_ping);
         session.add_request_handler(cx.weak_entity(), Self::handle_get_processes);
+        session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
@@ -311,6 +321,9 @@ impl HeadlessProject {
             extensions.downgrade(),
             HeadlessExtensionStore::handle_install_extension,
         );
+
+        session.add_request_handler(cx.weak_entity(), Self::handle_spawn_kernel);
+        session.add_request_handler(cx.weak_entity(), Self::handle_kill_kernel);
 
         BufferStore::init(&session);
         WorktreeStore::init(&session);
@@ -342,7 +355,9 @@ impl HeadlessProject {
             extensions,
             git_store,
             environment,
+            profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
+            kernels: Default::default(),
         }
     }
 
@@ -887,6 +902,131 @@ impl HeadlessProject {
         })
     }
 
+    async fn handle_spawn_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SpawnKernel>,
+        cx: AsyncApp,
+    ) -> Result<proto::SpawnKernelResponse> {
+        let fs = this.update(&mut cx.clone(), |this, _| this.fs.clone());
+
+        let mut ports = Vec::new();
+        for _ in 0..5 {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let port = listener.local_addr()?.port();
+            ports.push(port);
+        }
+
+        let connection_info = serde_json::json!({
+            "shell_port": ports[0],
+            "iopub_port": ports[1],
+            "stdin_port": ports[2],
+            "control_port": ports[3],
+            "hb_port": ports[4],
+            "ip": "127.0.0.1",
+            "key": uuid::Uuid::new_v4().to_string(),
+            "transport": "tcp",
+            "signature_scheme": "hmac-sha256",
+            "kernel_name": envelope.payload.kernel_name,
+        });
+
+        let connection_file_content = serde_json::to_string_pretty(&connection_info)?;
+        let kernel_id = uuid::Uuid::new_v4().to_string();
+
+        let connection_file_path = std::env::temp_dir().join(format!("kernel-{}.json", kernel_id));
+        fs.save(
+            &connection_file_path,
+            &connection_file_content.as_str().into(),
+            language::LineEnding::Unix,
+        )
+        .await?;
+
+        let working_directory = if envelope.payload.working_directory.is_empty() {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        } else {
+            Some(envelope.payload.working_directory)
+        };
+
+        // Spawn kernel (Assuming python for now, or we'd need to parse kernelspec logic here or pass the command)
+
+        // Spawn kernel
+        let spawn_kernel = |binary: &str, args: &[String]| {
+            let mut command = smol::process::Command::new(binary);
+
+            if !args.is_empty() {
+                for arg in args {
+                    if arg == "{connection_file}" {
+                        command.arg(&connection_file_path);
+                    } else {
+                        command.arg(arg);
+                    }
+                }
+            } else {
+                command
+                    .arg("-m")
+                    .arg("ipykernel_launcher")
+                    .arg("-f")
+                    .arg(&connection_file_path);
+            }
+
+            // This ensures subprocesses spawned from the kernel use the correct Python environment
+            let python_bin_dir = std::path::Path::new(binary).parent();
+            if let Some(bin_dir) = python_bin_dir {
+                if let Some(path_var) = std::env::var_os("PATH") {
+                    let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
+                    paths.insert(0, bin_dir.to_path_buf());
+                    if let Ok(new_path) = std::env::join_paths(paths) {
+                        command.env("PATH", new_path);
+                    }
+                }
+
+                if let Some(venv_root) = bin_dir.parent() {
+                    command.env("VIRTUAL_ENV", venv_root.to_string_lossy().to_string());
+                }
+            }
+
+            if let Some(wd) = &working_directory {
+                command.current_dir(wd);
+            }
+            command.spawn()
+        };
+
+        // We need to manage the child process lifecycle
+        let child = if !envelope.payload.command.is_empty() {
+            spawn_kernel(&envelope.payload.command, &envelope.payload.args).context(format!(
+                "failed to spawn kernel process (command: {})",
+                envelope.payload.command
+            ))?
+        } else {
+            spawn_kernel("python3", &[])
+                .or_else(|_| spawn_kernel("python", &[]))
+                .context("failed to spawn kernel process (tried python3 and python)")?
+        };
+
+        this.update(&mut cx.clone(), |this, _cx| {
+            this.kernels.insert(kernel_id.clone(), child);
+        });
+
+        Ok(proto::SpawnKernelResponse {
+            kernel_id,
+            connection_file: connection_file_content,
+        })
+    }
+
+    async fn handle_kill_kernel(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::KillKernel>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let kernel_id = envelope.payload.kernel_id;
+        let child = this.update(&mut cx, |this, _| this.kernels.remove(&kernel_id));
+        if let Some(mut child) = child {
+            child.kill().log_err();
+        }
+        Ok(proto::Ack {})
+    }
+
     async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
@@ -1097,6 +1237,53 @@ impl HeadlessProject {
         processes.sort_by_key(|p| p.name.clone());
 
         Ok(proto::GetProcessesResponse { processes })
+    }
+
+    async fn handle_get_remote_profiling_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetRemoteProfilingData>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetRemoteProfilingDataResponse> {
+        let foreground_only = envelope.payload.foreground_only;
+
+        let (deltas, now_nanos) = cx.update(|cx| {
+            let dispatcher = cx.foreground_executor().dispatcher();
+            let timings = if foreground_only {
+                vec![dispatcher.get_current_thread_timings()]
+            } else {
+                dispatcher.get_all_timings()
+            };
+            this.update(cx, |this, _cx| {
+                let deltas = this.profiling_collector.collect_unseen(timings);
+                let now_nanos = Instant::now()
+                    .duration_since(this.profiling_collector.startup_time())
+                    .as_nanos() as u64;
+                (deltas, now_nanos)
+            })
+        });
+
+        let threads = deltas
+            .into_iter()
+            .map(|delta| proto::RemoteProfilingThread {
+                thread_name: delta.thread_name,
+                thread_id: delta.thread_id,
+                timings: delta
+                    .new_timings
+                    .into_iter()
+                    .map(|t| proto::RemoteProfilingTiming {
+                        location: Some(proto::RemoteProfilingLocation {
+                            file: t.location.file.to_string(),
+                            line: t.location.line,
+                            column: t.location.column,
+                        }),
+                        start_nanos: t.start as u64,
+                        duration_nanos: t.duration as u64,
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        Ok(proto::GetRemoteProfilingDataResponse { threads, now_nanos })
     }
 
     async fn handle_get_directory_environment(
