@@ -147,8 +147,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                             .find_map(|line| {
                                 finder
                                     .links(line)
-                                    .filter(|link| *link.kind() == LinkKind::Url)
-                                    .next()
+                                    .find(|link| *link.kind() == LinkKind::Url)
                                     .map(|link| SuccessStyle::PushPrLink {
                                         text: mapped.to_string(),
                                         link: link.as_str().to_string(),
