@@ -161,18 +161,38 @@ struct History {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct InsertionSlice {
-    edit_id: clock::Lamport,
-    insertion_id: clock::Lamport,
+    // Inline the lamports to allow the replica ids to share the same alignment
+    // saving 4 bytes space edit_id: clock::Lamport,
+    edit_id_value: clock::Seq,
+    edit_id_replica_id: ReplicaId,
+    // insertion_id: clock::Lamport,
+    insertion_id_value: clock::Seq,
+    insertion_id_replica_id: ReplicaId,
     range: Range<u32>,
 }
 
 impl Ord for InsertionSlice {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.edit_id
-            .cmp(&other.edit_id)
-            .then_with(|| self.insertion_id.cmp(&other.insertion_id))
-            .then_with(|| self.range.start.cmp(&other.range.start))
-            .then_with(|| self.range.end.cmp(&other.range.end))
+        Lamport {
+            value: self.edit_id_value,
+            replica_id: self.edit_id_replica_id,
+        }
+        .cmp(&Lamport {
+            value: other.edit_id_value,
+            replica_id: other.edit_id_replica_id,
+        })
+        .then_with(|| {
+            Lamport {
+                value: self.insertion_id_value,
+                replica_id: self.insertion_id_replica_id,
+            }
+            .cmp(&Lamport {
+                value: other.insertion_id_value,
+                replica_id: other.insertion_id_replica_id,
+            })
+        })
+        .then_with(|| self.range.start.cmp(&other.range.start))
+        .then_with(|| self.range.end.cmp(&other.range.end))
     }
 }
 
@@ -185,8 +205,10 @@ impl PartialOrd for InsertionSlice {
 impl InsertionSlice {
     fn from_fragment(edit_id: clock::Lamport, fragment: &Fragment) -> Self {
         Self {
-            edit_id,
-            insertion_id: fragment.timestamp,
+            edit_id_value: edit_id.value,
+            edit_id_replica_id: edit_id.replica_id,
+            insertion_id_value: fragment.timestamp.value,
+            insertion_id_replica_id: fragment.timestamp.replica_id,
             range: fragment.insertion_offset..fragment.insertion_offset + fragment.len,
         }
     }
@@ -543,18 +565,18 @@ impl<D1, D2> Edit<(D1, D2)> {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct Fragment {
-    pub id: Locator,
-    pub timestamp: clock::Lamport,
-    pub insertion_offset: u32,
-    pub len: u32,
-    pub visible: bool,
-    pub deletions: SmallVec<[clock::Lamport; 2]>,
-    pub max_undos: clock::Global,
+struct Fragment {
+    id: Locator,
+    timestamp: clock::Lamport,
+    insertion_offset: u32,
+    len: u32,
+    visible: bool,
+    deletions: SmallVec<[clock::Lamport; 2]>,
+    max_undos: clock::Global,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct FragmentSummary {
+struct FragmentSummary {
     text: FragmentTextSummary,
     max_id: Locator,
     max_version: clock::Global,
@@ -1324,38 +1346,56 @@ impl Buffer {
         let mut insertion_slices = Vec::new();
         for edit_id in edit_ids {
             let insertion_slice = InsertionSlice {
-                edit_id: *edit_id,
-                insertion_id: clock::Lamport::MIN,
+                edit_id_value: edit_id.value,
+                edit_id_replica_id: edit_id.replica_id,
+                insertion_id_value: Lamport::MIN.value,
+                insertion_id_replica_id: Lamport::MIN.replica_id,
                 range: 0..0,
             };
             let slices = self
                 .snapshot
                 .insertion_slices
                 .iter_from(&insertion_slice)
-                .take_while(|slice| slice.edit_id == *edit_id);
+                .take_while(|slice| {
+                    Lamport {
+                        value: slice.edit_id_value,
+                        replica_id: slice.edit_id_replica_id,
+                    } == *edit_id
+                });
             insertion_slices.extend(slices)
         }
-        insertion_slices
-            .sort_unstable_by_key(|s| (s.insertion_id, s.range.start, Reverse(s.range.end)));
+        insertion_slices.sort_unstable_by_key(|s| {
+            (
+                Lamport {
+                    value: s.insertion_id_value,
+                    replica_id: s.insertion_id_replica_id,
+                },
+                s.range.start,
+                Reverse(s.range.end),
+            )
+        });
 
         // Get all of the fragments corresponding to these insertion slices.
         let mut fragment_ids = Vec::new();
         let mut insertions_cursor = self.insertions.cursor::<InsertionFragmentKey>(());
         for insertion_slice in &insertion_slices {
-            if insertion_slice.insertion_id != insertions_cursor.start().timestamp
+            let insertion_id = Lamport {
+                value: insertion_slice.insertion_id_value,
+                replica_id: insertion_slice.insertion_id_replica_id,
+            };
+            if insertion_id != insertions_cursor.start().timestamp
                 || insertion_slice.range.start > insertions_cursor.start().split_offset
             {
                 insertions_cursor.seek_forward(
                     &InsertionFragmentKey {
-                        timestamp: insertion_slice.insertion_id,
+                        timestamp: insertion_id,
                         split_offset: insertion_slice.range.start,
                     },
                     Bias::Left,
                 );
             }
             while let Some(item) = insertions_cursor.item() {
-                if item.timestamp != insertion_slice.insertion_id
-                    || item.split_offset >= insertion_slice.range.end
+                if item.timestamp != insertion_id || item.split_offset >= insertion_slice.range.end
                 {
                     break;
                 }
@@ -2105,10 +2145,6 @@ impl BufferSnapshot {
 
     pub fn deleted_text(&self) -> String {
         self.deleted_text.to_string()
-    }
-
-    pub fn fragments(&self) -> impl Iterator<Item = &Fragment> {
-        self.fragments.iter()
     }
 
     pub fn text_summary(&self) -> TextSummary {
