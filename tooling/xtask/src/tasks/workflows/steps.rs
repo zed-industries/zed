@@ -333,7 +333,6 @@ impl CommonJobConditions for Job {
 
 pub(crate) fn release_job(deps: &[&NamedJob]) -> Job {
     dependant_job(deps)
-        .with_repository_owner_guard()
 }
 
 pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
