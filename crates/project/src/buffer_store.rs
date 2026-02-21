@@ -872,7 +872,7 @@ impl BufferStore {
                         // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
-                            this.update(cx, |this, cx| {
+                            this.update(cx, |this, _cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
 
