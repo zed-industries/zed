@@ -801,6 +801,7 @@ impl VsCodeSettings {
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
+            line_numbers: None,
         };
 
         if let (Some(false), Some(false)) = (

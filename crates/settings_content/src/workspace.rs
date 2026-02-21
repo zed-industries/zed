@@ -739,6 +739,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to show line numbers in the project panel.
+    ///
+    /// Default: off
+    pub line_numbers: Option<ProjectPanelLineNumbers>,
 }
 
 #[derive(
@@ -787,6 +791,31 @@ pub enum ProjectPanelSortMode {
     Mixed,
     /// Show files first, then directories
     FilesFirst,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelLineNumbers {
+    /// No line numbers
+    #[default]
+    Off,
+    /// Absolute line numbers (1, 2, 3, ...)
+    Absolute,
+    /// Relative line numbers (distance from selection)
+    Relative,
 }
 
 #[with_fallible_options]
