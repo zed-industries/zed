@@ -558,16 +558,16 @@ impl ActiveView {
 }
 
 pub struct AgentPanel {
-    pub(crate) workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<Workspace>,
     /// Workspace id is used as a database key
     workspace_id: Option<WorkspaceId>,
     user_store: Entity<UserStore>,
-    pub(crate) project: Entity<Project>,
+    project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
-    pub(crate) acp_history: Entity<AcpThreadHistory>,
+    acp_history: Entity<AcpThreadHistory>,
     text_thread_history: Entity<TextThreadHistory>,
-    pub(crate) thread_store: Entity<ThreadStore>,
+    thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<assistant_text_thread::TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -589,8 +589,8 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
-    pub(crate) thread_target: ThreadTarget,
-    pub(crate) worktree_creation_status: Option<WorktreeCreationStatus>,
+    thread_target: ThreadTarget,
+    worktree_creation_status: Option<WorktreeCreationStatus>,
     _thread_view_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
     show_trust_workspace_message: bool,
@@ -725,9 +725,10 @@ impl AgentPanel {
                                     !project.is_via_collab()
                                         && !project.repositories(cx).is_empty()
                                 }
-                                ThreadTarget::ExistingWorktree { path, .. } => {
-                                    !panel.project.read(cx).is_via_collab()
-                                        && path.exists()
+                                ThreadTarget::ExistingWorktree { .. } => {
+                                    // Always fall back to LocalProject on cold start to avoid
+                                    // a blocking path.exists() call on the UI thread.
+                                    false
                                 }
                             };
                             if is_valid {
@@ -1746,42 +1747,11 @@ impl AgentPanel {
         self._active_view_observation = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
                 self._thread_view_subscription =
-                    server_view.read(cx).active_thread().cloned().map(|tv| {
-                        cx.subscribe_in(
-                            &tv,
-                            window,
-                            |this, view, event: &AcpThreadViewEvent, window, cx| match event {
-                                AcpThreadViewEvent::FirstSendRequested { text } => {
-                                    this.handle_first_send_requested(
-                                        view.clone(),
-                                        text.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            },
-                        )
-                    });
+                    Self::subscribe_to_active_thread_view(&server_view, window, cx);
                 Some(
                     cx.observe_in(server_view, window, |this, server_view, window, cx| {
                         this._thread_view_subscription =
-                            server_view.read(cx).active_thread().cloned().map(|tv| {
-                                cx.subscribe_in(
-                                    &tv,
-                                    window,
-                                    |this, view, event: &AcpThreadViewEvent, window, cx| match event
-                                    {
-                                        AcpThreadViewEvent::FirstSendRequested { text } => {
-                                            this.handle_first_send_requested(
-                                                view.clone(),
-                                                text.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    },
-                                )
-                            });
+                            Self::subscribe_to_active_thread_view(&server_view, window, cx);
                         cx.emit(AgentPanelEvent::ActiveViewChanged);
                         this.serialize(cx);
                         cx.notify();
@@ -1905,11 +1875,37 @@ impl AgentPanel {
         self.selected_agent.clone()
     }
 
+    fn subscribe_to_active_thread_view(
+        server_view: &Entity<AcpServerView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Subscription> {
+        server_view.read(cx).active_thread().cloned().map(|tv| {
+            cx.subscribe_in(
+                &tv,
+                window,
+                |this, view, event: &AcpThreadViewEvent, window, cx| match event {
+                    AcpThreadViewEvent::FirstSendRequested { text } => {
+                        this.handle_first_send_requested(view.clone(), text.clone(), window, cx);
+                    }
+                },
+            )
+        })
+    }
+
     pub fn thread_target(&self) -> &ThreadTarget {
         &self.thread_target
     }
 
     fn set_thread_target(&mut self, action: &SetThreadTarget, cx: &mut Context<Self>) {
+        if matches!(
+            action.kind,
+            ThreadTargetKind::NewWorktree | ThreadTargetKind::ExistingWorktree
+        ) && !cx.has_flag::<AgentGitWorktreesFeatureFlag>()
+        {
+            return;
+        }
+
         let is_via_collab = self.project.read(cx).is_via_collab();
         let has_git_repo = self.project_has_git_repository(cx);
 
@@ -2140,6 +2136,13 @@ impl AgentPanel {
         use rand::Rng as _;
         use settings::Settings as _;
 
+        if matches!(
+            self.worktree_creation_status,
+            Some(WorktreeCreationStatus::Creating)
+        ) {
+            return;
+        }
+
         self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
         cx.notify();
 
@@ -2280,14 +2283,26 @@ impl AgentPanel {
 
             if let Some(err) = first_error {
                 // Rollback all successfully created worktrees
+                let mut rollback_receivers = Vec::new();
                 for (rollback_repo, rollback_path) in &repos_and_paths {
-                    cx.update(|_, cx| {
+                    if let Ok(receiver) = cx.update(|_, cx| {
                         rollback_repo.update(cx, |repo, _cx| {
-                            // Fire-and-forget: the remove runs in the background
-                            let _receiver = repo.remove_worktree(rollback_path.clone(), true);
-                        });
-                    })
-                    .ok();
+                            repo.remove_worktree(rollback_path.clone(), true)
+                        })
+                    }) {
+                        rollback_receivers.push((rollback_path.clone(), receiver));
+                    }
+                }
+                for (path, receiver) in rollback_receivers {
+                    match receiver.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            log::error!("failed to rollback worktree at {}: {err}", path.display())
+                        }
+                        Err(err) => {
+                            log::error!("failed to rollback worktree at {}: {err}", path.display())
+                        }
+                    }
                 }
                 this.update_in(cx, |this, _window, cx| {
                     this.worktree_creation_status = Some(WorktreeCreationStatus::Error(
@@ -2423,7 +2438,7 @@ impl AgentPanel {
             anyhow::Ok(())
         });
 
-        self._worktree_creation_task = Some(cx.spawn_in(window, async move |_this, _cx| {
+        self._worktree_creation_task = Some(cx.foreground_executor().spawn(async move {
             task.await.log_err();
         }));
     }
