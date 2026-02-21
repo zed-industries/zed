@@ -4016,8 +4016,7 @@ mod tests {
     fn test_conflict_resource_block_structure() {
         let conflict = ConflictContent {
             file_path: "src/utils.rs".to_string(),
-            conflict_text: "<<<<<<< HEAD\nold code\n=======\nnew code\n>>>>>>> branch"
-                .to_string(),
+            conflict_text: "<<<<<<< HEAD\nold code\n=======\nnew code\n>>>>>>> branch".to_string(),
             ours_branch_name: "HEAD".to_string(),
             theirs_branch_name: "branch".to_string(),
         };
@@ -4025,14 +4024,14 @@ mod tests {
         let block = conflict_resource_block(&conflict);
         let (text, uri) = expect_resource_block(&block);
 
-        assert_eq!(text, conflict.conflict_text, "resource text should be the raw conflict");
+        assert_eq!(
+            text, conflict.conflict_text,
+            "resource text should be the raw conflict"
+        );
         assert!(
             uri.starts_with("zed:///agent/merge-conflict"),
             "URI should use the zed merge-conflict scheme, got: {uri}"
         );
-        assert!(
-            uri.contains("utils.rs"),
-            "URI should encode the file path"
-        );
+        assert!(uri.contains("utils.rs"), "URI should encode the file path");
     }
 }
