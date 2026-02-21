@@ -9,9 +9,9 @@ use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
     DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Hsla, InteractiveElement, KeyDownEvent, ParentElement, PathBuilder, Pixels, Point,
-    Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity,
-    Window, actions, anchored, deferred, point, px,
+    FontWeight, Hsla, InteractiveElement, KeyDownEvent, MouseDownEvent, ParentElement, PathBuilder,
+    Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -714,6 +714,7 @@ pub struct GitGraph {
     all_branches: Vec<BranchInfo>,
     branch_filter_query: String,
     branch_filter_menu_open: bool,
+    branch_filter_focus_handle: FocusHandle,
 }
 
 impl GitGraph {
@@ -811,6 +812,7 @@ impl GitGraph {
             all_branches: Vec::new(),
             branch_filter_query: String::new(),
             branch_filter_menu_open: false,
+            branch_filter_focus_handle: cx.focus_handle(),
         }
     }
 
@@ -1175,7 +1177,7 @@ impl GitGraph {
 
     fn toggle_branch_filter_menu(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         eprintln!("[GitGraph] toggle_branch_filter_menu: called, branches count={}", self.all_branches.len());
@@ -1184,7 +1186,14 @@ impl GitGraph {
         self.branch_filter_menu_open = !self.branch_filter_menu_open;
         if self.branch_filter_menu_open {
             self.branch_filter_query.clear();
+            // Focus the popover when opening
+            self.branch_filter_focus_handle.focus(window, cx);
         }
+        cx.notify();
+    }
+
+    fn toggle_branch_selection(&mut self, branch: SharedString, cx: &mut Context<Self>) {
+        self.branch_filter.toggle_branch(branch);
         cx.notify();
     }
 
@@ -1221,8 +1230,11 @@ impl GitGraph {
             self.branch_filter_query.clone()
         };
 
+        let focus_handle = self.branch_filter_focus_handle.clone();
+
         div()
             .id("branch-filter-popover")
+            .track_focus(&focus_handle)
             .absolute()
             .top(px(30.))
             .left(px(0.))
@@ -1235,6 +1247,10 @@ impl GitGraph {
             .shadow_lg()
             .flex()
             .flex_col()
+            .on_mouse_down_out(cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
+                this.branch_filter_menu_open = false;
+                cx.notify();
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 let key = &event.keystroke.key;
                 if key == "backspace" {
