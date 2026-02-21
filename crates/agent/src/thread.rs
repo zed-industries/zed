@@ -216,6 +216,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -226,6 +227,7 @@ impl UserMessage {
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
+        let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -326,6 +328,18 @@ impl UserMessage {
                                 &mut diffs_context,
                                 "\nBranch diff against {}:\n{}",
                                 base_ref,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::MergeConflict { file_path } => {
+                            write!(
+                                &mut merge_conflict_context,
+                                "\nMerge conflict in {}:\n{}",
+                                file_path,
                                 MarkdownCodeBlock {
                                     tag: "diff",
                                     text: content
