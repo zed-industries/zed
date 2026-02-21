@@ -571,7 +571,7 @@ fn open_with_tab(
     let repository = crate::resolve_active_repository(workspace, cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
-        GitPicker::new(workspace_handle, repository, tab, rems(34.), window, cx)
+        GitPicker::new(workspace_handle, repository, tab, rems(36.), window, cx)
     })
 }
 
