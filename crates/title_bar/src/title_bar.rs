@@ -1,6 +1,7 @@
 mod application_menu;
 pub mod collab;
 mod onboarding_banner;
+mod plan_chip;
 mod title_bar_settings;
 mod update_version;
 
@@ -8,6 +9,7 @@ mod update_version;
 mod stories;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
+use crate::plan_chip::PlanChip;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
@@ -37,8 +39,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, Chip, ContextMenu, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    Avatar, ButtonLike, ContextMenu, IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle,
+    TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
@@ -1026,32 +1028,11 @@ impl TitleBar {
             has_subscription_period
         });
 
-        let free_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.05));
-
-        let pro_chip_bg = cx
-            .theme()
-            .colors()
-            .editor_background
-            .opacity(0.5)
-            .blend(cx.theme().colors().text_accent.opacity(0.2));
-
         PopoverMenu::new("user-menu")
             .anchor(Corner::TopRight)
             .menu(move |window, cx| {
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     let user_login = user_login.clone();
-
-                    let (plan_name, label_color, bg_color) = match plan {
-                        None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                        Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                        Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
-                        Some(Plan::ZedStudent) => ("Student", Color::Accent, pro_chip_bg),
-                    };
 
                     menu.when(is_signed_in, |this| {
                         this.custom_entry(
@@ -1062,11 +1043,7 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .child(
-                                        Chip::new(plan_name.to_string())
-                                            .bg_color(bg_color)
-                                            .label_color(label_color),
-                                    )
+                                    .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
                                     .into_any_element()
                             },
                             move |_, cx| {
