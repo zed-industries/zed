@@ -69,11 +69,12 @@ profiling.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
+url.workspace = true
 util.workspace = true
 uuid.workspace = true
 
 # Always used
-oo7 = { version = "0.5.0", default-features = false, features = [
+oo7 = { version = "0.6", default-features = false, features = [
     "async-std",
     "native_crypto",
 ] }
