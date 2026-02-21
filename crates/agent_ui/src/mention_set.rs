@@ -147,8 +147,14 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
+                "Untitled buffer selection mentions are not supported for paste"
+            ))),
             MentionUri::PastedImage
-            | MentionUri::Selection { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::GitDiff { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -641,6 +647,45 @@ mod tests {
                 .contains("Thread mentions are only supported for the native agent"),
             "Unexpected error: {error:#}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_selection_mentions_supported_for_paste(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Selection {
+                    abs_path: Some(path!("/project/file.rs").into()),
+                    line_range: 1..=2,
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+
+        let mention = mention_task.await.unwrap();
+        match mention {
+            Mention::Text {
+                content,
+                tracked_buffers,
+            } => {
+                assert_eq!(content, "line 2\nline 3\n");
+                assert_eq!(tracked_buffers.len(), 1);
+            }
+            other => panic!("Expected selection mention to resolve as text, got {other:?}"),
+        }
     }
 }
 
