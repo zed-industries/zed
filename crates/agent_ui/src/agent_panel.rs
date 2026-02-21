@@ -12,7 +12,10 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{OpenClaudeAgentOnboardingModal, ReauthenticateAgent, ReviewBranchDiff};
+use zed_actions::agent::{
+    ConflictContent, OpenClaudeAgentOnboardingModal, ReauthenticateAgent,
+    ResolveConflictsWithAgent, ReviewBranchDiff,
+};
 
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
 use crate::{
@@ -309,7 +312,34 @@ pub fn init(cx: &mut App) {
                             cx,
                         );
                     });
-                });
+                })
+                .register_action(
+                    |workspace, action: &ResolveConflictsWithAgent, window, cx| {
+                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        let content_blocks = build_conflict_resolution_prompt(
+                            &action.conflicts,
+                            &action.conflicted_file_paths,
+                        );
+
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                None,
+                                None,
+                                Some(AgentInitialContent::ContentBlock {
+                                    blocks: content_blocks,
+                                    auto_submit: true,
+                                }),
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                );
         },
     )
     .detach();
