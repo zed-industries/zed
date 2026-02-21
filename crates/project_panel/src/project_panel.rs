@@ -82,6 +82,7 @@ use zed_actions::{
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
+const INDENT_GUIDE_LEFT_OFFSET: Pixels = px(14.);
 
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
@@ -4474,6 +4475,71 @@ impl ProjectPanel {
         None
     }
 
+    fn calculate_line_number_digit_count(&self) -> usize {
+        const MIN_DIGIT_COUNT: usize = 3;
+
+        let total_entries: usize = self
+            .state
+            .visible_entries
+            .iter()
+            .map(|v| v.entries.len())
+            .sum();
+
+        total_entries.to_string().len().max(MIN_DIGIT_COUNT)
+    }
+
+    fn calculate_line_number_gutter_width(&self) -> Pixels {
+        const LINE_NUMBER_CHAR_WIDTH: f32 = 8.0;
+        const LINE_NUMBER_GUTTER_PADDING: f32 = 16.0;
+
+        let digit_count = self.calculate_line_number_digit_count();
+        px(digit_count as f32 * LINE_NUMBER_CHAR_WIDTH + LINE_NUMBER_GUTTER_PADDING)
+    }
+
+    fn calculate_line_numbers(
+        &self,
+        range: Range<usize>,
+        settings: &ProjectPanelSettings,
+    ) -> HashMap<usize, u32> {
+        use settings::ProjectPanelLineNumbers;
+
+        let mut line_numbers = HashMap::default();
+
+        match settings.line_numbers {
+            ProjectPanelLineNumbers::Off => {
+                return line_numbers;
+            }
+            ProjectPanelLineNumbers::Absolute => {
+                for i in range {
+                    line_numbers.insert(i, (i + 1) as u32);
+                }
+            }
+            ProjectPanelLineNumbers::Relative => {
+                let selected_index = self
+                    .selection
+                    .and_then(|sel| self.index_for_entry(sel.entry_id, sel.worktree_id))
+                    .map(|(_, _, total_ix)| total_ix);
+
+                if let Some(base_index) = selected_index {
+                    for i in range {
+                        let number = if i == base_index {
+                            (i + 1) as u32
+                        } else {
+                            i.abs_diff(base_index) as u32
+                        };
+                        line_numbers.insert(i, number);
+                    }
+                } else {
+                    for i in range {
+                        line_numbers.insert(i, (i + 1) as u32);
+                    }
+                }
+            }
+        }
+
+        line_numbers
+    }
+
     fn iter_visible_entries(
         &self,
         range: Range<usize>,
@@ -4520,10 +4586,13 @@ impl ProjectPanel {
         callback: &mut dyn FnMut(
             ProjectEntryId,
             EntryDetails,
+            Option<u32>,
             &mut Window,
             &mut Context<ProjectPanel>,
         ),
     ) {
+        let settings = ProjectPanelSettings::get_global(cx);
+        let line_numbers = self.calculate_line_numbers(range.clone(), settings);
         let mut ix = 0;
         for visible in &self.state.visible_entries {
             if ix >= range.end {
@@ -4552,7 +4621,10 @@ impl ProjectPanel {
                 let entries = visible
                     .index
                     .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
-                for entry in visible.entries[entry_range].iter() {
+                let base_index = ix + entry_range.start;
+                for (i, entry) in visible.entries[entry_range].iter().enumerate() {
+                    let global_index = base_index + i;
+                    let line_number = line_numbers.get(&global_index).copied();
                     let status = git_status_setting
                         .then_some(entry.git_summary)
                         .unwrap_or_default();
@@ -4625,7 +4697,7 @@ impl ProjectPanel {
                         }
                     }
 
-                    callback(entry.id, details, window, cx);
+                    callback(entry.id, details, line_number, window, cx);
                 }
             }
             ix = end_ix;
@@ -5011,6 +5083,7 @@ impl ProjectPanel {
         &self,
         entry_id: ProjectEntryId,
         details: EntryDetails,
+        line_number: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -5021,6 +5094,27 @@ impl ProjectPanel {
         let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
+
+        let gutter_width = self.calculate_line_number_gutter_width();
+        let line_number_gutter = line_number.map(|num| {
+            let digit_count = self.calculate_line_number_digit_count();
+            let formatted = format!("{:>width$}", num, width = digit_count);
+
+            div()
+                .h_full()
+                .flex_none()
+                .w(gutter_width)
+                .flex()
+                .items_center()
+                .justify_end()
+                .px_1()
+                .text_color(if details.is_selected {
+                    cx.theme().colors().editor_active_line_number
+                } else {
+                    cx.theme().colors().editor_line_number
+                })
+                .child(formatted)
+        });
 
         let selection = SelectedEntry {
             worktree_id: details.worktree_id,
@@ -5146,17 +5240,34 @@ impl ProjectPanel {
             (entry_id.to_proto() as usize).into()
         };
 
-        div()
-            .id(id.clone())
-            .relative()
-            .group(GROUP_NAME)
-            .cursor_pointer()
-            .rounded_none()
-            .bg(bg_color)
-            .border_1()
-            .border_r_2()
-            .border_color(border_color)
-            .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
+        let has_line_numbers = line_number_gutter.is_some();
+
+        let wrapper_id: ElementId = if is_sticky {
+            SharedString::from(format!("project_panel_sticky_wrapper_{}", entry_id.to_usize()))
+                .into()
+        } else {
+            SharedString::from(format!("entry_wrapper_{}", entry_id.to_proto())).into()
+        };
+
+        h_flex()
+            .id(wrapper_id)
+            .w_full()
+            .when_some(line_number_gutter, |this, gutter| this.child(gutter))
+            .child(
+                div()
+                    .id(id.clone())
+                    .flex_1()
+                    .relative()
+                    .group(GROUP_NAME)
+                    .cursor_pointer()
+                    .rounded_none()
+                    .when(has_line_numbers, |this| this.rounded_l_none())
+                    .bg(bg_color)
+                    .border_1()
+                    .border_r_2()
+                    .when(has_line_numbers, |this| this.border_l_0())
+                    .border_color(border_color)
+                    .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_sticky, |this| this.block_mouse_except_scroll())
             .when(!is_sticky, |this| {
                 this.when(
@@ -5398,7 +5509,7 @@ impl ProjectPanel {
                                 range_start..range_end,
                                 window,
                                 cx,
-                                &mut |entry_id, details, _, _| {
+                                &mut |entry_id, details, _line_number, _, _| {
                                     new_selections.push(SelectedEntry {
                                         entry_id,
                                         worktree_id: details.worktree_id,
@@ -5620,7 +5731,8 @@ impl ProjectPanel {
                                 .size(LabelSize::Small),
                         ),
                 ))
-            })
+            }),
+            )
     }
 
     fn render_folder_elements(
@@ -6121,6 +6233,13 @@ impl ProjectPanel {
 
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let git_status_enabled = panel_settings.git_status;
+        let line_numbers_enabled =
+            panel_settings.line_numbers != settings::ProjectPanelLineNumbers::Off;
+        let sticky_left_offset = if line_numbers_enabled {
+            self.calculate_line_number_gutter_width()
+        } else {
+            px(0.)
+        };
         let root_name = worktree.root_name();
 
         let git_summaries_by_id = if git_status_enabled {
@@ -6156,23 +6275,27 @@ impl ProjectPanel {
                     window,
                     cx,
                 );
-                self.render_entry(entry.id, details, window, cx)
-                    .when(index == last_item_index, |this| {
-                        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
-                        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
-                        let sticky_shadow = div()
-                            .absolute()
-                            .left_0()
-                            .bottom_neg_1p5()
-                            .h_1p5()
-                            .w_full()
-                            .bg(linear_gradient(
-                                0.,
-                                linear_color_stop(shadow_color_top, 1.),
-                                linear_color_stop(shadow_color_bottom, 0.),
-                            ));
-                        this.child(sticky_shadow)
-                    })
+                div()
+                    .pl(sticky_left_offset)
+                    .child(
+                        self.render_entry(entry.id, details, None, window, cx)
+                            .when(index == last_item_index, |this| {
+                                let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
+                                let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
+                                let sticky_shadow = div()
+                                    .absolute()
+                                    .left_0()
+                                    .bottom_neg_1p5()
+                                    .h_1p5()
+                                    .w_full()
+                                    .bg(linear_gradient(
+                                        0.,
+                                        linear_color_stop(shadow_color_top, 1.),
+                                        linear_color_stop(shadow_color_bottom, 0.),
+                                    ));
+                                this.child(sticky_shadow)
+                            }),
+                    )
                     .into_any()
             })
             .collect()
@@ -6207,6 +6330,13 @@ impl Render for ProjectPanel {
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let indent_size = panel_settings.indent_size;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
+        let line_numbers_enabled =
+            panel_settings.line_numbers != settings::ProjectPanelLineNumbers::Off;
+        let line_number_gutter_width = if line_numbers_enabled {
+            self.calculate_line_number_gutter_width()
+        } else {
+            px(0.)
+        };
         let show_sticky_entries = {
             if panel_settings.sticky_scroll {
                 let is_scrollable = self.scroll_handle.is_scrollable();
@@ -6377,8 +6507,14 @@ impl Render for ProjectPanel {
                                         range,
                                         window,
                                         cx,
-                                        &mut |id, details, window, cx| {
-                                            items.push(this.render_entry(id, details, window, cx));
+                                        &mut |id, details, line_number, window, cx| {
+                                            items.push(this.render_entry(
+                                                id,
+                                                details,
+                                                line_number,
+                                                window,
+                                                cx,
+                                            ));
                                         },
                                     );
                                     items
@@ -6408,6 +6544,33 @@ impl Render for ProjectPanel {
                                                 },
                                             );
                                             items
+                                        },
+                                    )
+                                    .with_render_fn(
+                                        cx.entity(),
+                                        move |_this, params, _window, _cx| {
+                                            params
+                                                .indent_guides
+                                                .into_iter()
+                                                .map(|layout| ui::RenderedIndentGuide {
+                                                    bounds: gpui::Bounds::new(
+                                                        gpui::point(
+                                                            line_number_gutter_width
+                                                                + layout.offset.x
+                                                                    * params.indent_size
+                                                                + INDENT_GUIDE_LEFT_OFFSET,
+                                                            layout.offset.y * params.item_height,
+                                                        ),
+                                                        gpui::size(
+                                                            px(1.),
+                                                            layout.length * params.item_height,
+                                                        ),
+                                                    ),
+                                                    layout,
+                                                    is_active: false,
+                                                    hitbox: None,
+                                                })
+                                                .collect()
                                         },
                                     )
                                     .on_click(cx.listener(
@@ -6444,7 +6607,6 @@ impl Render for ProjectPanel {
                                     .with_render_fn(
                                         cx.entity(),
                                         move |this, params, _, cx| {
-                                            const LEFT_OFFSET: Pixels = px(14.);
                                             const PADDING_Y: Pixels = px(4.);
                                             const HITBOX_OVERDRAW: Pixels = px(3.);
 
@@ -6469,8 +6631,9 @@ impl Render for ProjectPanel {
                                                     };
                                                     let bounds = Bounds::new(
                                                         point(
-                                                            layout.offset.x * indent_size
-                                                                + LEFT_OFFSET,
+                                                            line_number_gutter_width
+                                                                + layout.offset.x * indent_size
+                                                                + INDENT_GUIDE_LEFT_OFFSET,
                                                             layout.offset.y * item_height + offset,
                                                         ),
                                                         size(
@@ -6540,8 +6703,6 @@ impl Render for ProjectPanel {
                                         .with_render_fn(
                                             cx.entity(),
                                             move |_, params, _, _| {
-                                                const LEFT_OFFSET: Pixels = px(14.);
-
                                                 let indent_size = params.indent_size;
                                                 let item_height = params.item_height;
 
@@ -6551,8 +6712,9 @@ impl Render for ProjectPanel {
                                                     .map(|layout| {
                                                         let bounds = Bounds::new(
                                                             point(
-                                                                layout.offset.x * indent_size
-                                                                    + LEFT_OFFSET,
+                                                                line_number_gutter_width
+                                                                    + layout.offset.x * indent_size
+                                                                    + INDENT_GUIDE_LEFT_OFFSET,
                                                                 layout.offset.y * item_height,
                                                             ),
                                                             size(
