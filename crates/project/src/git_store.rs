@@ -1615,7 +1615,6 @@ impl GitStore {
                     .detach();
                 }
             }
-            _ => {}
         }
     }
 
