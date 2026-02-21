@@ -9736,3 +9736,195 @@ impl Render for TestProjectItemView {
         Empty
     }
 }
+
+#[gpui::test]
+async fn test_line_number_digit_count(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": "",
+            "b": "",
+            "c": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, _window, _cx| {
+        let digit_count = panel.calculate_line_number_digit_count();
+        assert_eq!(digit_count, 3, "Should use minimum of 3 digits for small entry counts");
+    });
+}
+
+#[gpui::test]
+async fn test_line_number_digit_count_large(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let mut files = serde_json::Map::new();
+    for i in 0..1500 {
+        files.insert(format!("file_{:04}.txt", i), json!(""));
+    }
+    fs.insert_tree("/root", json!(files)).await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, _window, _cx| {
+        let digit_count = panel.calculate_line_number_digit_count();
+        assert_eq!(digit_count, 4, "Should use 4 digits for 1500+ entries");
+    });
+}
+
+#[gpui::test]
+async fn test_line_numbers_absolute_mode(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": "",
+            "b": "",
+            "c": "",
+            "d": "",
+            "e": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .line_numbers = Some(settings::ProjectPanelLineNumbers::Absolute);
+            });
+        });
+    });
+
+    panel.update_in(cx, |panel, _window, cx| {
+        let settings = ProjectPanelSettings::get_global(cx);
+        let line_numbers = panel.calculate_line_numbers(0..6, settings);
+
+        assert_eq!(line_numbers.get(&0), Some(&1));
+        assert_eq!(line_numbers.get(&1), Some(&2));
+        assert_eq!(line_numbers.get(&2), Some(&3));
+        assert_eq!(line_numbers.get(&3), Some(&4));
+        assert_eq!(line_numbers.get(&4), Some(&5));
+        assert_eq!(line_numbers.get(&5), Some(&6));
+    });
+}
+
+#[gpui::test]
+async fn test_line_numbers_relative_mode(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": "",
+            "b": "",
+            "c": "",
+            "d": "",
+            "e": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .line_numbers = Some(settings::ProjectPanelLineNumbers::Relative);
+            });
+        });
+    });
+
+    select_path(&panel, "root/c", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, _window, cx| {
+        let settings = ProjectPanelSettings::get_global(cx);
+        let line_numbers = panel.calculate_line_numbers(0..6, settings);
+
+        // Entry at index 3 is "c" (root=0, a=1, b=2, c=3)
+        // Selected entry shows absolute number, others show relative distance
+        assert_eq!(line_numbers.get(&0), Some(&3), "root should be 3 away from selected");
+        assert_eq!(line_numbers.get(&1), Some(&2), "a should be 2 away from selected");
+        assert_eq!(line_numbers.get(&2), Some(&1), "b should be 1 away from selected");
+        assert_eq!(line_numbers.get(&3), Some(&4), "c (selected) should show absolute number 4");
+        assert_eq!(line_numbers.get(&4), Some(&1), "d should be 1 away from selected");
+        assert_eq!(line_numbers.get(&5), Some(&2), "e should be 2 away from selected");
+    });
+}
+
+#[gpui::test]
+async fn test_line_numbers_off_mode(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": "",
+            "b": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, _window, cx| {
+        let settings = ProjectPanelSettings::get_global(cx);
+        let line_numbers = panel.calculate_line_numbers(0..3, settings);
+
+        assert!(line_numbers.is_empty(), "Line numbers should be empty when mode is Off");
+    });
+}
