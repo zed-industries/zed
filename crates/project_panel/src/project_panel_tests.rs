@@ -9736,3 +9736,54 @@ impl Render for TestProjectItemView {
         Empty
     }
 }
+
+#[test]
+fn test_diagnostic_color_priority_resolution() {
+    fn resolve_entry_color(
+        diagnostic_badges: bool,
+        severity: Option<DiagnosticSeverity>,
+        git_status: GitSummary,
+    ) -> Color {
+        if diagnostic_badges {
+            match severity {
+                Some(DiagnosticSeverity::ERROR) => Color::Error,
+                Some(DiagnosticSeverity::WARNING) => Color::Warning,
+                _ => entry_git_aware_label_color(git_status, false, false),
+            }
+        } else {
+            entry_git_aware_label_color(git_status, false, false)
+        }
+    }
+
+    let unchanged = GitSummary::UNCHANGED;
+
+    // Unselected entries with no git changes have Color::Muted as their default color.
+    let default_color = Color::Muted;
+
+    // When diagnostic_badges is disabled, diagnostic severity is ignored and git color is used.
+    assert_eq!(
+        resolve_entry_color(false, Some(DiagnosticSeverity::ERROR), unchanged),
+        default_color,
+        "badges disabled: error severity should not change color from default"
+    );
+
+    // When diagnostic_badges is enabled, errors take the highest priority.
+    assert_eq!(
+        resolve_entry_color(true, Some(DiagnosticSeverity::ERROR), unchanged),
+        Color::Error,
+        "badges enabled: error severity should produce Error color"
+    );
+
+    // When diagnostic_badges is enabled, warnings take priority over git status.
+    assert_eq!(
+        resolve_entry_color(true, Some(DiagnosticSeverity::WARNING), unchanged),
+        Color::Warning,
+        "badges enabled: warning severity should produce Warning color"
+    );
+    // When diagnostic_badges is enabled but there is no diagnostic, git color is used.
+    assert_eq!(
+        resolve_entry_color(true, None, unchanged),
+        default_color,
+        "badges enabled: no diagnostic on clean entry should produce Muted color"
+    );
+}
