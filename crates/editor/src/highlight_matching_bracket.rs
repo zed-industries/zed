@@ -40,42 +40,43 @@ impl Editor {
         self.refresh_matching_bracket_highlights_task = cx.spawn({
             let buffer_snapshot = buffer_snapshot.clone();
             async move |editor, cx| {
-                if let Some((opening_range, closing_range)) = task.await {
-                    let current_ranges = editor
-                        .read_with(cx, |editor, cx| {
-                            editor
-                                .display_map
-                                .read(cx)
-                                .text_highlights(HighlightKey::MatchingBracket)
-                                .map(|(_, ranges)| ranges.to_vec())
-                        })
-                        .ok()
-                        .flatten();
-                    let new_ranges = vec![
+                let bracket_ranges = task.await;
+                let current_ranges = editor
+                    .read_with(cx, |editor, cx| {
+                        editor
+                            .display_map
+                            .read(cx)
+                            .text_highlights(HighlightKey::MatchingBracket)
+                            .map(|(_, ranges)| ranges.to_vec())
+                    })
+                    .ok()
+                    .flatten();
+                let new_ranges = bracket_ranges.map(|(opening_range, closing_range)| {
+                    vec![
                         opening_range.to_anchors(&buffer_snapshot),
                         closing_range.to_anchors(&buffer_snapshot),
-                    ];
+                    ]
+                });
 
-                    if current_ranges.as_deref() == Some(&new_ranges) {
-                        return;
-                    }
-
+                if current_ranges != new_ranges {
                     editor
                         .update(cx, |editor, cx| {
                             editor.clear_highlights(HighlightKey::MatchingBracket, cx);
-                            editor.highlight_text(
-                                HighlightKey::MatchingBracket,
-                                new_ranges,
-                                HighlightStyle {
-                                    background_color: Some(
-                                        cx.theme()
-                                            .colors()
-                                            .editor_document_highlight_bracket_background,
-                                    ),
-                                    ..Default::default()
-                                },
-                                cx,
-                            )
+                            if let Some(new_ranges) = new_ranges {
+                                editor.highlight_text(
+                                    HighlightKey::MatchingBracket,
+                                    new_ranges,
+                                    HighlightStyle {
+                                        background_color: Some(
+                                            cx.theme()
+                                                .colors()
+                                                .editor_document_highlight_bracket_background,
+                                        ),
+                                        ..Default::default()
+                                    },
+                                    cx,
+                                )
+                            }
                         })
                         .ok();
                 }
