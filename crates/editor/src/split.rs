@@ -2069,7 +2069,10 @@ impl LhsEditor {
                 .diff_for(base_text_buffer.read(lhs_cx).remote_id())
                 .is_none_or(|old_diff| old_diff.entity_id() != diff.entity_id())
         {
-            lhs_multibuffer.add_inverted_diff(diff, lhs_cx);
+            let main_buffer_entity = rhs_multibuffer
+                .buffer(main_buffer.remote_id())
+                .expect("main buffer should exist in rhs_multibuffer");
+            lhs_multibuffer.add_inverted_diff(diff, main_buffer_entity, lhs_cx);
         }
 
         let rhs_merge_groups: Vec<Vec<ExcerptId>> = {
