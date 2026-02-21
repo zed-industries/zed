@@ -358,6 +358,10 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         job: release_job(&[])
             .runs_on(runner)
             .add_step(steps::checkout_repo())
+            .when(
+                platform == Platform::Windows,
+                |job| job.add_step(steps::enable_git_long_paths()),
+            )
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux,
@@ -402,6 +406,10 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
                 )
             })
             .add_step(steps::checkout_repo())
+            .when(
+                platform == Platform::Windows,
+                |job| job.add_step(steps::enable_git_long_paths()),
+            )
             .add_step(steps::setup_cargo_config(platform))
             .when(
                 platform == Platform::Linux,

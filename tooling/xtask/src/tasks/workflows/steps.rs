@@ -188,6 +188,10 @@ pub fn cargo_install_nextest() -> Step<Use> {
     named::uses("taiki-e", "install-action", "nextest")
 }
 
+pub fn enable_git_long_paths() -> Step<Run> {
+    named::pwsh("git config --global core.longpaths true")
+}
+
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"
