@@ -4,7 +4,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, dependant_job, named},
+    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, named},
     vars::{assets, bundle_envs},
 };
 
@@ -63,13 +63,20 @@ fn nix_job(platform: Platform, arch: Arch) -> NamedJob {
 }
 
 fn bundle_job(deps: &[&NamedJob]) -> Job {
-    dependant_job(deps)
-        .when(deps.len() == 0, |job|
-            job.cond(Expression::new(
-                indoc! {
-                    r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
-                })))
+    // For fork builds: ignore test failures and always run bundling
+    let job = if deps.is_empty() {
+        Job::default().cond(Expression::new(
+            indoc! {
+                r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+                (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
+            }))
+    } else {
+        // Use needs() but with if: always() to run even if tests fail
+        Job::default()
+            .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+            .cond(Expression::new("always()"))
+    };
+    job
 }
 
 pub(crate) fn bundle_mac(

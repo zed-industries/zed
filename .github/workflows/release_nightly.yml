@@ -113,6 +113,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -163,6 +164,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -213,6 +215,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -268,6 +271,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -323,6 +327,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -383,6 +388,7 @@ jobs:
     - check_style
     - run_tests_windows
     - clippy_windows
+    if: always()
     runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
