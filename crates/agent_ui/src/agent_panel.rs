@@ -345,6 +345,109 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+fn conflict_resource_block(conflict: &ConflictContent) -> acp::ContentBlock {
+    let mention_uri = MentionUri::MergeConflict {
+        file_path: conflict.file_path.clone(),
+    };
+    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+        acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents::new(
+            conflict.conflict_text.clone(),
+            mention_uri.to_uri().to_string(),
+        )),
+    ))
+}
+
+fn build_conflict_resolution_prompt(
+    conflicts: &[ConflictContent],
+    conflicted_file_paths: &[String],
+) -> Vec<acp::ContentBlock> {
+    let mut blocks = Vec::new();
+
+    let instruction = match (conflicts.len(), conflicted_file_paths.len()) {
+        (0, 0) => String::new(),
+        (1, 0) => {
+            let conflict = &conflicts[0];
+            format!(
+                "Please resolve the following merge conflict in `{}`.\n\n\
+                 The conflict is between branch `{}` (ours) and `{}` (theirs).\n\n\
+                 Analyze both versions carefully and resolve the conflict by editing \
+                 the file directly. Choose the resolution that best preserves the intent \
+                 of both changes, or combine them if appropriate.",
+                conflict.file_path, conflict.ours_branch_name, conflict.theirs_branch_name,
+            )
+        }
+        (n, 0) if n > 0 => {
+            let unique_files: std::collections::HashSet<&str> =
+                conflicts.iter().map(|c| c.file_path.as_str()).collect();
+            let ours = &conflicts[0].ours_branch_name;
+            let theirs = &conflicts[0].theirs_branch_name;
+            format!(
+                "Please resolve all {n} merge conflicts below.\n\n\
+                 The conflicts are between branch `{ours}` (ours) and `{theirs}` (theirs).\n\n\
+                 For each conflict, analyze both versions carefully and resolve them \
+                 by editing the file{} directly. Choose resolutions that best preserve \
+                 the intent of both changes, or combine them if appropriate.",
+                if unique_files.len() > 1 { "s" } else { "" },
+            )
+        }
+        (0, _) => {
+            let file_list = conflicted_file_paths
+                .iter()
+                .map(|p| format!("- `{p}`"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "The following files have unresolved merge conflicts. Please open each \
+                 file, find the conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`), \
+                 and resolve every conflict by editing the files directly.\n\n\
+                 Choose resolutions that best preserve the intent of both changes, \
+                 or combine them if appropriate.\n\n\
+                 Files with conflicts:\n{file_list}",
+            )
+        }
+        _ => {
+            let mut prompt = String::new();
+            if let Some(first) = conflicts.first() {
+                prompt.push_str(&format!(
+                    "Please resolve these merge conflicts between branch `{}` (ours) \
+                     and `{}` (theirs).\n\n\
+                     Analyze both versions carefully and resolve them by editing the \
+                     files directly. Choose resolutions that best preserve the intent \
+                     of both changes, or combine them if appropriate.",
+                    first.ours_branch_name, first.theirs_branch_name,
+                ));
+            }
+            if !conflicted_file_paths.is_empty() {
+                let file_list = conflicted_file_paths
+                    .iter()
+                    .map(|p| format!("- `{p}`"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                prompt.push_str(&format!(
+                    "\n\nThe following files also have unresolved merge conflicts. \
+                     Please open each file, find the conflict markers, and resolve \
+                     every conflict:\n{file_list}",
+                ));
+            }
+            prompt
+        }
+    };
+
+    if !instruction.is_empty() {
+        let mut text = instruction;
+        if !conflicts.is_empty() {
+            text.push_str("\n\n");
+        }
+        blocks.push(acp::ContentBlock::Text(acp::TextContent::new(text)));
+    }
+
+    for conflict in conflicts {
+        blocks.push(conflict_resource_block(conflict));
+    }
+
+    blocks
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HistoryKind {
     AgentThreads,
