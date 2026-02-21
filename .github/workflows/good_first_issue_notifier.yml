@@ -7,7 +7,7 @@ on:
 jobs:
   handle-good-first-issue:
     if: github.event.label.name == '.contrib/good first issue' && github.repository_owner == 'zed-industries'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository

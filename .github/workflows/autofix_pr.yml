@@ -15,7 +15,7 @@ on:
         default: 'true'
 jobs:
   run_autofix:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -29,11 +29,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -90,7 +85,7 @@ jobs:
     needs:
     - run_autofix
     if: needs.run_autofix.outputs.has_changes == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - id: get-app-token
       name: steps::authenticate_as_zippy

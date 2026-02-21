@@ -11,17 +11,12 @@ on:
 jobs:
   publish_job:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: publish_extension_cli::publish_job::build_extension_cli
@@ -35,7 +30,7 @@ jobs:
     needs:
     - publish_job
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token
@@ -47,11 +42,6 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
@@ -84,7 +74,7 @@ jobs:
     needs:
     - publish_job
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - id: generate-token
       name: extension_bump::generate_token

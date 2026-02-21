@@ -10,7 +10,7 @@ on:
     - v*
 jobs:
   run_tests_mac:
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -20,11 +20,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
@@ -49,7 +44,7 @@ jobs:
       run: |
         rm -rf ./../.cargo
   run_tests_linux:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -59,11 +54,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -102,7 +92,7 @@ jobs:
         - 5432:5432
         options: --health-cmd pg_isready --health-interval 500ms --health-timeout 5s --health-retries 10
   run_tests_windows:
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -140,7 +130,7 @@ jobs:
         Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
       shell: pwsh
   clippy_mac:
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -150,11 +140,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -167,7 +152,7 @@ jobs:
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
   clippy_linux:
-    runs-on: namespace-profile-16x32-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -177,11 +162,6 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
-    - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
-      with:
-        cache: rust
-        path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
     - name: steps::install_mold
@@ -200,7 +180,7 @@ jobs:
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
   clippy_windows:
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -226,7 +206,7 @@ jobs:
       run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
   check_scripts:
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -249,7 +229,7 @@ jobs:
           exit 1
         fi
   create_draft_release:
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -272,7 +252,7 @@ jobs:
     - run_tests_linux
     - clippy_linux
     - check_scripts
-    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -311,7 +291,7 @@ jobs:
     - run_tests_linux
     - clippy_linux
     - check_scripts
-    runs-on: namespace-profile-32x64-ubuntu-2004
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -350,7 +330,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -394,7 +374,7 @@ jobs:
     - run_tests_mac
     - clippy_mac
     - check_scripts
-    runs-on: namespace-profile-mac-large
+    runs-on: macos-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -438,7 +418,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -482,7 +462,7 @@ jobs:
     - run_tests_windows
     - clippy_windows
     - check_scripts
-    runs-on: self-32vcpu-windows-2022
+    runs-on: windows-latest
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -530,7 +510,7 @@ jobs:
     - bundle_mac_x86_64
     - bundle_windows_aarch64
     - bundle_windows_x86_64
-    runs-on: namespace-profile-4x8-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
     - name: release::download_workflow_artifacts
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
@@ -561,7 +541,7 @@ jobs:
   validate_release_assets:
     needs:
     - upload_release_assets
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - name: release::validate_release_assets
       run: |
@@ -585,7 +565,7 @@ jobs:
     needs:
     - validate_release_assets
     if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - id: get-app-token
       name: steps::authenticate_as_zippy
@@ -617,7 +597,7 @@ jobs:
     - bundle_windows_aarch64
     - bundle_windows_x86_64
     if: always()
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
     - id: generate-webhook-message
       name: release::generate_slack_message
