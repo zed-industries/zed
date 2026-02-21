@@ -39,9 +39,9 @@ impl Editor {
         });
         self.refresh_matching_bracket_highlights_task = cx.spawn({
             let buffer_snapshot = buffer_snapshot.clone();
-            async move |editor, cx| {
+            async move |this, cx| {
                 let bracket_ranges = task.await;
-                let current_ranges = editor
+                let current_ranges = this
                     .read_with(cx, |editor, cx| {
                         editor
                             .display_map
@@ -59,26 +59,25 @@ impl Editor {
                 });
 
                 if current_ranges != new_ranges {
-                    editor
-                        .update(cx, |editor, cx| {
-                            editor.clear_highlights(HighlightKey::MatchingBracket, cx);
-                            if let Some(new_ranges) = new_ranges {
-                                editor.highlight_text(
-                                    HighlightKey::MatchingBracket,
-                                    new_ranges,
-                                    HighlightStyle {
-                                        background_color: Some(
-                                            cx.theme()
-                                                .colors()
-                                                .editor_document_highlight_bracket_background,
-                                        ),
-                                        ..Default::default()
-                                    },
-                                    cx,
-                                )
-                            }
-                        })
-                        .ok();
+                    this.update(cx, |editor, cx| {
+                        editor.clear_highlights(HighlightKey::MatchingBracket, cx);
+                        if let Some(new_ranges) = new_ranges {
+                            editor.highlight_text(
+                                HighlightKey::MatchingBracket,
+                                new_ranges,
+                                HighlightStyle {
+                                    background_color: Some(
+                                        cx.theme()
+                                            .colors()
+                                            .editor_document_highlight_bracket_background,
+                                    ),
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        }
+                    })
+                    .ok();
                 }
             }
         });
