@@ -13,6 +13,7 @@ use ui::{ButtonLink, ConfiguredApiCard, ContextMenu, DropdownMenu, DropdownStyle
 use workspace::AppState;
 
 const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
+const OLLAMA_API_KEY_PLACEHOLDER: &str = "sk-xxx";
 const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
 use crate::{
@@ -384,6 +385,39 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             }),
             metadata: Some(Box::new(SettingsFieldMetadata {
                 placeholder: Some(OLLAMA_API_URL_PLACEHOLDER),
+                ..Default::default()
+            })),
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "API Key",
+            description: "API authorization key for the Ollama server.",
+            field: Box::new(SettingField {
+                pick: |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .ollama
+                        .as_ref()?
+                        .api_key
+                        .as_ref()
+                },
+                write: |settings, value| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .ollama
+                        .get_or_insert_default()
+                        .api_key = value;
+                },
+                json_path: Some("edit_predictions.ollama.api_key"),
+            }),
+            metadata: Some(Box::new(SettingsFieldMetadata {
+                placeholder: Some(OLLAMA_API_KEY_PLACEHOLDER),
                 ..Default::default()
             })),
             files: USER,

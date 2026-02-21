@@ -82,11 +82,17 @@ pub(crate) async fn make_request(
     };
 
     let request_body = serde_json::to_string(&request)?;
-    let http_request = http_client::Request::builder()
+    let mut http_request_builder = http_client::Request::builder()
         .method(http_client::Method::POST)
         .uri(format!("{}/api/generate", settings.api_url))
-        .header("Content-Type", "application/json")
-        .body(http_client::AsyncBody::from(request_body))?;
+        .header("Content-Type", "application/json");
+    if settings.api_key.is_some() {
+        http_request_builder = http_request_builder.header(
+            "Authorization",
+            format!("Bearer {}", settings.api_key.unwrap()),
+        );
+    }
+    let http_request = http_request_builder.body(http_client::AsyncBody::from(request_body))?;
 
     let mut response = http_client.send(http_request).await?;
     let status = response.status();

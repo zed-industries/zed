@@ -211,6 +211,10 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: ""
     pub api_url: Option<String>,
+    /// Api authorization key to use for completions.
+    ///
+    /// Default: ""
+    pub api_key: Option<String>,
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
@@ -344,7 +348,10 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: "http://localhost:11434"
     pub api_url: Option<String>,
-
+    /// Api authorization key to use for completions.
+    ///
+    /// Default: ""
+    pub api_key: Option<String>,
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""

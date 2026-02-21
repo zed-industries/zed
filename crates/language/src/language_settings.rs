@@ -466,6 +466,8 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     pub max_output_tokens: u32,
     /// Custom API URL to use for Ollama.
     pub api_url: Arc<str>,
+    /// API Key
+    pub api_key: Option<String>,
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
@@ -712,6 +714,7 @@ impl settings::Settings for AllLanguageSettings {
                 model: model.0,
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
+                api_key: ollama.api_key,
                 prompt_format: ollama.prompt_format.unwrap(),
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
@@ -723,12 +726,20 @@ impl settings::Settings for AllLanguageSettings {
                     .api_url
                     .filter(|api_url| !api_url.is_empty()),
             )
-            .map(|(model, api_url)| OpenAiCompatibleEditPredictionSettings {
-                model,
-                max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
-                api_url: api_url.into(),
-                prompt_format: openai_compatible_settings.prompt_format.unwrap(),
-            });
+            .zip(
+                openai_compatible_settings
+                    .api_key
+                    .filter(|api_key| !api_key.is_empty()),
+            )
+            .map(
+                |((model, api_url), api_key)| OpenAiCompatibleEditPredictionSettings {
+                    model,
+                    max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
+                    api_url: api_url.into(),
+                    api_key: api_key.into(),
+                    prompt_format: openai_compatible_settings.prompt_format.unwrap(),
+                },
+            );
 
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
