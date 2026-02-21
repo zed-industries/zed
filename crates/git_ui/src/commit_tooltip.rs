@@ -91,7 +91,7 @@ impl<'a> CommitAvatar<'a> {
 }
 
 #[derive(Clone, Debug)]
-struct CommitAvatarAsset {
+pub struct CommitAvatarAsset {
     sha: SharedString,
     author_email: Option<SharedString>,
     remote: GitRemote,
@@ -105,7 +105,7 @@ impl Hash for CommitAvatarAsset {
 }
 
 impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: SharedString, author_email: Option<SharedString>) -> Self {
+    pub fn new(remote: GitRemote, sha: SharedString, author_email: Option<SharedString>) -> Self {
         Self {
             remote,
             sha,

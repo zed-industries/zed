@@ -1,17 +1,20 @@
 use collections::{BTreeMap, HashMap};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use git::{
-    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
-    parse_git_remote_url,
+    Oid,
     repository::{CommitDiff, InitialGraphCommitData, LogOrder, LogSource},
 };
-use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView};
+use git_ui::{
+    commit_details_sidebar::{
+        CommitDetailsSidebar, CommitDetailsSidebarData, get_remote_from_repository,
+    },
+    commit_view::CommitView,
+};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, DefiniteLength,
-    DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, ParentElement, PathBuilder, Pixels, Point, Render, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions,
-    anchored, deferred, point, px,
+    AnyElement, App, Bounds, ClickEvent, Context, Corner, DefiniteLength, DragMoveEvent, ElementId,
+    Entity, EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, ParentElement,
+    PathBuilder, Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, actions, anchored, deferred, point, px,
 };
 use menu::{SelectNext, SelectPrevious};
 use project::{
@@ -1003,22 +1006,6 @@ impl GitGraph {
         );
     }
 
-    fn get_remote(
-        &self,
-        repository: &Repository,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> Option<GitRemote> {
-        let remote_url = repository.default_remote_url()?;
-        let provider_registry = GitHostingProviderRegistry::default_global(cx);
-        let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
-        Some(GitRemote {
-            host: provider,
-            owner: parsed.owner.into(),
-            repo: parsed.repo.into(),
-        })
-    }
-
     fn render_loading_spinner(&self, cx: &App) -> AnyElement {
         let rems = TextSize::Large.rems(cx);
         Icon::new(IconName::LoadCircle)
@@ -1056,14 +1043,6 @@ impl GitGraph {
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
-        let truncated_sha: SharedString = {
-            let sha_str = full_sha.as_ref();
-            if sha_str.len() > 24 {
-                format!("{}...", &sha_str[..24]).into()
-            } else {
-                full_sha.clone()
-            }
-        };
         let ref_names = commit_entry.data.ref_names.clone();
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
@@ -1076,260 +1055,78 @@ impl GitGraph {
             CommitDataState::Loaded(data) => (
                 data.author_name.clone(),
                 data.author_email.clone(),
-                Some(data.commit_timestamp),
+                data.commit_timestamp,
                 data.subject.clone(),
             ),
-            CommitDataState::Loading => ("Loading...".into(), "".into(), None, "Loading...".into()),
+            CommitDataState::Loading => ("Loading...".into(), "".into(), 0, "Loading...".into()),
         };
 
-        let date_string = commit_timestamp
-            .and_then(|ts| OffsetDateTime::from_unix_timestamp(ts).ok())
-            .map(|datetime| {
-                let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-                let local_datetime = datetime.to_offset(local_offset);
-                let format =
-                    time::format_description::parse("[month repr:short] [day], [year]").ok();
-                format
-                    .and_then(|f| local_datetime.format(&f).ok())
-                    .unwrap_or_default()
+        let remote = repository.update(cx, |repo, cx| get_remote_from_repository(repo, cx));
+
+        let changed_files: Vec<_> = self
+            .selected_commit_diff
+            .as_ref()
+            .map(|diff| {
+                diff.files
+                    .iter()
+                    .map(|file| {
+                        use git::status::{FileStatus, StatusCode, TrackedStatus};
+                        let is_created = file.old_text.is_none();
+                        let is_deleted = file.new_text.is_none();
+                        let status_code = if is_created {
+                            StatusCode::Added
+                        } else if is_deleted {
+                            StatusCode::Deleted
+                        } else {
+                            StatusCode::Modified
+                        };
+                        (
+                            file.path.clone(),
+                            FileStatus::Tracked(TrackedStatus {
+                                index_status: status_code,
+                                worktree_status: StatusCode::Unmodified,
+                            }),
+                        )
+                    })
+                    .collect()
             })
             .unwrap_or_default();
 
-        let remote = repository.update(cx, |repo, cx| self.get_remote(repo, window, cx));
+        let sidebar_data = CommitDetailsSidebarData::new(
+            full_sha,
+            author_name,
+            author_email,
+            commit_timestamp,
+            subject,
+            "".into(),
+        )
+        .with_ref_names(ref_names)
+        .with_accent_color(accent_color);
 
-        let avatar = {
-            let author_email_for_avatar = if author_email.is_empty() {
-                None
-            } else {
-                Some(author_email.clone())
-            };
-            let avatar = CommitAvatar::new(&full_sha, author_email_for_avatar, remote.as_ref());
-            v_flex()
-                .w(px(64.))
-                .h(px(64.))
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_full()
-                .justify_center()
-                .items_center()
-                .child(
-                    avatar
-                        .avatar(window, cx)
-                        .map(|a| a.size(px(64.)).into_any_element())
-                        .unwrap_or_else(|| {
-                            Icon::new(IconName::Person)
-                                .color(Color::Muted)
-                                .size(IconSize::XLarge)
-                                .into_any_element()
-                        }),
-                )
+        let weak_self = cx.entity().downgrade();
+        let on_close = move |_window: &mut Window, cx: &mut App| {
+            if let Some(this) = weak_self.upgrade() {
+                this.update(cx, |this, cx| {
+                    this.selected_entry_idx = None;
+                    this.selected_commit_diff = None;
+                    this._commit_diff_task = None;
+                    cx.notify();
+                });
+            }
         };
 
-        let changed_files_count = self
-            .selected_commit_diff
-            .as_ref()
-            .map(|diff| diff.files.len())
-            .unwrap_or(0);
+        let sidebar_element = CommitDetailsSidebar::new(sidebar_data)
+            .remote(remote)
+            .changed_files(changed_files)
+            .on_close(on_close)
+            .render(window, cx);
 
-        v_flex()
-            .w(px(300.))
+        div()
             .h_full()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().surface_background)
             .flex_basis(DefiniteLength::Fraction(
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
-            .child(
-                v_flex()
-                    .p_3()
-                    .gap_3()
-                    .child(
-                        h_flex().justify_between().child(avatar).child(
-                            IconButton::new("close-detail", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.selected_entry_idx = None;
-                                    this.selected_commit_diff = None;
-                                    this._commit_diff_task = None;
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(Label::new(author_name.clone()).weight(FontWeight::SEMIBOLD))
-                            .child(
-                                Label::new(date_string)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                    )
-                    .children((!ref_names.is_empty()).then(|| {
-                        h_flex().gap_1().flex_wrap().children(
-                            ref_names
-                                .iter()
-                                .map(|name| self.render_badge(name, accent_color)),
-                        )
-                    }))
-                    .child(
-                        v_flex()
-                            .gap_1p5()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::Person)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(author_name)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .when(!author_email.is_empty(), |this| {
-                                        this.child(
-                                            Label::new(format!("<{}>", author_email))
-                                                .size(LabelSize::Small)
-                                                .color(Color::Ignored),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::Hash)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child({
-                                        let copy_sha = full_sha.clone();
-                                        Button::new("sha-button", truncated_sha)
-                                            .style(ButtonStyle::Transparent)
-                                            .label_size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .tooltip(Tooltip::text(format!(
-                                                "Copy SHA: {}",
-                                                copy_sha
-                                            )))
-                                            .on_click(move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    copy_sha.to_string(),
-                                                ));
-                                            })
-                                    }),
-                            )
-                            .when_some(remote.clone(), |this, remote| {
-                                let provider_name = remote.host.name();
-                                let icon = match provider_name.as_str() {
-                                    "GitHub" => IconName::Github,
-                                    _ => IconName::Link,
-                                };
-                                let parsed_remote = ParsedGitRemote {
-                                    owner: remote.owner.as_ref().into(),
-                                    repo: remote.repo.as_ref().into(),
-                                };
-                                let params = BuildCommitPermalinkParams {
-                                    sha: full_sha.as_ref(),
-                                };
-                                let url = remote
-                                    .host
-                                    .build_commit_permalink(&parsed_remote, params)
-                                    .to_string();
-                                this.child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(icon)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Button::new(
-                                                "view-on-provider",
-                                                format!("View on {}", provider_name),
-                                            )
-                                            .style(ButtonStyle::Transparent)
-                                            .label_size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .on_click(
-                                                move |_, _, cx| {
-                                                    cx.open_url(&url);
-                                                },
-                                            ),
-                                        ),
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .p_3()
-                    .min_w_0()
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(Label::new(subject).weight(FontWeight::MEDIUM)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .p_3()
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                Label::new(format!("{} Changed Files", changed_files_count))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .children(self.selected_commit_diff.as_ref().map(|diff| {
-                                v_flex().gap_1().children(diff.files.iter().map(|file| {
-                                    let file_name: String = file
-                                        .path
-                                        .file_name()
-                                        .map(|n| n.to_string())
-                                        .unwrap_or_default();
-                                    let dir_path: String = file
-                                        .path
-                                        .parent()
-                                        .map(|p| p.as_unix_str().to_string())
-                                        .unwrap_or_default();
-
-                                    h_flex()
-                                        .gap_1()
-                                        .overflow_hidden()
-                                        .child(
-                                            Icon::new(IconName::File)
-                                                .size(IconSize::Small)
-                                                .color(Color::Accent),
-                                        )
-                                        .child(
-                                            Label::new(file_name)
-                                                .size(LabelSize::Small)
-                                                .single_line(),
-                                        )
-                                        .when(!dir_path.is_empty(), |this| {
-                                            this.child(
-                                                Label::new(dir_path)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .single_line(),
-                                            )
-                                        })
-                                }))
-                            })),
-                    ),
-            )
+            .child(sidebar_element)
             .into_any_element()
     }
 
