@@ -421,6 +421,13 @@ impl UserMessage {
                 .push(language_model::MessageContent::Text(diagnostics_context));
         }
 
+        if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
+            merge_conflict_context.push_str("</merge_conflicts>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(merge_conflict_context));
+        }
+
         if message.content.len() > len_before_context {
             message.content.insert(
                 len_before_context,
