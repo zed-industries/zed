@@ -4232,7 +4232,7 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
-        task: "subagent task prompt".to_string(),
+        message: "subagent task prompt".to_string(),
         session_id: None,
         timeout_secs: None,
     };
@@ -4383,7 +4383,7 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SpawnAgentToolInput {
         label: "label".to_string(),
-        task: "subagent task prompt".to_string(),
+        message: "subagent task prompt".to_string(),
         session_id: None,
         timeout_secs: None,
     };
@@ -4521,7 +4521,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     model.send_last_completion_stream_text_chunk("spawning subagent");
     let subagent_tool_input = SpawnAgentToolInput {
         label: "initial task".to_string(),
-        task: "do the first task".to_string(),
+        message: "do the first task".to_string(),
         session_id: None,
         timeout_secs: None,
     };
@@ -4583,7 +4583,7 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     model.send_last_completion_stream_text_chunk("resuming subagent");
     let resume_tool_input = SpawnAgentToolInput {
         label: "follow-up task".to_string(),
-        task: "do the follow-up task".to_string(),
+        message: "do the follow-up task".to_string(),
         session_id: Some(subagent_session_id.clone()),
         timeout_secs: None,
     };

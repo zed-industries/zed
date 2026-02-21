@@ -33,8 +33,8 @@ pub struct SpawnAgentToolInput {
     /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
     pub label: String,
     /// Describe the task for the agent to perform. Be specific about what you want accomplished. Include all necessary context (file paths, requirements, constraints) since the agent cannot see your conversation.
-    pub task: String,
-    /// Optional session ID of an existing agent session to continue a conversation with. When provided, the task is sent as a follow-up message to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
+    pub message: String,
+    /// Optional session ID of an existing agent session to continue a conversation with. When provided, the message is sent as a follow-up to that session instead of creating a new one. Use this to ask clarifying questions, request changes based on previous output, or retry after errors.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
     /// Optional maximum runtime in seconds. The purpose of this timeout is to prevent the agent from getting stuck in infinite loops, NOT to estimate task duration. Be generous if setting. If not set, the agent runs until it completes or is cancelled.
@@ -117,7 +117,7 @@ impl AgentTool for SpawnAgentTool {
             self.environment.resume_subagent(
                 parent_thread_entity,
                 session_id,
-                input.task,
+                input.message,
                 input.timeout_secs.map(Duration::from_secs),
                 cx,
             )
@@ -125,7 +125,7 @@ impl AgentTool for SpawnAgentTool {
             self.environment.create_subagent(
                 parent_thread_entity,
                 input.label,
-                input.task,
+                input.message,
                 input.timeout_secs.map(Duration::from_secs),
                 cx,
             )
