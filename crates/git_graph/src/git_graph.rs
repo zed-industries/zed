@@ -2349,11 +2349,28 @@ impl Render for GitGraph {
                         .flex_row()
                         .min_h_0()
                         .child(
-                            div()
+                            v_flex()
                                 .w(self.graph_content_width())
                                 .h_full()
-                                .child(self.render_graph(cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .w_full()
+                                        .p_2()
+                                        .border_b_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .child(Label::new("")),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .size_full()
+                                        .overflow_hidden()
+                                        .child(self.render_graph(cx))
+                                        .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
+                                ),
                         )
                         .child({
                             let row_height = self.row_height;
