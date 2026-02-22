@@ -101,6 +101,20 @@ impl ThreadStore {
         })
     }
 
+    pub fn set_thread_pinned(
+        &mut self,
+        id: acp::SessionId,
+        pinned: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::connect(cx);
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.set_thread_pinned(id, pinned).await?;
+            this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
     pub fn delete_threads(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {

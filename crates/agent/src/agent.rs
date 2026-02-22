@@ -1470,6 +1470,7 @@ impl NativeAgentSessionList {
             title: Some(entry.title),
             updated_at: Some(entry.updated_at),
             meta: None,
+            pinned: entry.pinned,
         }
     }
 
@@ -1495,6 +1496,21 @@ impl AgentSessionList for NativeAgentSessionList {
 
     fn supports_delete(&self) -> bool {
         true
+    }
+
+    fn supports_pin(&self) -> bool {
+        true
+    }
+
+    fn set_session_pinned(
+        &self,
+        session_id: &acp::SessionId,
+        pinned: bool,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.thread_store.update(cx, |store, cx| {
+            store.set_thread_pinned(session_id.clone(), pinned, cx)
+        })
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {

@@ -1558,6 +1558,7 @@ impl AcpThreadView {
                 title: Some(format!("🔗 {}", response.title).into()),
                 updated_at: Some(chrono::Utc::now()),
                 meta: None,
+                pinned: false,
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -7068,6 +7069,8 @@ impl AcpThreadView {
             .size_full()
             .when(render_history, |this| {
                 let recent_history = self.recent_history_entries.clone();
+                let supports_delete = self.history.read(cx).supports_delete();
+                let supports_pin = self.history.read(cx).supports_pin();
                 this.justify_end().child(
                     v_flex()
                         .child(
@@ -7094,12 +7097,10 @@ impl AcpThreadView {
                             ),
                         )
                         .child(v_flex().p_1().pr_1p5().gap_1().children({
-                            let supports_delete = self.history.read(cx).supports_delete();
                             recent_history
                                 .into_iter()
                                 .enumerate()
                                 .map(move |(index, entry)| {
-                                    // TODO: Add keyboard navigation.
                                     let is_hovered =
                                         self.hovered_recent_history_item == Some(index);
                                     crate::acp::thread_history::AcpHistoryEntryElement::new(
@@ -7108,6 +7109,7 @@ impl AcpThreadView {
                                     )
                                     .hovered(is_hovered)
                                     .supports_delete(supports_delete)
+                                    .supports_pin(supports_pin)
                                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                                         if *is_hovered {
                                             this.hovered_recent_history_item = Some(index);
@@ -7590,6 +7592,7 @@ pub(crate) fn open_link(
                                 title: Some(name.into()),
                                 updated_at: None,
                                 meta: None,
+                                pinned: false,
                             },
                             window,
                             cx,

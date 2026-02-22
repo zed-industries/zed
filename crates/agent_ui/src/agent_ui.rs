@@ -83,6 +83,8 @@ actions!(
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Toggles the pinned state of the currently selected thread.
+        TogglePinThread,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
