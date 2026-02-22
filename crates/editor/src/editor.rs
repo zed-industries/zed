@@ -27383,7 +27383,7 @@ impl EditorSnapshot {
 
         self.buffer_snapshot()
             .diff_hunks_in_range(buffer_start..buffer_end)
-            .filter_map(|hunk| {
+            .filter_map(move |hunk| {
                 if folded_buffers.contains(&hunk.buffer_id)
                     || (hunk.row_range.is_empty() && self.buffer.all_diff_hunks_expanded())
                 {

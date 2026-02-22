@@ -5511,6 +5511,19 @@ impl Repository {
         })
     }
 
+    pub fn branch_commits(&mut self, branch: String) -> oneshot::Receiver<Result<Vec<git::Oid>>> {
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.branch_commits(branch).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("branch_commits is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
         let id = self.id;
         self.send_job(None, move |repo, _| async move {

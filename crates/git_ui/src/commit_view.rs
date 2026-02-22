@@ -12,7 +12,7 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context,
     Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    ParentElement, PromptLevel, Render, Styled, Subscription, Task, WeakEntity, Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -66,6 +66,7 @@ pub struct CommitView {
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     remote: Option<GitRemote>,
+    _subscription: Subscription,
 }
 
 struct GitBlob {
@@ -144,15 +145,20 @@ impl CommitView {
 
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
-                            let ix = pane.items().position(|item| {
-                                let commit_view = item.downcast::<CommitView>();
-                                commit_view
-                                    .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
-                            });
-                            if let Some(ix) = ix {
-                                pane.activate_item(ix, true, true, window, cx);
-                            } else {
+                            // For single-file view, always add a new item instead of reusing existing one
+                            if file_filter.is_some() {
                                 pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+                            } else {
+                                let ix = pane.items().position(|item| {
+                                    let commit_view = item.downcast::<CommitView>();
+                                    commit_view
+                                        .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
+                                });
+                                if let Some(ix) = ix {
+                                    pane.activate_item(ix, true, true, window, cx);
+                                } else {
+                                    pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+                                }
                             }
                         })
                     })
@@ -202,12 +208,15 @@ impl CommitView {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
+            editor.start_temporary_diff_override();
             editor.disable_inline_diagnostics();
             editor.set_show_breakpoints(false, cx);
             editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_header_for_buffer(message_buffer.read(cx).remote_id(), cx);
             editor.disable_indent_guides_for_buffer(message_buffer.read(cx).remote_id(), cx);
+            // Delegate excerpt opening so we can open single-file editors with diff info
+            editor.set_delegate_open_excerpts(true);
 
             editor.insert_blocks(
                 [BlockProperties {
@@ -350,6 +359,8 @@ impl CommitView {
                             cx,
                         );
                         if let Some(buffer_diff) = buffer_diff {
+                            // Expand diff hunks before adding diff so sync_diff_transforms works correctly
+                            multibuffer.set_all_diff_hunks_expanded(cx);
                             multibuffer.add_diff(buffer_diff, cx);
                         }
                     });
@@ -386,6 +397,27 @@ impl CommitView {
             })
         });
 
+        // Subscribe to editor events to handle OpenExcerptsRequested
+        let commit_sha_for_handler = commit.sha.clone();
+        let repository_for_handler = repository.clone();
+        let this_weak = cx.weak_entity();
+        let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
+            if let EditorEvent::OpenExcerptsRequested { selections_by_buffer, split } = event {
+                if let Some(this) = this_weak.upgrade() {
+                    this.update(cx, |this, cx| {
+                        this.handle_open_excerpts_requested(
+                            &commit_sha_for_handler,
+                            &repository_for_handler,
+                            selections_by_buffer,
+                            *split,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            }
+        });
+
         Self {
             commit,
             editor,
@@ -393,6 +425,70 @@ impl CommitView {
             stash,
             repository,
             remote,
+            _subscription,
+        }
+    }
+
+    fn handle_open_excerpts_requested(
+        &mut self,
+        _commit_sha: &str,
+        _repository: &Entity<Repository>,
+        selections_by_buffer: &HashMap<language::BufferId, (Vec<std::ops::Range<editor::BufferOffset>>, Option<u32>)>,
+        _split: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Get the workspace
+        let workspace = match self.editor.read(cx).workspace() {
+            Some(ws) => ws,
+            None => return,
+        };
+        let project = workspace.read(cx).project().clone();
+        let pane = workspace.read(cx).active_pane().clone();
+
+        // Collect all the data we need before creating editors
+        let mut editors_to_create: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
+
+        for (buffer_id, (_ranges, _scroll_offset)) in selections_by_buffer {
+            // Get the BufferDiff from multibuffer
+            let buffer_diff = match self.multibuffer.read(cx).diff_for(*buffer_id) {
+                Some(diff) => diff,
+                None => continue,
+            };
+
+            // Get the buffer from multibuffer
+            let buffer = match self.multibuffer.read(cx).buffer(*buffer_id) {
+                Some(buf) => buf,
+                None => continue,
+            };
+
+            editors_to_create.push((buffer, buffer_diff));
+        }
+
+        // Use defer to postpone the editor creation to avoid borrowing issues
+        for (buffer, buffer_diff) in editors_to_create {
+            let project = project.clone();
+            let pane = pane.clone();
+            window.defer(cx, move |window, cx| {
+                // Create a new MultiBuffer with the buffer and diff
+                let new_multibuffer = cx.new(|cx| {
+                    let mut multibuffer = MultiBuffer::singleton(buffer, cx);
+                    multibuffer.set_all_diff_hunks_expanded(cx);
+                    multibuffer.add_diff(buffer_diff, cx);
+                    multibuffer
+                });
+
+                let new_editor = cx.new(|cx| {
+                    let mut editor = Editor::for_multibuffer(new_multibuffer, Some(project), window, cx);
+                    editor.start_temporary_diff_override();
+                    editor.set_expand_all_diff_hunks(cx);
+                    editor
+                });
+
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(new_editor), true, true, None, window, cx);
+                });
+            });
         }
     }
 
@@ -881,14 +977,14 @@ async fn build_buffer_diff(
     }
 
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
-    let buffer = cx.update(|cx| buffer.read(cx).snapshot());
+    let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
+    let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot.text, cx));
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
-                buffer.text.clone(),
+                buffer_snapshot.text.clone(),
                 old_text.map(|old_text| Arc::from(old_text.as_str())),
                 Some(true),
                 language.clone(),
@@ -899,7 +995,7 @@ async fn build_buffer_diff(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_snapshot(update, &buffer_snapshot.text, cx)
     })
     .await;
 
@@ -1061,6 +1157,28 @@ impl Item for CommitView {
                 }
             });
             let multibuffer = editor.read(cx).buffer().clone();
+
+            // Subscribe to editor events to handle OpenExcerptsRequested
+            let commit_sha_for_handler = self.commit.sha.clone();
+            let repository_for_handler = self.repository.clone();
+            let this_weak = cx.weak_entity();
+            let _subscription = window.subscribe(&editor, cx, move |_editor, event, window, cx| {
+                if let EditorEvent::OpenExcerptsRequested { selections_by_buffer, split } = event {
+                    if let Some(this) = this_weak.upgrade() {
+                        this.update(cx, |this: &mut CommitView, cx| {
+                            this.handle_open_excerpts_requested(
+                                &commit_sha_for_handler,
+                                &repository_for_handler,
+                                selections_by_buffer,
+                                *split,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                }
+            });
+
             Self {
                 editor,
                 multibuffer,
@@ -1068,6 +1186,7 @@ impl Item for CommitView {
                 stash: self.stash,
                 repository: self.repository.clone(),
                 remote: self.remote.clone(),
+                _subscription,
             }
         })))
     }

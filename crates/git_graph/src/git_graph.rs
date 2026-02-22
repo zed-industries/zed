@@ -707,6 +707,7 @@ pub struct GitGraph {
     branch_commit_shas: HashSet<Oid>,
     filtered_commit_indices: Vec<usize>,
     _branch_commits_task: Option<Task<()>>,
+    branch_commits_cache: HashMap<SharedString, HashSet<Oid>>,
 }
 
 impl GitGraph {
@@ -808,6 +809,7 @@ impl GitGraph {
             branch_commit_shas: HashSet::default(),
             filtered_commit_indices: Vec::new(),
             _branch_commits_task: None,
+            branch_commits_cache: HashMap::default(),
         }
     }
 
@@ -849,56 +851,99 @@ impl GitGraph {
     }
 
     fn update_branch_commits(&mut self, cx: &mut Context<Self>) {
+        let start = std::time::Instant::now();
+        eprintln!("[GitGraph] update_branch_commits: start, is_all={}", self.branch_filter.is_all());
+
         if self.branch_filter.is_all() {
             self.branch_commit_shas.clear();
             self.filtered_commit_indices.clear();
             cx.notify();
+            eprintln!("[GitGraph] update_branch_commits: is_all mode, elapsed={:?}", start.elapsed());
             return;
         }
 
         if self.project.read(cx).active_repository(cx).is_none() {
+            eprintln!("[GitGraph] update_branch_commits: no repository");
             return;
         }
 
-        let branches: Vec<String> = self
+        let branches: Vec<SharedString> = self
             .branch_filter
             .selected_branches
             .iter()
-            .map(|s| s.to_string())
+            .cloned()
             .collect();
+        eprintln!("[GitGraph] update_branch_commits: {} branches selected", branches.len());
+
+        // Check which branches need to be fetched (not in cache)
+        // Use into_iter() to transfer ownership and avoid lifetime issues with async
+        let (cached, uncached): (Vec<SharedString>, Vec<SharedString>) = branches
+            .into_iter()
+            .partition(|b| self.branch_commits_cache.contains_key(b));
+        eprintln!("[GitGraph] update_branch_commits: {} cached, {} uncached", cached.len(), uncached.len());
+
+        // Start with cached results
+        let mut all_shas: HashSet<Oid> = HashSet::default();
+        for branch in &cached {
+            if let Some(shas) = self.branch_commits_cache.get(branch) {
+                all_shas.extend(shas.iter().cloned());
+            }
+        }
 
         self._branch_commits_task = Some(cx.spawn(async move |this, cx| {
-            let mut all_shas = HashSet::default();
+            let async_start = std::time::Instant::now();
 
-            for branch in branches {
+            // Fetch uncached branches
+            for branch in uncached {
+                let branch_start = std::time::Instant::now();
                 if let Some(this) = this.upgrade() {
+                    let branch_clone = branch.clone();
                     let receiver = this.update(cx, |this, cx| {
                         this.project
                             .read(cx)
                             .active_repository(cx)
-                            .map(|r| r.update(cx, |r, _| r.branch_commits(branch.clone())))
+                            .map(|r| r.update(cx, |r, _| r.branch_commits(branch_clone.to_string())))
                     });
 
                     if let Some(receiver) = receiver {
                         if let Ok(shas_result) = receiver.await {
                             if let Ok(shas) = shas_result {
-                                all_shas.extend(shas);
+                                eprintln!("[GitGraph] update_branch_commits: branch {} got {} commits, elapsed={:?}",
+                                    branch, shas.len(), branch_start.elapsed());
+
+                                // Store in cache and add to all_shas
+                                let shas_set: HashSet<Oid> = shas.into_iter().collect();
+                                all_shas.extend(shas_set.iter().cloned());
+
+                                this.update(cx, |this, _cx| {
+                                    this.branch_commits_cache.insert(branch.clone(), shas_set);
+                                });
                             }
                         }
                     }
                 }
             }
 
+            eprintln!("[GitGraph] update_branch_commits: async part done, elapsed={:?}", async_start.elapsed());
+
             if let Some(this) = this.upgrade() {
+                let filter_start = std::time::Instant::now();
                 this.update(cx, |this, cx| {
                     this.branch_commit_shas = all_shas;
                     this.update_filtered_indices(cx);
                 });
+                eprintln!("[GitGraph] update_branch_commits: update_filtered_indices done, elapsed={:?}", filter_start.elapsed());
             }
+
+            eprintln!("[GitGraph] update_branch_commits: total async elapsed={:?}", async_start.elapsed());
         }));
     }
 
     fn update_filtered_indices(&mut self, _cx: &mut Context<Self>) {
+        let start = std::time::Instant::now();
+        let total_commits = self.graph_data.commits.len();
+        let sha_count = self.branch_commit_shas.len();
+
         if self.branch_commit_shas.is_empty() {
             self.filtered_commit_indices.clear();
         } else {
@@ -916,6 +961,8 @@ impl GitGraph {
                 })
                 .collect();
         }
+        eprintln!("[GitGraph] update_filtered_indices: {} total commits, {} shas, {} filtered, elapsed={:?}",
+            total_commits, sha_count, self.filtered_commit_indices.len(), start.elapsed());
     }
 
     fn on_repository_event(
@@ -1342,8 +1389,12 @@ impl GitGraph {
     }
 
     fn toggle_branch_selection(&mut self, branch: SharedString, cx: &mut Context<Self>) {
+        let start = std::time::Instant::now();
+        eprintln!("[GitGraph] toggle_branch_selection: start for branch {}", branch);
         self.branch_filter.toggle_branch(branch);
+        eprintln!("[GitGraph] toggle_branch_selection: after toggle_branch, elapsed={:?}", start.elapsed());
         self.update_branch_commits(cx);
+        eprintln!("[GitGraph] toggle_branch_selection: done, total elapsed={:?}", start.elapsed());
     }
 
     fn render_branch_filter_popover(
@@ -1895,8 +1946,12 @@ impl GitGraph {
                                                                 .style(ButtonStyle::Transparent)
                                                                 .label_size(LabelSize::Small)
                                                                 .on_click(move |_, window, cx| {
-                                                                    let Some(commit_sha) = commit_sha.clone() else { return; };
-                                                                    let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx)) else { return; };
+                                                                    let Some(commit_sha) = commit_sha.clone() else {
+                                                                        return;
+                                                                    };
+                                                                    let Some(repository) = project.read_with(cx, |project, cx| project.active_repository(cx)) else {
+                                                                        return;
+                                                                    };
                                                                     CommitView::open(
                                                                         commit_sha,
                                                                         repository.downgrade(),

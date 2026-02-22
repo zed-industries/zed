@@ -98,6 +98,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
         let buffer_snapshot = buffer.read(cx).snapshot();
+        eprintln!("[DEBUG] set_excerpts_for_path: buffer.remote_id()={:?}", buffer_snapshot.remote_id());
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -124,6 +125,7 @@ impl MultiBuffer {
         excerpt_ranges: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
+        eprintln!("[DEBUG] set_excerpt_ranges_for_path: buffer.remote_id()={:?}", buffer_snapshot.remote_id());
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
         let excerpt_insertion_result = self.set_merged_excerpt_ranges_for_path(
             path,
