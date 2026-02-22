@@ -85,16 +85,28 @@ function CheckEnvironmentVariables {
     }
 
     $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
-        'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
-        'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
-        'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL'
     )
 
     foreach ($var in $requiredVars) {
         if (-not (Test-Path "env:$var")) {
             Write-Error "$var is not set"
             exit 1
+        }
+    }
+
+    # Azure signing variables are only required if AZURE_TENANT_ID is set (main repo builds)
+    if (Test-Path "env:AZURE_TENANT_ID") {
+        $azureVars = @(
+            'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
+            'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
+            'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
+        )
+        foreach ($var in $azureVars) {
+            if (-not (Test-Path "env:$var")) {
+                Write-Error "$var is not set"
+                exit 1
+            }
         }
     }
 }
@@ -219,6 +231,12 @@ function MakeAppx {
 
 function SignZedAndItsFriends {
     if (-not $env:CI) {
+        return
+    }
+
+    # Skip signing if Azure secrets are not available (fork builds)
+    if (-not (Test-Path "env:AZURE_TENANT_ID")) {
+        Write-Output "Skipping signing: Azure secrets not available"
         return
     }
 
