@@ -111,7 +111,6 @@ jobs:
   bundle_linux_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: ubuntu-latest
@@ -119,6 +118,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: gcc-13
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -162,7 +162,6 @@ jobs:
   bundle_linux_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: ubuntu-latest
@@ -170,6 +169,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: gcc-13
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -213,7 +213,6 @@ jobs:
   bundle_mac_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: macos-latest
@@ -269,7 +268,6 @@ jobs:
   bundle_mac_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: macos-latest
@@ -325,7 +323,6 @@ jobs:
   bundle_windows_aarch64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: windows-latest
@@ -386,7 +383,6 @@ jobs:
   bundle_windows_x86_64:
     needs:
     - check_style
-    - run_tests_windows
     - clippy_windows
     if: always()
     runs-on: windows-latest
