@@ -235,7 +235,7 @@ function SignZedAndItsFriends {
     }
 
     # Skip signing if Azure secrets are not available (fork builds)
-    if (-not (Test-Path "env:AZURE_TENANT_ID")) {
+    if ([string]::IsNullOrEmpty($env:AZURE_TENANT_ID)) {
         Write-Output "Skipping signing: Azure secrets not available"
         return
     }
