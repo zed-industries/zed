@@ -671,7 +671,7 @@ fn diff_hunk_controls(thread: &Entity<AcpThread>) -> editor::RenderDiffHunkContr
     let thread = thread.clone();
 
     Arc::new(
-        move |row, status, hunk_range, is_created_file, line_height, editor, _, cx| {
+        move |row, status, hunk_range, is_created_file, line_height, editor, _, _, cx| {
             {
                 render_diff_hunk_controls(
                     row,

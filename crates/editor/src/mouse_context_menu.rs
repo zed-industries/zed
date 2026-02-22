@@ -215,6 +215,10 @@ pub fn deploy_context_menu(
                     .repository_and_path_for_buffer_id(buffer_id, cx)
                     .is_some()
             });
+        let in_diff_hunk = {
+            let point = point.to_point(&display_map);
+            !snapshot.hunks_for_ranges([point..point]).is_empty()
+        };
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
@@ -315,7 +319,14 @@ pub fn deploy_context_menu(
                     !has_git_repo,
                     "View File History",
                     Box::new(git::FileHistory),
-                );
+                )
+                .when(has_git_repo, |builder| {
+                    builder.action_disabled_when(
+                        !in_diff_hunk,
+                        "Restore Hunk",
+                        Box::new(::git::Restore),
+                    )
+                });
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
