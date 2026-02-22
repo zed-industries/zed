@@ -813,12 +813,10 @@ impl GitGraph {
 
     fn fetch_branches(&mut self, cx: &mut Context<Self>) {
         let Some(repository) = self.project.read(cx).active_repository(cx) else {
-            eprintln!("[GitGraph] fetch_branches: No active repository");
             return;
         };
 
         let show_remotes = self.show_remotes;
-        eprintln!("[GitGraph] fetch_branches: Starting fetch, show_remotes={}", show_remotes);
 
         // Get the branches future from the repository
         let branches_future = repository.update(cx, |repository, _| repository.branches());
@@ -828,7 +826,6 @@ impl GitGraph {
             let fetched_branches = branches_future.await.ok().and_then(|r| r.ok());
             if let Some(this) = this.upgrade() {
                 if let Some(branches) = fetched_branches {
-                    eprintln!("[GitGraph] fetch_branches: Fetched {} branches", branches.len());
                     this.update(cx, |this, cx| {
                         this.all_branches = branches
                             .into_iter()
@@ -844,11 +841,8 @@ impl GitGraph {
                                 })
                             })
                             .collect();
-                        eprintln!("[GitGraph] fetch_branches: After filtering, {} branches remain", this.all_branches.len());
                         cx.notify();
                     });
-                } else {
-                    eprintln!("[GitGraph] fetch_branches: Failed to fetch branches");
                 }
             }
         }));
@@ -1336,8 +1330,6 @@ impl GitGraph {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        eprintln!("[GitGraph] toggle_branch_filter_menu: called, branches count={}", self.all_branches.len());
-
         // Toggle menu visibility
         self.branch_filter_menu_open = !self.branch_filter_menu_open;
         if self.branch_filter_menu_open {
@@ -1382,21 +1374,22 @@ impl GitGraph {
 
         let focus_handle = self.branch_filter_focus_handle.clone();
 
-        div()
-            .id("branch-filter-popover")
-            .track_focus(&focus_handle)
-            .absolute()
-            .top(px(40.))
-            .left(px(0.))
-            .w(px(250.))
-            .max_h(px(350.))
-            .bg(colors.elevated_surface_background)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_md()
-            .shadow_lg()
-            .flex()
-            .flex_col()
+        deferred(
+            div()
+                .id("branch-filter-popover")
+                .track_focus(&focus_handle)
+                .absolute()
+                .top(px(40.))
+                .left(px(0.))
+                .w(px(250.))
+                .max_h(px(350.))
+                .bg(colors.elevated_surface_background)
+                .border_1()
+                .border_color(colors.border)
+                .rounded_md()
+                .shadow_lg()
+                .flex()
+                .flex_col()
             .on_mouse_down_out(cx.listener(|this, _event: &MouseDownEvent, _window, cx| {
                 this.branch_filter_menu_open = false;
                 cx.notify();
@@ -1497,9 +1490,13 @@ impl GitGraph {
                     .max_h(px(250.))
                     .px_1()
                     .pb_1()
+                    .bg(colors.elevated_surface_background)
+                    .occlude()
                     .child(
                         v_flex()
                             .gap_0p5()
+                            .bg(colors.elevated_surface_background)
+                            .w_full()
                             // "No Filter" option
                             .child(
                                 div()
@@ -1578,7 +1575,8 @@ impl GitGraph {
                                 children
                             }),
                     ),
-            )
+            ),
+        )
     }
 
     fn render_commit_detail_panel(
@@ -2280,7 +2278,7 @@ impl Render for GitGraph {
                         .p_2()
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
+                        .bg(cx.theme().colors().elevated_surface_background)
                         .child(self.render_branch_filter_bar(cx))
                         .when(self.branch_filter_menu_open, |this| {
                             this.child(self.render_branch_filter_popover(window, cx))
@@ -2300,67 +2298,66 @@ impl Render for GitGraph {
                                 .on_scroll_wheel(cx.listener(Self::handle_graph_scroll)),
                         )
                         .child({
-                    let row_height = self.row_height;
-                    let selected_entry_idx = self.selected_entry_idx;
-                    let weak_self = cx.weak_entity();
-                    div().flex_1().size_full().child(
-                        Table::new(4)
-                            .interactable(&self.table_interaction_state)
-                            .hide_row_borders()
-                            .header(vec![
-                                Label::new("Description")
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                                Label::new("Date").color(Color::Muted).into_any_element(),
-                                Label::new("Author").color(Color::Muted).into_any_element(),
-                                Label::new("Commit").color(Color::Muted).into_any_element(),
-                            ])
-                            .column_widths(
-                                [
-                                    DefiniteLength::Fraction(description_width_fraction),
-                                    DefiniteLength::Fraction(date_width_fraction),
-                                    DefiniteLength::Fraction(author_width_fraction),
-                                    DefiniteLength::Fraction(commit_width_fraction),
-                                ]
-                                .to_vec(),
-                            )
-                            .resizable_columns(
-                                vec![
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                ],
-                                &self.table_column_widths,
-                                cx,
-                            )
-                            .map_row(move |(index, row), _window, cx| {
-                                let is_selected = selected_entry_idx == Some(index);
-                                let weak = weak_self.clone();
-                                row.h(row_height)
-                                    .when(is_selected, |row| {
-                                        row.bg(cx.theme().colors().element_selected)
+                            let row_height = self.row_height;
+                            let selected_entry_idx = self.selected_entry_idx;
+                            let weak_self = cx.weak_entity();
+                            div().flex_1().size_full().child(
+                                Table::new(4)
+                                    .interactable(&self.table_interaction_state)
+                                    .hide_row_borders()
+                                    .header(vec![
+                                        Label::new("Description")
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
+                                        Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                    ])
+                                    .column_widths(
+                                        [
+                                            DefiniteLength::Fraction(description_width_fraction),
+                                            DefiniteLength::Fraction(date_width_fraction),
+                                            DefiniteLength::Fraction(author_width_fraction),
+                                            DefiniteLength::Fraction(commit_width_fraction),
+                                        ]
+                                        .to_vec(),
+                                    )
+                                    .resizable_columns(
+                                        vec![
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                            TableResizeBehavior::Resizable,
+                                        ],
+                                        &self.table_column_widths,
+                                        cx,
+                                    )
+                                    .map_row(move |(index, row), _window, cx| {
+                                        let is_selected = selected_entry_idx == Some(index);
+                                        let weak = weak_self.clone();
+                                        row.h(row_height)
+                                            .when(is_selected, |row| {
+                                                row.bg(cx.theme().colors().element_selected)
+                                            })
+                                            .on_click(move |event, window, cx| {
+                                                let click_count = event.click_count();
+                                                weak.update(cx, |this, cx| {
+                                                    this.select_entry(index, cx);
+                                                    if click_count >= 2 {
+                                                        this.open_commit_view(index, window, cx);
+                                                    }
+                                                })
+                                                .ok();
+                                            })
+                                            .into_any_element()
                                     })
-                                    .on_click(move |event, window, cx| {
-                                        let click_count = event.click_count();
-                                        weak.update(cx, |this, cx| {
-                                            this.select_entry(index, cx);
-                                            if click_count >= 2 {
-                                                this.open_commit_view(index, window, cx);
-                                            }
-                                        })
-                                        .ok();
-                                    })
-                                    .into_any_element()
-                            })
-                            .uniform_list(
-                                "git-graph-commits",
-                                display_count,
-                                cx.processor(Self::render_table_rows),
-                            ),
-                    )
-                }),
-                )
+                                    .uniform_list(
+                                        "git-graph-commits",
+                                        display_count,
+                                        cx.processor(Self::render_table_rows),
+                                    ),
+                            )
+                        })
                 .on_drag_move::<DraggedSplitHandle>(cx.listener(|this, event, window, cx| {
                     this.commit_details_split_state.update(cx, |state, cx| {
                         state.on_drag_move(event, window, cx);
@@ -2375,6 +2372,7 @@ impl Render for GitGraph {
                     this.child(self.render_commit_view_resize_handle(window, cx))
                         .child(self.render_commit_detail_panel(window, cx))
                 })
+                )
         };
 
         div()
