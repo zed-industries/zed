@@ -209,6 +209,8 @@ actions!(
         ActivateNextPane,
         /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
+        /// Activates the last pane in the workspace.
+        ActivateLastPane,
         /// Switches to the next window.
         ActivateNextWindow,
         /// Switches to the previous window.
@@ -4325,6 +4327,12 @@ impl Workspace {
         }
     }
 
+    pub fn activate_last_pane(&mut self, window: &mut Window, cx: &mut App) {
+        if let Some(last_pane) = self.center.panes().last().cloned() {
+            window.focus(&last_pane.focus_handle(cx), cx);
+        }
+    }
+
     pub fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
@@ -6372,6 +6380,9 @@ impl Workspace {
             )
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
                 workspace.activate_next_pane(window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivateLastPane, window, cx| {
+                workspace.activate_last_pane(window, cx)
             }))
             .on_action(
                 cx.listener(|workspace, _: &ActivateNextWindow, _window, cx| {
@@ -10465,6 +10476,57 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_activate_last_pane(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let first_item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(first_item), None, true, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+        });
+
+        let (first_pane_id, target_last_pane_id) = workspace.update(cx, |workspace, _cx| {
+            let panes = workspace.center.panes();
+            assert!(panes.len() >= 2);
+            (
+                panes.first().expect("at least one pane").entity_id(),
+                panes.last().expect("at least one pane").entity_id(),
+            )
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_pane_at_index(&ActivatePane(0), window, cx);
+        });
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane().entity_id(), first_pane_id);
+            assert_ne!(workspace.active_pane().entity_id(), target_last_pane_id);
+        });
+
+        cx.dispatch_action(ActivateLastPane);
+
+        workspace.update(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane().entity_id(), target_last_pane_id);
         });
     }
 
