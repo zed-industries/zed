@@ -22,12 +22,12 @@ pub fn release_nightly() -> Workflow {
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
-        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[&style, &clippy_job]),
-        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[&style, &clippy_job]),
-        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[&style, &clippy_job]),
-        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[&style, &clippy_job]),
-        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[&style, &clippy_job]),
-        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[&style, &clippy_job]),
+        linux_aarch64: bundle_linux(Arch::AARCH64, nightly, &[]),
+        linux_x86_64: bundle_linux(Arch::X86_64, nightly, &[]),
+        mac_aarch64: bundle_mac(Arch::AARCH64, nightly, &[]),
+        mac_x86_64: bundle_mac(Arch::X86_64, nightly, &[]),
+        windows_aarch64: bundle_windows(Arch::AARCH64, nightly, &[]),
+        windows_x86_64: bundle_windows(Arch::X86_64, nightly, &[]),
     };
 
     let nix_linux_x86 = build_nix(

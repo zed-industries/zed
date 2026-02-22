@@ -62,19 +62,31 @@ fn nix_job(platform: Platform, arch: Arch) -> NamedJob {
     job
 }
 
-fn bundle_job(deps: &[&NamedJob]) -> Job {
-    // For fork builds: ignore test failures and always run bundling
-    let job = if deps.is_empty() {
-        Job::default().cond(Expression::new(
-            indoc! {
-                r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
-                (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
-            }))
+fn bundle_job(deps: &[&NamedJob], release_channel: Option<ReleaseChannel>) -> Job {
+    // For nightly builds: always run without conditions
+    // For PR builds: only run when labeled with 'run-bundling'
+    let job = if release_channel.is_some() {
+        // Nightly build - no conditions, just run
+        if deps.is_empty() {
+            Job::default()
+        } else {
+            Job::default()
+                .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+                .cond(Expression::new("always()"))
+        }
     } else {
-        // Use needs() but with if: always() to run even if tests fail
-        Job::default()
-            .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
-            .cond(Expression::new("always()"))
+        // PR build - requires label
+        if deps.is_empty() {
+            Job::default().cond(Expression::new(
+                indoc! {
+                    r#"(github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+                    (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))"#,
+                }))
+        } else {
+            Job::default()
+                .needs(deps.iter().map(|j| j.name.clone()).collect::<Vec<_>>())
+                .cond(Expression::new("always()"))
+        }
     };
     job
 }
@@ -98,7 +110,7 @@ pub(crate) fn bundle_mac(
     };
     NamedJob {
         name: format!("bundle_mac_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(runners::MAC_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
@@ -150,7 +162,7 @@ pub(crate) fn bundle_linux(
     };
     NamedJob {
         name: format!("bundle_linux_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(arch.linux_bundler())
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
@@ -191,7 +203,7 @@ pub(crate) fn bundle_windows(
     };
     NamedJob {
         name: format!("bundle_windows_{arch}"),
-        job: bundle_job(deps)
+        job: bundle_job(deps, release_channel)
             .runs_on(runners::WINDOWS_DEFAULT)
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
