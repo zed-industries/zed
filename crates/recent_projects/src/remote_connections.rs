@@ -144,57 +144,62 @@ pub async fn open_remote_project(
     .await;
 
     if let Some((existing_window, existing_workspace)) = existing {
-        let remote_connection = cx
-            .update(|cx| {
-                existing_workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .remote_client()
-                    .and_then(|client| client.read(cx).remote_connection())
-            })
-            .ok_or_else(|| anyhow::anyhow!("no remote connection for existing remote workspace"))?;
-
-        let (resolved_paths, paths_with_positions) =
-            determine_paths_with_positions(&remote_connection, paths).await;
-
-        let open_results = existing_window
-            .update(cx, |multi_workspace, window, cx| {
-                window.activate_window();
-                multi_workspace.activate(existing_workspace.clone(), cx);
-                existing_workspace.update(cx, |workspace, cx| {
-                    workspace.open_paths(
-                        resolved_paths,
-                        OpenOptions {
-                            visible: Some(open_visible),
-                            ..Default::default()
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
-                })
-            })?
-            .await;
-
-        _ = existing_window.update(cx, |multi_workspace, _, cx| {
-            let workspace = multi_workspace.workspace().clone();
-            workspace.update(cx, |workspace, cx| {
-                for item in open_results.iter().flatten() {
-                    if let Err(e) = item {
-                        workspace.show_error(&e, cx);
-                    }
-                }
-            });
+        let remote_connection = cx.update(|cx| {
+            existing_workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .remote_client()
+                .and_then(|client| client.read(cx).remote_connection())
         });
 
-        let items = open_results
-            .into_iter()
-            .map(|r| r.and_then(|r| r.ok()))
-            .collect::<Vec<_>>();
-        navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
+        if let Some(remote_connection) = remote_connection {
+            let (resolved_paths, paths_with_positions) =
+                determine_paths_with_positions(&remote_connection, paths).await;
 
-        return Ok(());
+            let open_results = existing_window
+                .update(cx, |multi_workspace, window, cx| {
+                    window.activate_window();
+                    multi_workspace.activate(existing_workspace.clone(), cx);
+                    existing_workspace.update(cx, |workspace, cx| {
+                        workspace.open_paths(
+                            resolved_paths,
+                            OpenOptions {
+                                visible: Some(open_visible),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                })?
+                .await;
+
+            _ = existing_window.update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    for item in open_results.iter().flatten() {
+                        if let Err(e) = item {
+                            workspace.show_error(&e, cx);
+                        }
+                    }
+                });
+            });
+
+            let items = open_results
+                .into_iter()
+                .map(|r| r.and_then(|r| r.ok()))
+                .collect::<Vec<_>>();
+            navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
+
+            return Ok(());
+        }
+        // If the remote connection is dead (e.g. server not running after failed reconnect),
+        // fall through to establish a fresh connection instead of showing an error.
+        log::info!(
+            "existing remote workspace found but connection is dead, starting fresh connection"
+        );
     }
 
     let (window, initial_workspace) = if let Some(window) = open_options.replace_window {
@@ -722,6 +727,158 @@ mod tests {
             still_first_window, first_window,
             "The window handle should be the same after reuse"
         );
+    }
+
+    #[gpui::test]
+    async fn test_reconnect_when_server_not_running(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client: http_client.clone(),
+                    node_runtime: node_runtime.clone(),
+                    languages: languages.clone(),
+                    extension_host_proxy: proxy.clone(),
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        // Open the remote project normally.
+        let paths = vec![PathBuf::from(path!("/project"))];
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            opts.clone(),
+            paths.clone(),
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("initial open should succeed");
+
+        executor.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        // Force the remote client into ServerNotRunning state (simulates the
+        // scenario where the remote server died and reconnection failed).
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let client = workspace
+                        .project()
+                        .read(cx)
+                        .remote_client()
+                        .expect("should have remote client");
+                    client.update(cx, |client, cx| {
+                        client.force_server_not_running(cx);
+                    });
+                });
+            })
+            .unwrap();
+
+        executor.run_until_parked();
+
+        // Register a new mock server under the same options so the reconnect
+        // path can establish a fresh connection.
+        let (server_session_2, connect_guard_2) =
+            RemoteClient::fake_server_with_opts(&opts, cx, server_cx);
+
+        let _headless_2 = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session_2,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard_2);
+
+        // Simulate clicking "Reconnect": calls open_remote_project with
+        // replace_window pointing to the existing window.
+        let result = open_remote_project(
+            opts,
+            paths,
+            app_state,
+            workspace::OpenOptions {
+                replace_window: Some(window),
+                ..Default::default()
+            },
+            &mut async_cx,
+        )
+        .await;
+
+        executor.run_until_parked();
+
+        assert!(
+            result.is_ok(),
+            "reconnect should succeed but got: {:?}",
+            result.err()
+        );
+
+        // Should still be a single window with a working remote project.
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert!(
+                        workspace.project().read(cx).is_remote(),
+                        "project should be remote after reconnect"
+                    );
+                });
+            })
+            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
