@@ -31,7 +31,7 @@ WizardStyle=modern
 
 CloseApplications=force
 
-#if GetEnv("CI") != ""
+#if GetEnv("ZED_ENABLE_SIGNING") != ""
 SignTool=Defaultsign
 #endif
 

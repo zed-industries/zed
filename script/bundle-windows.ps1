@@ -377,6 +377,7 @@ function BuildInstaller {
 
     $innoArgs = @($issFilePath) + $defs
     if($env:CI -and -not [string]::IsNullOrEmpty($env:AZURE_TENANT_ID)) {
+        $env:ZED_ENABLE_SIGNING = "1"
         $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
         $innoArgs += "/sDefaultsign=`"$signTool`""
     }
