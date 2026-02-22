@@ -8804,6 +8804,9 @@ impl Editor {
                 cx,
             );
             for (breakpoint, state) in breakpoints {
+                if !buffer_snapshot.can_resolve(&breakpoint.position) {
+                    continue;
+                }
                 let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, breakpoint.position);
                 let position = multi_buffer_anchor
                     .to_point(&multi_buffer_snapshot)
