@@ -65,9 +65,9 @@ pub fn bundle_envs(platform: Platform) -> Env {
 
     match platform {
         Platform::Linux => env
-            .add("CC", "gcc-13")
-            .add("CC_x86_64_unknown_linux_musl", "gcc-13")
-            .add("CC_aarch64_unknown_linux_musl", "gcc-13"),
+            .add("CC", "musl-gcc")
+            .add("CC_x86_64_unknown_linux_musl", "musl-gcc")
+            .add("CC_aarch64_unknown_linux_musl", "musl-gcc"),
         Platform::Mac => env
             .add("MACOS_CERTIFICATE", MACOS_CERTIFICATE)
             .add("MACOS_CERTIFICATE_PASSWORD", MACOS_CERTIFICATE_PASSWORD)
