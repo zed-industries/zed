@@ -1348,6 +1348,7 @@ impl ServerInfo {
             status: LanguageServerStatus {
                 name: server.name(),
                 server_version: server.version(),
+                readable_version: server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
