@@ -1334,6 +1334,9 @@ impl GitGraph {
         self.branch_filter_menu_open = !self.branch_filter_menu_open;
         if self.branch_filter_menu_open {
             self.branch_filter_query.clear();
+            if self.all_branches.is_empty() {
+                self.fetch_branches(cx);
+            }
         }
         cx.notify();
     }
