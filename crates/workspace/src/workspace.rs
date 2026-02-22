@@ -4328,9 +4328,8 @@ impl Workspace {
     }
 
     pub fn activate_last_pane(&mut self, window: &mut Window, cx: &mut App) {
-        if let Some(last_pane) = self.center.panes().last().cloned() {
-            window.focus(&last_pane.focus_handle(cx), cx);
-        }
+        let last_pane = self.center.last_pane();
+        window.focus(&last_pane.focus_handle(cx), cx);
     }
 
     pub fn activate_pane_in_direction(
@@ -6405,9 +6404,6 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &ActivatePaneDown, window, cx| {
                 workspace.activate_pane_in_direction(SplitDirection::Down, window, cx)
-            }))
-            .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
-                workspace.activate_next_pane(window, cx)
             }))
             .on_action(cx.listener(
                 |workspace, action: &MoveItemToPaneInDirection, window, cx| {
