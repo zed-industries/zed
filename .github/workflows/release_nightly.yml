@@ -109,7 +109,7 @@ jobs:
       shell: pwsh
     timeout-minutes: 180
   bundle_linux_aarch64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
