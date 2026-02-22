@@ -3694,11 +3694,19 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if ix == self.active_item_index
+            && let Some(active_item) = self.active_item()
+            && active_item.handle_drop(dragged_tab, window, cx)
+        {
+            return;
+        }
+
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
             && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, window, cx)
         {
             return;
         }
+
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
@@ -3843,11 +3851,18 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(active_item) = self.active_item()
+            && active_item.handle_drop(dragged_selection, window, cx)
+        {
+            return;
+        }
+
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
             && let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, window, cx)
         {
             return;
         }
+
         self.handle_project_entry_drop(
             &dragged_selection.active_selection.entry_id,
             dragged_onto,
@@ -3863,11 +3878,18 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(active_item) = self.active_item()
+            && active_item.handle_drop(project_entry_id, window, cx)
+        {
+            return;
+        }
+
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
             && let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, window, cx)
         {
             return;
         }
+
         let mut to_pane = cx.entity();
         let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
@@ -3939,11 +3961,18 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(active_item) = self.active_item()
+            && active_item.handle_drop(paths, window, cx)
+        {
+            return;
+        }
+
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone()
             && let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx)
         {
             return;
         }
+
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();

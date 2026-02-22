@@ -8,18 +8,20 @@ mod terminal_slash_command;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
-    div,
+    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
+    anchored, deferred, div,
 };
+use itertools::Itertools;
 use menu;
 use persistence::TERMINAL_DB;
-use project::{Project, search::SearchQuery};
+use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
 use std::{
+    any::Any,
     cmp,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
@@ -50,8 +52,8 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
-    delete_unloaded_items,
+    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal,
+    ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -833,6 +835,15 @@ impl TerminalView {
         });
     }
 
+    fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
+        let mut text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        text.push(' ');
+        window.focus(&self.focus_handle(cx), cx);
+        self.terminal.update(cx, |terminal, _| {
+            terminal.paste(&text);
+        });
+    }
+
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
@@ -1410,6 +1421,61 @@ impl Item for TerminalView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
+    }
+
+    fn handle_drop(&self, dropped: &dyn Any, window: &mut Window, cx: &mut App) -> bool {
+        let Some(project) = self.project.upgrade() else {
+            return false;
+        };
+
+        if let Some(paths) = dropped.downcast_ref::<ExternalPaths>() {
+            let is_local = project.read(cx).is_local();
+            if is_local {
+                self.add_paths_to_terminal(paths.paths(), window, cx);
+                return true;
+            }
+
+            return false;
+        } else if let Some(tab) = dropped.downcast_ref::<DraggedTab>() {
+            if tab.item.downcast::<TerminalView>().is_some() {
+                return false;
+            }
+
+            if let Some(project_path) = tab.item.project_path(cx)
+                && let Some(path) = project.read(cx).absolute_path(&project_path, cx)
+            {
+                self.add_paths_to_terminal(&[path], window, cx);
+                return true;
+            }
+
+            return false;
+        } else if let Some(selection) = dropped.downcast_ref::<DraggedSelection>() {
+            let project = project.read(cx);
+            let paths = selection
+                .items()
+                .map(|selected_entry| selected_entry.entry_id)
+                .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
+                .filter_map(|project_path| project.absolute_path(&project_path, cx))
+                .collect::<Vec<_>>();
+
+            if !paths.is_empty() {
+                self.add_paths_to_terminal(&paths, window, cx);
+            }
+
+            return true;
+        } else if let Some(&entry_id) = dropped.downcast_ref::<ProjectEntryId>() {
+            let project = project.read(cx);
+            if let Some(path) = project
+                .path_for_entry(entry_id, cx)
+                .and_then(|project_path| project.absolute_path(&project_path, cx))
+            {
+                self.add_paths_to_terminal(&[path], window, cx);
+            }
+
+            return true;
+        }
+
+        false
     }
 
     fn tab_extra_context_menu_actions(
