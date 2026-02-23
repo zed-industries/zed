@@ -701,7 +701,12 @@ pub struct GitGraph {
     filtered_commit_indices: Vec<usize>,
     _branch_commits_task: Option<Task<()>>,
     branch_commits_cache: HashMap<SharedString, HashSet<Oid>>,
+    branch_commits_cache_order: Vec<SharedString>,
 }
+
+/// Maximum number of branches to cache commits for.
+/// When exceeded, oldest entries are evicted (LRU-like behavior).
+const MAX_BRANCH_CACHE_SIZE: usize = 10;
 
 impl GitGraph {
     fn row_height(cx: &App) -> Pixels {
@@ -804,6 +809,7 @@ impl GitGraph {
             filtered_commit_indices: Vec::new(),
             _branch_commits_task: None,
             branch_commits_cache: HashMap::default(),
+            branch_commits_cache_order: Vec::new(),
         };
 
         // Fetch branches and update commit filtering on initialization
@@ -929,7 +935,16 @@ impl GitGraph {
                                 all_shas.extend(shas_set.iter().cloned());
 
                                 this.update(cx, |this, _cx| {
+                                    // Evict oldest entries if cache is full
+                                    while this.branch_commits_cache.len() >= MAX_BRANCH_CACHE_SIZE {
+                                        if let Some(oldest) = this.branch_commits_cache_order.pop()
+                                        {
+                                            this.branch_commits_cache.remove(&oldest);
+                                        }
+                                    }
+                                    // Add to cache and update order
                                     this.branch_commits_cache.insert(branch.clone(), shas_set);
+                                    this.branch_commits_cache_order.insert(0, branch.clone());
                                 });
                             }
                         }
@@ -997,6 +1012,9 @@ impl GitGraph {
                 } else if !self.branch_commit_shas.is_empty() {
                     // Re-apply filter with new commits
                     self.update_filtered_indices(cx);
+                } else if self.branch_filter.is_all() && !self.show_remotes {
+                    // Need to filter by local branches but cache is empty - trigger update
+                    self.update_branch_commits(cx);
                 }
             }
             RepositoryEvent::BranchChanged => {
