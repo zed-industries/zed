@@ -3682,7 +3682,14 @@ impl AcpThreadView {
                 }
             }
             AgentThreadEntry::ToolCall(tool_call) => self
-                .render_any_tool_call(&self.id, entry_ix, tool_call, window, cx)
+                .render_any_tool_call(
+                    &self.id,
+                    entry_ix,
+                    tool_call,
+                    &self.focus_handle(cx),
+                    window,
+                    cx,
+                )
                 .into_any(),
         };
 
@@ -4492,6 +4499,7 @@ impl AcpThreadView {
         entry_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4765,6 +4773,7 @@ impl AcpThreadView {
                     options,
                     entry_ix,
                     tool_call.id.clone(),
+                    focus_handle,
                     cx,
                 ))
             })
@@ -4781,7 +4790,6 @@ impl AcpThreadView {
             .read(cx)
             .pending_tool_call(active_session_id, cx)
             .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
-                dbg!(&pending_session_id, &pending_tool_call_id);
                 self.id == pending_session_id && tool_call_id == &pending_tool_call_id
             })
     }
@@ -4791,6 +4799,7 @@ impl AcpThreadView {
         active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -4803,6 +4812,7 @@ impl AcpThreadView {
                     entry_ix,
                     tool_call,
                     tool_call.subagent_session_id.clone(),
+                    focus_handle,
                     window,
                     cx,
                 ))
@@ -4813,6 +4823,7 @@ impl AcpThreadView {
                         entry_ix,
                         terminal,
                         tool_call,
+                        focus_handle,
                         window,
                         cx,
                     )
@@ -4822,6 +4833,7 @@ impl AcpThreadView {
                     active_session_id,
                     entry_ix,
                     tool_call,
+                    focus_handle,
                     window,
                     cx,
                 ))
@@ -4834,6 +4846,7 @@ impl AcpThreadView {
         active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -4901,6 +4914,7 @@ impl AcpThreadView {
                                         use_card_layout,
                                         has_image_content,
                                         failed_or_canceled,
+                                        focus_handle,
                                         window,
                                         cx,
                                     ))
@@ -4977,6 +4991,7 @@ impl AcpThreadView {
                         options,
                         entry_ix,
                         tool_call.id.clone(),
+                        focus_handle,
                         cx,
                     ))
                     .into_any(),
@@ -5029,6 +5044,7 @@ impl AcpThreadView {
                                         use_card_layout,
                                         has_image_content,
                                         failed_or_canceled,
+                                        focus_handle,
                                         window,
                                         cx,
                                     ),
@@ -5196,6 +5212,7 @@ impl AcpThreadView {
         options: &PermissionOptions,
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
         match options {
@@ -5205,6 +5222,7 @@ impl AcpThreadView {
                 options,
                 entry_ix,
                 tool_call_id,
+                focus_handle,
                 cx,
             ),
             PermissionOptions::Dropdown(options) => self.render_permission_buttons_dropdown(
@@ -5213,6 +5231,7 @@ impl AcpThreadView {
                 options,
                 entry_ix,
                 tool_call_id,
+                focus_handle,
                 cx,
             ),
         }
@@ -5225,6 +5244,7 @@ impl AcpThreadView {
         choices: &[PermissionOptionChoice],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
         // Get the selected granularity index, defaulting to the last option ("Only this time")
@@ -5275,11 +5295,10 @@ impl AcpThreadView {
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
-                                dbg!("is_first");
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &AllowOnce as &dyn Action,
-                                        &self.focus_handle(cx),
+                                        focus_handle,
                                         cx,
                                     )
                                     .map(|kb| kb.size(rems_from_px(10.))),
@@ -5310,11 +5329,10 @@ impl AcpThreadView {
                             .icon_size(IconSize::XSmall)
                             .label_size(LabelSize::Small)
                             .when(is_first, |this| {
-                                dbg!("is_first");
                                 this.key_binding(
                                     KeyBinding::for_action_in(
                                         &RejectOnce as &dyn Action,
-                                        &self.focus_handle(cx),
+                                        focus_handle,
                                         cx,
                                     )
                                     .map(|kb| kb.size(rems_from_px(10.))),
@@ -5428,6 +5446,7 @@ impl AcpThreadView {
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
@@ -5472,7 +5491,7 @@ impl AcpThreadView {
                         seen_kinds.push(option.kind);
 
                         this.key_binding(
-                            KeyBinding::for_action_in(action, &self.focus_handle(cx), cx)
+                            KeyBinding::for_action_in(action, focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(10.))),
                         )
                     })
@@ -5760,6 +5779,7 @@ impl AcpThreadView {
         card_layout: bool,
         is_image_tool_call: bool,
         has_failed: bool,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -5793,8 +5813,15 @@ impl AcpThreadView {
             ToolCallContent::Diff(diff) => {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
-            ToolCallContent::Terminal(terminal) => self
-                .render_terminal_tool_call(session_id, entry_ix, terminal, tool_call, window, cx),
+            ToolCallContent::Terminal(terminal) => self.render_terminal_tool_call(
+                session_id,
+                entry_ix,
+                terminal,
+                tool_call,
+                focus_handle,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -6030,6 +6057,7 @@ impl AcpThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         subagent_session_id: Option<acp::SessionId>,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6048,6 +6076,7 @@ impl AcpThreadView {
             0,
             subagent_thread_view,
             tool_call_status,
+            focus_handle,
             window,
             cx,
         );
@@ -6062,6 +6091,7 @@ impl AcpThreadView {
         context_ix: usize,
         thread_view: Option<&Entity<AcpThreadView>>,
         tool_call_status: &ToolCallStatus,
+        focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -6294,6 +6324,7 @@ impl AcpThreadView {
                             active_session_id,
                             entry_ix,
                             tool_call,
+                            focus_handle,
                             window,
                             cx,
                         ))
