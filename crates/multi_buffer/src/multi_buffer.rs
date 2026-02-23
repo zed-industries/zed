@@ -536,9 +536,9 @@ impl DiffState {
 }
 
 #[derive(Clone)]
-struct DiffStateSnapshot {
-    diff: BufferDiffSnapshot,
-    main_buffer: Option<language::BufferSnapshot>,
+pub struct DiffStateSnapshot {
+    pub diff: BufferDiffSnapshot,
+    pub main_buffer: Option<language::BufferSnapshot>,
 }
 
 impl std::ops::Deref for DiffStateSnapshot {
@@ -602,6 +602,8 @@ impl DiffState {
                                     base_text_changed_range,
                                     cx,
                                 )
+                            } else {
+                                this.refresh_inverted_diff_snapshot(diff, main_buffer, cx);
                             }
                             cx.emit(Event::BufferDiffChanged);
                         }
@@ -2492,6 +2494,24 @@ impl MultiBuffer {
         cx.emit(Event::Edited {
             edited_buffer: None,
         });
+    }
+
+    fn refresh_inverted_diff_snapshot(
+        &mut self,
+        diff: Entity<BufferDiff>,
+        main_buffer: Entity<language::Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        let base_text_buffer_id = diff.read(cx).base_text_buffer().read(cx).remote_id();
+        let main_buffer_snapshot = main_buffer.read(cx).snapshot();
+        let new_diff = DiffStateSnapshot {
+            diff: diff.read(cx).snapshot(cx),
+            main_buffer: Some(main_buffer_snapshot),
+        };
+        self.snapshot
+            .get_mut()
+            .diffs
+            .insert_or_replace(base_text_buffer_id, new_diff);
     }
 
     fn inverted_buffer_diff_changed(
@@ -7134,6 +7154,10 @@ impl MultiBufferSnapshot {
 
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id).map(|diff| &diff.diff)
+    }
+
+    pub fn diff_state_for(&self, buffer_id: BufferId) -> Option<&DiffStateSnapshot> {
+        self.diffs.get(&buffer_id)
     }
 
     pub fn all_diff_hunks_expanded(&self) -> bool {

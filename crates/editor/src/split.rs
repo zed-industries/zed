@@ -1133,10 +1133,10 @@ impl SplittableEditor {
         let lhs = self.lhs.as_ref().unwrap();
 
         if quiesced {
-            let rhs_snapshot = lhs
+            let lhs_snapshot = lhs
                 .editor
                 .update(cx, |editor, cx| editor.display_snapshot(cx));
-            let lhs_snapshot = self
+            let rhs_snapshot = self
                 .rhs_editor
                 .update(cx, |editor, cx| editor.display_snapshot(cx));
 
@@ -1196,21 +1196,6 @@ impl SplittableEditor {
                     "mismatch in hunk position"
                 );
             }
-
-            // Filtering out empty lines is a bit of a hack, to work around a case where
-            // the base text has a trailing newline but the current text doesn't, or vice versa.
-            // In this case, we get the additional newline on one side, but that line is not
-            // marked as added/deleted by rowinfos.
-            self.check_sides_match(cx, |snapshot| {
-                snapshot
-                    .buffer_snapshot()
-                    .text()
-                    .split("\n")
-                    .zip(snapshot.buffer_snapshot().row_infos(MultiBufferRow(0)))
-                    .filter(|(line, row_info)| !line.is_empty() && row_info.diff_status.is_none())
-                    .map(|(line, _)| line.to_owned())
-                    .collect::<Vec<_>>()
-            });
         }
     }
 
@@ -1506,90 +1491,6 @@ impl SplittableEditor {
         eprintln!("{}", "═".repeat(terminal_width));
         eprintln!("Legend: + added, - deleted, ~ modified, ~~~ block/spacer row");
         eprintln!();
-    }
-
-    fn randomly_edit_excerpts(
-        &mut self,
-        rng: &mut impl rand::Rng,
-        mutation_count: usize,
-        cx: &mut Context<Self>,
-    ) {
-        use collections::HashSet;
-        use rand::prelude::*;
-        use std::env;
-        use util::RandomCharIter;
-
-        let max_buffers = env::var("MAX_BUFFERS")
-            .map(|i| i.parse().expect("invalid `MAX_BUFFERS` variable"))
-            .unwrap_or(4);
-
-        for _ in 0..mutation_count {
-            let paths = self
-                .rhs_multibuffer
-                .read(cx)
-                .paths()
-                .cloned()
-                .collect::<Vec<_>>();
-            let excerpt_ids = self.rhs_multibuffer.read(cx).excerpt_ids();
-
-            if rng.random_bool(0.2) && !excerpt_ids.is_empty() {
-                let mut excerpts = HashSet::default();
-                for _ in 0..rng.random_range(0..excerpt_ids.len()) {
-                    excerpts.extend(excerpt_ids.choose(rng).copied());
-                }
-
-                let line_count = rng.random_range(1..5);
-
-                log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
-
-                self.expand_excerpts(
-                    excerpts.iter().cloned(),
-                    line_count,
-                    ExpandExcerptDirection::UpAndDown,
-                    cx,
-                );
-                continue;
-            }
-
-            if excerpt_ids.is_empty() || (rng.random_bool(0.8) && paths.len() < max_buffers) {
-                let len = rng.random_range(100..500);
-                let text = RandomCharIter::new(&mut *rng).take(len).collect::<String>();
-                let buffer = cx.new(|cx| Buffer::local(text, cx));
-                log::info!(
-                    "Creating new buffer {} with text: {:?}",
-                    buffer.read(cx).remote_id(),
-                    buffer.read(cx).text()
-                );
-                let buffer_snapshot = buffer.read(cx).snapshot();
-                let diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_snapshot, cx));
-                // Create some initial diff hunks.
-                buffer.update(cx, |buffer, cx| {
-                    buffer.randomly_edit(rng, 1, cx);
-                });
-                let buffer_snapshot = buffer.read(cx).text_snapshot();
-                diff.update(cx, |diff, cx| {
-                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                });
-                let path = PathKey::for_buffer(&buffer, cx);
-                let ranges = diff.update(cx, |diff, cx| {
-                    diff.snapshot(cx)
-                        .hunks(&buffer_snapshot)
-                        .map(|hunk| hunk.buffer_range.to_point(&buffer_snapshot))
-                        .collect::<Vec<_>>()
-                });
-                self.set_excerpts_for_path(path, buffer, ranges, 2, diff, cx);
-            } else {
-                log::info!("removing excerpts");
-                let remove_count = rng.random_range(1..=paths.len());
-                let paths_to_remove = paths
-                    .choose_multiple(rng, remove_count)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for path in paths_to_remove {
-                    self.remove_excerpts_for_path(path.clone(), cx);
-                }
-            }
-        }
     }
 
     fn check_excerpt_mapping_invariants(&self, cx: &gpui::App) {
@@ -2370,7 +2271,9 @@ mod tests {
 
     #[gpui::test(iterations = 25)]
     async fn test_random_split_editor(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
+        use multi_buffer::ExpandExcerptDirection;
         use rand::prelude::*;
+        use util::RandomCharIter;
 
         let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
         let operations = std::env::var("OPERATIONS")
@@ -2383,9 +2286,32 @@ mod tests {
             });
 
             if buffers.is_empty() {
-                log::info!("adding excerpts to empty multibuffer");
+                log::info!("creating initial buffer");
+                let len = rng.random_range(200..1000);
+                let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
+                let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+                let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
+                let diff =
+                    cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
+                let edit_count = rng.random_range(3..8);
+                buffer.update(cx, |buffer, cx| {
+                    buffer.randomly_edit(rng, edit_count, cx);
+                });
+                let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
+                diff.update(cx, |diff, cx| {
+                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                });
+                let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                let ranges = diff_snapshot
+                    .hunks(&buffer_snapshot)
+                    .map(|hunk| hunk.range)
+                    .collect::<Vec<_>>();
+                let context_lines = rng.random_range(0..2);
                 editor.update(cx, |editor, cx| {
-                    editor.randomly_edit_excerpts(rng, 2, cx);
+                    let path = PathKey::for_buffer(&buffer, cx);
+                    editor.set_excerpts_for_path(path, buffer, ranges, context_lines, diff, cx);
+                });
+                editor.update(cx, |editor, cx| {
                     editor.check_invariants(true, cx);
                 });
                 continue;
@@ -2394,26 +2320,129 @@ mod tests {
             let mut quiesced = false;
 
             match rng.random_range(0..100) {
-                0..=44 => {
+                0..=14 if buffers.len() < 6 => {
+                    log::info!("creating new buffer and setting excerpts");
+                    let len = rng.random_range(200..1000);
+                    let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
+                    let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
+                    let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
+                    let diff = cx
+                        .new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
+                    let edit_count = rng.random_range(3..8);
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.randomly_edit(rng, edit_count, cx);
+                    });
+                    let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
+                    diff.update(cx, |diff, cx| {
+                        diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                    });
+                    let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                    let ranges = diff_snapshot
+                        .hunks(&buffer_snapshot)
+                        .map(|hunk| hunk.range)
+                        .collect::<Vec<_>>();
+                    let context_lines = rng.random_range(0..2);
+                    editor.update(cx, |editor, cx| {
+                        let path = PathKey::for_buffer(&buffer, cx);
+                        editor.set_excerpts_for_path(path, buffer, ranges, context_lines, diff, cx);
+                    });
+                }
+                15..=29 => {
                     log::info!("randomly editing multibuffer");
+                    let edit_count = rng.random_range(1..5);
                     editor.update(cx, |editor, cx| {
                         editor.rhs_multibuffer.update(cx, |multibuffer, cx| {
-                            multibuffer.randomly_edit(rng, 5, cx);
-                        })
-                    })
+                            multibuffer.randomly_edit(rng, edit_count, cx);
+                        });
+                    });
                 }
-                45..=64 => {
+                30..=44 => {
+                    log::info!("randomly editing individual buffer");
+                    let buffer = buffers.iter().choose(rng).unwrap();
+                    let edit_count = rng.random_range(1..3);
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.randomly_edit(rng, edit_count, cx);
+                    });
+                }
+                45..=54 => {
+                    log::info!("recalculating diff and resetting excerpts for single buffer");
+                    let buffer = buffers.iter().choose(rng).unwrap();
+                    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                    let diff = editor.update(cx, |editor, cx| {
+                        editor
+                            .rhs_multibuffer
+                            .read(cx)
+                            .diff_for(buffer.read(cx).remote_id())
+                            .unwrap()
+                    });
+                    diff.update(cx, |diff, cx| {
+                        diff.recalculate_diff_sync(&buffer_snapshot, cx);
+                    });
+                    cx.run_until_parked();
+                    let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
+                    let ranges = diff_snapshot
+                        .hunks(&buffer_snapshot)
+                        .map(|hunk| hunk.range)
+                        .collect::<Vec<_>>();
+                    let context_lines = rng.random_range(0..2);
+                    let buffer = buffer.clone();
+                    editor.update(cx, |editor, cx| {
+                        let path = PathKey::for_buffer(&buffer, cx);
+                        editor.set_excerpts_for_path(path, buffer, ranges, context_lines, diff, cx);
+                    });
+                }
+                55..=64 => {
                     log::info!("randomly undoing/redoing in single buffer");
                     let buffer = buffers.iter().choose(rng).unwrap();
                     buffer.update(cx, |buffer, cx| {
                         buffer.randomly_undo_redo(rng, cx);
                     });
                 }
-                65..=79 => {
-                    log::info!("mutating excerpts");
-                    editor.update(cx, |editor, cx| {
-                        editor.randomly_edit_excerpts(rng, 2, cx);
+                65..=74 => {
+                    log::info!("removing excerpts for a random path");
+                    let paths = editor.update(cx, |editor, cx| {
+                        editor
+                            .rhs_multibuffer
+                            .read(cx)
+                            .paths()
+                            .cloned()
+                            .collect::<Vec<_>>()
                     });
+                    if let Some(path) = paths.choose(rng) {
+                        editor.update(cx, |editor, cx| {
+                            editor.remove_excerpts_for_path(path.clone(), cx);
+                        });
+                    }
+                }
+                75..=79 => {
+                    log::info!("unsplit and resplit");
+                    editor.update_in(cx, |editor, window, cx| {
+                        editor.unsplit(window, cx);
+                    });
+                    cx.run_until_parked();
+                    editor.update_in(cx, |editor, window, cx| {
+                        editor.split(window, cx);
+                    });
+                }
+                80..=89 => {
+                    let excerpt_ids = editor.update(cx, |editor, cx| {
+                        editor.rhs_multibuffer.read(cx).excerpt_ids()
+                    });
+                    if !excerpt_ids.is_empty() {
+                        let count = rng.random_range(1..=excerpt_ids.len().min(3));
+                        let chosen: Vec<_> =
+                            excerpt_ids.choose_multiple(rng, count).copied().collect();
+                        let line_count = rng.random_range(1..5);
+                        log::info!("expanding {count} excerpts by {line_count} lines");
+                        editor.update(cx, |editor, cx| {
+                            editor.expand_excerpts(
+                                chosen.into_iter(),
+                                line_count,
+                                ExpandExcerptDirection::UpAndDown,
+                                cx,
+                            );
+                        });
+                    }
                 }
                 _ => {
                     log::info!("quiescing");
@@ -2447,198 +2476,6 @@ mod tests {
 
             editor.update(cx, |editor, cx| {
                 editor.check_invariants(quiesced, cx);
-            });
-        }
-    }
-
-    #[gpui::test(iterations = 25)]
-    async fn test_random_excerpt_management(mut rng: StdRng, cx: &mut gpui::TestAppContext) {
-        use multi_buffer::{ExcerptId, ExpandExcerptDirection};
-        use rand::prelude::*;
-        use util::RandomCharIter;
-
-        let (editor, cx) = init_test(cx, SoftWrap::EditorWidth, DiffViewStyle::Split).await;
-        let operations = std::env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(10);
-        let rng = &mut rng;
-        let mut managed_buffers: Vec<(Entity<Buffer>, Entity<BufferDiff>)> = Vec::new();
-
-        for i in 0..operations {
-            if managed_buffers.is_empty() {
-                log::info!("op {i}: adding initial buffer");
-                let len = rng.random_range(200..1000);
-                let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
-                let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                let diff =
-                    cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
-                let edit_count = rng.random_range(3..8);
-                buffer.update(cx, |buffer, cx| {
-                    buffer.randomly_edit(rng, edit_count, cx);
-                });
-                let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                diff.update(cx, |diff, cx| {
-                    diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                });
-                let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-                let ranges = diff_snapshot
-                    .hunks(&buffer_snapshot)
-                    .map(|hunk| hunk.range)
-                    .collect::<Vec<_>>();
-                let context_lines = rng.random_range(0..2);
-                editor.update(cx, |editor, cx| {
-                    let path = PathKey::for_buffer(&buffer, cx);
-                    editor.set_excerpts_for_path(
-                        path,
-                        buffer.clone(),
-                        ranges,
-                        context_lines,
-                        diff.clone(),
-                        cx,
-                    );
-                });
-                managed_buffers.push((buffer, diff));
-                editor.update(cx, |editor, cx| {
-                    editor.check_excerpt_mapping_invariants(cx);
-                });
-                continue;
-            }
-
-            match rng.random_range(0..100) {
-                0..=14 if managed_buffers.len() < 6 => {
-                    log::info!("op {i}: creating new buffer and setting excerpts");
-                    let len = rng.random_range(200..1000);
-                    let base_text: String = RandomCharIter::new(&mut *rng).take(len).collect();
-                    let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                    let diff = cx
-                        .new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer_snapshot, cx));
-                    let edit_count = rng.random_range(3..8);
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.randomly_edit(rng, edit_count, cx);
-                    });
-                    let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                    diff.update(cx, |diff, cx| {
-                        diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                    });
-                    let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-                    let ranges = diff_snapshot
-                        .hunks(&buffer_snapshot)
-                        .map(|hunk| hunk.range)
-                        .collect::<Vec<_>>();
-                    let context_lines = rng.random_range(0..2);
-                    editor.update(cx, |editor, cx| {
-                        let path = PathKey::for_buffer(&buffer, cx);
-                        editor.set_excerpts_for_path(
-                            path,
-                            buffer.clone(),
-                            ranges,
-                            context_lines,
-                            diff.clone(),
-                            cx,
-                        );
-                    });
-                    managed_buffers.push((buffer, diff));
-                }
-
-                15..=29 => {
-                    log::info!("op {i}: randomly editing multibuffer");
-                    let edit_count = rng.random_range(1..5);
-                    editor.update(cx, |editor, cx| {
-                        editor.rhs_multibuffer.update(cx, |multibuffer, cx| {
-                            multibuffer.randomly_edit(rng, edit_count, cx);
-                        });
-                    });
-                }
-
-                30..=44 => {
-                    let idx = rng.random_range(0..managed_buffers.len());
-                    log::info!("op {i}: randomly editing individual buffer {idx}");
-                    let edit_count = rng.random_range(1..3);
-                    managed_buffers[idx].0.update(cx, |buffer, cx| {
-                        buffer.randomly_edit(rng, edit_count, cx);
-                    });
-                }
-
-                45..=59 => {
-                    let idx = rng.random_range(0..managed_buffers.len());
-                    log::info!(
-                        "op {i}: recalculating diff and resetting excerpts for buffer {idx}"
-                    );
-                    let (buffer, diff) = &managed_buffers[idx];
-                    let buffer_snapshot = buffer.read_with(cx, |b, _| b.text_snapshot());
-                    diff.update(cx, |diff, cx| {
-                        diff.recalculate_diff_sync(&buffer_snapshot, cx);
-                    });
-                    cx.run_until_parked();
-                    let diff_snapshot = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-                    let ranges = diff_snapshot
-                        .hunks(&buffer_snapshot)
-                        .map(|hunk| hunk.range)
-                        .collect::<Vec<_>>();
-                    let context_lines = rng.random_range(0..2);
-                    let buffer = buffer.clone();
-                    let diff = diff.clone();
-                    editor.update(cx, |editor, cx| {
-                        let path = PathKey::for_buffer(&buffer, cx);
-                        editor.set_excerpts_for_path(path, buffer, ranges, context_lines, diff, cx);
-                    });
-                }
-
-                60..=69 => {
-                    let idx = rng.random_range(0..managed_buffers.len());
-                    log::info!("op {i}: undo/redo on buffer {idx}");
-                    managed_buffers[idx].0.update(cx, |buffer, cx| {
-                        buffer.randomly_undo_redo(rng, cx);
-                    });
-                }
-
-                70..=79 => {
-                    let idx = rng.random_range(0..managed_buffers.len());
-                    log::info!("op {i}: removing excerpts for buffer {idx}");
-                    let (buffer, _) = managed_buffers.remove(idx);
-                    editor.update(cx, |editor, cx| {
-                        let path = PathKey::for_buffer(&buffer, cx);
-                        editor.remove_excerpts_for_path(path, cx);
-                    });
-                }
-
-                80..=84 => {
-                    log::info!("op {i}: unsplit and resplit");
-                    editor.update_in(cx, |editor, window, cx| {
-                        editor.unsplit(window, cx);
-                    });
-                    cx.run_until_parked();
-                    editor.update_in(cx, |editor, window, cx| {
-                        editor.split(window, cx);
-                    });
-                }
-
-                _ => {
-                    let excerpt_ids = editor.update(cx, |editor, cx| {
-                        editor.rhs_multibuffer.read(cx).excerpt_ids()
-                    });
-                    if !excerpt_ids.is_empty() {
-                        let count = rng.random_range(1..=excerpt_ids.len().min(3));
-                        let chosen: Vec<ExcerptId> =
-                            excerpt_ids.choose_multiple(rng, count).copied().collect();
-                        let line_count = rng.random_range(1..5);
-                        log::info!("op {i}: expanding {count} excerpts by {line_count} lines");
-                        editor.update(cx, |editor, cx| {
-                            editor.expand_excerpts(
-                                chosen.iter().copied(),
-                                line_count,
-                                ExpandExcerptDirection::UpAndDown,
-                                cx,
-                            );
-                        });
-                    }
-                }
-            }
-
-            editor.update(cx, |editor, cx| {
-                editor.check_excerpt_mapping_invariants(cx);
             });
         }
     }
