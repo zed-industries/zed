@@ -895,15 +895,17 @@ pub struct TokenUsage {
     pub max_output_tokens: Option<u64>,
 }
 
+pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
+
 impl TokenUsage {
     pub fn ratio(&self) -> TokenUsageRatio {
         #[cfg(debug_assertions)]
         let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
-            .unwrap_or("0.8".to_string())
+            .unwrap_or(TOKEN_USAGE_WARNING_THRESHOLD.to_string())
             .parse()
             .unwrap();
         #[cfg(not(debug_assertions))]
-        let warning_threshold: f32 = 0.8;
+        let warning_threshold: f32 = TOKEN_USAGE_WARNING_THRESHOLD;
 
         // When the maximum is unknown because there is no selected model,
         // avoid showing the token limit warning.

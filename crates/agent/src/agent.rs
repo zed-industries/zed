@@ -1652,33 +1652,14 @@ impl NativeThreadEnvironment {
         prompt: String,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
-        parent_thread_entity.update(cx, |parent_thread, _cx| {
-            parent_thread.register_running_subagent(subagent_thread.downgrade())
-        });
-
-        let task = acp_thread.update(cx, |acp_thread, cx| {
-            acp_thread.send(vec![prompt.into()], cx)
-        });
-
-        let wait_for_prompt_to_complete = cx
-            .background_spawn(async move {
-                let response = task.await.log_err().flatten();
-                if response
-                    .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
-                {
-                    SubagentInitialPromptResult::Cancelled
-                } else {
-                    SubagentInitialPromptResult::Completed
-                }
-            })
-            .shared();
-
-        Ok(Rc::new(NativeSubagentHandle {
+        Ok(Rc::new(NativeSubagentHandle::new(
             session_id,
             subagent_thread,
-            parent_thread: parent_thread_entity.downgrade(),
-            wait_for_prompt_to_complete,
-        }) as _)
+            acp_thread,
+            parent_thread_entity,
+            prompt,
+            cx,
+        )) as _)
     }
 }
 
@@ -1753,6 +1734,8 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 enum SubagentInitialPromptResult {
     Completed,
     Cancelled,
+    ContextWindowWarning,
+    ContextWindowExceeded,
 }
 
 pub struct NativeSubagentHandle {
@@ -1760,6 +1743,82 @@ pub struct NativeSubagentHandle {
     parent_thread: WeakEntity<Thread>,
     subagent_thread: Entity<Thread>,
     wait_for_prompt_to_complete: Shared<Task<SubagentInitialPromptResult>>,
+    _subscription: Subscription,
+}
+
+impl NativeSubagentHandle {
+    fn new(
+        session_id: acp::SessionId,
+        subagent_thread: Entity<Thread>,
+        acp_thread: Entity<acp_thread::AcpThread>,
+        parent_thread_entity: Entity<Thread>,
+        prompt: String,
+        cx: &mut App,
+    ) -> Self {
+        let ratio_before_prompt = subagent_thread
+            .read(cx)
+            .latest_token_usage()
+            .map(|usage| usage.ratio());
+
+        parent_thread_entity.update(cx, |parent_thread, _cx| {
+            parent_thread.register_running_subagent(subagent_thread.downgrade())
+        });
+
+        let task = acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.send(vec![prompt.into()], cx)
+        });
+
+        let (token_limit_tx, token_limit_rx) = oneshot::channel::<acp_thread::TokenUsageRatio>();
+        let mut token_limit_tx = Some(token_limit_tx);
+
+        let subscription = cx.subscribe(
+            &subagent_thread,
+            move |_thread, event: &TokenUsageUpdated, _cx| {
+                if let Some(usage) = &event.0 {
+                    let old_ratio = ratio_before_prompt
+                        .clone()
+                        .unwrap_or(acp_thread::TokenUsageRatio::Normal);
+                    let new_ratio = usage.ratio();
+                    if new_ratio > old_ratio && new_ratio >= acp_thread::TokenUsageRatio::Warning {
+                        if let Some(tx) = token_limit_tx.take() {
+                            tx.send(new_ratio).ok();
+                        }
+                    }
+                }
+            },
+        );
+
+        let wait_for_prompt_to_complete = cx
+            .background_spawn(async move {
+                futures::select! {
+                    response = task.fuse() => {
+                        let response = response.log_err().flatten();
+                        if response
+                            .is_some_and(|response| response.stop_reason == acp::StopReason::Cancelled)
+                        {
+                            SubagentInitialPromptResult::Cancelled
+                        } else {
+                            SubagentInitialPromptResult::Completed
+                        }
+                    }
+                    ratio = token_limit_rx.fuse() => match ratio {
+                        Ok(acp_thread::TokenUsageRatio::Exceeded) => {
+                            SubagentInitialPromptResult::ContextWindowExceeded
+                        }
+                        _ => SubagentInitialPromptResult::ContextWindowWarning,
+                    }
+                }
+            })
+            .shared();
+
+        NativeSubagentHandle {
+            session_id,
+            subagent_thread,
+            parent_thread: parent_thread_entity.downgrade(),
+            wait_for_prompt_to_complete,
+            _subscription: subscription,
+        }
+    }
 }
 
 impl SubagentHandle for NativeSubagentHandle {
@@ -1783,6 +1842,22 @@ impl SubagentHandle for NativeSubagentHandle {
                         .context("No response from subagent")
                 }),
                 SubagentInitialPromptResult::Cancelled => Err(anyhow!("User cancelled")),
+                SubagentInitialPromptResult::ContextWindowWarning => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The subagent is nearing the end of its context window and has been \
+                         stopped. You can prompt the thread again to have the agent wrap up \
+                         or hand off its work."
+                    ))
+                }
+                SubagentInitialPromptResult::ContextWindowExceeded => {
+                    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                    Err(anyhow!(
+                        "The subagent has exceeded its context window and has been stopped. \
+                         It cannot be prompted again. Start a new subagent if more work is \
+                         needed."
+                    ))
+                }
             };
 
             parent_thread
