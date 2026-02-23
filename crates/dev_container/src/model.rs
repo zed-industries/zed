@@ -1717,6 +1717,12 @@ fn create_docker_build(
         "_DEV_CONTAINERS_FEATURE_CONTENT_SOURCE=dev_container_feature_content_temp",
     ]);
 
+    if let Some(args) = dev_container.build.as_ref().and_then(|b| b.args.as_ref()) {
+        for (key, value) in args {
+            command.args(["--build-arg", &format!("{}={}", key, value)]);
+        }
+    }
+
     // Target the final stage in the generated Dockerfile
     command.args(["--target", "dev_containers_target_stage"]);
 
