@@ -41,7 +41,7 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
 };
 
-const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
+const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
 const LANE_WIDTH: Pixels = px(16.0);
 const LEFT_PADDING: Pixels = px(12.0);
@@ -756,7 +756,7 @@ fn draw_commit_circle(center_x: Pixels, center_y: Pixels, color: Hsla, window: &
     let radius = COMMIT_CIRCLE_RADIUS;
     let stroke_width = COMMIT_CIRCLE_STROKE_WIDTH;
 
-    let mut builder = PathBuilder::stroke(stroke_width);
+    let mut builder = PathBuilder::fill();
 
     // Start at the rightmost point of the circle
     builder.move_to(point(center_x + radius, center_y));
