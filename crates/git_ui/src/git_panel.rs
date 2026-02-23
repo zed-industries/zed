@@ -4481,7 +4481,7 @@ impl GitPanel {
 
     fn render_previous_commit(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
