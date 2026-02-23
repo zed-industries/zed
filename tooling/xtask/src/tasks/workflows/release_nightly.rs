@@ -108,6 +108,9 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
         job: steps::release_job(&bundle.jobs())
             .runs_on(runners::LINUX_MEDIUM)
             .timeout_minutes(180u32)
+            .cond(Expression::new(
+                "${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY != '' }}",
+            ))
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))

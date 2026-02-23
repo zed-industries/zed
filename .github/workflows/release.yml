@@ -297,11 +297,14 @@ jobs:
     - clippy_linux
     - check_scripts
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     env:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: musl-gcc
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -347,6 +350,9 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: musl-gcc
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
