@@ -932,7 +932,7 @@ pub struct GitGraph {
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
     hovered_lane: Option<(Range<usize>, usize)>,
-    hovered_graph_task: Task<()>,
+    hovered_lane_task: Option<Task<()>>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
@@ -1041,7 +1041,7 @@ impl GitGraph {
             selected_repo_id: active_repository,
             // hover graph show related commits
             hovered_lane: None,
-            hovered_graph_task: Task::ready(()),
+            hovered_lane_task: None,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
         };
 
@@ -2222,23 +2222,19 @@ impl Render for GitGraph {
                                 .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
                                 .on_click(cx.listener(Self::handle_graph_click))
                                 .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
-                                    if !is_hovered && this.hovered_entry_idx.is_some() {
+                                    if !is_hovered {
                                         this.hovered_entry_idx = None;
+                                        this.hovered_lane_task.take();
+                                        this.hovered_lane.take();
                                         cx.notify();
                                     }
                                 }))
                                 .on_mouse_move(cx.listener(
                                     move |this, event: &gpui::MouseMoveEvent, _window, cx| {
-                                        this.hovered_graph_task =
-                                            this.hover_graph_task(event.position, cx);
+                                        this.hovered_lane_task =
+                                            Some(this.hover_graph_task(event.position, cx));
                                     },
-                                ))
-                                .on_mouse_down_out(cx.listener(|this, _, _window, cx| {
-                                    if this.hovered_lane.is_some() {
-                                        this.hovered_lane = None;
-                                        cx.notify();
-                                    }
-                                })),
+                                )),
                         ),
                 )
                 .child({
