@@ -24,6 +24,7 @@ http_client = { workspace = true, features = ["test-support"] }
 log.workspace = true
 net.workspace = true
 parking_lot.workspace = true
+rand.workspace = true
 postage.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
