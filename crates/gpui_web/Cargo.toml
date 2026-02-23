@@ -27,6 +27,8 @@ console_error_panic_hook = "0.1.7"
 js-sys = "0.3"
 raw-window-handle = "0.6"
 web-sys = { version = "0.3", features = [
+    "Clipboard",
+    "ClipboardEvent",
     "console",
     "CssStyleDeclaration",
     "DataTransfer",
@@ -39,11 +41,14 @@ web-sys = { version = "0.3", features = [
     "FileList",
     "HtmlCanvasElement",
     "HtmlElement",
+    "HtmlInputElement",
     "KeyboardEvent",
+    "MediaQueryList",
     "MouseEvent",
     "Navigator",
     "PointerEvent",
     "Screen",
+    "Storage",
     "WheelEvent",
     "Window",
 ] }
