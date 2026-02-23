@@ -1,11 +1,35 @@
 use gpui::{PlatformDispatcher, Priority, RunnableVariant, ThreadTaskTimings};
-use std::{
-    thread::ThreadId,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = "queueMicrotask")]
+    fn queue_microtask(callback: &JsValue);
+
+    #[wasm_bindgen(js_name = "setTimeout")]
+    fn set_timeout(callback: &JsValue, timeout: i32) -> i32;
+}
+
+fn schedule_runnable(runnable: RunnableVariant, priority: Priority) {
+    let callback = Closure::once_into_js(move || {
+        if !runnable.metadata().is_closed() {
+            runnable.run();
+        }
+    });
+
+    match priority {
+        Priority::RealtimeAudio | Priority::High => {
+            queue_microtask(&callback);
+        }
+        Priority::Medium | Priority::Low => {
+            set_timeout(&callback, 0);
+        }
+    }
+}
 
 pub struct WebDispatcher {
-    main_thread_id: ThreadId,
+    main_thread_id: std::thread::ThreadId,
 }
 
 impl WebDispatcher {
@@ -34,24 +58,30 @@ impl PlatformDispatcher for WebDispatcher {
         std::thread::current().id() == self.main_thread_id
     }
 
-    fn dispatch(&self, runnable: RunnableVariant, _priority: Priority) {
-        // Stub: run inline. Real implementation will use setTimeout/microtasks.
-        runnable.run();
+    fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
+        schedule_runnable(runnable, priority);
     }
 
-    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
-        // Stub: run inline. In wasm there is only one thread anyway.
-        runnable.run();
+    fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
+        schedule_runnable(runnable, priority);
     }
 
-    fn dispatch_after(&self, _duration: Duration, runnable: RunnableVariant) {
-        log::warn!("WebDispatcher::dispatch_after: delay ignored in stub implementation");
-        runnable.run();
+    fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant) {
+        let callback = Closure::once_into_js(move || {
+            if !runnable.metadata().is_closed() {
+                runnable.run();
+            }
+        });
+
+        let millis = duration.as_millis().min(i32::MAX as u128) as i32;
+        set_timeout(&callback, millis);
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        // Stub: just call directly. No real-time thread spawning in wasm.
-        f();
+    fn spawn_realtime(&self, function: Box<dyn FnOnce() + Send>) {
+        let callback = Closure::once_into_js(move || {
+            function();
+        });
+        queue_microtask(&callback);
     }
 
     fn now(&self) -> Instant {
