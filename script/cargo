@@ -53,7 +53,7 @@ function getShellConfigPath(shell) {
   const home = os.homedir();
   switch (shell) {
     case "zsh":
-      return path.join(home, ".zshrc");
+      return path.join(process.env.ZDOTDIR || home, ".zshrc");
     case "bash":
       // Prefer .bashrc, fall back to .bash_profile
       const bashrc = path.join(home, ".bashrc");
